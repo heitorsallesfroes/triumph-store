@@ -1,3 +1,42 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+/* Inputs globais estilo Gestão TFX */
+input, select, textarea {
+  background: #0d0d14 !important;
+  border: 1px solid #1a1a2a !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: #f5c518 !important;
+  outline: none !important;
+  box-shadow: 0 0 0 1px #f5c51820 !important;
+}
+
+input::placeholder, textarea::placeholder {
+  color: #3a3a5a !important;
+}
+
+/* Seções de formulário */
+.form-section {
+  background: #111118;
+  border: 1px solid #1a1a2a;
+  border-left: 3px solid #f5c518;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 12px;
+}
+
+/* Botão confirmar */
+.btn-confirm {
+  background: #f5c518 !important;
+  color: #0a0a0f !important;
+  font-weight: 700 !important;
+  border-radius: 10px !important;
+}
+
+.btn-confirm:hover {
+  background: #e0b315 !important;
+}
