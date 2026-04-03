@@ -3,6 +3,7 @@ import { supabase, Product, Accessory, Motoboy, Supplier } from '../lib/supabase
 import { Trash2, ShoppingCart, TrendingUp, Loader2 } from 'lucide-react';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
 import UnifiedSearch from '../components/UnifiedSearch';
+import QuickAdd from '../components/QuickAdd';
 import AutocompleteInput from '../components/AutocompleteInput';
 import { validateAddressForDeliveryType } from '../lib/addressValidation';
 import { fetchAddressByCep } from '../lib/viaCep';
@@ -664,6 +665,13 @@ export default function Sales({ triggerFastSale }: SalesProps) {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+      <QuickAdd
+  products={products}
+  accessories={accessories}
+  onAddProduct={addProductFromSearch}
+  onAddAccessory={addAccessoryFromSearch}
+  onAddManualItem={addManualItem}
+/>
         <UnifiedSearch
           products={products}
           accessories={accessories}
