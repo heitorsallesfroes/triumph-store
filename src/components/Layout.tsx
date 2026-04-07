@@ -12,6 +12,7 @@ import {
   TrendingUp,
   Settings,
   Zap,
+  Receipt,
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -43,12 +44,14 @@ const menuGroups = [
     items: [
       { id: 'motoboys', label: 'Motoboys', icon: Bike },
       { id: 'marketing', label: 'Marketing / Ads', icon: TrendingUp },
+      { id: 'costs', label: 'Custos Operacionais', icon: Receipt },
       { id: 'reports', label: 'Relatórios', icon: BarChart3 },
     ],
   },
   {
     label: 'GESTÃO',
     items: [
+      { id: 'resumo', label: 'Resumo Mensal', icon: BarChart3 },
       { id: 'settings', label: 'Configurações', icon: Settings },
     ],
   },
@@ -158,4 +161,3 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
     </div>
   );
 }
-

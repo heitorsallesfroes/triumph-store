@@ -11,6 +11,8 @@ import Logistics from './pages/Logistics';
 import Reports from './pages/Reports';
 import Marketing from './pages/Marketing';
 import Settings from './pages/Settings';
+import OperationalCosts from './pages/OperationalCosts';
+import ResumoMensal from './pages/ResumoMensal';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -18,15 +20,12 @@ function App() {
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      // Check if user is typing in an input/textarea
       const target = e.target as HTMLElement;
       const isTyping = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
 
-      // F2: Fast sales mode
       if (e.key === 'F2' && !isTyping) {
         e.preventDefault();
         setCurrentPage('sales');
-        // Trigger the fast sale mode in Sales component
         setTriggerFastSale(prev => prev + 1);
       }
     };
@@ -57,6 +56,10 @@ function App() {
         return <Marketing />;
       case 'reports':
         return <Reports />;
+      case 'costs':
+        return <OperationalCosts />;
+      case 'resumo':
+        return <ResumoMensal />;
       case 'settings':
         return <Settings />;
       default:
