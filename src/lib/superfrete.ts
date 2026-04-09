@@ -80,7 +80,7 @@ export async function generateShippingLabel(
         postal_code: sanitizeCEP(params.zip_code),
         document: params.customer_cpf.replace(/\D/g, ''),
       },
-      service: 1,
+      service: 2,
       volumes: {
         height: 2,
         width: 15,
@@ -89,7 +89,7 @@ export async function generateShippingLabel(
       },
       products,
       options: {
-        insurance_value: params.items.reduce((acc, item) => acc + (item.price * item.quantity), 0),
+        insurance_value: 150,
         non_commercial: true,
       },
       platform: "TriumphStore",

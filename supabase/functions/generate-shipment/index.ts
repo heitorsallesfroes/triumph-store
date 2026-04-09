@@ -26,7 +26,7 @@ Deno.serve(async (req: Request) => {
       "User-Agent": "TriumphStore/1.0 (integracao@triumphstore.com.br)",
     };
 
-    const cartResponse = await fetch("https://superfrete.com/api/v0/cart", {
+    const cartResponse = await fetch("https://api.superfrete.com/api/v0/cart", {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
@@ -49,7 +49,7 @@ Deno.serve(async (req: Request) => {
       throw new Error("ID do pedido não retornado pelo carrinho");
     }
 
-    const checkoutResponse = await fetch("https://superfrete.com/api/v0/checkout", {
+    const checkoutResponse = await fetch("https://api.superfrete.com/api/v0/checkout", {
       method: "POST",
       headers,
       body: JSON.stringify({ orders: [orderId] }),
@@ -67,7 +67,7 @@ Deno.serve(async (req: Request) => {
       throw new Error(checkoutData?.message || `Erro no checkout: ${checkoutResponse.status}`);
     }
 
-    const printResponse = await fetch("https://superfrete.com/api/v0/shipment/generate", {
+    const printResponse = await fetch("https://api.superfrete.com/api/v0/shipment/generate", {
       method: "POST",
       headers,
       body: JSON.stringify({ orders: [orderId] }),
@@ -85,7 +85,7 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({
         success: true,
         tracking_code: checkoutData?.purchase?.orders?.[0]?.tracking ?? orderId,
-        label_url: printData?.url ?? `https://superfrete.com/api/v0/shipment/print?orders[]=${orderId}`,
+        label_url: printData?.url ?? `https://api.superfrete.com/api/v0/shipment/print?orders[]=${orderId}`,
         order_id: orderId,
       }),
       {
