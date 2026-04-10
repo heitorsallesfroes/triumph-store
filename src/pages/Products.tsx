@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react';
 import { supabase, Product } from '../lib/supabase';
-import { Plus, Pencil, Trash2, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, RefreshCw, Watch, Link } from 'lucide-react';
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export default function Products() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [filterCategory, setFilterCategory] = useState<'all' | 'smartwatch' | 'pulseira'>('all');
   const [formData, setFormData] = useState({
     model: '',
     color: '',
@@ -36,9 +42,34 @@ export default function Products() {
     }
   };
 
+  const handleImportTiny = async (categoria: 'smartwatch' | 'pulseira') => {
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/import-tiny-products`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ categoria }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setImportResult(`✅ ${data.imported} ${categoria}s importados com sucesso!`);
+        loadProducts();
+      } else {
+        setImportResult(`❌ Erro: ${data.error}`);
+      }
+    } catch (error) {
+      setImportResult('❌ Erro ao importar produtos');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     try {
       const productData = {
         model: formData.model,
@@ -52,17 +83,10 @@ export default function Products() {
       };
 
       if (editingProduct) {
-        const { error } = await supabase
-          .from('products')
-          .update(productData)
-          .eq('id', editingProduct.id);
-
+        const { error } = await supabase.from('products').update(productData).eq('id', editingProduct.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase
-          .from('products')
-          .insert([productData]);
-
+        const { error } = await supabase.from('products').insert([productData]);
         if (error) throw error;
       }
 
@@ -70,9 +94,7 @@ export default function Products() {
       resetForm();
       loadProducts();
     } catch (error: any) {
-      console.error('Error saving product:', error);
-      const errorMessage = error?.message || 'Erro desconhecido';
-      alert(`Erro ao salvar produto: ${errorMessage}`);
+      alert(`Erro ao salvar produto: ${error?.message || 'Erro desconhecido'}`);
     }
   };
 
@@ -91,45 +113,32 @@ export default function Products() {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Tem certeza que deseja excluir este produto?')) return;
-
     try {
-      const { error } = await supabase
-        .from('products')
-        .delete()
-        .eq('id', id);
-
+      const { error } = await supabase.from('products').delete().eq('id', id);
       if (error) throw error;
       loadProducts();
     } catch (error) {
-      console.error('Error deleting product:', error);
       alert('Erro ao excluir produto');
     }
   };
 
   const resetForm = () => {
-    setFormData({
-      model: '',
-      color: '',
-      cost: '',
-      price: '',
-      current_stock: '',
-      minimum_stock: '',
-    });
+    setFormData({ model: '', color: '', cost: '', price: '', current_stock: '', minimum_stock: '' });
     setEditingProduct(null);
     setShowForm(false);
   };
 
+  const filteredProducts = filterCategory === 'all'
+    ? products
+    : products.filter((p: any) => p.category === filterCategory);
+
   if (loading) {
-    return (
-      <div className="p-8">
-        <div className="text-white">Carregando...</div>
-      </div>
-    );
+    return <div className="p-8"><div className="text-white">Carregando...</div></div>;
   }
 
   return (
     <div className="p-8">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-white">Produtos</h1>
         <button
           onClick={() => setShowForm(true)}
@@ -138,6 +147,55 @@ export default function Products() {
           <Plus size={20} />
           Adicionar Produto
         </button>
+      </div>
+
+      {/* Importar do Tiny */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <RefreshCw size={18} className="text-orange-400" />
+          <h2 className="text-white font-medium">Sincronizar com Tiny ERP</h2>
+        </div>
+        <div className="flex gap-3 flex-wrap">
+          <button
+            onClick={() => handleImportTiny('smartwatch')}
+            disabled={importing}
+            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+          >
+            <Watch size={16} />
+            {importing ? 'Importando...' : 'Importar Smartwatches'}
+          </button>
+          <button
+            onClick={() => handleImportTiny('pulseira')}
+            disabled={importing}
+            className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50"
+          >
+            <Link size={16} />
+            {importing ? 'Importando...' : 'Importar Pulseiras'}
+          </button>
+        </div>
+        {importResult && (
+          <p className="mt-3 text-sm text-gray-300">{importResult}</p>
+        )}
+      </div>
+
+      {/* Filtros */}
+      <div className="flex gap-2 mb-4">
+        {(['all', 'smartwatch', 'pulseira'] as const).map((cat) => (
+          <button
+            key={cat}
+            onClick={() => setFilterCategory(cat)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              filterCategory === cat
+                ? 'bg-orange-500 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            {cat === 'all' ? 'Todos' : cat === 'smartwatch' ? 'Smartwatches' : 'Pulseiras'}
+          </button>
+        ))}
+        <span className="ml-auto text-gray-400 text-sm self-center">
+          {filteredProducts.length} produtos
+        </span>
       </div>
 
       {showForm && (
@@ -151,108 +209,38 @@ export default function Products() {
                 <X size={24} />
               </button>
             </div>
-
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Modelo
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.model}
-                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
-                    placeholder="Ex: Ultra 9"
-                    required
-                  />
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Modelo</label>
+                  <input type="text" value={formData.model} onChange={(e) => setFormData({ ...formData, model: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="Ex: S11 Pro" required />
                 </div>
-
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Cor
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.color}
-                    onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
-                    placeholder="Ex: Black"
-                    required
-                  />
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Cor</label>
+                  <input type="text" value={formData.color} onChange={(e) => setFormData({ ...formData, color: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="Ex: Preto" required />
                 </div>
-
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Custo (R$)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.cost}
-                    onChange={(e) => setFormData({ ...formData, cost: e.target.value })}
-                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
-                    placeholder="120.00"
-                    required
-                  />
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Custo (R$)</label>
+                  <input type="number" step="0.01" value={formData.cost} onChange={(e) => setFormData({ ...formData, cost: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="120.00" required />
                 </div>
-
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Preço de Venda (R$)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.price}
-                    onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
-                    placeholder="299.00"
-                    required
-                  />
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Preço de Venda (R$)</label>
+                  <input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="299.00" required />
                 </div>
-
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Estoque Atual
-                  </label>
-                  <input
-                    type="number"
-                    value={formData.current_stock}
-                    onChange={(e) => setFormData({ ...formData, current_stock: e.target.value })}
-                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
-                    placeholder="8"
-                    required
-                  />
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Estoque Atual</label>
+                  <input type="number" value={formData.current_stock} onChange={(e) => setFormData({ ...formData, current_stock: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="8" required />
                 </div>
-
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Estoque Mínimo
-                  </label>
-                  <input
-                    type="number"
-                    value={formData.minimum_stock}
-                    onChange={(e) => setFormData({ ...formData, minimum_stock: e.target.value })}
-                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
-                    placeholder="3"
-                    required
-                  />
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Estoque Mínimo</label>
+                  <input type="number" value={formData.minimum_stock} onChange={(e) => setFormData({ ...formData, minimum_stock: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="3" required />
                 </div>
               </div>
-
               <div className="flex gap-4 pt-4">
-                <button
-                  type="submit"
-                  className="flex-1 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors"
-                >
+                <button type="submit" className="flex-1 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">
                   {editingProduct ? 'Atualizar Produto' : 'Adicionar Produto'}
                 </button>
-                <button
-                  type="button"
-                  onClick={resetForm}
-                  className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors"
-                >
+                <button type="button" onClick={resetForm} className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">
                   Cancelar
                 </button>
               </div>
@@ -265,65 +253,37 @@ export default function Products() {
         <table className="w-full">
           <thead className="bg-gray-900">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Modelo
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Cor
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Custo
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Preço
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Estoque
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Est. Mín.
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Ações
-              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Modelo</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Cor</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">SKU</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Custo</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Preço</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Estoque</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-700">
-            {products.length === 0 ? (
+            {filteredProducts.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-6 py-8 text-center text-gray-400">
-                  Nenhum produto ainda. Clique em "Adicionar Produto" para começar.
+                  Nenhum produto encontrado.
                 </td>
               </tr>
             ) : (
-              products.map((product) => (
+              filteredProducts.map((product: any) => (
                 <tr key={product.id} className="hover:bg-gray-700/50">
                   <td className="px-6 py-4 text-white font-medium">{product.model}</td>
                   <td className="px-6 py-4 text-gray-300">{product.color}</td>
+                  <td className="px-6 py-4 text-gray-400 text-sm">{product.sku || '-'}</td>
                   <td className="px-6 py-4 text-gray-300">R$ {product.cost.toFixed(2)}</td>
                   <td className="px-6 py-4 text-green-400 font-medium">R$ {product.price.toFixed(2)}</td>
-                  <td className={`px-6 py-4 font-medium ${
-                    product.current_stock <= product.minimum_stock
-                      ? 'text-red-400'
-                      : 'text-gray-300'
-                  }`}>
+                  <td className={`px-6 py-4 font-medium ${product.current_stock <= product.minimum_stock ? 'text-red-400' : 'text-gray-300'}`}>
                     {product.current_stock}
                   </td>
-                  <td className="px-6 py-4 text-gray-400">{product.minimum_stock}</td>
                   <td className="px-6 py-4">
                     <div className="flex gap-2">
-                      <button
-                        onClick={() => handleEdit(product)}
-                        className="text-blue-400 hover:text-blue-300"
-                      >
-                        <Pencil size={18} />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(product.id)}
-                        className="text-red-400 hover:text-red-300"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                      <button onClick={() => handleEdit(product)} className="text-blue-400 hover:text-blue-300"><Pencil size={18} /></button>
+                      <button onClick={() => handleDelete(product.id)} className="text-red-400 hover:text-red-300"><Trash2 size={18} /></button>
                     </div>
                   </td>
                 </tr>
