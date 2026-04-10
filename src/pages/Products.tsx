@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, Product } from '../lib/supabase';
-import { Plus, Pencil, Trash2, X, RefreshCw, Watch, Link } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, RefreshCw, Watch, Link, Gift } from 'lucide-react';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -12,7 +12,7 @@ export default function Products() {
   const [importResult, setImportResult] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [filterCategory, setFilterCategory] = useState<'all' | 'smartwatch' | 'pulseira'>('all');
+  const [filterCategory, setFilterCategory] = useState<'all' | 'smartwatch' | 'pulseira' | 'brinde'>('all');
   const [formData, setFormData] = useState({
     model: '',
     color: '',
@@ -42,7 +42,7 @@ export default function Products() {
     }
   };
 
-  const handleImportTiny = async (categoria: 'smartwatch' | 'pulseira') => {
+  const handleImportTiny = async (categoria: 'smartwatch' | 'pulseira' | 'brinde') => {
     setImporting(true);
     setImportResult(null);
     try {
@@ -172,6 +172,14 @@ export default function Products() {
             <Link size={16} />
             {importing ? 'Importando...' : 'Importar Pulseiras'}
           </button>
+          <button
+            onClick={() => handleImportTiny('brinde')}
+            disabled={importing}
+            className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+          >
+            <Gift size={16} />
+            {importing ? 'Importando...' : 'Importar Brindes'}
+          </button>
         </div>
         {importResult && (
           <p className="mt-3 text-sm text-gray-300">{importResult}</p>
@@ -180,7 +188,7 @@ export default function Products() {
 
       {/* Filtros */}
       <div className="flex gap-2 mb-4">
-        {(['all', 'smartwatch', 'pulseira'] as const).map((cat) => (
+        {(['all', 'smartwatch', 'pulseira', 'brinde'] as const).map((cat) => (
           <button
             key={cat}
             onClick={() => setFilterCategory(cat)}
@@ -190,7 +198,7 @@ export default function Products() {
                 : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
           >
-            {cat === 'all' ? 'Todos' : cat === 'smartwatch' ? 'Smartwatches' : 'Pulseiras'}
+            {cat === 'all' ? 'Todos' : cat === 'smartwatch' ? 'Smartwatches' : cat === 'pulseira' ? 'Pulseiras' : 'Brindes'}
           </button>
         ))}
         <span className="ml-auto text-gray-400 text-sm self-center">
@@ -225,7 +233,7 @@ export default function Products() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Preço de Venda (R$)</label>
-                  <input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="299.00" required />
+                  <input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="299.00" required />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Estoque Atual</label>
