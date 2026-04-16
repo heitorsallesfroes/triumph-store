@@ -7,6 +7,17 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+async function obterProdutoTiny(id: string, token: string) {
+  const response = await fetch("https://api.tiny.com.br/api2/produto.obter.php", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `token=${token}&id=${id}&formato=JSON`,
+  });
+  const data = await response.json();
+  if (data?.retorno?.status === "OK") return data.retorno.produto;
+  return null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -15,111 +26,124 @@ Deno.serve(async (req: Request) => {
   try {
     const TINY_TOKEN = Deno.env.get("TINY_API_TOKEN");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-    const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!TINY_TOKEN) throw new Error("Token do Tiny não configurado");
+    if (!TINY_TOKEN) throw new Error("TINY_API_TOKEN não encontrado");
 
-    const supabase = createClient(SUPABASE_URL!, SUPABASE_KEY!);
-    const { sale_id } = await req.json();
+    const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_KEY!);
+    const body = await req.json();
+    const { sale_id } = body;
 
-    // Buscar dados da venda
+    if (!sale_id) throw new Error("sale_id é obrigatório");
+
     const { data: sale, error: saleError } = await supabase
-      .from('sales')
-      .select('*')
-      .eq('id', sale_id)
-      .single();
+      .from("sales").select("*").eq("id", sale_id).single();
 
     if (saleError || !sale) throw new Error("Venda não encontrada");
 
-    // Buscar itens da venda
-    const { data: items } = await supabase
-      .from('sale_items')
-      .select('*, products(model, color, cost, price)')
-      .eq('sale_id', sale_id);
+    const { data: saleItems } = await supabase
+      .from("sale_items")
+      .select("*, products(model, color, sku, tiny_id)")
+      .eq("sale_id", sale_id);
 
-    // Formatar data
-    const saleDate = new Date(sale.sale_date);
-    const dataEmissao = `${String(saleDate.getDate()).padStart(2, '0')}/${String(saleDate.getMonth() + 1).padStart(2, '0')}/${saleDate.getFullYear()}`;
+    if (!saleItems || saleItems.length === 0) throw new Error("Nenhum item encontrado na venda");
 
-    // Montar itens da NF
-    const produtosNF = (items || []).map((item: any) => ({
-      item: {
-        descricao: `${item.products?.model || 'Produto'} ${item.products?.color || ''}`.trim(),
-        unidade: "Pç",
-        quantidade: item.quantity,
-        valor_unitario: item.unit_price || item.products?.price || 0,
-        tipo: "P",
-        ncm: "91021110",
-        cst: "0102",
-        cfop: "5102",
+    const itens: any[] = [];
+    for (const item of saleItems) {
+      const product = item.products;
+      if (!product) continue;
+
+      let ncm = "91021110";
+      if (product.tiny_id) {
+        const produtoTiny = await obterProdutoTiny(product.tiny_id.toString(), TINY_TOKEN);
+        if (produtoTiny?.ncm) ncm = produtoTiny.ncm.replace(/\D/g, "");
       }
-    }));
 
-    // Montar XML da NF para o Tiny
-    const nfeData = {
-      nota: {
-        data_emissao: dataEmissao,
-        data_saida: dataEmissao,
-        tipo: "S",
-        finalidade_emissao: "1",
+      itens.push({
+        item: {
+          codigo: product.sku || "",
+          descricao: `${product.model} ${product.color}`,
+          tipo: "P",
+          ncm,
+          unidade: "Pç",
+          quantidade: item.quantity,
+          valor_unitario: item.unit_price.toFixed(2),
+        }
+      });
+    }
+
+    const hoje = new Date().toLocaleDateString("pt-BR");
+    const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + ":00";
+
+    const nota = {
+      nota_fiscal: {
         natureza_operacao: "Venda de mercadorias de terceiros para consumidor final",
-        forma_pagamento: "0",
+        data_emissao: hoje,
+        data_entrada_saida: hoje,
+        hora_entrada_saida: hora,
         cliente: {
           nome: sale.customer_name,
-          cpf_cnpj: sale.customer_cpf || "",
+          tipo_pessoa: "F",
+          cpf_cnpj: (sale.customer_cpf || "").replace(/\D/g, ""),
           endereco: sale.address_street || "",
           numero: sale.address_number || "S/N",
-          complemento: sale.address_complement || "",
           bairro: sale.neighborhood || "",
-          municipio: sale.city || "",
-          uf: sale.state || "RJ",
           cep: (sale.zip_code || "").replace(/\D/g, ""),
-          fone: (sale.customer_phone || "").replace(/\D/g, ""),
+          cidade: sale.city || "",
+          uf: (sale.state || "RJ").toUpperCase(),
         },
-        itens: produtosNF,
-        parcelas: [
-          {
-            parcela: {
-              dias: "0",
-              data: dataEmissao,
-              valor: sale.total_sale_price,
-              obs: sale.payment_method || "pix",
-            }
-          }
-        ]
+        itens,
+        frete_por_conta: "R",
+        forma_pagamento: "dinheiro",
       }
     };
 
-    // Enviar para o Tiny
-    const formData = new URLSearchParams();
-    formData.append("token", TINY_TOKEN);
-    formData.append("formato", "json");
-    formData.append("nota", JSON.stringify(nfeData));
+    console.log("Payload NF:", JSON.stringify(nota));
 
-    const tinyResponse = await fetch("https://api.tiny.com.br/api2/nota.fiscal.incluir.php", {
+    const incluirResponse = await fetch("https://api.tiny.com.br/api2/nota.fiscal.incluir.php", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: formData.toString(),
+      body: `token=${TINY_TOKEN}&nota=${encodeURIComponent(JSON.stringify(nota))}&formato=JSON`,
     });
 
-    const tinyData = await tinyResponse.json();
+    const incluirData = await incluirResponse.json();
+    console.log("Incluir NF:", JSON.stringify(incluirData));
 
-    if (tinyData.retorno?.status === "Erro") {
-      throw new Error(tinyData.retorno?.registros?.registro?.erros?.erro?.msg || "Erro ao criar NF no Tiny");
+    if (incluirData?.retorno?.status !== "OK") {
+      const erro = incluirData?.retorno?.registros?.registro?.erros?.[0]?.erro
+        || incluirData?.retorno?.erros?.[0]?.erro
+        || JSON.stringify(incluirData?.retorno)
+        || "Erro ao incluir nota fiscal";
+      throw new Error(erro);
     }
 
-    const nfeId = tinyData.retorno?.registros?.registro?.id;
+    const notaId = incluirData?.retorno?.registros?.registro?.id;
+    if (!notaId) throw new Error("ID da nota não retornado: " + JSON.stringify(incluirData));
 
-    // Salvar referência da NF na venda
-    if (nfeId) {
-      await supabase.from('sales').update({ 
-        nfe_id: nfeId,
-        nfe_status: 'criada'
-      }).eq('id', sale_id);
+    const emitirResponse = await fetch("https://api.tiny.com.br/api2/nota.fiscal.emitir.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `token=${TINY_TOKEN}&id=${notaId}&enviarEmail=N&formato=JSON`,
+    });
+
+    const emitirData = await emitirResponse.json();
+    console.log("Emitir NF:", JSON.stringify(emitirData));
+
+    if (emitirData?.retorno?.status !== "OK") {
+      const erro = emitirData?.retorno?.erros?.[0]?.erro || "Erro ao emitir nota fiscal";
+      throw new Error(erro);
     }
+
+    const nfData = emitirData?.retorno?.nota_fiscal;
+
+    await supabase.from("sales").update({
+      nfe_url: nfData?.link_acesso || "",
+      nfe_chave: nfData?.chave_acesso || "",
+      nfe_status: "emitida",
+    }).eq("id", sale_id);
 
     return new Response(
-      JSON.stringify({ success: true, nfe_id: nfeId, data: tinyData }),
+      JSON.stringify({ success: true, nfe_url: nfData?.link_acesso, chave_acesso: nfData?.chave_acesso }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
