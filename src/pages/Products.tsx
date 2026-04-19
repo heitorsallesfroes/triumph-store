@@ -11,16 +11,16 @@ export default function Products() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editingProduct, setEditingProduct] = useState<any | null>(null);
   const [filterCategory, setFilterCategory] = useState<'all' | 'smartwatch' | 'acessorio'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [editingCost, setEditingCost] = useState<string | null>(null);
+  const [costValue, setCostValue] = useState('');
   const [formData, setFormData] = useState({
     model: '',
     color: '',
     cost: '',
     price: '',
-    current_stock: '',
-    minimum_stock: '',
   });
 
   useEffect(() => {
@@ -33,7 +33,6 @@ export default function Products() {
         .from('products')
         .select('*')
         .order('model', { ascending: true });
-
       if (error) throw error;
       setProducts(data || []);
     } catch (error) {
@@ -76,10 +75,8 @@ export default function Products() {
         model: formData.model,
         color: formData.color,
         supplier: '',
-        cost: parseFloat(formData.cost),
-        price: parseFloat(formData.price),
-        current_stock: parseInt(formData.current_stock),
-        minimum_stock: parseInt(formData.minimum_stock),
+        cost: parseFloat(formData.cost) || 0,
+        price: parseFloat(formData.price) || 0,
         updated_at: new Date().toISOString(),
       };
 
@@ -99,15 +96,13 @@ export default function Products() {
     }
   };
 
-  const handleEdit = (product: Product) => {
+  const handleEdit = (product: any) => {
     setEditingProduct(product);
     setFormData({
       model: product.model,
       color: product.color,
-      cost: product.cost.toString(),
-      price: product.price.toString(),
-      current_stock: product.current_stock.toString(),
-      minimum_stock: product.minimum_stock.toString(),
+      cost: product.cost?.toString() || '0',
+      price: product.price?.toString() || '0',
     });
     setShowForm(true);
   };
@@ -123,8 +118,22 @@ export default function Products() {
     }
   };
 
+  const handleSaveCost = async (productId: string) => {
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update({ cost: parseFloat(costValue) || 0 })
+        .eq('id', productId);
+      if (error) throw error;
+      setEditingCost(null);
+      loadProducts();
+    } catch (error) {
+      alert('Erro ao salvar custo');
+    }
+  };
+
   const resetForm = () => {
-    setFormData({ model: '', color: '', cost: '', price: '', current_stock: '', minimum_stock: '' });
+    setFormData({ model: '', color: '', cost: '', price: '' });
     setEditingProduct(null);
     setShowForm(false);
   };
@@ -196,22 +205,19 @@ export default function Products() {
             key={cat}
             onClick={() => setFilterCategory(cat)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              filterCategory === cat
-                ? 'bg-orange-500 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              filterCategory === cat ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
           >
             {cat === 'all' ? 'Todos' : cat === 'smartwatch' ? 'Smartwatches' : 'Acessórios'}
           </button>
         ))}
-        <span className="text-gray-400 text-sm self-center">
-          {filteredProducts.length} produtos
-        </span>
+        <span className="text-gray-400 text-sm self-center">{filteredProducts.length} produtos</span>
       </div>
 
+      {/* Modal editar/adicionar */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl border border-gray-700">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg border border-gray-700">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-white">
                 {editingProduct ? 'Editar Produto' : 'Adicionar Novo Produto'}
@@ -232,19 +238,11 @@ export default function Products() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Custo (R$)</label>
-                  <input type="number" step="0.01" value={formData.cost} onChange={(e) => setFormData({ ...formData, cost: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="120.00" required />
+                  <input type="number" step="0.01" value={formData.cost} onChange={(e) => setFormData({ ...formData, cost: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="120.00" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Preço de Venda (R$)</label>
-                  <input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="299.00" required />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Estoque Atual</label>
-                  <input type="number" value={formData.current_stock} onChange={(e) => setFormData({ ...formData, current_stock: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="8" required />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Estoque Mínimo</label>
-                  <input type="number" value={formData.minimum_stock} onChange={(e) => setFormData({ ...formData, minimum_stock: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="3" required />
+                  <input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="299.00" />
                 </div>
               </div>
               <div className="flex gap-4 pt-4">
@@ -260,6 +258,7 @@ export default function Products() {
         </div>
       )}
 
+      {/* Tabela */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-900">
@@ -276,9 +275,7 @@ export default function Products() {
           <tbody className="divide-y divide-gray-700">
             {filteredProducts.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-gray-400">
-                  Nenhum produto encontrado.
-                </td>
+                <td colSpan={7} className="px-6 py-8 text-center text-gray-400">Nenhum produto encontrado.</td>
               </tr>
             ) : (
               filteredProducts.map((product: any) => (
@@ -286,11 +283,35 @@ export default function Products() {
                   <td className="px-6 py-4 text-white font-medium">{product.model}</td>
                   <td className="px-6 py-4 text-gray-300">{product.color}</td>
                   <td className="px-6 py-4 text-gray-400 text-sm">{product.sku || '-'}</td>
-                  <td className="px-6 py-4 text-gray-300">R$ {product.cost.toFixed(2)}</td>
-                  <td className="px-6 py-4 text-green-400 font-medium">R$ {product.price.toFixed(2)}</td>
-                  <td className="px-6 py-4 font-medium text-gray-300">
-                    {product.current_stock}
+                  <td className="px-6 py-4">
+                    {editingCost === product.id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={costValue}
+                          onChange={(e) => setCostValue(e.target.value)}
+                          className="w-24 bg-gray-700 text-white rounded px-2 py-1 border border-orange-500 text-sm"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveCost(product.id);
+                            if (e.key === 'Escape') setEditingCost(null);
+                          }}
+                        />
+                        <button onClick={() => handleSaveCost(product.id)} className="text-green-400 text-xs">✓</button>
+                        <button onClick={() => setEditingCost(null)} className="text-red-400 text-xs">✕</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setEditingCost(product.id); setCostValue(product.cost?.toString() || '0'); }}
+                        className="text-gray-300 hover:text-orange-400 hover:underline"
+                      >
+                        R$ {(product.cost || 0).toFixed(2)}
+                      </button>
+                    )}
                   </td>
+                  <td className="px-6 py-4 text-green-400 font-medium">R$ {(product.price || 0).toFixed(2)}</td>
+                  <td className="px-6 py-4 font-medium text-gray-300">{product.current_stock}</td>
                   <td className="px-6 py-4">
                     <div className="flex gap-2">
                       <button onClick={() => handleEdit(product)} className="text-blue-400 hover:text-blue-300"><Pencil size={18} /></button>

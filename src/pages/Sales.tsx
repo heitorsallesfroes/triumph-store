@@ -24,6 +24,7 @@ interface SaleProduct {
   product?: Product;
   quantity: number;
   unit_price: number;
+  unit_cost: number;
 }
 
 interface SaleAccessoryItem {
@@ -196,7 +197,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
     } else {
       setSaleProducts([
         ...saleProducts,
-        { product_id: product.id, product, quantity: 1, unit_price: product.price },
+        { product_id: product.id, product, quantity: 1, unit_price: product.price, unit_cost: product.cost },
       ]);
     }
   };
@@ -266,8 +267,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
       const totalSalePrice = (saleProducts || []).reduce((sum, sp) => sum + (sp.unit_price || 0) * (sp.quantity || 0), 0);
       const totalManualPrice = (manualItems || []).reduce((sum, mi) => sum + (mi.price || 0) * (mi.quantity || 0), 0);
       const totalProductCost = (saleProducts || []).reduce((sum, sp) => {
-        const product = products.find((p) => p.id === sp.product_id);
-        return sum + (product?.cost || 0) * (sp.quantity || 0);
+        return sum + (sp.unit_cost || 0) * (sp.quantity || 0);
       }, 0);
       const totalAccessoryCost = (saleAccessories || []).reduce((sum, sa) => {
         return sum + (sa.cost || 0) * (sa.quantity || 0);
@@ -708,12 +708,12 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                   className="bg-gray-700 rounded-lg p-4 border border-gray-600"
                 >
                   <div className="grid grid-cols-12 gap-4 items-center">
-                    <div className="col-span-4">
+                    <div className="col-span-3">
                       <div className="text-white font-medium">
                         {sp.product?.model} - {sp.product?.color}
                       </div>
                       <div className="text-gray-400 text-sm">
-                        Custo: R$ {sp.product?.cost.toFixed(2)} | Estoque: {sp.product?.current_stock}
+                        Estoque: {sp.product?.current_stock}
                       </div>
                     </div>
 
@@ -730,6 +730,18 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                       />
                     </div>
 
+                    <div className="col-span-2">
+                      <label className="block text-xs text-gray-400 mb-1">Custo (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={sp.unit_cost}
+                        onChange={(e) => updateProduct(index, 'unit_cost', parseFloat(e.target.value) || 0)}
+                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                      />
+                    </div>
+
                     <div className="col-span-3">
                       <label className="block text-xs text-gray-400 mb-1">Preço Venda (R$)</label>
                       <input
@@ -743,7 +755,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                       />
                     </div>
 
-                    <div className="col-span-2 text-right">
+                    <div className="col-span-1 text-right">
                       <div className="text-xs text-gray-400">Subtotal</div>
                       <div className="text-orange-500 font-bold text-lg">
                         R$ {(sp.unit_price * sp.quantity).toFixed(2)}

@@ -41,7 +41,7 @@ interface SaleItem {
   sale_id: string;
   product_id: string;
   quantity: number;
-  products: { model: string; color: string } | null;
+  products: { model: string; color: string; category: string } | null;
 }
 
 export default function ResumoMensal() {
@@ -83,7 +83,7 @@ export default function ResumoMensal() {
         const saleIds = salesData.map(s => s.id);
         const { data: itemsData } = await supabase
           .from('sale_items')
-          .select('sale_id,product_id,quantity,products(model,color)')
+          .select('sale_id,product_id,quantity,products(model,color,category)')
           .in('sale_id', saleIds);
         setSaleItems((itemsData || []) as SaleItem[]);
       } else {
@@ -130,11 +130,11 @@ export default function ResumoMensal() {
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
 
-  // Produtos mais vendidos
+  // Produtos mais vendidos (apenas smartwatches)
   const modelMap = new Map<string, number>();
   const colorMap = new Map<string, number>();
   saleItems.forEach(item => {
-    if (item.products) {
+    if (item.products && item.products.category === 'smartwatch') {
       const model = item.products.model;
       const color = item.products.color;
       modelMap.set(model, (modelMap.get(model) || 0) + item.quantity);

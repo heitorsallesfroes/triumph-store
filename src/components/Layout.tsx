@@ -5,7 +5,6 @@ import {
   Warehouse,
   ShoppingCart,
   History,
-  Gift,
   Bike,
   Truck,
   BarChart3,
@@ -13,6 +12,7 @@ import {
   Settings,
   Zap,
   Receipt,
+  DollarSign,
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -25,7 +25,7 @@ const menuGroups = [
   {
     label: 'PRINCIPAL',
     items: [
-      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { id: 'dashboard', label: 'Visão Geral', icon: LayoutDashboard },
       { id: 'sales', label: 'Nova Venda', icon: ShoppingCart },
       { id: 'history', label: 'Histórico de Vendas', icon: History },
       { id: 'logistics', label: 'Logística', icon: Truck },
@@ -36,7 +36,6 @@ const menuGroups = [
     items: [
       { id: 'products', label: 'Produtos', icon: Package },
       { id: 'stock', label: 'Controle de Estoque', icon: Warehouse },
-      { id: 'accessories', label: 'Acessórios / Brindes', icon: Gift },
     ],
   },
   {
@@ -51,7 +50,8 @@ const menuGroups = [
   {
     label: 'GESTÃO',
     items: [
-      { id: 'resumo', label: 'Resumo Mensal', icon: BarChart3 },
+      { id: 'resumo-vendas', label: 'Resumo de Vendas', icon: DollarSign },
+      { id: 'resumo', label: 'Relatório Mensal', icon: BarChart3 },
       { id: 'settings', label: 'Configurações', icon: Settings },
     ],
   },

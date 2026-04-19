@@ -5,7 +5,6 @@ import Products from './pages/Products';
 import StockControl from './pages/StockControl';
 import Sales from './pages/Sales';
 import SalesHistory from './pages/SalesHistory';
-import Accessories from './pages/Accessories';
 import Motoboys from './pages/Motoboys';
 import Logistics from './pages/Logistics';
 import Reports from './pages/Reports';
@@ -13,6 +12,7 @@ import Marketing from './pages/Marketing';
 import Settings from './pages/Settings';
 import OperationalCosts from './pages/OperationalCosts';
 import ResumoMensal from './pages/ResumoMensal';
+import ResumoVendas from './pages/ResumoVendas';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -46,8 +46,6 @@ function App() {
         return <Sales triggerFastSale={triggerFastSale} />;
       case 'history':
         return <SalesHistory />;
-      case 'accessories':
-        return <Accessories />;
       case 'motoboys':
         return <Motoboys />;
       case 'logistics':
@@ -58,6 +56,8 @@ function App() {
         return <Reports />;
       case 'costs':
         return <OperationalCosts />;
+      case 'resumo-vendas':
+        return <ResumoVendas />;
       case 'resumo':
         return <ResumoMensal />;
       case 'settings':

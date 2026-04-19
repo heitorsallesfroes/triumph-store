@@ -50,10 +50,21 @@ export default function Dashboard() {
       const firstDayOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
       const lastDayOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
 
-      const { data: allSales } = await supabase.from('sales').select('*').order('sale_date', { ascending: true });
-      const { data: adSpendData } = await supabase.from('ad_spend').select('*');
-      const { data: products } = await supabase.from('products').select('id, model, color, cost, current_stock, minimum_stock');
-      const { data: saleItems } = await supabase.from('sale_items').select('product_id, quantity, unit_price');
+      const firstDayOfLastMonthStr = firstDayOfLastMonth.toISOString().split('T')[0];
+
+      const [{ data: allSales }, { data: adSpendData }, { data: products }] = await Promise.all([
+        supabase
+          .from('sales')
+          .select('id, total_sale_price, profit, sale_date')
+          .gte('sale_date', `${firstDayOfLastMonthStr}T00:00:00`)
+          .order('sale_date', { ascending: true }),
+        supabase.from('ad_spend').select('date, amount'),
+        supabase.from('products').select('id, model, color, cost, category, current_stock, minimum_stock'),
+      ]);
+
+      if (products) {
+        setLowStock(products.filter(p => p.current_stock <= p.minimum_stock).length);
+      }
 
       if (allSales) {
         const todaySales = allSales.filter(s => normalizeDateFromDB(s.sale_date) === todayStr);
@@ -88,21 +99,29 @@ export default function Dashboard() {
           accData.push({ day: d, revenue: acc });
         }
         setAccumulated(accData);
-      }
 
-      if (saleItems && products) {
-        const map = new Map<string, ProductSales>();
-        saleItems.forEach(item => {
-          const p = products.find(x => x.id === item.product_id);
-          if (p) {
-            const cur = map.get(item.product_id) || { product_id: p.id, model: p.model, color: p.color, total_quantity: 0, total_profit: 0 };
-            cur.total_quantity += item.quantity;
-            cur.total_profit += (item.unit_price - p.cost) * item.quantity;
-            map.set(item.product_id, cur);
+        // Top produtos do mês atual — busca sale_items apenas dos IDs do mês
+        const monthSaleIds = monthSales.map(s => s.id);
+        if (monthSaleIds.length > 0 && products) {
+          const { data: saleItems } = await supabase
+            .from('sale_items')
+            .select('product_id, quantity, unit_price')
+            .in('sale_id', monthSaleIds);
+
+          if (saleItems) {
+            const map = new Map<string, ProductSales>();
+            saleItems.forEach(item => {
+              const p = products.find(x => x.id === item.product_id);
+              if (p && (p as any).category === 'smartwatch') {
+                const cur = map.get(item.product_id) || { product_id: p.id, model: p.model, color: p.color, total_quantity: 0, total_profit: 0 };
+                cur.total_quantity += item.quantity;
+                cur.total_profit += (item.unit_price - p.cost) * item.quantity;
+                map.set(item.product_id, cur);
+              }
+            });
+            setBestSelling([...map.values()].sort((a, b) => b.total_quantity - a.total_quantity).slice(0, 5));
           }
-        });
-        setBestSelling([...map.values()].sort((a, b) => b.total_quantity - a.total_quantity).slice(0, 5));
-        setLowStock(products.filter(p => p.current_stock <= p.minimum_stock).length);
+        }
       }
     } catch (e) {
       console.error(e);
@@ -141,11 +160,12 @@ export default function Dashboard() {
     <div className="p-6 md:p-8" style={{ minHeight: '100%' }}>
 
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-white">Visão Geral</h1>
         <p className="text-xs uppercase tracking-widest mt-0.5" style={{ color: '#3a3a5a' }}>Visão geral do negócio</p>
       </div>
 
       {/* Cards principais */}
+      <p className="text-xs mb-1.5 font-medium" style={{ color: '#3a3a5a' }}>FATURAMENTO E LUCRO — mês atual · vs. mês anterior</p>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
         <BigCard label="FATURAMENTO" value={`R$${Math.round(stats.monthlyRevenue).toLocaleString('pt-BR')}`} sub={`${stats.totalSalesMonth} vendas`} growth={revenueGrowth} accent="#f5c518" />
         <BigCard label="LUCRO LÍQUIDO" value={`R$${Math.round(stats.monthlyProfit).toLocaleString('pt-BR')}`} sub={`${profitMargin.toFixed(1)}% de margem`} growth={profitGrowth} accent="#22c55e" />
@@ -154,6 +174,7 @@ export default function Dashboard() {
       </div>
 
       {/* Cards secundários */}
+      <p className="text-xs mb-1.5 font-medium" style={{ color: '#3a3a5a' }}>MÉTRICAS RÁPIDAS — hoje e mês atual</p>
       <div className="grid grid-cols-3 gap-3 mb-3">
         <SmallCard label="TICKET MÉDIO" value={`R$${Math.round(stats.averageTicket).toLocaleString('pt-BR')}`} sub="Por venda" />
         <SmallCard label="ROI" value={stats.dailyRoas > 0 ? `${stats.dailyRoas.toFixed(1)}x` : '—'} sub="Mês atual" bar="#f5c518" />
@@ -161,6 +182,7 @@ export default function Dashboard() {
       </div>
 
       {/* Gráfico + Saúde */}
+      <p className="text-xs mb-1.5 font-medium" style={{ color: '#3a3a5a' }}>EVOLUÇÃO E SAÚDE — mês atual</p>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
         <div className="lg:col-span-2 rounded-xl p-5" style={{ background: '#111118', border: '1px solid #1a1a2a' }}>
           <div className="flex items-center justify-between mb-3">
@@ -210,11 +232,15 @@ export default function Dashboard() {
       </div>
 
       {/* Top produtos + Acesso rápido */}
+      <p className="text-xs mb-1.5 font-medium" style={{ color: '#3a3a5a' }}>RANKING E ALERTAS</p>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         <div className="lg:col-span-2 rounded-xl p-5" style={{ background: '#111118', border: '1px solid #1a1a2a' }}>
-          <div className="flex items-center gap-2 mb-4">
-            <Package size={14} style={{ color: '#f5c518' }} />
-            <span className="text-sm font-semibold text-white">Top Produtos Mais Vendidos</span>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Package size={14} style={{ color: '#f5c518' }} />
+              <span className="text-sm font-semibold text-white">Top Produtos Mais Vendidos</span>
+            </div>
+            <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#1a1a2a', color: '#5a5a7a' }}>mês atual · só smartwatches</span>
           </div>
           {bestSelling.length === 0 ? (
             <div className="text-center py-8 text-sm" style={{ color: '#3a3a5a' }}>Sem dados ainda</div>

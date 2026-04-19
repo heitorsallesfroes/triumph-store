@@ -1,24 +1,20 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Package, Truck, CheckCircle, Calendar } from 'lucide-react';
+import { Package, Truck, CheckCircle, Calendar, Bike, CreditCard } from 'lucide-react';
 import { getTodayInBrazil, formatDateDisplay } from '../lib/dateUtils';
 
 interface Sale {
   id: string;
   customer_name: string;
   neighborhood: string;
+  city: string;
   total_sale_price: number;
   payment_method: string;
   status: string;
   sale_date: string;
   motoboy_id: string | null;
-  motoboy?: {
-    name: string;
-  };
-  products: Array<{
-    model: string;
-    color: string;
-  }>;
+  motoboy?: { name: string };
+  products: Array<{ model: string; color: string }>;
 }
 
 type LogisticsColumn = 'para_embalar' | 'saiu_entrega' | 'concluido';
@@ -46,11 +42,10 @@ export default function Logistics() {
   const loadSales = async () => {
     try {
       const today = getTodayInBrazil();
-      console.log('Today:', today);
 
       const { data: salesData, error: salesError } = await supabase
         .from('sales')
-        .select('*')
+        .select('*, sale_items(quantity, product_id, products(model, color, category)), motoboys(name)')
         .in('status', ['em_separacao', 'em_rota', 'finalizado'])
         .eq('delivery_type', 'motoboy')
         .gte('sale_date', `${today}T00:00:00`)
@@ -58,57 +53,22 @@ export default function Logistics() {
         .order('sale_date', { ascending: false });
 
       if (salesError) throw salesError;
-      console.log('Sales loaded:', salesData?.length);
 
-      const salesWithDetails = await Promise.all(
-        (salesData || []).map(async (sale) => {
-          const { data: items } = await supabase
-            .from('sale_items')
-            .select('quantity, product_id')
-            .eq('sale_id', sale.id);
-
-          const products = await Promise.all(
-            (items || []).map(async (item) => {
-              const { data: product } = await supabase
-                .from('products')
-                .select('model, color')
-                .eq('id', item.product_id)
-                .maybeSingle();
-
-              return {
-                model: product?.model || '',
-                color: product?.color || '',
-              };
-            })
-          );
-
-          let motoboy = undefined;
-          if (sale.motoboy_id) {
-            const { data: motoboyData } = await supabase
-              .from('motoboys')
-              .select('name')
-              .eq('id', sale.motoboy_id)
-              .maybeSingle();
-
-            if (motoboyData) {
-              motoboy = { name: motoboyData.name };
-            }
-          }
-
-          return {
-            id: sale.id,
-            customer_name: sale.customer_name,
-            neighborhood: sale.neighborhood,
-            total_sale_price: sale.total_sale_price,
-            payment_method: sale.payment_method,
-            status: sale.status,
-            sale_date: sale.sale_date,
-            motoboy_id: sale.motoboy_id,
-            products,
-            motoboy,
-          };
-        })
-      );
+      const salesWithDetails = (salesData || []).map((sale: any) => ({
+        id: sale.id,
+        customer_name: sale.customer_name,
+        neighborhood: sale.neighborhood,
+        city: sale.city || '',
+        total_sale_price: sale.total_sale_price,
+        payment_method: sale.payment_method,
+        status: sale.status,
+        sale_date: sale.sale_date,
+        motoboy_id: sale.motoboy_id,
+        products: (sale.sale_items || [])
+          .filter((item: any) => item.products?.category === 'smartwatch')
+          .map((item: any) => ({ model: item.products.model, color: item.products.color })),
+        motoboy: sale.motoboys ? { name: sale.motoboys.name } : undefined,
+      }));
 
       setSales(salesWithDetails);
     } catch (error) {
@@ -305,38 +265,47 @@ function KanbanColumn({
               key={sale.id}
               draggable
               onDragStart={() => onDragStart(sale)}
-              className="bg-gray-900 rounded-lg p-4 border border-gray-700 cursor-move hover:border-orange-500 transition-colors"
+              className="bg-gray-900 rounded-lg p-4 border border-gray-700 cursor-move hover:border-orange-500 transition-colors space-y-3"
             >
-              {sale.products.map((product, index) => (
-                <div key={index} className="text-white font-semibold text-lg mb-1">
-                  {product.model} {product.color}
-                </div>
-              ))}
-
-              <div className="text-gray-400 text-sm mb-2">
-                {sale.neighborhood}
+              {/* Cliente + localização */}
+              <div>
+                <h3 className="text-white text-lg font-bold leading-tight">{sale.customer_name}</h3>
+                <p className="text-gray-400 text-sm mt-0.5">
+                  {sale.neighborhood}{sale.city ? ` · ${sale.city}` : ''}
+                </p>
               </div>
 
-              <div className="text-orange-400 font-bold text-lg mb-2">
-                R$ {sale.total_sale_price.toFixed(0)}
-              </div>
-
-              <div className="text-gray-300 text-sm mb-3">
-                {formatPaymentMethod(sale.payment_method)}
-              </div>
-
-              {sale.motoboy && (
-                <div className="flex items-center gap-2 text-sm text-blue-400 bg-blue-500/10 rounded px-2 py-1">
-                  <Truck size={14} />
-                  <span>Motoboy: {sale.motoboy.name}</span>
+              {/* Smartwatch principal */}
+              {sale.products.length > 0 && (
+                <div className="flex items-center gap-1.5 text-orange-300 text-sm font-medium">
+                  <Package size={13} className="flex-shrink-0" />
+                  <span>{sale.products[0].model} {sale.products[0].color}</span>
                 </div>
               )}
 
-              {!sale.motoboy && column !== 'para_embalar' && (
-                <div className="text-xs text-gray-500 italic">
-                  Sem motoboy atribuído
+              {/* Valor + pagamento */}
+              <div className="flex items-center justify-between">
+                <span className="text-green-400 font-bold text-xl">
+                  R$ {sale.total_sale_price.toFixed(0)}
+                </span>
+                <span className="flex items-center gap-1.5 text-xs font-semibold bg-gray-700 text-gray-200 px-2.5 py-1 rounded-full">
+                  <CreditCard size={11} />
+                  {formatPaymentMethod(sale.payment_method)}
+                </span>
+              </div>
+
+              {/* Motoboy */}
+              {sale.motoboy ? (
+                <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/25 rounded-lg px-3 py-1.5">
+                  <Bike size={15} className="text-blue-400 flex-shrink-0" />
+                  <span className="text-blue-300 text-sm font-semibold">{sale.motoboy.name}</span>
                 </div>
-              )}
+              ) : column !== 'para_embalar' ? (
+                <div className="flex items-center gap-2 bg-gray-700/50 border border-gray-600 rounded-lg px-3 py-1.5">
+                  <Bike size={15} className="text-gray-500 flex-shrink-0" />
+                  <span className="text-gray-500 text-xs italic">Sem motoboy atribuído</span>
+                </div>
+              ) : null}
             </div>
           ))
         )}

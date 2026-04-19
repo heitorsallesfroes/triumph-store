@@ -44,7 +44,7 @@ export default function Reports() {
 
       const { data: products } = await supabase
         .from('products')
-        .select('id, model, color, cost');
+        .select('id, model, color, cost, category');
 
       let salesQuery = supabase
         .from('sales')
@@ -61,7 +61,7 @@ export default function Reports() {
 
         saleItems.forEach(item => {
           const product = products.find(p => p.id === item.product_id);
-          if (product) {
+          if (product && (product as any).category === 'smartwatch') {
             const key = item.product_id;
             const current = productMap.get(key) || {
               product_id: product.id,
