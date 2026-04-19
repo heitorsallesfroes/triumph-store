@@ -1,22 +1,13 @@
 import { useEffect, useState } from 'react';
 import { supabase, Product } from '../lib/supabase';
-import { AlertTriangle, CheckCircle, Plus, Minus, History, Search, Package } from 'lucide-react';
-
-interface StockMovement {
-  id: string;
-  product_id: string;
-  type: 'entrada' | 'saida';
-  quantity: number;
-  reason: string;
-  created_at: string;
-}
+import { AlertTriangle, CheckCircle, Plus, Minus, History, Search, Package, ShoppingCart } from 'lucide-react';
 
 export default function StockControl() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'smartwatch' | 'acessorio'>('all');
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
   const [showMovementForm, setShowMovementForm] = useState(false);
   const [movementType, setMovementType] = useState<'entrada' | 'saida'>('entrada');
   const [movementQty, setMovementQty] = useState('');
@@ -24,6 +15,8 @@ export default function StockControl() {
   const [savingMovement, setSavingMovement] = useState(false);
   const [movements, setMovements] = useState<any[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [editingIdealStock, setEditingIdealStock] = useState<string | null>(null);
+  const [idealStockValue, setIdealStockValue] = useState('');
 
   useEffect(() => {
     loadProducts();
@@ -45,7 +38,7 @@ export default function StockControl() {
     }
   };
 
-  const loadHistory = async (product: Product) => {
+  const loadHistory = async (product: any) => {
     try {
       const { data: saleItems } = await supabase
         .from('sale_items')
@@ -88,15 +81,14 @@ export default function StockControl() {
 
       if (error) throw error;
 
-      // Atualizar no Tiny também
-      if ((selectedProduct as any).tiny_id) {
+      if (selectedProduct.tiny_id) {
         await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-tiny-stock`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ tiny_id: (selectedProduct as any).tiny_id, quantidade: novoEstoque }),
+          body: JSON.stringify({ tiny_id: selectedProduct.tiny_id, quantidade: novoEstoque }),
         });
       }
 
@@ -113,14 +105,30 @@ export default function StockControl() {
     }
   };
 
-  const filteredProducts = products.filter(p => {
+  const handleSaveIdealStock = async (productId: string) => {
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update({ ideal_stock: parseInt(idealStockValue) || 0 })
+        .eq('id', productId);
+
+      if (error) throw error;
+      setEditingIdealStock(null);
+      loadProducts();
+    } catch (error) {
+      alert('Erro ao salvar estoque ideal');
+    }
+  };
+
+  const filteredProducts = products.filter((p: any) => {
     const matchSearch = searchTerm === '' ||
       `${p.model} ${p.color}`.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchCategory = categoryFilter === 'all' || (p as any).category === categoryFilter;
+    const matchCategory = categoryFilter === 'all' || p.category === categoryFilter;
     return matchSearch && matchCategory;
   });
 
-  const lowStockProducts = products.filter(p => p.current_stock <= p.minimum_stock);
+  const needsToBuy = filteredProducts.filter((p: any) => p.current_stock < (p.ideal_stock || 0));
+  const totalToBuy = needsToBuy.reduce((sum: number, p: any) => sum + Math.max(0, (p.ideal_stock || 0) - p.current_stock), 0);
 
   if (loading) {
     return <div className="p-8"><div className="text-white">Carregando...</div></div>;
@@ -131,18 +139,22 @@ export default function StockControl() {
       <h1 className="text-3xl font-bold text-white mb-8">Controle de Estoque</h1>
 
       {/* Cards resumo */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
           <h3 className="text-gray-400 text-sm font-medium mb-2">Total de Produtos</h3>
           <p className="text-3xl font-bold text-white">{products.length}</p>
         </div>
         <div className="bg-gray-800 rounded-lg p-6 border border-red-500/50">
-          <h3 className="text-gray-400 text-sm font-medium mb-2">Estoque Baixo</h3>
-          <p className="text-3xl font-bold text-red-500">{lowStockProducts.length}</p>
+          <h3 className="text-gray-400 text-sm font-medium mb-2">Abaixo do Ideal</h3>
+          <p className="text-3xl font-bold text-red-500">{needsToBuy.length}</p>
         </div>
         <div className="bg-gray-800 rounded-lg p-6 border border-green-500/50">
-          <h3 className="text-gray-400 text-sm font-medium mb-2">Estoque Adequado</h3>
-          <p className="text-3xl font-bold text-green-500">{products.length - lowStockProducts.length}</p>
+          <h3 className="text-gray-400 text-sm font-medium mb-2">No Ideal ou Acima</h3>
+          <p className="text-3xl font-bold text-green-500">{products.length - needsToBuy.length}</p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-6 border border-orange-500/50">
+          <h3 className="text-gray-400 text-sm font-medium mb-2">Total a Comprar</h3>
+          <p className="text-3xl font-bold text-orange-500">{totalToBuy} unidades</p>
         </div>
       </div>
 
@@ -171,16 +183,16 @@ export default function StockControl() {
         ))}
       </div>
 
-      {/* Tabela de produtos */}
+      {/* Tabela */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-900">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Produto</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">SKU</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Estoque</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Mínimo</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Estoque em Loja</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Estoque Ideal</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">A Comprar</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Ações</th>
             </tr>
           </thead>
@@ -192,29 +204,57 @@ export default function StockControl() {
                 </td>
               </tr>
             ) : (
-              filteredProducts.map((product) => {
-                const isLowStock = product.current_stock <= product.minimum_stock;
+              filteredProducts.map((product: any) => {
+                const aToBuy = Math.max(0, (product.ideal_stock || 0) - product.current_stock);
+                const isLow = aToBuy > 0;
+
                 return (
-                  <tr key={product.id} className="hover:bg-gray-700/50">
+                  <tr key={product.id} className={`hover:bg-gray-700/50 ${isLow ? 'bg-red-500/5' : ''}`}>
                     <td className="px-6 py-4">
                       <div className="text-white font-medium">{product.model}</div>
                       <div className="text-gray-400 text-sm">{product.color}</div>
                     </td>
-                    <td className="px-6 py-4 text-gray-400 text-sm">{(product as any).sku || '-'}</td>
-                    <td className="px-6 py-4">
-                      <span className={`text-2xl font-bold ${isLowStock ? 'text-red-400' : 'text-white'}`}>
+                    <td className="px-6 py-4 text-gray-400 text-sm">{product.sku || '-'}</td>
+                    <td className="px-6 py-4 text-center">
+                      <span className={`text-2xl font-bold ${isLow ? 'text-red-400' : 'text-white'}`}>
                         {product.current_stock}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-gray-300">{product.minimum_stock}</td>
-                    <td className="px-6 py-4">
-                      {isLowStock ? (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/50">
-                          <AlertTriangle size={12} /> Baixo
+                    <td className="px-6 py-4 text-center">
+                      {editingIdealStock === product.id ? (
+                        <div className="flex items-center gap-2 justify-center">
+                          <input
+                            type="number"
+                            min="0"
+                            value={idealStockValue}
+                            onChange={(e) => setIdealStockValue(e.target.value)}
+                            className="w-20 bg-gray-700 text-white rounded px-2 py-1 border border-orange-500 text-center"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveIdealStock(product.id);
+                              if (e.key === 'Escape') setEditingIdealStock(null);
+                            }}
+                          />
+                          <button onClick={() => handleSaveIdealStock(product.id)} className="text-green-400 hover:text-green-300 text-xs">✓</button>
+                          <button onClick={() => setEditingIdealStock(null)} className="text-red-400 hover:text-red-300 text-xs">✕</button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => { setEditingIdealStock(product.id); setIdealStockValue(product.ideal_stock?.toString() || '0'); }}
+                          className="text-xl font-bold text-blue-400 hover:text-blue-300 hover:underline"
+                        >
+                          {product.ideal_stock || 0}
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      {aToBuy > 0 ? (
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold bg-orange-500/20 text-orange-400 border border-orange-500/50">
+                          <ShoppingCart size={14} /> {aToBuy}
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/50">
-                          <CheckCircle size={12} /> OK
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-green-500/20 text-green-400 border border-green-500/50">
+                          <CheckCircle size={14} /> OK
                         </span>
                       )}
                     </td>
@@ -255,7 +295,7 @@ export default function StockControl() {
             <h2 className="text-xl font-bold text-white mb-2">
               {movementType === 'entrada' ? '➕ Entrada de Estoque' : '➖ Saída de Estoque'}
             </h2>
-            <p className="text-gray-400 mb-4">{selectedProduct.model} {selectedProduct.color}</p>
+            <p className="text-gray-400 mb-1">{selectedProduct.model} {selectedProduct.color}</p>
             <p className="text-gray-300 mb-4">Estoque atual: <span className="text-white font-bold">{selectedProduct.current_stock}</span></p>
 
             <div className="space-y-4">
