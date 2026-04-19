@@ -15,6 +15,7 @@ export default function StockControl() {
   const [savingMovement, setSavingMovement] = useState(false);
   const [movements, setMovements] = useState<any[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showBuyReport, setShowBuyReport] = useState(false);
   const [editingIdealStock, setEditingIdealStock] = useState<string | null>(null);
   const [idealStockValue, setIdealStockValue] = useState('');
 
@@ -28,7 +29,6 @@ export default function StockControl() {
         .from('products')
         .select('*')
         .order('model', { ascending: true });
-
       if (error) throw error;
       setProducts(data || []);
     } catch (error) {
@@ -46,7 +46,6 @@ export default function StockControl() {
         .eq('product_id', product.id)
         .order('created_at', { ascending: false })
         .limit(20);
-
       setMovements(saleItems || []);
       setSelectedProduct(product);
       setShowHistory(true);
@@ -60,14 +59,11 @@ export default function StockControl() {
       alert('Informe uma quantidade válida');
       return;
     }
-
     const qty = parseInt(movementQty);
-
     if (movementType === 'saida' && qty > selectedProduct.current_stock) {
       alert('Quantidade maior que o estoque disponível');
       return;
     }
-
     setSavingMovement(true);
     try {
       const novoEstoque = movementType === 'entrada'
@@ -78,7 +74,6 @@ export default function StockControl() {
         .from('products')
         .update({ current_stock: novoEstoque })
         .eq('id', selectedProduct.id);
-
       if (error) throw error;
 
       if (selectedProduct.tiny_id) {
@@ -111,7 +106,6 @@ export default function StockControl() {
         .from('products')
         .update({ ideal_stock: parseInt(idealStockValue) || 0 })
         .eq('id', productId);
-
       if (error) throw error;
       setEditingIdealStock(null);
       loadProducts();
@@ -127,8 +121,16 @@ export default function StockControl() {
     return matchSearch && matchCategory;
   });
 
-  const needsToBuy = filteredProducts.filter((p: any) => p.current_stock < (p.ideal_stock || 0));
+  const needsToBuy = products.filter((p: any) => p.current_stock < (p.ideal_stock || 0));
   const totalToBuy = needsToBuy.reduce((sum: number, p: any) => sum + Math.max(0, (p.ideal_stock || 0) - p.current_stock), 0);
+
+  const buyReportData = products
+    .filter((p: any) => p.category === 'smartwatch' && p.current_stock < (p.ideal_stock || 0))
+    .reduce((acc: any, p: any) => {
+      if (!acc[p.model]) acc[p.model] = [];
+      acc[p.model].push(p);
+      return acc;
+    }, {});
 
   if (loading) {
     return <div className="p-8"><div className="text-white">Carregando...</div></div>;
@@ -152,10 +154,14 @@ export default function StockControl() {
           <h3 className="text-gray-400 text-sm font-medium mb-2">No Ideal ou Acima</h3>
           <p className="text-3xl font-bold text-green-500">{products.length - needsToBuy.length}</p>
         </div>
-        <div className="bg-gray-800 rounded-lg p-6 border border-orange-500/50">
+        <button
+          onClick={() => setShowBuyReport(true)}
+          className="bg-gray-800 rounded-lg p-6 border border-orange-500/50 hover:border-orange-500 transition-colors text-left"
+        >
           <h3 className="text-gray-400 text-sm font-medium mb-2">Total a Comprar</h3>
           <p className="text-3xl font-bold text-orange-500">{totalToBuy} unidades</p>
-        </div>
+          <p className="text-orange-400 text-xs mt-2">Clique para ver relatório →</p>
+        </button>
       </div>
 
       {/* Filtros */}
@@ -199,15 +205,12 @@ export default function StockControl() {
           <tbody className="divide-y divide-gray-700">
             {filteredProducts.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-gray-400">
-                  Nenhum produto encontrado.
-                </td>
+                <td colSpan={6} className="px-6 py-8 text-center text-gray-400">Nenhum produto encontrado.</td>
               </tr>
             ) : (
               filteredProducts.map((product: any) => {
                 const aToBuy = Math.max(0, (product.ideal_stock || 0) - product.current_stock);
                 const isLow = aToBuy > 0;
-
                 return (
                   <tr key={product.id} className={`hover:bg-gray-700/50 ${isLow ? 'bg-red-500/5' : ''}`}>
                     <td className="px-6 py-4">
@@ -297,7 +300,6 @@ export default function StockControl() {
             </h2>
             <p className="text-gray-400 mb-1">{selectedProduct.model} {selectedProduct.color}</p>
             <p className="text-gray-300 mb-4">Estoque atual: <span className="text-white font-bold">{selectedProduct.current_stock}</span></p>
-
             <div className="space-y-4">
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Quantidade*</label>
@@ -322,7 +324,6 @@ export default function StockControl() {
                 />
               </div>
             </div>
-
             <div className="flex gap-3 mt-6">
               <button
                 onClick={handleMovement}
@@ -355,7 +356,6 @@ export default function StockControl() {
               </div>
               <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
             </div>
-
             {movements.length === 0 ? (
               <div className="text-center py-8">
                 <Package size={48} className="mx-auto text-gray-600 mb-3" />
@@ -386,6 +386,68 @@ export default function StockControl() {
                   ))}
                 </tbody>
               </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal relatório de compras */}
+      {showBuyReport && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl border border-gray-700 max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-white">📋 Relatório de Compras</h2>
+                <p className="text-gray-400 text-sm">Smartwatches abaixo do estoque ideal</p>
+              </div>
+              <button onClick={() => setShowBuyReport(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
+            </div>
+
+            {Object.keys(buyReportData).length === 0 ? (
+              <div className="text-center py-8">
+                <CheckCircle size={48} className="mx-auto text-green-500 mb-3" />
+                <p className="text-gray-400">Todos os smartwatches estão no estoque ideal!</p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {Object.entries(buyReportData).map(([modelo, items]: [string, any]) => (
+                  <div key={modelo}>
+                    <h3 className="text-orange-400 font-bold text-lg mb-3 border-b border-gray-700 pb-2">{modelo}</h3>
+                    <table className="w-full">
+                      <thead>
+                        <tr>
+                          <th className="text-left text-xs text-gray-400 uppercase pb-2">Cor</th>
+                          <th className="text-center text-xs text-gray-400 uppercase pb-2">Em Loja</th>
+                          <th className="text-center text-xs text-gray-400 uppercase pb-2">Ideal</th>
+                          <th className="text-center text-xs text-orange-400 uppercase pb-2">A Comprar</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-700">
+                        {items.map((p: any) => (
+                          <tr key={p.id}>
+                            <td className="py-2 text-white">{p.color}</td>
+                            <td className="py-2 text-center text-red-400 font-bold">{p.current_stock}</td>
+                            <td className="py-2 text-center text-gray-300">{p.ideal_stock}</td>
+                            <td className="py-2 text-center">
+                              <span className="bg-orange-500/20 text-orange-400 border border-orange-500/50 px-3 py-1 rounded-full font-bold">
+                                {Math.max(0, (p.ideal_stock || 0) - p.current_stock)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+                <div className="border-t border-gray-700 pt-4 flex justify-between items-center">
+                  <span className="text-gray-400 font-medium">Total geral a comprar:</span>
+                  <span className="text-orange-400 font-bold text-2xl">
+                    {Object.values(buyReportData).flat().reduce((sum: number, p: any) =>
+                      sum + Math.max(0, (p.ideal_stock || 0) - p.current_stock), 0
+                    )} unidades
+                  </span>
+                </div>
+              </div>
             )}
           </div>
         </div>
