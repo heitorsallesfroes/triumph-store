@@ -171,11 +171,15 @@ export default function Sales({ triggerFastSale }: SalesProps) {
   };
 
   const calculateVolumes = (productsList: SaleProduct[]) => {
-    const totalSmartWatches = productsList.reduce((sum, sp) => {
+  const totalSmartWatches = productsList.reduce((sum, sp) => {
+    const product = products.find((p) => p.id === sp.product_id);
+    if ((product as any)?.category === 'smartwatch') {
       return sum + sp.quantity;
-    }, 0);
-    return Math.max(1, totalSmartWatches);
-  };
+    }
+    return sum;
+  }, 0);
+  return Math.max(1, totalSmartWatches);
+};
 
   useEffect(() => {
     const volumes = calculateVolumes(saleProducts);
@@ -361,15 +365,15 @@ export default function Sales({ triggerFastSale }: SalesProps) {
     }
 
     for (const sp of saleProducts) {
-      if (sp.unit_price <= 0) {
-        alert('Por favor, insira o preço de venda para todos os produtos');
-        return;
-      }
+     if (sp.unit_price < 0) {
+  alert('Por favor, insira o preço de venda para todos os produtos');
+  return;
+}
       const product = products.find((p) => p.id === sp.product_id);
-      if (!product || product.current_stock < sp.quantity) {
-        alert(`Estoque insuficiente para ${product?.model} - ${product?.color}`);
-        return;
-      }
+     if (!product) {
+  alert(`Produto não encontrado`);
+  return;
+}
     }
 
     try {
@@ -718,7 +722,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                       <input
                         type="number"
                         min="1"
-                        max={sp.product?.current_stock}
+                        max={Math.max(sp.product?.current_stock || 0, sp.quantity)}
                         value={sp.quantity}
                         onChange={(e) => updateProduct(index, 'quantity', parseInt(e.target.value))}
                         className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"

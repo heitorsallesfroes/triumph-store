@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, Product } from '../lib/supabase';
-import { Plus, Pencil, Trash2, X, RefreshCw, Watch, ShoppingBag } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, RefreshCw, Watch, ShoppingBag, Search } from 'lucide-react';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -13,6 +13,7 @@ export default function Products() {
   const [showForm, setShowForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [filterCategory, setFilterCategory] = useState<'all' | 'smartwatch' | 'acessorio'>('all');
+  const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState({
     model: '',
     color: '',
@@ -128,9 +129,9 @@ export default function Products() {
     setShowForm(false);
   };
 
-  const filteredProducts = filterCategory === 'all'
-    ? products
-    : products.filter((p: any) => p.category === filterCategory);
+  const filteredProducts = products
+    .filter((p: any) => filterCategory === 'all' || p.category === filterCategory)
+    .filter((p: any) => searchTerm === '' || `${p.model} ${p.color}`.toLowerCase().includes(searchTerm.toLowerCase()));
 
   if (loading) {
     return <div className="p-8"><div className="text-white">Carregando...</div></div>;
@@ -179,7 +180,17 @@ export default function Products() {
       </div>
 
       {/* Filtros */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-4 flex-wrap">
+        <div className="relative flex-1 min-w-48">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+          <input
+            type="text"
+            placeholder="Buscar produto..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-gray-700 text-white rounded-lg pl-10 pr-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+          />
+        </div>
         {(['all', 'smartwatch', 'acessorio'] as const).map((cat) => (
           <button
             key={cat}
@@ -193,7 +204,7 @@ export default function Products() {
             {cat === 'all' ? 'Todos' : cat === 'smartwatch' ? 'Smartwatches' : 'Acessórios'}
           </button>
         ))}
-        <span className="ml-auto text-gray-400 text-sm self-center">
+        <span className="text-gray-400 text-sm self-center">
           {filteredProducts.length} produtos
         </span>
       </div>
@@ -277,7 +288,7 @@ export default function Products() {
                   <td className="px-6 py-4 text-gray-400 text-sm">{product.sku || '-'}</td>
                   <td className="px-6 py-4 text-gray-300">R$ {product.cost.toFixed(2)}</td>
                   <td className="px-6 py-4 text-green-400 font-medium">R$ {product.price.toFixed(2)}</td>
-                  <td className={`px-6 py-4 font-medium ${product.current_stock <= product.minimum_stock ? 'text-red-400' : 'text-gray-300'}`}>
+                  <td className="px-6 py-4 font-medium text-gray-300">
                     {product.current_stock}
                   </td>
                   <td className="px-6 py-4">
