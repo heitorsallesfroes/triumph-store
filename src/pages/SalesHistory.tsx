@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
-import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign } from 'lucide-react';
+import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check } from 'lucide-react';
 import Receipt from '../components/Receipt';
 import EditSale from '../components/EditSale';
 import { generateShippingLabel } from '../lib/superfrete';
@@ -86,6 +86,9 @@ export default function SalesHistory() {
   const [generatingLabel, setGeneratingLabel] = useState<string | null>(null);
   const [generatingNFe, setGeneratingNFe] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [whatsappSale, setWhatsappSale] = useState<Sale | null>(null);
+  const [receiptChoiceSale, setReceiptChoiceSale] = useState<Sale | null>(null);
+  const [receiptHideDelivery, setReceiptHideDelivery] = useState(false);
 
   useEffect(() => { loadSales(); }, []);
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [filteredSales]);
@@ -558,14 +561,18 @@ export default function SalesHistory() {
                     </div>
                   </div>
 
-                  <div className="col-span-12 lg:col-span-2 flex gap-2">
-                    <button onClick={() => setEditingSaleId(sale.id)} className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 flex-1">
-                      <Edit size={16} />
+                  <div className="col-span-12 lg:col-span-2 flex flex-wrap gap-2">
+                    <button onClick={() => setEditingSaleId(sale.id)} className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
+                      <Edit size={14} />
                       <span className="text-xs font-semibold">Editar</span>
                     </button>
-                    <button onClick={() => setSelectedSale(sale)} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 flex-1">
-                      <FileText size={16} />
+                    <button onClick={() => setReceiptChoiceSale(sale)} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
+                      <FileText size={14} />
                       <span className="text-xs font-semibold">Recibo</span>
+                    </button>
+                    <button onClick={() => setWhatsappSale(sale)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 w-full">
+                      <MessageCircle size={14} />
+                      <span className="text-xs font-semibold">Resumo WhatsApp</span>
                     </button>
                   </div>
 
@@ -665,8 +672,188 @@ export default function SalesHistory() {
         </div>
       )}
 
-      {selectedSale && <Receipt saleData={selectedSale} onClose={() => setSelectedSale(null)} />}
+      {selectedSale && <Receipt saleData={selectedSale} hideDeliveryControl={receiptHideDelivery} onClose={() => setSelectedSale(null)} />}
+      {receiptChoiceSale && (
+        <ReceiptChoiceModal
+          onClose={() => setReceiptChoiceSale(null)}
+          onSelect={(hide) => {
+            setReceiptHideDelivery(hide);
+            setSelectedSale(receiptChoiceSale);
+            setReceiptChoiceSale(null);
+          }}
+        />
+      )}
       {editingSaleId && <EditSale saleId={editingSaleId} onClose={() => { setEditingSaleId(null); loadSales(); }} />}
+      {whatsappSale && <WhatsAppModal sale={whatsappSale} onClose={() => setWhatsappSale(null)} />}
+    </div>
+  );
+}
+
+function ReceiptChoiceModal({ onClose, onSelect }: { onClose: () => void; onSelect: (hideDelivery: boolean) => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
+      <div className="w-full max-w-xs rounded-2xl p-5" style={{ background: '#111118', border: '1px solid #1a1a2a' }}>
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-sm font-semibold text-white">Abrir Recibo</span>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-700 transition-colors">
+            <X size={16} className="text-gray-400" />
+          </button>
+        </div>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => onSelect(false)}
+            className="w-full py-3 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2 transition-colors"
+            style={{ background: '#1e3a5f', border: '1px solid #2563eb' }}
+          >
+            🖨️ Imprimir completo
+          </button>
+          <button
+            onClick={() => onSelect(true)}
+            className="w-full py-3 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2 transition-colors"
+            style={{ background: '#14532d', border: '1px solid #16a34a' }}
+          >
+            📱 Versão WhatsApp
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function translatePayment(method: string): string {
+  const map: Record<string, string> = {
+    pix: 'PIX',
+    cash: 'Dinheiro',
+    dinheiro: 'Dinheiro',
+    debit_card: 'Débito',
+    credit_card: 'Crédito até 10x sem juros',
+    debito: 'Débito',
+    credito: 'Crédito até 10x sem juros',
+  };
+  return map[method?.toLowerCase()] ?? method;
+}
+
+interface SaleItem { name: string; quantity: number; isMain: boolean; }
+
+function WhatsAppModal({ sale, onClose }: { sale: any; onClose: () => void }) {
+  const [items, setItems] = useState<SaleItem[]>([]);
+  const [loadingItems, setLoadingItems] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const fetchItems = async () => {
+      const result: SaleItem[] = [];
+
+      const { data: saleItems } = await supabase
+        .from('sale_items')
+        .select('product_id, quantity')
+        .eq('sale_id', sale.id)
+        .order('quantity', { ascending: false });
+
+      if (saleItems && saleItems.length > 0) {
+        const productIds = saleItems.map((i: any) => i.product_id);
+        const { data: products } = await supabase
+          .from('products')
+          .select('id, model, color, category')
+          .in('id', productIds);
+
+        saleItems.forEach((item: any, idx: number) => {
+          const p = products?.find((x: any) => x.id === item.product_id);
+          if (p) {
+            const name = item.quantity > 1 ? `${p.model} ${p.color} (x${item.quantity})` : `${p.model} ${p.color}`;
+            result.push({ name, quantity: item.quantity, isMain: idx === 0 && p.category === 'smartwatch' });
+          }
+        });
+      }
+
+      const { data: accessories } = await supabase
+        .from('sale_accessories')
+        .select('quantity, accessory_id, custom_name')
+        .eq('sale_id', sale.id);
+
+      if (accessories && accessories.length > 0) {
+        for (const acc of accessories as any[]) {
+          let accName = acc.custom_name || '';
+          if (!accName && acc.accessory_id) {
+            const { data: accessory } = await supabase.from('accessories').select('name').eq('id', acc.accessory_id).maybeSingle();
+            if (accessory) accName = (accessory as any).name;
+          }
+          if (accName) {
+            const name = acc.quantity > 1 ? `${accName} (x${acc.quantity})` : accName;
+            result.push({ name, quantity: acc.quantity, isMain: false });
+          }
+        }
+      }
+
+      if (sale.manual_items) {
+        const manualItems = Array.isArray(sale.manual_items) ? sale.manual_items : [];
+        for (const mi of manualItems) {
+          const name = mi.quantity > 1 ? `${mi.name || 'Item'} (x${mi.quantity})` : (mi.name || 'Item');
+          result.push({ name, quantity: mi.quantity || 1, isMain: false });
+        }
+      }
+
+      setItems(result);
+      setLoadingItems(false);
+    };
+
+    fetchItems();
+  }, [sale.id]);
+
+  const formatCurrencyBR = (v: number) =>
+    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+  const buildMessage = () => {
+    const itemLines = items.map(i => `- ${i.name}`).join('\n');
+    return (
+      `✅ *PEDIDO CONFIRMADO*\n\n` +
+      `👤 *Cliente:* ${sale.customer_name}\n` +
+      `📍 *Entrega:* ${sale.neighborhood} - ${sale.city}\n` +
+      `💳 *Pagamento:* ${translatePayment(sale.payment_method)}\n` +
+      `💰 *Total:* ${formatCurrencyBR(sale.total_sale_price)}\n\n` +
+      `📦 *Itens:*\n${itemLines}\n\n` +
+      `✅ Pedido confirmado e em separação!`
+    );
+  };
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(buildMessage());
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
+      <div className="w-full max-w-md rounded-2xl p-6" style={{ background: '#111118', border: '1px solid #1a1a2a' }}>
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2">
+            <MessageCircle size={18} style={{ color: '#22c55e' }} />
+            <span className="text-base font-semibold text-white">Resumo WhatsApp</span>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-700 transition-colors">
+            <X size={18} className="text-gray-400" />
+          </button>
+        </div>
+
+        {loadingItems ? (
+          <div className="flex items-center justify-center py-10">
+            <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#22c55e', borderTopColor: 'transparent' }} />
+          </div>
+        ) : (
+          <>
+            <pre className="whitespace-pre-wrap text-sm leading-relaxed rounded-xl p-4 mb-4 font-sans select-all" style={{ background: '#0d0d14', border: '1px solid #1a1a2a', color: '#d1d5db' }}>
+              {buildMessage()}
+            </pre>
+            <button
+              onClick={handleCopy}
+              className="w-full py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all"
+              style={{ background: copied ? '#166534' : '#16a34a', color: '#fff' }}
+            >
+              {copied ? <><Check size={16} />Copiado! ✓</> : <><Copy size={16} />Copiar</>}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

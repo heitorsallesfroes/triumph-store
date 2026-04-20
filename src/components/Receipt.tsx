@@ -7,6 +7,7 @@ interface ReceiptProps {
   saleId?: string;
   saleData?: any;
   onClose: () => void;
+  hideDeliveryControl?: boolean;
 }
 
 interface SaleData {
@@ -53,7 +54,7 @@ interface SaleAccessory {
   } | null;
 }
 
-export default function Receipt({ saleId, saleData, onClose }: ReceiptProps) {
+export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl = false }: ReceiptProps) {
   const [sale, setSale] = useState<SaleData | null>(null);
   const [items, setItems] = useState<SaleItem[]>([]);
   const [accessories, setAccessories] = useState<SaleAccessory[]>([]);
@@ -552,11 +553,13 @@ export default function Receipt({ saleId, saleData, onClose }: ReceiptProps) {
         </div>
 
         {/* Delivery Labels - Multiple based on volumes */}
-        <div className="delivery-label-container">
-          {Array.from({ length: sale.volumes || 1 }, (_, index) =>
-            renderDeliveryLabel(index + 1, sale.volumes || 1)
-          )}
-        </div>
+        {!hideDeliveryControl && (
+          <div className="delivery-label-container">
+            {Array.from({ length: sale.volumes || 1 }, (_, index) =>
+              renderDeliveryLabel(index + 1, sale.volumes || 1)
+            )}
+          </div>
+        )}
       </div>
       </div>
 

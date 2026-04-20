@@ -254,9 +254,9 @@ function KanbanColumn({
         </div>
       </div>
 
-      <div className="p-4 space-y-3 min-h-[400px] max-h-[600px] overflow-y-auto">
+      <div className="p-2.5 space-y-2 min-h-[200px] max-h-[calc(100vh-250px)] overflow-y-auto">
         {sales.length === 0 ? (
-          <div className="text-center text-gray-400 py-8">
+          <div className="text-center text-gray-400 py-6 text-sm">
             Nenhum pedido nesta etapa
           </div>
         ) : (
@@ -265,44 +265,44 @@ function KanbanColumn({
               key={sale.id}
               draggable
               onDragStart={() => onDragStart(sale)}
-              className="bg-gray-900 rounded-lg p-4 border border-gray-700 cursor-move hover:border-orange-500 transition-colors space-y-3"
+              className="bg-gray-900 rounded-lg p-2.5 border border-gray-700 cursor-move hover:border-orange-500 transition-colors space-y-1.5"
             >
               {/* Cliente + localização */}
               <div>
-                <h3 className="text-white text-lg font-bold leading-tight">{sale.customer_name}</h3>
-                <p className="text-gray-400 text-sm mt-0.5">
+                <h3 className="text-white text-sm font-bold leading-tight">{sale.customer_name}</h3>
+                <p className="text-gray-400 text-xs mt-0.5">
                   {sale.neighborhood}{sale.city ? ` · ${sale.city}` : ''}
                 </p>
               </div>
 
               {/* Smartwatch principal */}
               {sale.products.length > 0 && (
-                <div className="flex items-center gap-1.5 text-orange-300 text-sm font-medium">
-                  <Package size={13} className="flex-shrink-0" />
+                <div className="flex items-center gap-1 text-orange-300 text-xs font-medium">
+                  <Package size={11} className="flex-shrink-0" />
                   <span>{sale.products[0].model} {sale.products[0].color}</span>
                 </div>
               )}
 
               {/* Valor + pagamento */}
               <div className="flex items-center justify-between">
-                <span className="text-green-400 font-bold text-xl">
+                <span className="text-green-400 font-bold text-base">
                   R$ {sale.total_sale_price.toFixed(0)}
                 </span>
-                <span className="flex items-center gap-1.5 text-xs font-semibold bg-gray-700 text-gray-200 px-2.5 py-1 rounded-full">
-                  <CreditCard size={11} />
+                <span className="flex items-center gap-1 text-xs font-semibold bg-gray-700 text-gray-200 px-2 py-0.5 rounded-full">
+                  <CreditCard size={10} />
                   {formatPaymentMethod(sale.payment_method)}
                 </span>
               </div>
 
               {/* Motoboy */}
               {sale.motoboy ? (
-                <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/25 rounded-lg px-3 py-1.5">
-                  <Bike size={15} className="text-blue-400 flex-shrink-0" />
-                  <span className="text-blue-300 text-sm font-semibold">{sale.motoboy.name}</span>
+                <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/25 rounded px-2 py-1">
+                  <Bike size={12} className="text-blue-400 flex-shrink-0" />
+                  <span className="text-blue-300 text-xs font-semibold">{sale.motoboy.name}</span>
                 </div>
               ) : column !== 'para_embalar' ? (
-                <div className="flex items-center gap-2 bg-gray-700/50 border border-gray-600 rounded-lg px-3 py-1.5">
-                  <Bike size={15} className="text-gray-500 flex-shrink-0" />
+                <div className="flex items-center gap-1.5 bg-gray-700/50 border border-gray-600 rounded px-2 py-1">
+                  <Bike size={12} className="text-gray-500 flex-shrink-0" />
                   <span className="text-gray-500 text-xs italic">Sem motoboy atribuído</span>
                 </div>
               ) : null}
