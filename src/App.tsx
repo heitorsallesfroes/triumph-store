@@ -13,6 +13,7 @@ import Settings from './pages/Settings';
 import OperationalCosts from './pages/OperationalCosts';
 import ResumoMensal from './pages/ResumoMensal';
 import ResumoVendas from './pages/ResumoVendas';
+import SmallSales from './pages/SmallSales';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -44,6 +45,8 @@ function App() {
         return <StockControl />;
       case 'sales':
         return <Sales triggerFastSale={triggerFastSale} />;
+      case 'small-sales':
+        return <SmallSales />;
       case 'history':
         return <SalesHistory />;
       case 'motoboys':

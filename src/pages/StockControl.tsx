@@ -18,6 +18,7 @@ export default function StockControl() {
   const [showBuyReport, setShowBuyReport] = useState(false);
   const [editingIdealStock, setEditingIdealStock] = useState<string | null>(null);
   const [idealStockValue, setIdealStockValue] = useState('');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     loadProducts();
@@ -123,6 +124,34 @@ export default function StockControl() {
 
   const needsToBuy = products.filter((p: any) => p.current_stock < (p.ideal_stock || 0));
   const totalToBuy = needsToBuy.reduce((sum: number, p: any) => sum + Math.max(0, (p.ideal_stock || 0) - p.current_stock), 0);
+
+  const handleCopyWhatsApp = () => {
+    const grouped = products
+      .filter((p: any) => p.category === 'smartwatch' && p.current_stock < (p.ideal_stock || 0))
+      .reduce((acc: any, p: any) => {
+        if (!acc[p.model]) acc[p.model] = [];
+        acc[p.model].push(p);
+        return acc;
+      }, {});
+
+    let totalUnits = 0;
+    let text = '🛒 *LISTA DE COMPRAS*';
+
+    Object.entries(grouped).forEach(([model, items]: [string, any]) => {
+      text += `\n\n📦 *${model}*\n`;
+      items.forEach((p: any) => {
+        const qty = Math.max(0, (p.ideal_stock || 0) - p.current_stock);
+        text += `- ${p.color} → ${qty} un\n`;
+        totalUnits += qty;
+      });
+    });
+
+    text += `\nTotal: ${totalUnits} unidades`;
+
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const buyReportData = products
     .filter((p: any) => p.category === 'smartwatch' && p.current_stock < (p.ideal_stock || 0))
@@ -395,13 +424,19 @@ export default function StockControl() {
       {showBuyReport && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl border border-gray-700 max-h-[80vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex justify-between items-center mb-4">
               <div>
                 <h2 className="text-xl font-bold text-white">📋 Relatório de Compras</h2>
                 <p className="text-gray-400 text-sm">Smartwatches abaixo do estoque ideal</p>
               </div>
               <button onClick={() => setShowBuyReport(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
             </div>
+            <button
+              onClick={handleCopyWhatsApp}
+              className="w-full mb-6 bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg font-medium transition-colors"
+            >
+              {copied ? 'Copiado! ✓' : '📋 Copiar Lista WhatsApp'}
+            </button>
 
             {Object.keys(buyReportData).length === 0 ? (
               <div className="text-center py-8">

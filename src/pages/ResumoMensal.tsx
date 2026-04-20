@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { calculateCardFee } from '../lib/cardFees';
 import {
   TrendingUp, DollarSign, ShoppingCart, Package, Truck,
-  Bike, BarChart3, MapPin, Star, ArrowUp, ArrowDown, Minus
+  Bike, BarChart3, MapPin, Star, ArrowUp, ArrowDown, Minus, ShoppingBag
 } from 'lucide-react';
 
 const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
@@ -51,6 +52,7 @@ export default function ResumoMensal() {
   const [adSpend, setAdSpend] = useState(0);
   const [operationalCosts, setOperationalCosts] = useState(0);
   const [motoboyExtras, setMotoboyExtras] = useState(0);
+  const [smallSales, setSmallSales] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadData(); }, [selected]);
@@ -93,6 +95,13 @@ export default function ResumoMensal() {
       setAdSpend((adRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
       setOperationalCosts((costsRes.data || []).reduce((sum, r) => sum + Number(r.amount_paid), 0));
       setMotoboyExtras((motoboyExtrasRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
+
+      const { data: ssData } = await supabase
+        .from('small_sales')
+        .select('*')
+        .gte('created_at', startDate)
+        .lte('created_at', endDate + 'T23:59:59');
+      setSmallSales(ssData || []);
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
@@ -104,8 +113,22 @@ export default function ResumoMensal() {
   const totalMotoboyExtras = motoboyExtras;
   const totalCustoEntregas = totalEntregas + totalMotoboyExtras;
   const totalCustos = totalCustoProdutos + adSpend + operationalCosts + totalCustoEntregas;
-  const lucroReal = totalLiquido - totalCustos;
-  const margemLucro = totalLiquido > 0 ? (lucroReal / totalLiquido) * 100 : 0;
+
+  // Pequenas vendas
+  const smallSalesRevenue = smallSales.reduce((s, v) => s + Number(v.sale_price) * Number(v.quantity), 0);
+  const smallSalesCost = smallSales.reduce((s, v) => s + Number(v.cost) * Number(v.quantity), 0);
+  const smallSalesCardFees = smallSales.reduce((s, v) => {
+    if (v.payment_method === 'credit_card' && v.card_brand && v.installments) {
+      return s + calculateCardFee(Number(v.sale_price) * Number(v.quantity), 'credit_card', v.card_brand, v.installments);
+    }
+    return s;
+  }, 0);
+  const smallSalesNet = smallSalesRevenue - smallSalesCardFees;
+  const smallSalesProfit = smallSalesNet - smallSalesCost;
+
+  const lucroReal = totalLiquido - totalCustos + smallSalesProfit;
+  const totalReceita = totalLiquido + smallSalesNet;
+  const margemLucro = totalReceita > 0 ? (lucroReal / totalReceita) * 100 : 0;
 
   // Canais de venda
   const canais = [
@@ -201,10 +224,12 @@ export default function ResumoMensal() {
               {/* Receitas */}
               <div className="mb-6">
                 <p className="text-gray-400 text-xs uppercase tracking-wider mb-3">Receitas</p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <MetricCard label="Faturamento Bruto" value={totalBruto} color="green" icon={TrendingUp} />
                   <MetricCard label="Valor Líquido Recebido" value={totalLiquido} color="green" icon={DollarSign}
                     subtitle={`Desconto taxas: R$ ${(totalBruto - totalLiquido).toFixed(2)}`} />
+                  <MetricCard label="Pequenas Vendas" value={smallSalesRevenue} color="green" icon={ShoppingBag}
+                    subtitle={`Líquido: R$ ${smallSalesNet.toFixed(2)} | Taxas: R$ ${smallSalesCardFees.toFixed(2)}`} />
                   <MetricCard label="Total de Vendas" value={sales.length} color="blue" icon={ShoppingCart} isCount />
                 </div>
               </div>
@@ -212,8 +237,10 @@ export default function ResumoMensal() {
               {/* Custos */}
               <div className="mb-6">
                 <p className="text-gray-400 text-xs uppercase tracking-wider mb-3">Custos</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                   <MetricCard label="Custo dos Produtos" value={totalCustoProdutos} color="red" icon={Package} negative />
+                  <MetricCard label="Custo Peq. Vendas" value={smallSalesCost} color="red" icon={ShoppingBag} negative
+                    subtitle={smallSalesCardFees > 0 ? `+ Taxas: R$ ${smallSalesCardFees.toFixed(2)}` : undefined} />
                   <MetricCard label="Investimento em Ads" value={adSpend} color="red" icon={TrendingUp} negative />
                   <MetricCard label="Custos Operacionais" value={operationalCosts} color="red" icon={BarChart3} negative />
                   <MetricCard label="Custo de Entregas" value={totalCustoEntregas} color="red" icon={Truck} negative
@@ -239,9 +266,23 @@ export default function ResumoMensal() {
                       <span className="text-green-400 font-medium">+ R$ {totalLiquido.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between gap-8">
+                      <span className="text-gray-400">Peq. vendas (líquido)</span>
+                      <span className="text-green-400 font-medium">+ R$ {smallSalesNet.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-8">
                       <span className="text-gray-400">Custo produtos</span>
                       <span className="text-red-400 font-medium">- R$ {totalCustoProdutos.toFixed(2)}</span>
                     </div>
+                    <div className="flex justify-between gap-8">
+                      <span className="text-gray-400">Custo peq. vendas</span>
+                      <span className="text-red-400 font-medium">- R$ {smallSalesCost.toFixed(2)}</span>
+                    </div>
+                    {smallSalesCardFees > 0 && (
+                      <div className="flex justify-between gap-8">
+                        <span className="text-gray-400">Taxas peq. vendas</span>
+                        <span className="text-red-400 font-medium">- R$ {smallSalesCardFees.toFixed(2)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between gap-8">
                       <span className="text-gray-400">Ads</span>
                       <span className="text-red-400 font-medium">- R$ {adSpend.toFixed(2)}</span>
@@ -256,7 +297,7 @@ export default function ResumoMensal() {
                     </div>
                     <div className="border-t border-gray-700 pt-1 flex justify-between gap-8">
                       <span className="text-white font-semibold">Total custos</span>
-                      <span className="text-red-400 font-bold">- R$ {totalCustos.toFixed(2)}</span>
+                      <span className="text-red-400 font-bold">- R$ {(totalCustos + smallSalesCost + smallSalesCardFees).toFixed(2)}</span>
                     </div>
                   </div>
                 </div>

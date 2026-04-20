@@ -4,6 +4,7 @@ import {
   Package,
   Warehouse,
   ShoppingCart,
+  ShoppingBag,
   History,
   Bike,
   Truck,
@@ -27,6 +28,7 @@ const menuGroups = [
     items: [
       { id: 'dashboard', label: 'Visão Geral', icon: LayoutDashboard },
       { id: 'sales', label: 'Nova Venda', icon: ShoppingCart },
+      { id: 'small-sales', label: 'Pequenas Vendas', icon: ShoppingBag },
       { id: 'history', label: 'Histórico de Vendas', icon: History },
       { id: 'logistics', label: 'Logística', icon: Truck },
     ],

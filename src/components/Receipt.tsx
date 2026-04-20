@@ -429,16 +429,18 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
         <div className="print-page" style={{ height: 'auto', maxHeight: 'none', overflow: 'visible' }}>
           <div className="receipt-section" style={{ height: 'auto', maxHeight: 'none', overflow: 'visible' }}>
           {/* Header */}
-          <div className="text-center mb-3 pb-2 border-b-2 border-black">
-            <h1 className="text-xl font-bold text-black mb-1">Triumph Store Smartwatches</h1>
-            <p className="text-xs text-gray-700 leading-tight">
-              Rua Quinze de Novembro n°106, Sala 908<br />
-              Centro - Niterói - RJ<br />
-              CEP: 24020-125
-            </p>
-            <p className="text-xs text-gray-700 mt-1">CNPJ: 49.923.481/0001-04</p>
-            <p className="text-xs text-gray-700">WhatsApp: (21) 98708-7535</p>
-            <p className="text-xs text-gray-700">Instagram: @store_triumph</p>
+          <div className="flex justify-center items-start gap-4 mb-3 pb-2 border-b-2 border-black">
+            <img src="/Logo2p-1.png" alt="Triumph Store" style={{ maxWidth: '190px' }} />
+            <div className="text-left">
+              <h1 className="text-sm font-bold text-black mb-0.5">Triumph Store Smartwatches</h1>
+              <p className="text-xs text-gray-700 leading-tight">
+                Rua Quinze de Novembro n°106, Sala 908<br />
+                Centro - Niterói - RJ · CEP: 24020-125
+              </p>
+              <p className="text-xs text-gray-700 mt-0.5">CNPJ: 49.923.481/0001-04</p>
+              <p className="text-xs text-gray-700">WhatsApp: (21) 98708-7535</p>
+              <p className="text-xs text-gray-700">Instagram: @store_triumph</p>
+            </div>
           </div>
 
           {/* Title */}
