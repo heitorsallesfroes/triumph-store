@@ -63,7 +63,7 @@ export default function Marketing() {
       const dateRange = getDateRange();
       const [adSpendResult, salesResult] = await Promise.all([
         supabase.from('ad_spend').select('*').order('date', { ascending: false }),
-        supabase.from('sales').select('id, sale_date, total_sale_price, profit, status').eq('status', 'finalizado')
+        supabase.from('sales').select('id, sale_date, total_sale_price, profit, status').neq('status', 'cancelado')
       ]);
       const allAd = adSpendResult.data || [];
       const allSales = salesResult.data || [];

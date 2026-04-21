@@ -24,29 +24,44 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
     const { period, dateStart: customStart, dateEnd: customEnd } = await req.json();
 
-    const today = new Date();
+    // Calcula a data atual no horário do Brasil (UTC-3)
+    const brazilToday = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().split('T')[0];
+
     let dateStart: string;
-    let dateEnd: string = today.toISOString().split('T')[0];
+    let dateEnd: string = brazilToday;
 
-    if (period === 'custom' && customStart && customEnd) {
-      dateStart = customStart;
-      dateEnd = customEnd;
-    } else if (period === 'today') {
-      dateStart = dateEnd;
-    } else if (period === 'week') {
-      const weekAgo = new Date(today);
-      weekAgo.setDate(today.getDate() - 7);
-      dateStart = weekAgo.toISOString().split('T')[0];
-    } else {
-      const monthAgo = new Date(today);
-      monthAgo.setDate(1);
-      dateStart = monthAgo.toISOString().split('T')[0];
-    }
-
-    const timeRange = `{"since":"${dateStart}","until":"${dateEnd}"}`;
     const fields = 'spend,impressions,clicks,reach,cpm,cpc,ctr';
-    const fbUrl = `https://graph.facebook.com/v25.0/${FB_ACCOUNT}/insights?fields=${fields}&time_range=${timeRange}&access_token=${FB_TOKEN}&level=account`;
-    const fbDailyUrl = `https://graph.facebook.com/v25.0/${FB_ACCOUNT}/insights?fields=spend&time_range=${timeRange}&time_increment=1&access_token=${FB_TOKEN}&level=account`;
+    const accountBase = `https://graph.facebook.com/v25.0/${FB_ACCOUNT}/insights`;
+    const authParams = `access_token=${FB_TOKEN}&level=account`;
+
+    let fbUrl: string;
+    let fbDailyUrl: string;
+
+    if (period === 'today') {
+      // date_preset=today retorna dados parciais do dia com atualização frequente
+      dateStart = brazilToday;
+      fbUrl      = `${accountBase}?fields=${fields}&date_preset=today&${authParams}`;
+      fbDailyUrl = `${accountBase}?fields=spend&date_preset=today&time_increment=1&${authParams}`;
+    } else {
+      if (period === 'custom' && customStart && customEnd) {
+        dateStart = customStart;
+        dateEnd   = customEnd;
+      } else if (period === 'week') {
+        const weekAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
+        weekAgo.setDate(weekAgo.getDate() - 6);
+        dateStart = weekAgo.toISOString().split('T')[0];
+      } else {
+        // month — do primeiro dia do mês até hoje
+        const monthStart = new Date(Date.now() - 3 * 60 * 60 * 1000);
+        monthStart.setDate(1);
+        dateStart = monthStart.toISOString().split('T')[0];
+      }
+
+      // Inclui hoje explicitamente no until para capturar dados parciais do dia
+      const timeRange = encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }));
+      fbUrl      = `${accountBase}?fields=${fields}&time_range=${timeRange}&${authParams}`;
+      fbDailyUrl = `${accountBase}?fields=spend&time_range=${timeRange}&time_increment=1&${authParams}`;
+    }
 
     const [fbResponse, fbDailyResponse] = await Promise.all([
       fetch(fbUrl),
