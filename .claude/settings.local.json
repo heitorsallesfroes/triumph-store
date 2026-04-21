@@ -10,7 +10,8 @@
       "Bash(git -C \"C:\\\\Users\\\\Heitor Salles\\\\triumph-store\" push)",
       "Bash(curl *)",
       "Bash(npx supabase *)",
-      "Bash(git -C \"C:\\\\Users\\\\Heitor Salles\\\\triumph-store\" commit -m \"feat: contagem de vendas independente do status, melhorias gerais\")"
+      "Bash(git -C \"C:\\\\Users\\\\Heitor Salles\\\\triumph-store\" commit -m \"feat: contagem de vendas independente do status, melhorias gerais\")",
+      "Bash(git -C \"C:\\\\Users\\\\Heitor Salles\\\\triumph-store\" commit -m \"feat: cores indicativas ROAS, ROI e CPV no marketing\")"
     ]
   }
 }

@@ -283,21 +283,38 @@ export default function Marketing() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
-              <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">CPV Médio</p>
-              <p className="text-2xl font-bold text-white">R$ {summary.avgCpv.toFixed(2)}</p>
-              <p className="text-gray-500 text-xs mt-1">Custo por venda</p>
-            </div>
-            <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
-              <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">ROI</p>
-              <p className={`text-2xl font-bold ${summary.avgRoi >= 0 ? 'text-green-400' : 'text-red-400'}`}>{summary.avgRoi.toFixed(0)}%</p>
-              <p className="text-gray-500 text-xs mt-1">Retorno sobre investimento</p>
-            </div>
-            <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
-              <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">ROAS</p>
-              <p className="text-2xl font-bold text-orange-400">{summary.avgRoas.toFixed(2)}x</p>
-              <p className="text-gray-500 text-xs mt-1">Retorno sobre gasto em ads</p>
-            </div>
+            {(() => {
+              const cpvCfg  = getCpvConfig(summary.avgCpv);
+              const roiCfg  = getRoiConfig(summary.avgRoi);
+              const roasCfg = getRoasConfig(summary.avgRoas);
+              const hasData = summary.totalAdSpend > 0;
+              return (<>
+                <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
+                  <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">CPV Médio</p>
+                  <p className={`text-2xl font-bold ${hasData ? cpvCfg.color : 'text-white'}`}>R$ {summary.avgCpv.toFixed(2)}</p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-gray-500 text-xs">Custo por venda</p>
+                    {hasData && cpvCfg.label && <span className={`text-xs font-semibold ${cpvCfg.color}`}>{cpvCfg.label}</span>}
+                  </div>
+                </div>
+                <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
+                  <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">ROI</p>
+                  <p className={`text-2xl font-bold ${hasData ? roiCfg.color : 'text-white'}`}>{summary.avgRoi.toFixed(0)}%</p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-gray-500 text-xs">Retorno sobre investimento</p>
+                    {hasData && <span className={`text-xs font-semibold ${roiCfg.color}`}>{roiCfg.label}</span>}
+                  </div>
+                </div>
+                <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
+                  <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">ROAS</p>
+                  <p className={`text-2xl font-bold ${hasData ? roasCfg.color : 'text-white'}`}>{summary.avgRoas.toFixed(2)}x</p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-gray-500 text-xs">Retorno sobre gasto em ads</p>
+                    {hasData && <span className={`text-xs font-semibold ${roasCfg.color}`}>{roasCfg.label}</span>}
+                  </div>
+                </div>
+              </>);
+            })()}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -397,30 +414,46 @@ export default function Marketing() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-gradient-to-br from-orange-900/40 to-orange-800/20 rounded-xl p-6 border border-orange-700/50">
-                  <div className="flex items-center gap-3 mb-3">
-                    <Target size={24} className="text-orange-400" />
-                    <h3 className="text-white font-semibold">ROAS</h3>
-                  </div>
-                  <p className="text-5xl font-bold text-orange-400">{parseFloat(fbMetrics.roas).toFixed(2)}x</p>
-                  <p className="text-gray-400 text-sm mt-2">Para cada R$ 1 investido, você retornou R$ {parseFloat(fbMetrics.roas).toFixed(2)}</p>
-                  <div className="mt-4 bg-gray-800/50 rounded-lg p-3">
-                    <p className="text-xs text-gray-400">Investimento total</p>
-                    <p className="text-lg font-bold text-white">R$ {parseFloat(fbMetrics.spend).toFixed(2)}</p>
-                  </div>
-                </div>
-                <div className="bg-gradient-to-br from-blue-900/40 to-blue-800/20 rounded-xl p-6 border border-blue-700/50">
-                  <div className="flex items-center gap-3 mb-3">
-                    <ShoppingCart size={24} className="text-blue-400" />
-                    <h3 className="text-white font-semibold">Custo por Venda (CPV)</h3>
-                  </div>
-                  <p className="text-5xl font-bold text-blue-400">R$ {parseFloat(fbMetrics.cpv).toFixed(2)}</p>
-                  <p className="text-gray-400 text-sm mt-2">Custo médio para gerar cada venda</p>
-                  <div className="mt-4 bg-gray-800/50 rounded-lg p-3">
-                    <p className="text-xs text-gray-400">Total de vendas no período</p>
-                    <p className="text-lg font-bold text-white">{fbMetrics.purchases} vendas</p>
-                  </div>
-                </div>
+                {(() => {
+                  const roasCfg = getRoasConfig(parseFloat(fbMetrics.roas));
+                  return (
+                    <div className="bg-gradient-to-br from-orange-900/40 to-orange-800/20 rounded-xl p-6 border border-orange-700/50">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <Target size={24} className="text-orange-400" />
+                          <h3 className="text-white font-semibold">ROAS</h3>
+                        </div>
+                        <span className={`text-sm font-bold ${roasCfg.color}`}>{roasCfg.label}</span>
+                      </div>
+                      <p className={`text-5xl font-bold ${roasCfg.color}`}>{parseFloat(fbMetrics.roas).toFixed(2)}x</p>
+                      <p className="text-gray-400 text-sm mt-2">Para cada R$ 1 investido, você retornou R$ {parseFloat(fbMetrics.roas).toFixed(2)}</p>
+                      <div className="mt-4 bg-gray-800/50 rounded-lg p-3">
+                        <p className="text-xs text-gray-400">Investimento total</p>
+                        <p className="text-lg font-bold text-white">R$ {parseFloat(fbMetrics.spend).toFixed(2)}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  const cpvCfg = getCpvConfig(parseFloat(fbMetrics.cpv));
+                  return (
+                    <div className="bg-gradient-to-br from-blue-900/40 to-blue-800/20 rounded-xl p-6 border border-blue-700/50">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <ShoppingCart size={24} className="text-blue-400" />
+                          <h3 className="text-white font-semibold">Custo por Venda (CPV)</h3>
+                        </div>
+                        {cpvCfg.label && <span className={`text-sm font-bold ${cpvCfg.color}`}>{cpvCfg.label}</span>}
+                      </div>
+                      <p className={`text-5xl font-bold ${cpvCfg.color}`}>R$ {parseFloat(fbMetrics.cpv).toFixed(2)}</p>
+                      <p className="text-gray-400 text-sm mt-2">Custo médio para gerar cada venda</p>
+                      <div className="mt-4 bg-gray-800/50 rounded-lg p-3">
+                        <p className="text-xs text-gray-400">Total de vendas no período</p>
+                        <p className="text-lg font-bold text-white">{fbMetrics.purchases} vendas</p>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </>
           )}
@@ -455,11 +488,15 @@ export default function Marketing() {
                       <td className="px-4 py-3 text-sm text-white whitespace-nowrap">{metric.sales}</td>
                       <td className="px-4 py-3 text-sm text-green-400 font-medium whitespace-nowrap">R$ {metric.revenue.toFixed(2)}</td>
                       <td className="px-4 py-3 text-sm text-blue-400 font-medium whitespace-nowrap">R$ {metric.profit.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-sm text-orange-400 whitespace-nowrap">{metric.roas > 0 ? `${metric.roas.toFixed(2)}x` : '-'}</td>
-                      <td className={`px-4 py-3 text-sm font-medium whitespace-nowrap ${metric.roi > 0 ? 'text-green-400' : metric.roi < 0 ? 'text-red-400' : 'text-white'}`}>
+                      <td className={`px-4 py-3 text-sm font-medium whitespace-nowrap ${metric.roas > 0 ? getRoasConfig(metric.roas).color : 'text-gray-500'}`}>
+                        {metric.roas > 0 ? `${metric.roas.toFixed(2)}x` : '-'}
+                      </td>
+                      <td className={`px-4 py-3 text-sm font-medium whitespace-nowrap ${metric.adSpend > 0 ? getRoiConfig(metric.roi).color : 'text-gray-500'}`}>
                         {metric.adSpend > 0 ? `${metric.roi.toFixed(0)}%` : '-'}
                       </td>
-                      <td className="px-4 py-3 text-sm text-white whitespace-nowrap">{metric.cpv > 0 ? `R$ ${metric.cpv.toFixed(2)}` : '-'}</td>
+                      <td className={`px-4 py-3 text-sm font-medium whitespace-nowrap ${metric.cpv > 0 ? getCpvConfig(metric.cpv).color : 'text-gray-500'}`}>
+                        {metric.cpv > 0 ? `R$ ${metric.cpv.toFixed(2)}` : '-'}
+                      </td>
                       <td className="px-4 py-3 text-sm whitespace-nowrap">
                         <div className="flex gap-2">
                           {record && <>
@@ -478,6 +515,29 @@ export default function Marketing() {
       )}
     </div>
   );
+}
+
+function getRoasConfig(roas: number): { color: string; label: string } {
+  if (roas > 7)  return { color: 'text-emerald-400', label: 'Excelente 🚀' };
+  if (roas >= 6) return { color: 'text-green-400',   label: 'Ótimo ✅' };
+  if (roas >= 5) return { color: 'text-green-300',   label: 'Bom' };
+  if (roas >= 4) return { color: 'text-yellow-400',  label: 'OK' };
+  return                { color: 'text-red-400',     label: 'Ruim ⚠️' };
+}
+
+function getCpvConfig(cpv: number): { color: string; label: string } {
+  if (cpv === 0)  return { color: 'text-gray-400',   label: '' };
+  if (cpv < 40)   return { color: 'text-emerald-400', label: 'Excelente 🚀' };
+  if (cpv < 65)   return { color: 'text-green-400',   label: 'Bom ✅' };
+  if (cpv < 75)   return { color: 'text-yellow-400',  label: 'OK' };
+  return                 { color: 'text-red-400',     label: 'Ruim ⚠️' };
+}
+
+function getRoiConfig(roi: number): { color: string; label: string } {
+  if (roi > 200)  return { color: 'text-emerald-400', label: 'Excelente 🚀' };
+  if (roi >= 100) return { color: 'text-green-400',   label: 'Ótimo ✅' };
+  if (roi >= 50)  return { color: 'text-yellow-400',  label: 'OK' };
+  return                 { color: 'text-red-400',     label: 'Ruim ⚠️' };
 }
 
 function StatCard({ title, value, subtitle, icon: Icon, color }: { title: string; value: string; subtitle: string; icon: React.ElementType; color: string }) {
