@@ -136,11 +136,11 @@ export default function Marketing() {
   }, [timeFilter, customStartDate, customEndDate]);
 
   useEffect(() => {
-    if (activeTab === 'facebook') {
-      setFbMetrics(null);
-      loadFacebookData();
-    }
-  }, [activeTab, loadFacebookData]);
+    if (activeTab !== 'facebook') return;
+    setFbMetrics(null);
+    setFbSyncedCount(null);
+    loadFacebookData();
+  }, [activeTab, timeFilter, customStartDate, customEndDate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -425,12 +425,6 @@ export default function Marketing() {
             </>
           )}
 
-          {!fbMetrics && !fbLoading && !fbError && timeFilter !== 'today' && !(timeFilter === 'custom' && (!customStartDate || !customEndDate)) && (
-            <div className="text-center py-16">
-              <Activity size={48} className="text-gray-600 mx-auto mb-4" />
-              <p className="text-gray-400">Clique em Sincronizar para carregar os dados do Facebook Ads</p>
-            </div>
-          )}
         </div>
       )}
 

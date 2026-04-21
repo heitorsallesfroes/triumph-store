@@ -84,7 +84,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
     delivery_type: 'motoboy',
     motoboy_id: '',
     supplier_id: '',
-    delivery_fee: 0,
+    delivery_fee: 20,
     delivery_cost: 0,
     volumes: 1,
   });

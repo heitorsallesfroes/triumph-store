@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
-import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check } from 'lucide-react';
+import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2 } from 'lucide-react';
 import Receipt from '../components/Receipt';
 import EditSale from '../components/EditSale';
 import { generateShippingLabel } from '../lib/superfrete';
@@ -89,9 +89,12 @@ export default function SalesHistory() {
   const [whatsappSale, setWhatsappSale] = useState<Sale | null>(null);
   const [receiptChoiceSale, setReceiptChoiceSale] = useState<Sale | null>(null);
   const [receiptHideDelivery, setReceiptHideDelivery] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState<SaleStatus>('finalizado');
+  const [bulkUpdating, setBulkUpdating] = useState(false);
 
   useEffect(() => { loadSales(); }, []);
-  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [filteredSales]);
+  useEffect(() => { setVisibleCount(PAGE_SIZE); setSelectedIds(new Set()); }, [filteredSales]);
 
   useEffect(() => {
     const timer = setTimeout(() => { setDebouncedProductFilter(productFilter); }, 300);
@@ -352,9 +355,89 @@ export default function SalesHistory() {
     try {
       const { error } = await supabase.from('sales').update({ status: newStatus }).eq('id', saleId);
       if (error) throw error;
-      setSales(sales.map(sale => sale.id === saleId ? { ...sale, status: newStatus } : sale));
+      setFilteredSales(prev => prev.map(s => s.id === saleId ? { ...s, status: newStatus } : s));
+      setSales(prev => prev.map(s => s.id === saleId ? { ...s, status: newStatus } : s));
     } catch (error) {
       alert('Erro ao atualizar status da venda');
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const visible = filteredSales.slice(0, visibleCount).map(s => s.id);
+    const allSelected = visible.every(id => selectedIds.has(id));
+    if (allSelected) {
+      setSelectedIds(prev => { const next = new Set(prev); visible.forEach(id => next.delete(id)); return next; });
+    } else {
+      setSelectedIds(prev => { const next = new Set(prev); visible.forEach(id => next.add(id)); return next; });
+    }
+  };
+
+  const updateBulkStatus = async () => {
+    if (selectedIds.size === 0) return;
+    setBulkUpdating(true);
+    try {
+      const ids = [...selectedIds];
+      const { error } = await supabase.from('sales').update({ status: bulkStatus }).in('id', ids);
+      if (error) throw error;
+      setFilteredSales(prev => prev.map(s => selectedIds.has(s.id) ? { ...s, status: bulkStatus } : s));
+      setSales(prev => prev.map(s => selectedIds.has(s.id) ? { ...s, status: bulkStatus } : s));
+      setSelectedIds(new Set());
+    } catch {
+      alert('Erro ao atualizar status das vendas');
+    } finally {
+      setBulkUpdating(false);
+    }
+  };
+
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const deleteSale = async (sale: Sale) => {
+    if (!confirm(`Excluir a venda de ${sale.customer_name}?\n\nO estoque dos produtos será restaurado. Esta ação não pode ser desfeita.`)) return;
+    setDeletingId(sale.id);
+    try {
+      const { data: items } = await supabase
+        .from('sale_items')
+        .select('product_id, quantity')
+        .eq('sale_id', sale.id);
+
+      if (items && items.length > 0) {
+        await Promise.all(
+          items.map(async (item) => {
+            const { data: product } = await supabase
+              .from('products')
+              .select('current_stock')
+              .eq('id', item.product_id)
+              .maybeSingle();
+            if (product) {
+              await supabase
+                .from('products')
+                .update({ current_stock: product.current_stock + item.quantity })
+                .eq('id', item.product_id);
+            }
+          })
+        );
+        await supabase.from('sale_items').delete().eq('sale_id', sale.id);
+      }
+
+      await supabase.from('sale_accessories').delete().eq('sale_id', sale.id);
+      const { error } = await supabase.from('sales').delete().eq('id', sale.id);
+      if (error) throw error;
+
+      setFilteredSales(prev => prev.filter(s => s.id !== sale.id));
+      setSales(prev => prev.filter(s => s.id !== sale.id));
+      setSelectedIds(prev => { const next = new Set(prev); next.delete(sale.id); return next; });
+    } catch {
+      alert('Erro ao excluir venda.');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -492,6 +575,38 @@ export default function SalesHistory() {
         </div>
       )}
 
+      {/* Barra de seleção em massa */}
+      {selectedIds.size > 0 && (
+        <div className="sticky top-0 z-20 flex flex-wrap items-center gap-3 rounded-xl px-4 py-3" style={{ background: '#1a1400', border: '2px solid #f5c518' }}>
+          <span className="text-sm font-bold" style={{ color: '#f5c518' }}>
+            {selectedIds.size} venda{selectedIds.size !== 1 ? 's' : ''} selecionada{selectedIds.size !== 1 ? 's' : ''}
+          </span>
+          <div className="flex items-center gap-2 flex-1 flex-wrap">
+            <select
+              value={bulkStatus}
+              onChange={e => setBulkStatus(e.target.value as SaleStatus)}
+              className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:outline-none text-sm"
+            >
+              {SALE_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+            <button
+              onClick={updateBulkStatus}
+              disabled={bulkUpdating}
+              className="px-4 py-2 rounded-lg text-sm font-bold transition-opacity disabled:opacity-50"
+              style={{ background: '#f5c518', color: '#000' }}
+            >
+              {bulkUpdating ? 'Atualizando...' : `Atualizar ${selectedIds.size} venda${selectedIds.size !== 1 ? 's' : ''}`}
+            </button>
+          </div>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="text-xs text-gray-400 hover:text-white transition-colors"
+          >
+            Limpar seleção
+          </button>
+        </div>
+      )}
+
       <div className="space-y-4">
         {filterLoading ? (
           <div className="bg-gray-800 rounded-lg p-12 border border-gray-700 text-center">
@@ -511,13 +626,45 @@ export default function SalesHistory() {
             </p>
           </div>
         ) : (
-          filteredSales.slice(0, visibleCount).map((sale) => {
+          <>
+            {/* Selecionar todos visíveis */}
+            <div className="flex items-center gap-2 px-1">
+              <input
+                type="checkbox"
+                id="select-all"
+                checked={filteredSales.slice(0, visibleCount).every(s => selectedIds.has(s.id))}
+                onChange={toggleSelectAll}
+                className="w-4 h-4 accent-orange-500 cursor-pointer"
+              />
+              <label htmlFor="select-all" className="text-xs text-gray-400 cursor-pointer select-none">
+                Selecionar todos visíveis ({Math.min(visibleCount, filteredSales.length)})
+              </label>
+            </div>
+
+          {filteredSales.slice(0, visibleCount).map((sale) => {
             const statusConfig = getStatusConfig(sale.status);
+            const isSelected = selectedIds.has(sale.id);
             return (
-              <div key={sale.id} className="bg-gray-800 rounded-lg p-6 border border-gray-700 hover:border-gray-600 transition-all">
+              <div
+                key={sale.id}
+                className="relative bg-gray-800 rounded-lg p-6 border transition-all"
+                style={{ borderColor: isSelected ? '#f5c518' : undefined }}
+                onClick={e => {
+                  const tag = (e.target as HTMLElement).tagName;
+                  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'OPTION') return;
+                  if ((e.target as HTMLElement).closest('button, select, a')) return;
+                }}
+              >
                 <div className="grid grid-cols-12 gap-4 items-start">
                   <div className="col-span-12 lg:col-span-4">
                     <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelect(sale.id)}
+                        onClick={e => e.stopPropagation()}
+                        className="w-4 h-4 mt-1.5 flex-shrink-0 accent-orange-500 cursor-pointer"
+                      />
                       <Package size={24} className="text-orange-500 mt-1 flex-shrink-0" />
                       <div>
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -583,6 +730,15 @@ export default function SalesHistory() {
                       </select>
                       <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none" size={20} />
                     </div>
+                    <button
+                      onClick={() => deleteSale(sale)}
+                      disabled={deletingId === sale.id}
+                      className="mt-2 flex items-center gap-1.5 text-gray-500 hover:text-red-400 disabled:opacity-30 transition-colors text-xs"
+                      title="Excluir venda"
+                    >
+                      <Trash2 size={14} />
+                      <span>{deletingId === sale.id ? 'Excluindo...' : 'Excluir venda'}</span>
+                    </button>
                   </div>
                 </div>
 
@@ -656,7 +812,8 @@ export default function SalesHistory() {
                 )}
               </div>
             );
-          })
+          })}
+          </>
         )}
       </div>
 

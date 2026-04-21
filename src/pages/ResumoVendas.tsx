@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { getTodayInBrazil } from '../lib/dateUtils';
+import { calculateCardFee } from '../lib/cardFees';
 import {
   TrendingUp, DollarSign, CreditCard, Package, ShoppingCart,
   Truck, BarChart3, Zap, Calendar, Bike, MapPin, Watch,
@@ -23,6 +24,9 @@ interface Summary {
 interface RowData { label: string; count: number; total: number; }
 interface MotoboyRow { name: string; deliveries: number; earned: number; }
 interface SmartWatchRow { product_id: string; model: string; color: string; quantity: number; }
+
+interface CardBucket { count: number; bruto: number; fees: number; liquid: number; }
+interface CardConciliation { credit: CardBucket; debit: CardBucket; }
 
 const PERIOD_LABELS: Record<Period, string> = {
   today: 'Hoje',
@@ -60,6 +64,10 @@ export default function ResumoVendas() {
   const [motoboys, setMotoboys] = useState<MotoboyRow[]>([]);
   const [cities, setCities] = useState<RowData[]>([]);
   const [smartwatches, setSmartwatches] = useState<SmartWatchRow[]>([]);
+  const [cardConciliation, setCardConciliation] = useState<CardConciliation>({
+    credit: { count: 0, bruto: 0, fees: 0, liquid: 0 },
+    debit:  { count: 0, bruto: 0, fees: 0, liquid: 0 },
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -87,7 +95,7 @@ export default function ResumoVendas() {
     try {
       const { start, end } = getDateRange();
 
-      const [{ data: salesRaw }, { data: adSpend }, { data: motoboysList }, { data: products }] = await Promise.all([
+      const [{ data: salesRaw }, { data: adSpend }, { data: motoboysList }, { data: products }, { data: smallSalesRaw }] = await Promise.all([
         supabase
           .from('sales')
           .select('id, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, delivery_type, motoboy_id, city')
@@ -97,6 +105,12 @@ export default function ResumoVendas() {
         supabase.from('ad_spend').select('amount').gte('date', start).lte('date', end),
         supabase.from('motoboys').select('id, name'),
         supabase.from('products').select('id, model, color, category').eq('category', 'smartwatch'),
+        supabase
+          .from('small_sales')
+          .select('sale_price, quantity, payment_method, card_brand, installments')
+          .in('payment_method', ['credit_card', 'debit_card'])
+          .gte('created_at', `${start}T00:00:00`)
+          .lte('created_at', `${end}T23:59:59`),
       ]);
 
       const s = salesRaw || [];
@@ -111,6 +125,38 @@ export default function ResumoVendas() {
       const lucroFinal        = totalLiquido - totalProductCost - totalDeliveryCost - totalAdSpend;
       const averageTicket     = s.length > 0 ? totalBruto / s.length : 0;
       setSummary({ totalBruto, totalLiquido, totalCardFee, totalProductCost, totalDeliveryCost, totalAdSpend, lucroFinal, totalSales: s.length, averageTicket });
+
+      // ── Conciliação com maquininha ────────────────────────────────────
+      const conciliation: CardConciliation = {
+        credit: { count: 0, bruto: 0, fees: 0, liquid: 0 },
+        debit:  { count: 0, bruto: 0, fees: 0, liquid: 0 },
+      };
+
+      // vendas principais
+      s.filter(v => v.payment_method === 'credit_card' || v.payment_method === 'debit_card').forEach(v => {
+        const bucket = v.payment_method === 'credit_card' ? conciliation.credit : conciliation.debit;
+        const bruto = Number(v.total_sale_price);
+        const fee   = Number(v.card_fee || 0);
+        bucket.count  += 1;
+        bucket.bruto  += bruto;
+        bucket.fees   += fee;
+        bucket.liquid += bruto - fee;
+      });
+
+      // pequenas vendas
+      (smallSalesRaw || []).forEach(v => {
+        const bucket = v.payment_method === 'credit_card' ? conciliation.credit : conciliation.debit;
+        const bruto = Number(v.sale_price) * Number(v.quantity);
+        const fee   = v.payment_method === 'credit_card' && v.card_brand && v.installments
+          ? calculateCardFee(bruto, 'credit_card', v.card_brand, v.installments)
+          : 0;
+        bucket.count  += 1;
+        bucket.bruto  += bruto;
+        bucket.fees   += fee;
+        bucket.liquid += bruto - fee;
+      });
+
+      setCardConciliation(conciliation);
 
       // ── Formas de pagamento ────────────────────────────────────────────
       const paymentMap = new Map<string, { count: number; total: number }>();
@@ -292,6 +338,62 @@ export default function ResumoVendas() {
               </div>
             </div>
           </div>
+
+          {/* Conciliação com Maquininha */}
+          {(cardConciliation.credit.count > 0 || cardConciliation.debit.count > 0) && (() => {
+            const total = {
+              count:  cardConciliation.credit.count  + cardConciliation.debit.count,
+              bruto:  cardConciliation.credit.bruto  + cardConciliation.debit.bruto,
+              fees:   cardConciliation.credit.fees   + cardConciliation.debit.fees,
+              liquid: cardConciliation.credit.liquid + cardConciliation.debit.liquid,
+            };
+            return (
+              <div className="bg-gray-800 rounded-xl border border-blue-500/30 p-6 mb-6">
+                <div className="flex items-center gap-2 mb-5">
+                  <CreditCard size={16} className="text-blue-400" />
+                  <h2 className="text-sm font-semibold text-white">Conciliação com Maquininha</h2>
+                  <span className="ml-auto text-xs text-gray-500">Vendas + Pequenas Vendas pagas no cartão</span>
+                </div>
+
+                {/* Totais gerais */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+                  <ConcCard label="Total de Transações" value={String(total.count)}   unit="transações" accent="blue" />
+                  <ConcCard label="Valor Bruto"         value={fmt(total.bruto)}      accent="blue" />
+                  <ConcCard label="Taxas Descontadas"   value={fmt(total.fees)}       accent="red"  negative />
+                  <ConcCard label="Líquido a Receber"   value={fmt(total.liquid)}     accent="green" />
+                </div>
+
+                {/* Breakdown por tipo */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {[
+                    { label: 'Crédito', bucket: cardConciliation.credit,  color: 'border-blue-500/40',   badge: 'bg-blue-500/10 text-blue-400 border border-blue-500/30' },
+                    { label: 'Débito',  bucket: cardConciliation.debit,   color: 'border-gray-600',      badge: 'bg-gray-700 text-gray-300 border border-gray-600' },
+                  ].filter(t => t.bucket.count > 0).map(({ label, bucket, color, badge }) => (
+                    <div key={label} className={`rounded-xl border p-4 ${color}`} style={{ background: '#0d0d14' }}>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${badge}`}>{label}</span>
+                        <span className="text-xs text-gray-500">{bucket.count} transaç{bucket.count === 1 ? 'ão' : 'ões'}</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-400">Bruto</span>
+                          <span className="text-white font-medium">{fmt(bucket.bruto)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-400">− Taxas</span>
+                          <span className="text-red-400">− {fmt(bucket.fees)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm border-t border-gray-700 pt-1.5 mt-1.5">
+                          <span className="text-gray-300 font-semibold">Líquido</span>
+                          <span className="text-green-400 font-bold">{fmt(bucket.liquid)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Seções analíticas — grid 2 colunas */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -482,6 +584,27 @@ function FinCard({ label, value, icon: Icon, accent, negative, sub }: {
         {value}
       </p>
       {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+function ConcCard({ label, value, unit, accent, negative }: {
+  label: string; value: string; unit?: string;
+  accent: 'blue' | 'green' | 'red'; negative?: boolean;
+}) {
+  const c = {
+    blue:  'text-blue-400',
+    green: 'text-green-400',
+    red:   'text-red-400',
+  }[accent];
+  return (
+    <div className="rounded-lg p-4" style={{ background: '#0d0d14', border: '1px solid #1a1a2a' }}>
+      <p className="text-xs text-gray-500 mb-1.5">{label}</p>
+      <p className={`text-lg font-bold ${c}`}>
+        {negative && <span className="text-sm font-normal mr-0.5">−</span>}
+        {value}
+      </p>
+      {unit && <p className="text-xs text-gray-600 mt-0.5">{unit}</p>}
     </div>
   );
 }

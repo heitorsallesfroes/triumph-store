@@ -384,7 +384,8 @@ export default function SmallSales() {
                     <td className="px-4 py-3 text-center">
                       <button
                         onClick={() => handleDelete(sale.id)}
-                        className="text-gray-500 hover:text-red-400 transition-colors"
+                        className="text-red-500 hover:text-red-400 transition-colors"
+                        title="Excluir venda"
                       >
                         <Trash2 size={15} />
                       </button>
