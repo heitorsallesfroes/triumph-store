@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import {
   TrendingUp, DollarSign, Target, ShoppingCart, Plus, Trash2,
   CreditCard as Edit2, X, Calendar, RefreshCw,
-  BarChart2, Activity, AlertCircle
+  BarChart2, Activity, AlertCircle, CheckCircle
 } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
@@ -39,6 +39,7 @@ export default function Marketing() {
   const [fbMetrics, setFbMetrics] = useState<FBMetrics | null>(null);
   const [fbLoading, setFbLoading] = useState(false);
   const [fbError, setFbError] = useState<string | null>(null);
+  const [fbSyncedCount, setFbSyncedCount] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'facebook' | 'detail'>('overview');
 
   useEffect(() => {
@@ -103,6 +104,7 @@ export default function Marketing() {
     if (timeFilter === 'custom' && (!customStartDate || !customEndDate)) return;
     setFbLoading(true);
     setFbError(null);
+    setFbSyncedCount(null);
     try {
       const payload = getFBPeriodPayload();
       const res = await fetch(`${SUPABASE_URL}/functions/v1/facebook-ads`, {
@@ -111,8 +113,25 @@ export default function Marketing() {
         body: JSON.stringify(payload)
       });
       const data = await res.json();
-      if (data.success) setFbMetrics(data.metrics);
-      else setFbError(data.error || 'Erro ao carregar dados do Facebook');
+      if (data.success) {
+        setFbMetrics(data.metrics);
+        if (data.dailySpend && data.dailySpend.length > 0) {
+          const rows = data.dailySpend.map((d: { date: string; spend: number }) => ({
+            date: d.date,
+            amount: d.spend,
+          }));
+          const { error: upsertError } = await supabase
+            .from('ad_spend')
+            .upsert(rows, { onConflict: 'date' });
+          if (upsertError) console.error('Erro ao salvar ad_spend:', upsertError.message);
+          else {
+            setFbSyncedCount(rows.length);
+            loadData();
+          }
+        }
+      } else {
+        setFbError(data.error || 'Erro ao carregar dados do Facebook');
+      }
     } catch { setFbError('Erro de conexão com Facebook Ads'); } finally { setFbLoading(false); }
   }, [timeFilter, customStartDate, customEndDate]);
 
@@ -351,6 +370,13 @@ export default function Marketing() {
                 <RefreshCw size={32} className="animate-spin text-blue-500" />
                 <p className="text-gray-400">Buscando dados do Facebook Ads...</p>
               </div>
+            </div>
+          )}
+
+          {fbSyncedCount !== null && !fbLoading && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg mb-2" style={{ background: '#0a1a0a', border: '1px solid #0a2a0a' }}>
+              <CheckCircle size={14} className="text-green-400" />
+              <span className="text-sm text-green-400">{fbSyncedCount} dia{fbSyncedCount !== 1 ? 's' : ''} de gastos sincronizado{fbSyncedCount !== 1 ? 's' : ''} com o Supabase</span>
             </div>
           )}
 

@@ -43,11 +43,19 @@ Deno.serve(async (req: Request) => {
       dateStart = monthAgo.toISOString().split('T')[0];
     }
 
+    const timeRange = `{"since":"${dateStart}","until":"${dateEnd}"}`;
     const fields = 'spend,impressions,clicks,reach,cpm,cpc,ctr';
-    const fbUrl = `https://graph.facebook.com/v25.0/${FB_ACCOUNT}/insights?fields=${fields}&time_range={"since":"${dateStart}","until":"${dateEnd}"}&access_token=${FB_TOKEN}&level=account`;
+    const fbUrl = `https://graph.facebook.com/v25.0/${FB_ACCOUNT}/insights?fields=${fields}&time_range=${timeRange}&access_token=${FB_TOKEN}&level=account`;
+    const fbDailyUrl = `https://graph.facebook.com/v25.0/${FB_ACCOUNT}/insights?fields=spend&time_range=${timeRange}&time_increment=1&access_token=${FB_TOKEN}&level=account`;
 
-    const fbResponse = await fetch(fbUrl);
-    const fbData = await fbResponse.json();
+    const [fbResponse, fbDailyResponse] = await Promise.all([
+      fetch(fbUrl),
+      fetch(fbDailyUrl),
+    ]);
+    const [fbData, fbDailyData] = await Promise.all([
+      fbResponse.json(),
+      fbDailyResponse.json(),
+    ]);
 
     if (!fbResponse.ok || fbData.error) {
       throw new Error(fbData.error?.message || 'Erro ao buscar dados do Facebook');
@@ -55,6 +63,13 @@ Deno.serve(async (req: Request) => {
 
     const insights = fbData.data?.[0] || {};
     const spend = parseFloat(insights.spend || '0');
+
+    const dailySpend: { date: string; spend: number }[] = (fbDailyData.data || [])
+      .map((d: { date_start: string; spend: string }) => ({
+        date: d.date_start,
+        spend: parseFloat(d.spend || '0'),
+      }))
+      .filter((d: { date: string; spend: number }) => d.spend > 0);
 
     const { data: salesData, error: salesError } = await supabase
       .from('sales')
@@ -78,6 +93,7 @@ Deno.serve(async (req: Request) => {
         period,
         dateStart,
         dateEnd,
+        dailySpend,
         metrics: {
           spend: spend.toFixed(2),
           impressions: insights.impressions || '0',
