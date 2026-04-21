@@ -87,6 +87,7 @@ Deno.serve(async (req: Request) => {
           cpf_cnpj: (sale.customer_cpf || "").replace(/\D/g, ""),
           endereco: sale.address_street || "",
           numero: sale.address_number || "S/N",
+          complemento: sale.address_complement || "",
           bairro: sale.neighborhood || "",
           cep: (sale.zip_code || "").replace(/\D/g, ""),
           cidade: sale.city || "",
@@ -136,14 +137,33 @@ Deno.serve(async (req: Request) => {
 
     const nfData = emitirData?.retorno?.nota_fiscal;
 
+    // Log completo para identificar o campo exato da URL retornado pelo Tiny
+    console.log("nfData completo:", JSON.stringify(nfData));
+    console.log("Campos disponíveis em nfData:", nfData ? Object.keys(nfData) : "nfData é null/undefined");
+
+    // Tenta campos conhecidos; fallback para URL do Tiny via ID da nota
+    const nfeUrl =
+      nfData?.link_acesso ||
+      nfData?.linkNFe ||
+      nfData?.link_nfe ||
+      nfData?.link ||
+      nfData?.url ||
+      nfData?.danfe_url ||
+      (nfData?.id ? `https://erp.olist.com/notas_fiscais#edit/${nfData.id}` : null);
+
+    console.log("nfe_url resolvida:", nfeUrl);
+
+    // Salva o ID numérico da nota em nfe_chave para montar a URL de acesso
+    const notaNumericId = nfData?.id ? String(nfData.id) : null;
+
     await supabase.from("sales").update({
-      nfe_url: nfData?.link_acesso || "",
-      nfe_chave: nfData?.chave_acesso || "",
+      nfe_url: nfeUrl,
+      nfe_chave: notaNumericId,
       nfe_status: "emitida",
     }).eq("id", sale_id);
 
     return new Response(
-      JSON.stringify({ success: true, nfe_url: nfData?.link_acesso, chave_acesso: nfData?.chave_acesso }),
+      JSON.stringify({ success: true, nfe_url: nfeUrl, nfe_chave: notaNumericId }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 

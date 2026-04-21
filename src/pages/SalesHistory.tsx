@@ -257,6 +257,12 @@ export default function SalesHistory() {
     }
   };
 
+  const updateNFeInState = (saleId: string, nfe_url: string, nfe_status: string) => {
+    const patch = (s: Sale) => s.id === saleId ? { ...s, nfe_url, nfe_status } : s;
+    setFilteredSales(prev => prev.map(patch));
+    setSales(prev => prev.map(patch));
+  };
+
   const handleGenerateNFe = async (sale: Sale) => {
     if (!sale.customer_cpf) {
       alert('CPF/CNPJ do cliente é obrigatório para gerar nota fiscal');
@@ -281,21 +287,36 @@ export default function SalesHistory() {
         return;
       }
 
-      setFilteredSales(filteredSales.map(s =>
-        s.id === sale.id
-          ? { ...s, nfe_url: data.nfe_url, nfe_status: 'emitida' }
-          : s
-      ));
+      const nfeUrl = data.nfe_url || '';
+      updateNFeInState(sale.id, nfeUrl, 'emitida');
 
+      // Abre antes do alert para não ser bloqueado como popup
+      if (nfeUrl) window.open(nfeUrl, '_blank');
       alert('Nota fiscal gerada com sucesso!');
-
-      if (data.nfe_url) {
-        window.open(data.nfe_url, '_blank');
-      }
     } catch (error) {
       alert('Erro ao gerar nota fiscal');
     } finally {
       setGeneratingNFe(null);
+    }
+  };
+
+  const handleViewNFe = async (sale: Sale) => {
+    // Sempre busca do Supabase em tempo real para garantir dados frescos
+    const { data } = await supabase
+      .from('sales')
+      .select('nfe_url, nfe_chave')
+      .eq('id', sale.id)
+      .single();
+
+    const resolvedUrl =
+      data?.nfe_url ||
+      (data?.nfe_chave ? `https://erp.olist.com/notas_fiscais#edit/${data.nfe_chave}` : null);
+
+    if (resolvedUrl) {
+      window.open(resolvedUrl, '_blank');
+      updateNFeInState(sale.id, resolvedUrl, 'emitida');
+    } else {
+      alert('URL da nota não disponível. Acesse diretamente no Tiny ERP.');
     }
   };
 
@@ -339,6 +360,7 @@ export default function SalesHistory() {
         customer_cpf: sale.customer_cpf,
         street: sale.address_street,
         number: sale.address_number,
+        complement: sale.address_complement,
         neighborhood: sale.neighborhood,
         city: sale.city,
         state: sale.state,
@@ -789,7 +811,7 @@ export default function SalesHistory() {
                         </button>
                       ) : (
                         <button
-                          onClick={() => sale.nfe_url && window.open(sale.nfe_url, '_blank')}
+                          onClick={() => handleViewNFe(sale)}
                           className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
                         >
                           <FileText size={16} />

@@ -14,6 +14,7 @@ export interface GenerateShippingLabelParams {
   customer_cpf: string;
   street: string;
   number: string;
+  complement?: string;
   neighborhood: string;
   city: string;
   state: string;
@@ -74,6 +75,7 @@ export async function generateShippingLabel(
         name: params.customer_name,
         address: params.street,
         number: params.number || "S/N",
+        complement: params.complement || "",
         district: params.neighborhood || "NA",
         city: params.city,
         state_abbr: params.state.toUpperCase(),
