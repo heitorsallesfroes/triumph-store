@@ -41,6 +41,13 @@ interface ManualItem {
   quantity: number;
 }
 
+interface PaymentEntry {
+  method: string;
+  card_brand: string;
+  installments: number;
+  amount: number;
+}
+
 interface SalesProps {
   triggerFastSale?: number;
 }
@@ -78,9 +85,6 @@ export default function Sales({ triggerFastSale }: SalesProps) {
     neighborhood: '',
     state: '',
     zip_code: '',
-    payment_method: 'credit_card',
-    card_brand: '',
-    installments: 0,
     delivery_type: 'motoboy',
     motoboy_id: '',
     supplier_id: '',
@@ -92,6 +96,9 @@ export default function Sales({ triggerFastSale }: SalesProps) {
   const [saleProducts, setSaleProducts] = useState<SaleProduct[]>([]);
   const [saleAccessories, setSaleAccessories] = useState<SaleAccessoryItem[]>([]);
   const [manualItems, setManualItems] = useState<ManualItem[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentEntry[]>([
+    { method: 'credit_card', card_brand: '', installments: 0, amount: 0 },
+  ]);
 
   useEffect(() => {
     loadData();
@@ -261,6 +268,26 @@ export default function Sales({ triggerFastSale }: SalesProps) {
     setManualItems(manualItems.filter((_, i) => i !== index));
   };
 
+  const updatePaymentMethod = (index: number, field: string, value: string | number) => {
+    const updated = [...paymentMethods];
+    updated[index] = { ...updated[index], [field]: value };
+    if (field === 'method' && value !== 'credit_card' && value !== 'debit_card') {
+      updated[index].card_brand = '';
+      updated[index].installments = 0;
+    }
+    if (field === 'method' && value !== 'credit_card') {
+      updated[index].installments = 0;
+    }
+    setPaymentMethods(updated);
+  };
+
+  const addPaymentEntry = () => {
+    setPaymentMethods([...paymentMethods, { method: 'pix', card_brand: '', installments: 0, amount: 0 }]);
+  };
+
+  const removePaymentEntry = (index: number) => {
+    setPaymentMethods(paymentMethods.filter((_, i) => i !== index));
+  };
 
   const calculateTotals = () => {
     try {
@@ -275,12 +302,10 @@ export default function Sales({ triggerFastSale }: SalesProps) {
 
       const totalWithManual = totalSalePrice + totalManualPrice;
 
-      const cardFee = calculateCardFee(
-        totalWithManual,
-        formData.payment_method || 'pix',
-        formData.card_brand || '',
-        formData.installments || 0
-      );
+      const allAmountsZero = paymentMethods.every((pm) => pm.amount === 0);
+      const cardFee = allAmountsZero
+        ? calculateCardFee(totalWithManual, paymentMethods[0]?.method || 'pix', paymentMethods[0]?.card_brand || '', paymentMethods[0]?.installments || 0)
+        : paymentMethods.reduce((sum, pm) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0), 0);
 
       const deliveryFee = formData.delivery_type === 'motoboy' ? (formData.delivery_fee || 0) : 0;
       const deliveryCost = formData.delivery_type === 'correios' ? (formData.delivery_cost || 0) : 0;
@@ -374,6 +399,17 @@ export default function Sales({ triggerFastSale }: SalesProps) {
   alert(`Produto não encontrado`);
   return;
 }
+    }
+
+    const allAmountsZero = paymentMethods.every((pm) => pm.amount === 0);
+    if (!allAmountsZero) {
+      const totalExpected = saleProducts.reduce((s, sp) => s + sp.unit_price * sp.quantity, 0) +
+        manualItems.reduce((s, mi) => s + mi.price * mi.quantity, 0);
+      const totalAllocated = paymentMethods.reduce((s, pm) => s + pm.amount, 0);
+      if (Math.abs(totalAllocated - totalExpected) > 0.01) {
+        alert(`Total alocado (R$ ${totalAllocated.toFixed(2)}) não bate com o valor da venda (R$ ${totalExpected.toFixed(2)})`);
+        return;
+      }
     }
 
     try {
@@ -473,9 +509,10 @@ export default function Sales({ triggerFastSale }: SalesProps) {
             neighborhood: neighborhoodName,
             state: formData.state || null,
             zip_code: formData.zip_code || null,
-            payment_method: formData.payment_method,
-            card_brand: formData.card_brand || null,
-            installments: formData.installments || 1,
+            payment_method: paymentMethods[0]?.method || 'pix',
+            card_brand: paymentMethods.find((pm) => pm.method === 'credit_card' || pm.method === 'debit_card')?.card_brand || null,
+            installments: paymentMethods.find((pm) => pm.method === 'credit_card')?.installments || 1,
+            payment_methods: paymentMethods,
             delivery_type: formData.delivery_type,
             motoboy_id: formData.delivery_type === 'motoboy' ? (formData.motoboy_id || null) : null,
             supplier_id: supplierId || null,
@@ -615,9 +652,6 @@ export default function Sales({ triggerFastSale }: SalesProps) {
       neighborhood: '',
       state: '',
       zip_code: '',
-      payment_method: 'credit_card',
-      card_brand: '',
-      installments: 0,
       delivery_type: 'motoboy',
       motoboy_id: '',
       supplier_id: '',
@@ -628,6 +662,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
     setSaleProducts([]);
     setSaleAccessories([]);
     setManualItems([]);
+    setPaymentMethods([{ method: 'credit_card', card_brand: '', installments: 0, amount: 0 }]);
     setSupplierSearch('');
     setCitySearch('');
     setNeighborhoodSearch('');
@@ -1069,51 +1104,117 @@ export default function Sales({ triggerFastSale }: SalesProps) {
           </div>
 
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-lg font-bold text-white mb-4">Pagamento</h2>
-            <div className="space-y-3">
-              <select
-                value={formData.payment_method}
-                onChange={(e) => setFormData({ ...formData, payment_method: e.target.value })}
-                className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
-                required
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-white">Pagamento</h2>
+              <button
+                type="button"
+                onClick={addPaymentEntry}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-colors text-sm font-medium"
               >
-                <option value="pix">PIX (Sem taxa)</option>
-                <option value="cash">Dinheiro (Sem taxa)</option>
-                <option value="debit_card">Débito</option>
-                <option value="credit_card">Crédito</option>
-              </select>
+                + Adicionar forma de pagamento
+              </button>
+            </div>
 
-              {(formData.payment_method === 'credit_card' ||
-                formData.payment_method === 'debit_card') && (
-                <div className="space-y-3">
-                  <select
-                    value={formData.card_brand}
-                    onChange={(e) => setFormData({ ...formData, card_brand: e.target.value })}
-                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
-                  >
-                    <option value="">Definir depois</option>
-                    <option value="visa_mastercard">Visa / Mastercard</option>
-                    <option value="elo_amex">Elo / Amex</option>
-                  </select>
-                  {formData.payment_method === 'credit_card' && (
+            <div className="space-y-3">
+              {paymentMethods.map((pm, index) => (
+                <div key={index} className="bg-gray-700 rounded-lg p-4 border border-gray-600 space-y-3">
+                  <div className="flex items-center gap-2">
                     <select
-                      value={formData.installments}
-                      onChange={(e) =>
-                        setFormData({ ...formData, installments: parseInt(e.target.value) })
-                      }
-                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      value={pm.method}
+                      onChange={(e) => updatePaymentMethod(index, 'method', e.target.value)}
+                      className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
                     >
-                      <option value="0">Definir depois</option>
-                      {formData.card_brand && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
-                        <option key={n} value={n}>
-                          {n}x (Taxa {getFeePercentageLabel('credit_card', formData.card_brand, n)})
-                        </option>
-                      ))}
+                      <option value="pix">PIX (Sem taxa)</option>
+                      <option value="cash">Dinheiro (Sem taxa)</option>
+                      <option value="debit_card">Débito</option>
+                      <option value="credit_card">Crédito</option>
                     </select>
+
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="Valor (R$)"
+                      value={pm.amount || ''}
+                      onChange={(e) => updatePaymentMethod(index, 'amount', parseFloat(e.target.value) || 0)}
+                      className="w-36 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                    />
+
+                    {paymentMethods.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removePaymentEntry(index)}
+                        className="text-red-400 hover:text-red-300 p-1.5"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+
+                  {(pm.method === 'credit_card' || pm.method === 'debit_card') && (
+                    <div className="flex gap-3">
+                      <select
+                        value={pm.card_brand}
+                        onChange={(e) => updatePaymentMethod(index, 'card_brand', e.target.value)}
+                        className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                      >
+                        <option value="">Bandeira (definir depois)</option>
+                        <option value="visa_mastercard">Visa / Mastercard</option>
+                        <option value="elo_amex">Elo / Amex</option>
+                      </select>
+
+                      {pm.method === 'credit_card' && (
+                        <select
+                          value={pm.installments}
+                          onChange={(e) => updatePaymentMethod(index, 'installments', parseInt(e.target.value))}
+                          className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                        >
+                          <option value="0">Parcelas (definir depois)</option>
+                          {pm.card_brand && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
+                            <option key={n} value={n}>
+                              {n}x ({getFeePercentageLabel('credit_card', pm.card_brand, n)})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+
+                  {(pm.method === 'credit_card' || pm.method === 'debit_card') && pm.amount > 0 && pm.card_brand && (
+                    <div className="text-xs text-red-400">
+                      Taxa: R$ {calculateCardFee(pm.amount, pm.method, pm.card_brand, pm.installments).toFixed(2)} ({getFeePercentageLabel(pm.method, pm.card_brand, pm.installments)})
+                    </div>
                   )}
                 </div>
-              )}
+              ))}
             </div>
+
+            {(() => {
+              const totalAllocated = paymentMethods.reduce((s, pm) => s + pm.amount, 0);
+              const remaining = totals.totalSalePrice - totalAllocated;
+              const isBalanced = Math.abs(remaining) < 0.01;
+              const hasAmounts = totalAllocated > 0;
+              return (
+                <div className="mt-4 pt-3 border-t border-gray-600 grid grid-cols-3 gap-3 text-sm">
+                  <div>
+                    <div className="text-gray-400 text-xs mb-0.5">Total da Venda</div>
+                    <div className="text-white font-bold">R$ {totals.totalSalePrice.toFixed(2)}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-400 text-xs mb-0.5">Alocado</div>
+                    <div className={`font-bold ${!hasAmounts ? 'text-gray-400' : isBalanced ? 'text-green-400' : 'text-yellow-400'}`}>
+                      R$ {totalAllocated.toFixed(2)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-400 text-xs mb-0.5">Falta Alocar</div>
+                    <div className={`font-bold ${!hasAmounts ? 'text-gray-400' : isBalanced ? 'text-green-400' : remaining > 0 ? 'text-yellow-400' : 'text-red-400'}`}>
+                      R$ {remaining.toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
 

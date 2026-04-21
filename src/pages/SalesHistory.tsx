@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
-import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2 } from 'lucide-react';
+import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers } from 'lucide-react';
 import Receipt from '../components/Receipt';
 import EditSale from '../components/EditSale';
 import { generateShippingLabel } from '../lib/superfrete';
@@ -27,6 +27,14 @@ const DELIVERY_CONFIG: Record<string, { label: string; icon: React.ElementType; 
   motoboy:    { label: 'Motoboy',    icon: Bike,         color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/30' },
   correios:   { label: 'Correios',   icon: Truck,        color: 'text-blue-400',   bg: 'bg-blue-500/10 border-blue-500/30'     },
   loja_fisica:{ label: 'Loja Física',icon: ShoppingCart, color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/30'   },
+};
+
+const PAYMENT_CONFIG: Record<string, { label: string; icon: React.ElementType; color: string; bg: string }> = {
+  pix:         { label: 'PIX',      icon: Zap,     color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/30'   },
+  cash:        { label: 'Dinheiro', icon: Banknote, color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/30'   },
+  credit_card: { label: 'Crédito',  icon: Edit,     color: 'text-blue-400',   bg: 'bg-blue-500/10 border-blue-500/30'     },
+  debit_card:  { label: 'Débito',   icon: Edit,     color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/30' },
+  mixed:       { label: 'Misto',    icon: Layers,   color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/30' },
 };
 
 const EMPTY_PERIOD_LABELS: Record<Period, string> = {
@@ -64,6 +72,7 @@ interface Sale {
   state?: string;
   zip_code?: string;
   manual_items?: any;
+  payment_methods?: { method: string; card_brand: string; installments: number; amount: number }[] | null;
   nfe_url?: string;
   nfe_chave?: string;
   nfe_status?: string;
@@ -671,6 +680,17 @@ export default function SalesHistory() {
                           <h3 className="text-lg font-semibold text-white">{sale.customer_name}</h3>
                           {sale.delivery_type && DELIVERY_CONFIG[sale.delivery_type] && (() => {
                             const cfg = DELIVERY_CONFIG[sale.delivery_type!];
+                            const Icon = cfg.icon;
+                            return (
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium ${cfg.color} ${cfg.bg}`}>
+                                <Icon size={11} />{cfg.label}
+                              </span>
+                            );
+                          })()}
+                          {(() => {
+                            const paymentKey = (sale.payment_methods && sale.payment_methods.length > 1) ? 'mixed' : sale.payment_method;
+                            const cfg = PAYMENT_CONFIG[paymentKey];
+                            if (!cfg) return null;
                             const Icon = cfg.icon;
                             return (
                               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium ${cfg.color} ${cfg.bg}`}>

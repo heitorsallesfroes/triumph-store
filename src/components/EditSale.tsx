@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react';
 import { supabase, Supplier, Motoboy } from '../lib/supabase';
-import { X, Save } from 'lucide-react';
-import { calculateCardFee, getFeePercentageLabel, getCardBrandLabel } from '../lib/cardFees';
+import { X, Save, Trash2 } from 'lucide-react';
+import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
 
 interface EditSaleProps {
   saleId: string;
   onClose: () => void;
   onSaved: () => void;
+}
+
+interface PaymentEntry {
+  method: string;
+  card_brand: string;
+  installments: number;
+  amount: number;
 }
 
 interface SaleData {
@@ -23,6 +30,7 @@ interface SaleData {
   motoboy_id: string | null;
   supplier_id: string | null;
   volumes: number;
+  payment_methods?: PaymentEntry[] | null;
 }
 
 interface SaleItem {
@@ -54,8 +62,6 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
   const [saving, setSaving] = useState(false);
 
   const [editData, setEditData] = useState({
-    card_brand: '',
-    installments: 0,
     delivery_fee: 0,
     delivery_cost: 0,
     delivery_type: 'loja_fisica',
@@ -63,6 +69,10 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
     supplier_id: '',
     volumes: 1,
   });
+
+  const [paymentMethods, setPaymentMethods] = useState<PaymentEntry[]>([
+    { method: 'credit_card', card_brand: '', installments: 0, amount: 0 },
+  ]);
 
   useEffect(() => {
     loadSaleData();
@@ -88,8 +98,6 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
       setSuppliers(suppliersResponse.data || []);
       setMotoboys(motoboysResponse.data || []);
       setEditData({
-        card_brand: saleResponse.data.card_brand || '',
-        installments: saleResponse.data.installments,
         delivery_fee: saleResponse.data.delivery_fee || 0,
         delivery_cost: saleResponse.data.delivery_cost || 0,
         delivery_type: saleResponse.data.delivery_type || 'loja_fisica',
@@ -97,12 +105,45 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
         supplier_id: saleResponse.data.supplier_id || '',
         volumes: saleResponse.data.volumes || 1,
       });
+
+      const existing = saleResponse.data.payment_methods;
+      if (existing && Array.isArray(existing) && existing.length > 0) {
+        setPaymentMethods(existing);
+      } else {
+        setPaymentMethods([{
+          method: saleResponse.data.payment_method || 'pix',
+          card_brand: saleResponse.data.card_brand || '',
+          installments: saleResponse.data.installments || 0,
+          amount: 0,
+        }]);
+      }
     } catch (error) {
       console.error('Error loading sale data:', error);
       alert('Erro ao carregar dados da venda');
     } finally {
       setLoading(false);
     }
+  };
+
+  const updatePaymentMethod = (index: number, field: string, value: string | number) => {
+    const updated = [...paymentMethods];
+    updated[index] = { ...updated[index], [field]: value };
+    if (field === 'method' && value !== 'credit_card' && value !== 'debit_card') {
+      updated[index].card_brand = '';
+      updated[index].installments = 0;
+    }
+    if (field === 'method' && value !== 'credit_card') {
+      updated[index].installments = 0;
+    }
+    setPaymentMethods(updated);
+  };
+
+  const addPaymentEntry = () => {
+    setPaymentMethods([...paymentMethods, { method: 'pix', card_brand: '', installments: 0, amount: 0 }]);
+  };
+
+  const removePaymentEntry = (index: number) => {
+    setPaymentMethods(paymentMethods.filter((_, i) => i !== index));
   };
 
   const calculateUpdatedValues = () => {
@@ -116,12 +157,10 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
       return sum + (acc.cost || acc.accessory?.cost || 0) * acc.quantity;
     }, 0);
 
-    const cardFee = calculateCardFee(
-      sale.total_sale_price,
-      sale.payment_method,
-      editData.card_brand || sale.card_brand,
-      editData.installments
-    );
+    const allAmountsZero = paymentMethods.every((pm) => pm.amount === 0);
+    const cardFee = allAmountsZero
+      ? calculateCardFee(sale.total_sale_price, paymentMethods[0]?.method || 'pix', paymentMethods[0]?.card_brand || '', paymentMethods[0]?.installments || 0)
+      : paymentMethods.reduce((sum, pm) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0), 0);
 
     const deliveryFee = editData.delivery_type === 'motoboy' ? editData.delivery_fee : 0;
     const deliveryCost = editData.delivery_type === 'correios' ? editData.delivery_cost : 0;
@@ -142,6 +181,15 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
   const handleSave = async () => {
     if (!sale) return;
 
+    const allAmountsZero = paymentMethods.every((pm) => pm.amount === 0);
+    if (!allAmountsZero) {
+      const totalAllocated = paymentMethods.reduce((s, pm) => s + pm.amount, 0);
+      if (Math.abs(totalAllocated - sale.total_sale_price) > 0.01) {
+        alert(`Total alocado (R$ ${totalAllocated.toFixed(2)}) não bate com o valor da venda (R$ ${sale.total_sale_price.toFixed(2)})`);
+        return;
+      }
+    }
+
     const updated = calculateUpdatedValues();
     if (!updated) return;
 
@@ -150,8 +198,10 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
       const { error } = await supabase
         .from('sales')
         .update({
-          card_brand: editData.card_brand || null,
-          installments: editData.installments,
+          payment_method: paymentMethods[0]?.method || 'pix',
+          card_brand: paymentMethods.find((pm) => pm.method === 'credit_card' || pm.method === 'debit_card')?.card_brand || null,
+          installments: paymentMethods.find((pm) => pm.method === 'credit_card')?.installments || 1,
+          payment_methods: paymentMethods,
           delivery_type: editData.delivery_type,
           delivery_fee: updated.deliveryFee,
           delivery_cost: updated.deliveryCost,
@@ -207,15 +257,9 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
 
         <div className="p-6 space-y-6">
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <div className="text-white font-semibold mb-2">{sale.customer_name}</div>
+            <div className="text-white font-semibold mb-1">{sale.customer_name}</div>
             <div className="text-gray-400 text-sm">
               Valor Total: R$ {sale.total_sale_price.toFixed(2)}
-            </div>
-            <div className="text-gray-400 text-sm">
-              Pagamento: {sale.payment_method === 'pix' && 'PIX'}
-              {sale.payment_method === 'cash' && 'Dinheiro'}
-              {sale.payment_method === 'credit_card' && 'Crédito'}
-              {sale.payment_method === 'debit_card' && 'Débito'}
             </div>
           </div>
 
@@ -235,38 +279,119 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
             </select>
           </div>
 
-          {(sale.payment_method === 'credit_card' || sale.payment_method === 'debit_card') && (
-            <div className="space-y-2">
-              <label className="block text-white font-semibold">Bandeira do Cartão</label>
-              <select
-                value={editData.card_brand}
-                onChange={(e) => setEditData({ ...editData, card_brand: e.target.value })}
-                className="w-full bg-gray-800 text-white rounded-lg px-4 py-3 border border-gray-600 focus:border-orange-500 focus:outline-none"
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-white font-semibold">Formas de Pagamento</label>
+              <button
+                type="button"
+                onClick={addPaymentEntry}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-colors text-sm font-medium"
               >
-                <option value="">Definir depois</option>
-                <option value="visa_mastercard">Visa / Mastercard</option>
-                <option value="elo_amex">Elo / Amex</option>
-              </select>
+                + Adicionar
+              </button>
             </div>
-          )}
 
-          {sale.payment_method === 'credit_card' && (
-            <div className="space-y-2">
-              <label className="block text-white font-semibold">Parcelas</label>
-              <select
-                value={editData.installments}
-                onChange={(e) => setEditData({ ...editData, installments: parseInt(e.target.value) })}
-                className="w-full bg-gray-800 text-white rounded-lg px-4 py-3 border border-gray-600 focus:border-orange-500 focus:outline-none"
-              >
-                <option value="0">Definir depois</option>
-                {editData.card_brand && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
-                  <option key={n} value={n}>
-                    {n}x (Taxa {getFeePercentageLabel('credit_card', editData.card_brand, n)})
-                  </option>
-                ))}
-              </select>
+            <div className="space-y-3">
+              {paymentMethods.map((pm, index) => (
+                <div key={index} className="bg-gray-700 rounded-lg p-3 border border-gray-600 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={pm.method}
+                      onChange={(e) => updatePaymentMethod(index, 'method', e.target.value)}
+                      className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                    >
+                      <option value="pix">PIX (Sem taxa)</option>
+                      <option value="cash">Dinheiro (Sem taxa)</option>
+                      <option value="debit_card">Débito</option>
+                      <option value="credit_card">Crédito</option>
+                    </select>
+
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="Valor (R$)"
+                      value={pm.amount || ''}
+                      onChange={(e) => updatePaymentMethod(index, 'amount', parseFloat(e.target.value) || 0)}
+                      className="w-36 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                    />
+
+                    {paymentMethods.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removePaymentEntry(index)}
+                        className="text-red-400 hover:text-red-300 p-1.5"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+
+                  {(pm.method === 'credit_card' || pm.method === 'debit_card') && (
+                    <div className="flex gap-3">
+                      <select
+                        value={pm.card_brand}
+                        onChange={(e) => updatePaymentMethod(index, 'card_brand', e.target.value)}
+                        className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                      >
+                        <option value="">Bandeira (definir depois)</option>
+                        <option value="visa_mastercard">Visa / Mastercard</option>
+                        <option value="elo_amex">Elo / Amex</option>
+                      </select>
+
+                      {pm.method === 'credit_card' && (
+                        <select
+                          value={pm.installments}
+                          onChange={(e) => updatePaymentMethod(index, 'installments', parseInt(e.target.value))}
+                          className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                        >
+                          <option value="0">Parcelas (definir depois)</option>
+                          {pm.card_brand && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
+                            <option key={n} value={n}>
+                              {n}x ({getFeePercentageLabel('credit_card', pm.card_brand, n)})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+
+                  {(pm.method === 'credit_card' || pm.method === 'debit_card') && pm.amount > 0 && pm.card_brand && (
+                    <div className="text-xs text-red-400">
+                      Taxa: R$ {calculateCardFee(pm.amount, pm.method, pm.card_brand, pm.installments).toFixed(2)} ({getFeePercentageLabel(pm.method, pm.card_brand, pm.installments)})
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-          )}
+
+            {(() => {
+              const totalAllocated = paymentMethods.reduce((s, pm) => s + pm.amount, 0);
+              const remaining = sale.total_sale_price - totalAllocated;
+              const isBalanced = Math.abs(remaining) < 0.01;
+              const hasAmounts = totalAllocated > 0;
+              return (
+                <div className="mt-2 pt-3 border-t border-gray-600 grid grid-cols-3 gap-3 text-sm">
+                  <div>
+                    <div className="text-gray-400 text-xs mb-0.5">Total da Venda</div>
+                    <div className="text-white font-bold">R$ {sale.total_sale_price.toFixed(2)}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-400 text-xs mb-0.5">Alocado</div>
+                    <div className={`font-bold ${!hasAmounts ? 'text-gray-400' : isBalanced ? 'text-green-400' : 'text-yellow-400'}`}>
+                      R$ {totalAllocated.toFixed(2)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-400 text-xs mb-0.5">Falta Alocar</div>
+                    <div className={`font-bold ${!hasAmounts ? 'text-gray-400' : isBalanced ? 'text-green-400' : remaining > 0 ? 'text-yellow-400' : 'text-red-400'}`}>
+                      R$ {remaining.toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
 
           <div className="space-y-2">
             <label className="block text-white font-semibold">Tipo de Entrega</label>

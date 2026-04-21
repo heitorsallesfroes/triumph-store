@@ -4,7 +4,10 @@
       "Bash(npx tsc *)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(git -C \"C:\\\\Users\\\\Heitor Salles\\\\triumph-store\" add .)",
+      "Bash(git -C \"C:\\\\Users\\\\Heitor Salles\\\\triumph-store\" commit -m \"feat: múltiplas formas de pagamento, badge pagamento no histórico\")",
+      "Bash(git -C \"C:\\\\Users\\\\Heitor Salles\\\\triumph-store\" push)"
     ]
   }
 }
