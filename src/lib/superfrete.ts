@@ -20,6 +20,7 @@ export interface GenerateShippingLabelParams {
   state: string;
   zip_code: string;
   items: SaleItem[];
+  invoice_key?: string;
 }
 
 export interface ShippingLabelResult {
@@ -94,6 +95,7 @@ export async function generateShippingLabel(
         insurance_value: 150,
         non_commercial: true,
       },
+      ...(params.invoice_key ? { invoice: { key: params.invoice_key } } : {}),
       platform: "TriumphStore",
     };
 

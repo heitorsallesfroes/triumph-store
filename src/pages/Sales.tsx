@@ -1031,6 +1031,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                   <input
                     type="text"
                     placeholder="Complemento (opcional)"
+                    maxLength={18}
                     value={formData.address_complement}
                     onChange={(e) => setFormData({ ...formData, address_complement: e.target.value })}
                     className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"

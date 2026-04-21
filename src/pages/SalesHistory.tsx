@@ -366,6 +366,7 @@ export default function SalesHistory() {
         state: sale.state,
         zip_code: sale.zip_code,
         items,
+        invoice_key: sale.nfe_chave || undefined,
       });
 
       if (!result.success) { alert(result.error || 'Erro ao gerar etiqueta'); return; }
