@@ -4,7 +4,7 @@ import { getTodayInBrazil } from '../lib/dateUtils';
 import { calculateCardFee } from '../lib/cardFees';
 import {
   TrendingUp, DollarSign, CreditCard, Package, ShoppingCart,
-  Truck, BarChart3, Zap, Calendar, Bike, MapPin, Watch,
+  Truck, BarChart3, Zap, Calendar, Bike, MapPin, Watch, Target, Eye, X,
 } from 'lucide-react';
 
 type Period = 'today' | 'week' | 'month' | 'custom';
@@ -55,7 +55,7 @@ const EMPTY_SUMMARY: Summary = {
 };
 
 export default function ResumoVendas() {
-  const [period, setPeriod] = useState<Period>('month');
+  const [period, setPeriod] = useState<Period>('today');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
@@ -69,6 +69,7 @@ export default function ResumoVendas() {
     debit:  { count: 0, bruto: 0, fees: 0, liquid: 0 },
   });
   const [loading, setLoading] = useState(true);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   useEffect(() => {
     if (period !== 'custom') loadData();
@@ -290,34 +291,112 @@ export default function ResumoVendas() {
             {summary.totalSales} {summary.totalSales === 1 ? 'venda' : 'vendas'} no período
           </p>
 
-          {/* Cards linha 1 */}
+          {/* Hero row — Faturamento, Gasto em Ads, ROAS */}
+          {(() => {
+            const roas = summary.totalAdSpend > 0 ? summary.totalBruto / summary.totalAdSpend : null;
+            const roasCfg = roas !== null ? getRoasConfig(roas) : null;
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                <HeroCard label="Faturamento Bruto" value={fmt(summary.totalBruto)} icon={TrendingUp} accent="green" sub={`${summary.totalSales} vendas`} />
+                <HeroCard
+                  label="Gasto em Ads"
+                  value={fmt(summary.totalAdSpend)}
+                  icon={BarChart3}
+                  accent="red"
+                  negative
+                  action={
+                    <button
+                      onClick={() => setShowShareModal(true)}
+                      className="p-1.5 rounded-lg bg-gray-700/80 hover:bg-gray-600 text-gray-400 hover:text-white transition-colors"
+                      title="Ver resumo para compartilhar"
+                    >
+                      <Eye size={14} />
+                    </button>
+                  }
+                />
+                <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 border-l-4 border-l-orange-500">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Target size={18} className="text-orange-400" />
+                    <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">ROAS</p>
+                  </div>
+                  {roas !== null ? (
+                    <>
+                      <p className={`text-3xl font-bold ${roasCfg!.color}`}>{roas.toFixed(2)}x</p>
+                      <p className={`text-xs mt-1 font-medium ${roasCfg!.color}`}>{roasCfg!.label}</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-3xl font-bold text-gray-500">—</p>
+                      <p className="text-xs text-gray-600 mt-1">Sem gasto em ads</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Cards métricas linha 1 */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-            <FinCard label="Faturamento Bruto"      value={fmt(summary.totalBruto)}       icon={TrendingUp} accent="orange" sub={`${summary.totalSales} vendas`} />
-            <FinCard label="Valor Líquido Recebido" value={fmt(summary.totalLiquido)}     icon={DollarSign} accent="green"  sub="Após taxas de cartão" />
+            <FinCard label="Valor Líquido Recebido" value={fmt(summary.totalLiquido)}     icon={DollarSign} accent="green" sub="Após taxas de cartão" />
             <FinCard label="Taxas de Cartão"        value={fmt(summary.totalCardFee)}     icon={CreditCard} accent="red"   negative />
             <FinCard label="Custo dos Produtos"     value={fmt(summary.totalProductCost)} icon={Package}    accent="red"   negative sub="Produtos + acessórios" />
+            <FinCard label="Custo de Entregas"      value={fmt(summary.totalDeliveryCost)} icon={Truck}     accent="red"   negative sub="Motoboy + Correios" />
           </div>
 
-          {/* Cards linha 2 — contagem e ticket */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-            <FinCard label="Total de Vendas"  value={String(summary.totalSales)}   icon={ShoppingCart} accent="blue" sub="Vendas no período" />
-            <FinCard label="Ticket Médio"     value={fmt(summary.averageTicket)}   icon={TrendingUp}   accent="orange" sub="Faturamento ÷ vendas" />
-          </div>
-
-          {/* Cards linha 3 — custos e lucro */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-            <FinCard label="Custo de Entregas"   value={fmt(summary.totalDeliveryCost)} icon={Truck}     accent="red" negative sub="Motoboy + Correios" />
-            <FinCard label="Investimento em Ads" value={fmt(summary.totalAdSpend)}      icon={BarChart3} accent="red" negative />
-            <div className={`rounded-xl p-5 border-2 ${summary.lucroFinal >= 0 ? 'border-green-500 bg-green-500/5' : 'border-red-500 bg-red-500/5'}`}>
-              <div className="flex items-center gap-2 mb-3">
-                <Zap size={16} className={summary.lucroFinal >= 0 ? 'text-green-400' : 'text-red-400'} />
-                <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Lucro Final</p>
+          {/* Cards métricas linha 2 — contagem, ticket, CPV, ROI */}
+          {(() => {
+            const cpv = summary.totalSales > 0 ? summary.totalAdSpend / summary.totalSales : null;
+            const roi = summary.totalAdSpend > 0 ? (summary.lucroFinal / summary.totalAdSpend) * 100 : null;
+            const cpvCfg = cpv !== null ? getCpvConfig(cpv) : null;
+            const roiCfg = roi !== null ? getRoiConfig(roi) : null;
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                <FinCard label="Total de Vendas" value={String(summary.totalSales)}  icon={ShoppingCart} accent="blue"   sub="Vendas no período" />
+                <FinCard label="Ticket Médio"    value={fmt(summary.averageTicket)}  icon={TrendingUp}   accent="orange" sub="Faturamento ÷ vendas" />
+                <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 border-l-4 border-l-blue-500">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ShoppingCart size={14} className="text-blue-400" />
+                    <p className="text-xs text-gray-400 font-medium">CPV</p>
+                  </div>
+                  {cpv !== null && summary.totalAdSpend > 0 ? (
+                    <>
+                      <p className={`text-xl font-bold ${cpvCfg!.color}`}>R$ {cpv.toFixed(2)}</p>
+                      {cpvCfg!.label && <p className={`text-xs mt-1 font-medium ${cpvCfg!.color}`}>{cpvCfg!.label}</p>}
+                    </>
+                  ) : (
+                    <p className="text-xl font-bold text-gray-500">—</p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">Ads ÷ vendas</p>
+                </div>
+                <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 border-l-4 border-l-purple-500">
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingUp size={14} className="text-purple-400" />
+                    <p className="text-xs text-gray-400 font-medium">ROI</p>
+                  </div>
+                  {roi !== null ? (
+                    <>
+                      <p className={`text-xl font-bold ${roiCfg!.color}`}>{roi.toFixed(0)}%</p>
+                      <p className={`text-xs mt-1 font-medium ${roiCfg!.color}`}>{roiCfg!.label}</p>
+                    </>
+                  ) : (
+                    <p className="text-xl font-bold text-gray-500">—</p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">Lucro ÷ ads</p>
+                </div>
               </div>
-              <p className={`text-3xl font-bold ${summary.lucroFinal >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {fmt(summary.lucroFinal)}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">Líquido − produtos − entregas − ads</p>
+            );
+          })()}
+
+          {/* Lucro Final — destaque */}
+          <div className={`rounded-xl p-5 border-2 mb-6 ${summary.lucroFinal >= 0 ? 'border-green-500 bg-green-500/5' : 'border-red-500 bg-red-500/5'}`}>
+            <div className="flex items-center gap-2 mb-3">
+              <Zap size={16} className={summary.lucroFinal >= 0 ? 'text-green-400' : 'text-red-400'} />
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Lucro Final</p>
             </div>
+            <p className={`text-3xl font-bold ${summary.lucroFinal >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {fmt(summary.lucroFinal)}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">Líquido − produtos − entregas − ads</p>
           </div>
 
           {/* Detalhamento P&L */}
@@ -541,6 +620,90 @@ export default function ResumoVendas() {
           </Section>
         </>
       )}
+      {showShareModal && (() => {
+        const roas = summary.totalAdSpend > 0 ? summary.totalBruto / summary.totalAdSpend : null;
+        const roasCfg = roas !== null ? getRoasConfig(roas) : null;
+        const today = getTodayInBrazil();
+        const [year, month, day] = today.split('-');
+        const dateLabel = `${day}/${month}/${year}`;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ background: 'rgba(0,0,0,0.85)' }}
+            onClick={() => setShowShareModal(false)}
+          >
+            <div
+              className="relative w-full max-w-sm rounded-2xl overflow-hidden"
+              style={{ background: '#111118', border: '1px solid #2a2a3a' }}
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Gradiente decorativo topo */}
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-500 via-yellow-400 to-orange-600" />
+
+              {/* Botão fechar */}
+              <button
+                onClick={() => setShowShareModal(false)}
+                className="absolute top-4 right-4 p-1.5 rounded-full text-gray-500 hover:text-white hover:bg-white/10 transition-colors z-10"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="px-8 pt-10 pb-8">
+                {/* Header */}
+                <div className="text-center mb-8">
+                  <p className="text-xs font-bold tracking-[0.25em] uppercase text-orange-400 mb-1">Triumph Store</p>
+                  <p className="text-xs text-gray-600">{dateLabel}</p>
+                  <div className="mt-4 h-px bg-gradient-to-r from-transparent via-gray-700 to-transparent" />
+                </div>
+
+                {/* Métricas */}
+                <div className="space-y-4">
+                  {/* Faturamento */}
+                  <div
+                    className="rounded-xl px-5 py-4"
+                    style={{ background: '#0d1a0d', border: '1px solid #1a3a1a' }}
+                  >
+                    <p className="text-xs font-semibold text-green-600 uppercase tracking-widest mb-1">🚀 Faturamento</p>
+                    <p className="text-3xl font-black text-green-400 tracking-tight">{fmt(summary.totalBruto)}</p>
+                    <p className="text-xs text-green-800 mt-1">{summary.totalSales} {summary.totalSales === 1 ? 'venda' : 'vendas'} no período</p>
+                  </div>
+
+                  {/* Investido em Ads */}
+                  <div
+                    className="rounded-xl px-5 py-4"
+                    style={{ background: '#1a0d0d', border: '1px solid #3a1a1a' }}
+                  >
+                    <p className="text-xs font-semibold text-red-500 uppercase tracking-widest mb-1">💸 Investido em Ads</p>
+                    <p className="text-3xl font-black text-red-400 tracking-tight">{fmt(summary.totalAdSpend)}</p>
+                  </div>
+
+                  {/* ROAS */}
+                  <div
+                    className="rounded-xl px-5 py-4"
+                    style={{ background: '#1a1200', border: '1px solid #3a2a00' }}
+                  >
+                    <p className="text-xs font-semibold text-orange-500 uppercase tracking-widest mb-1">🎯 ROAS</p>
+                    {roas !== null ? (
+                      <div className="flex items-baseline gap-3">
+                        <p className={`text-3xl font-black tracking-tight ${roasCfg!.color}`}>{roas.toFixed(2)}x</p>
+                        <span className={`text-sm font-semibold ${roasCfg!.color}`}>{roasCfg!.label}</span>
+                      </div>
+                    ) : (
+                      <p className="text-3xl font-black text-gray-600">—</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Rodapé */}
+                <div className="mt-8">
+                  <div className="h-px bg-gradient-to-r from-transparent via-gray-700 to-transparent mb-4" />
+                  <p className="text-center text-xs text-gray-700 tracking-widest uppercase">triumphstore.com.br</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -616,4 +779,53 @@ function PLRow({ label, value, color, bold }: { label: string; value: string; co
       <span className={`text-sm font-mono ${color}`}>{value}</span>
     </div>
   );
+}
+
+function HeroCard({ label, value, icon: Icon, accent, negative, sub, action }: {
+  label: string; value: string; icon: React.ElementType;
+  accent: 'green' | 'red' | 'orange'; negative?: boolean; sub?: string;
+  action?: React.ReactNode;
+}) {
+  const c = {
+    green:  { text: 'text-green-400',  border: 'border-l-green-500'  },
+    red:    { text: 'text-red-400',    border: 'border-l-red-500'    },
+    orange: { text: 'text-orange-400', border: 'border-l-orange-500' },
+  }[accent];
+  return (
+    <div className={`relative bg-gray-800 rounded-xl p-6 border border-gray-700 border-l-4 ${c.border}`}>
+      {action && <div className="absolute top-3 right-3">{action}</div>}
+      <div className="flex items-center gap-2 mb-3">
+        <Icon size={18} className={c.text} />
+        <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">{label}</p>
+      </div>
+      <p className={`text-3xl font-bold ${c.text}`}>
+        {negative && <span className="text-lg font-normal mr-0.5">−</span>}
+        {value}
+      </p>
+      {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+function getRoasConfig(roas: number): { color: string; label: string } {
+  if (roas > 7)  return { color: 'text-emerald-400', label: 'Excelente 🚀' };
+  if (roas >= 6) return { color: 'text-green-400',   label: 'Ótimo ✅' };
+  if (roas >= 5) return { color: 'text-green-300',   label: 'Bom' };
+  if (roas >= 4) return { color: 'text-yellow-400',  label: 'OK' };
+  return               { color: 'text-red-400',     label: 'Ruim ⚠️' };
+}
+
+function getCpvConfig(cpv: number): { color: string; label: string } {
+  if (cpv === 0)  return { color: 'text-gray-400',    label: '' };
+  if (cpv < 40)   return { color: 'text-emerald-400', label: 'Excelente 🚀' };
+  if (cpv < 65)   return { color: 'text-green-400',   label: 'Bom ✅' };
+  if (cpv < 75)   return { color: 'text-yellow-400',  label: 'OK' };
+  return                 { color: 'text-red-400',     label: 'Ruim ⚠️' };
+}
+
+function getRoiConfig(roi: number): { color: string; label: string } {
+  if (roi > 200)  return { color: 'text-emerald-400', label: 'Excelente 🚀' };
+  if (roi >= 100) return { color: 'text-green-400',   label: 'Ótimo ✅' };
+  if (roi >= 50)  return { color: 'text-yellow-400',  label: 'OK' };
+  return                 { color: 'text-red-400',     label: 'Ruim ⚠️' };
 }

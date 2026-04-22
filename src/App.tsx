@@ -44,7 +44,7 @@ function App() {
       case 'stock':
         return <StockControl />;
       case 'sales':
-        return <Sales triggerFastSale={triggerFastSale} />;
+        return <Sales triggerFastSale={triggerFastSale} onNavigate={setCurrentPage} />;
       case 'small-sales':
         return <SmallSales />;
       case 'history':

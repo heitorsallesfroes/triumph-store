@@ -30,6 +30,7 @@ interface SaleData {
   supplier_id: string | null;
   volumes: number;
   manual_items?: Array<{ name: string; price: number; quantity: number }> | null;
+  payment_status?: string | null;
 }
 
 interface SaleItem {
@@ -265,7 +266,10 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
   };
 
   const handlePrint = () => {
+    const originalTitle = document.title;
+    document.title = `Recibo de Compra - ${sale?.customer_name || 'Cliente'}`;
     window.print();
+    document.title = originalTitle;
   };
 
   const getPaymentMethodText = (method: string, brand: string | null, installments: number) => {
@@ -275,8 +279,10 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
       return 'Débito';
     }
     if (method === 'credit_card') {
-      const installmentText = installments > 1 ? ` ${installments}x` : '';
-      return `Crédito${installmentText}`;
+      return 'Crédito';
+    }
+    if (method === 'payment_link') {
+      return 'Link de Pagamento';
     }
     return method;
   };
@@ -328,15 +334,13 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
 
           <div style={{ marginTop: '8px' }}>
             <p style={{ fontSize: '10px', color: '#555', marginBottom: '4px' }}>Status do pagamento:</p>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span className="checkbox"></span>
-                <span style={{ fontSize: '11px', fontWeight: '500', color: '#000' }}>Pago</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span className="checkbox"></span>
-                <span style={{ fontSize: '11px', fontWeight: '500', color: '#000' }}>A cobrar</span>
-              </div>
+            <div style={{ display: 'flex', gap: '16px' }}>
+              <span style={{ fontSize: '11px', fontWeight: '500', color: '#000', fontFamily: 'monospace' }}>
+                {sale?.payment_status === 'pago' ? '[X]' : '[ ]'} Pago
+              </span>
+              <span style={{ fontSize: '11px', fontWeight: '500', color: '#000', fontFamily: 'monospace' }}>
+                {sale?.payment_status === 'a_cobrar' ? '[X]' : '[ ]'} A cobrar
+              </span>
             </div>
           </div>
         </div>

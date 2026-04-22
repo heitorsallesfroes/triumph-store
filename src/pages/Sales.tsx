@@ -38,6 +38,7 @@ interface SaleAccessoryItem {
 interface ManualItem {
   name: string;
   price: number;
+  cost: number;
   quantity: number;
 }
 
@@ -50,9 +51,10 @@ interface PaymentEntry {
 
 interface SalesProps {
   triggerFastSale?: number;
+  onNavigate?: (page: string) => void;
 }
 
-export default function Sales({ triggerFastSale }: SalesProps) {
+export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
   console.log('Nova Venda loaded');
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -96,8 +98,10 @@ export default function Sales({ triggerFastSale }: SalesProps) {
   const [saleProducts, setSaleProducts] = useState<SaleProduct[]>([]);
   const [saleAccessories, setSaleAccessories] = useState<SaleAccessoryItem[]>([]);
   const [manualItems, setManualItems] = useState<ManualItem[]>([]);
+  const [paymentStatus, setPaymentStatus] = useState<'pago' | 'a_cobrar'>('a_cobrar');
+  const [perProductSupplierIds, setPerProductSupplierIds] = useState<Record<string, string>>({});
   const [paymentMethods, setPaymentMethods] = useState<PaymentEntry[]>([
-    { method: 'credit_card', card_brand: '', installments: 0, amount: 0 },
+    { method: 'credit_card', card_brand: 'visa_mastercard', installments: 10, amount: 0 },
   ]);
 
   useEffect(() => {
@@ -255,7 +259,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
   };
 
   const addManualItem = (name: string) => {
-    setManualItems([...manualItems, { name, price: 0, quantity: 1 }]);
+    setManualItems([...manualItems, { name, price: 0, cost: 0, quantity: 1 }]);
   };
 
   const updateManualItem = (index: number, field: string, value: string | number) => {
@@ -268,14 +272,22 @@ export default function Sales({ triggerFastSale }: SalesProps) {
     setManualItems(manualItems.filter((_, i) => i !== index));
   };
 
+  const saveProductCost = async (productId: string, cost: number) => {
+    try {
+      await supabase.from('products').update({ cost }).eq('id', productId);
+    } catch (error) {
+      console.error('Error saving product cost:', error);
+    }
+  };
+
   const updatePaymentMethod = (index: number, field: string, value: string | number) => {
     const updated = [...paymentMethods];
     updated[index] = { ...updated[index], [field]: value };
-    if (field === 'method' && value !== 'credit_card' && value !== 'debit_card') {
+    if (field === 'method' && value !== 'credit_card' && value !== 'debit_card' && value !== 'payment_link') {
       updated[index].card_brand = '';
       updated[index].installments = 0;
     }
-    if (field === 'method' && value !== 'credit_card') {
+    if (field === 'method' && value !== 'credit_card' && value !== 'payment_link') {
       updated[index].installments = 0;
     }
     setPaymentMethods(updated);
@@ -299,6 +311,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
       const totalAccessoryCost = (saleAccessories || []).reduce((sum, sa) => {
         return sum + (sa.cost || 0) * (sa.quantity || 0);
       }, 0);
+      const totalManualCost = (manualItems || []).reduce((sum, mi) => sum + (mi.cost || 0) * (mi.quantity || 0), 0);
 
       const totalWithManual = totalSalePrice + totalManualPrice;
 
@@ -309,7 +322,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
 
       const deliveryFee = formData.delivery_type === 'motoboy' ? (formData.delivery_fee || 0) : 0;
       const deliveryCost = formData.delivery_type === 'correios' ? (formData.delivery_cost || 0) : 0;
-      const totalCost = totalProductCost + totalAccessoryCost + deliveryFee + deliveryCost;
+      const totalCost = totalProductCost + totalAccessoryCost + totalManualCost + deliveryFee + deliveryCost;
       const netReceived = totalWithManual - cardFee;
       const profit = netReceived - totalCost;
 
@@ -349,13 +362,21 @@ export default function Sales({ triggerFastSale }: SalesProps) {
     }
 
     for (const mi of manualItems) {
-      if (mi.price <= 0) {
+      if (mi.price < 0) {
         alert(`Por favor, insira o preço para o item "${mi.name}"`);
         return;
       }
     }
 
-    if (supplierSearch.trim() === '') {
+    const smartwatchItems = saleProducts.filter(sp => (sp.product as any)?.category === 'smartwatch');
+    const isMultiSupplier = smartwatchItems.length >= 2;
+
+    if (isMultiSupplier) {
+      if (smartwatchItems.some(sp => !perProductSupplierIds[sp.product_id])) {
+        alert('Por favor, selecione o fornecedor para cada smartwatch');
+        return;
+      }
+    } else if (supplierSearch.trim() === '') {
       alert('Por favor, informe o fornecedor');
       return;
     }
@@ -416,7 +437,9 @@ export default function Sales({ triggerFastSale }: SalesProps) {
       // Auto-create supplier if it doesn't exist
       let supplierId = formData.supplier_id;
 
-      if (!supplierId && supplierSearch.trim()) {
+      if (isMultiSupplier) {
+        supplierId = perProductSupplierIds[smartwatchItems[0]?.product_id] || '';
+      } else if (!supplierId && supplierSearch.trim()) {
         const supplierName = supplierSearch.trim();
         const existingSupplier = suppliers.find(
           (s) => s.name.toLowerCase() === supplierName.toLowerCase()
@@ -510,8 +533,8 @@ export default function Sales({ triggerFastSale }: SalesProps) {
             state: formData.state || null,
             zip_code: formData.zip_code || null,
             payment_method: paymentMethods[0]?.method || 'pix',
-            card_brand: paymentMethods.find((pm) => pm.method === 'credit_card' || pm.method === 'debit_card')?.card_brand || null,
-            installments: paymentMethods.find((pm) => pm.method === 'credit_card')?.installments || 1,
+            card_brand: paymentMethods.find((pm) => pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link')?.card_brand || null,
+            installments: paymentMethods.find((pm) => pm.method === 'credit_card' || pm.method === 'payment_link')?.installments || 1,
             payment_methods: paymentMethods,
             delivery_type: formData.delivery_type,
             motoboy_id: formData.delivery_type === 'motoboy' ? (formData.motoboy_id || null) : null,
@@ -525,6 +548,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
             profit: totals.profit,
             volumes: formData.volumes,
             manual_items: manualItems.length > 0 ? manualItems : null,
+            payment_status: paymentStatus,
             status: 'em_separacao',
             sale_date: new Date().toISOString(),
           },
@@ -540,6 +564,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
         quantity: sp.quantity,
         unit_price: sp.unit_price,
         total_price: sp.unit_price * sp.quantity,
+        ...(isMultiSupplier ? { supplier_id: perProductSupplierIds[sp.product_id] || null } : {}),
       }));
 
       const { error: itemsError } = await supabase.from('sale_items').insert(saleItemsData);
@@ -558,6 +583,23 @@ export default function Sales({ triggerFastSale }: SalesProps) {
         const { error: accError } = await supabase.from('sale_accessories').insert(accessoriesData);
 
         if (accError) throw accError;
+      }
+
+      for (const mi of manualItems) {
+        const modelName = mi.name.trim();
+        const existingProduct = products.find(
+          (p) => (p as any).model?.toLowerCase() === modelName.toLowerCase() && (p as any).category === 'acessorio'
+        );
+
+        if (!existingProduct) {
+          await supabase.from('products').insert([{
+            category: 'acessorio',
+            model: modelName,
+            cost: mi.cost,
+            price: mi.price,
+            current_stock: 0,
+          }]);
+        }
       }
 
      for (const sp of saleProducts) {
@@ -586,7 +628,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
       }
       alert('Venda registrada com sucesso!');
       resetForm();
-      loadData();
+      onNavigate?.('history');
     } catch (error: any) {
       console.error('Error saving sale:', error);
       const errorMessage = error?.message || 'Erro desconhecido';
@@ -662,7 +704,9 @@ export default function Sales({ triggerFastSale }: SalesProps) {
     setSaleProducts([]);
     setSaleAccessories([]);
     setManualItems([]);
-    setPaymentMethods([{ method: 'credit_card', card_brand: '', installments: 0, amount: 0 }]);
+    setPerProductSupplierIds({});
+    setPaymentStatus('a_cobrar');
+    setPaymentMethods([{ method: 'credit_card', card_brand: 'visa_mastercard', installments: 10, amount: 0 }]);
     setSupplierSearch('');
     setCitySearch('');
     setNeighborhoodSearch('');
@@ -685,6 +729,9 @@ export default function Sales({ triggerFastSale }: SalesProps) {
       </div>
     );
   }
+
+  const smartwatchItemsForUI = saleProducts.filter(sp => (sp.product as any)?.category === 'smartwatch');
+  const isMultiSupplierUI = smartwatchItemsForUI.length >= 2;
 
   let totals;
   try {
@@ -773,6 +820,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                         min="0"
                         value={sp.unit_cost}
                         onChange={(e) => updateProduct(index, 'unit_cost', parseFloat(e.target.value) || 0)}
+                        onBlur={(e) => saveProductCost(sp.product_id, parseFloat(e.target.value) || 0)}
                         className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
@@ -878,7 +926,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
               {manualItems.map((mi, index) => (
                 <div key={index} className="bg-gray-700 rounded-lg p-4 border border-gray-600">
                   <div className="grid grid-cols-12 gap-4 items-center">
-                    <div className="col-span-5">
+                    <div className="col-span-4">
                       <div className="text-white font-medium">{mi.name}</div>
                       <div className="text-gray-400 text-xs">Item personalizado</div>
                     </div>
@@ -895,8 +943,20 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                       />
                     </div>
 
-                    <div className="col-span-3">
-                      <label className="block text-xs text-gray-400 mb-1">Preço (R$)</label>
+                    <div className="col-span-2">
+                      <label className="block text-xs text-gray-400 mb-1">Custo (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={mi.cost}
+                        onChange={(e) => updateManualItem(index, 'cost', parseFloat(e.target.value) || 0)}
+                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="col-span-2">
+                      <label className="block text-xs text-gray-400 mb-1">Preço Venda (R$)</label>
                       <input
                         type="number"
                         step="0.01"
@@ -1087,20 +1147,44 @@ export default function Sales({ triggerFastSale }: SalesProps) {
               </div>
 
 
-              <AutocompleteInput
-                value={supplierSearch}
-                onChange={(value) => {
-                  setSupplierSearch(value);
-                  setFormData({ ...formData, supplier_id: '' });
-                }}
-                onSelect={(supplier) => {
-                  setFormData({ ...formData, supplier_id: supplier.id });
-                }}
-                items={suppliers}
-                placeholder="Selecionar fornecedor"
-                required
-                className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
-              />
+              {isMultiSupplierUI ? (
+                <div className="space-y-2">
+                  <label className="block text-xs text-gray-400">Fornecedor por Smartwatch</label>
+                  {smartwatchItemsForUI.map(sp => (
+                    <div key={sp.product_id} className="flex items-center gap-2">
+                      <span className="text-white text-sm flex-1 truncate">
+                        {sp.product?.model} {(sp.product as any)?.color}
+                      </span>
+                      <select
+                        value={perProductSupplierIds[sp.product_id] || ''}
+                        onChange={(e) => setPerProductSupplierIds(prev => ({ ...prev, [sp.product_id]: e.target.value }))}
+                        className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                        required
+                      >
+                        <option value="">Selecionar fornecedor</option>
+                        {suppliers.map(s => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <AutocompleteInput
+                  value={supplierSearch}
+                  onChange={(value) => {
+                    setSupplierSearch(value);
+                    setFormData({ ...formData, supplier_id: '' });
+                  }}
+                  onSelect={(supplier) => {
+                    setFormData({ ...formData, supplier_id: supplier.id });
+                  }}
+                  items={suppliers}
+                  placeholder="Selecionar fornecedor"
+                  required
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                />
+              )}
             </div>
           </div>
 
@@ -1129,6 +1213,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                       <option value="cash">Dinheiro (Sem taxa)</option>
                       <option value="debit_card">Débito</option>
                       <option value="credit_card">Crédito</option>
+                      <option value="payment_link">Link de Pagamento</option>
                     </select>
 
                     <input
@@ -1152,7 +1237,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                     )}
                   </div>
 
-                  {(pm.method === 'credit_card' || pm.method === 'debit_card') && (
+                  {(pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link') && (
                     <div className="flex gap-3">
                       <select
                         value={pm.card_brand}
@@ -1164,7 +1249,7 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                         <option value="elo_amex">Elo / Amex</option>
                       </select>
 
-                      {pm.method === 'credit_card' && (
+                      {(pm.method === 'credit_card' || pm.method === 'payment_link') && (
                         <select
                           value={pm.installments}
                           onChange={(e) => updatePaymentMethod(index, 'installments', parseInt(e.target.value))}
@@ -1181,13 +1266,41 @@ export default function Sales({ triggerFastSale }: SalesProps) {
                     </div>
                   )}
 
-                  {(pm.method === 'credit_card' || pm.method === 'debit_card') && pm.amount > 0 && pm.card_brand && (
+                  {(pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link') && pm.amount > 0 && pm.card_brand && (
                     <div className="text-xs text-red-400">
                       Taxa: R$ {calculateCardFee(pm.amount, pm.method, pm.card_brand, pm.installments).toFixed(2)} ({getFeePercentageLabel(pm.method, pm.card_brand, pm.installments)})
                     </div>
                   )}
                 </div>
               ))}
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-gray-600">
+              <div className="text-xs text-gray-400 mb-2">Status do Pagamento</div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPaymentStatus('pago')}
+                  className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                    paymentStatus === 'pago'
+                      ? 'bg-green-500 text-white'
+                      : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                  }`}
+                >
+                  Pago
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentStatus('a_cobrar')}
+                  className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                    paymentStatus === 'a_cobrar'
+                      ? 'bg-yellow-500 text-white'
+                      : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                  }`}
+                >
+                  A Cobrar
+                </button>
+              </div>
             </div>
 
             {(() => {

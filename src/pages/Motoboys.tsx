@@ -32,7 +32,7 @@ export default function Motoboys() {
   const [showForm, setShowForm] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState<string | null>(null);
   const [editingMotoboy, setEditingMotoboy] = useState<Motoboy | null>(null);
-  const [selectedPeriod, setSelectedPeriod] = useState<TimePeriod>('month');
+  const [selectedPeriod, setSelectedPeriod] = useState<TimePeriod>('today');
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [formData, setFormData] = useState({ name: '' });

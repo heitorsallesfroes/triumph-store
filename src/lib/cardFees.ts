@@ -48,7 +48,7 @@ export function getCardFeeRate(
     return VISA_MASTERCARD_FEES.debit;
   }
 
-  if (paymentMethod === 'credit_card' && installments > 0) {
+  if ((paymentMethod === 'credit_card' || paymentMethod === 'payment_link') && installments > 0) {
     const numInstallments = Math.min(Math.max(installments, 1), 12) as keyof typeof VISA_MASTERCARD_FEES.credit;
 
     if (cardBrand === 'elo_amex') {

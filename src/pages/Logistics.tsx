@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Package, Truck, CheckCircle, Calendar, Bike, CreditCard } from 'lucide-react';
+import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard } from 'lucide-react';
 import { getTodayInBrazil, formatDateDisplay } from '../lib/dateUtils';
 
 interface Sale {
@@ -17,7 +17,7 @@ interface Sale {
   products: Array<{ model: string; color: string }>;
 }
 
-type LogisticsColumn = 'para_embalar' | 'saiu_entrega' | 'concluido';
+type LogisticsColumn = 'para_embalar' | 'embalado' | 'saiu_entrega' | 'concluido';
 
 export default function Logistics() {
   const [sales, setSales] = useState<Sale[]>([]);
@@ -46,7 +46,7 @@ export default function Logistics() {
       const { data: salesData, error: salesError } = await supabase
         .from('sales')
         .select('*, sale_items(quantity, product_id, products(model, color, category)), motoboys(name)')
-        .in('status', ['em_separacao', 'em_rota', 'finalizado'])
+        .in('status', ['em_separacao', 'embalado', 'em_rota', 'finalizado'])
         .eq('delivery_type', 'motoboy')
         .gte('sale_date', `${today}T00:00:00`)
         .lte('sale_date', `${today}T23:59:59`)
@@ -80,6 +80,7 @@ export default function Logistics() {
 
   const getLogisticsColumn = (status: string): LogisticsColumn => {
     if (status === 'em_separacao') return 'para_embalar';
+    if (status === 'embalado') return 'embalado';
     if (status === 'em_rota') return 'saiu_entrega';
     if (status === 'finalizado') return 'concluido';
     return 'para_embalar';
@@ -87,6 +88,7 @@ export default function Logistics() {
 
   const getSalesStatus = (column: LogisticsColumn): string => {
     if (column === 'para_embalar') return 'em_separacao';
+    if (column === 'embalado') return 'embalado';
     if (column === 'saiu_entrega') return 'em_rota';
     if (column === 'concluido') return 'finalizado';
     return 'em_separacao';
@@ -149,6 +151,7 @@ export default function Logistics() {
   }
 
   const paraEmbalar = sales.filter(s => getLogisticsColumn(s.status) === 'para_embalar');
+  const embalado = sales.filter(s => getLogisticsColumn(s.status) === 'embalado');
   const saiuEntrega = sales.filter(s => getLogisticsColumn(s.status) === 'saiu_entrega');
   const concluido = sales.filter(s => getLogisticsColumn(s.status) === 'concluido');
 
@@ -162,13 +165,24 @@ export default function Logistics() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <KanbanColumn
           title="Para Embalar"
           icon={Package}
           color="orange"
           sales={paraEmbalar}
           column="para_embalar"
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          formatPaymentMethod={formatPaymentMethod}
+        />
+        <KanbanColumn
+          title="Embalado"
+          icon={CheckSquare}
+          color="yellow"
+          sales={embalado}
+          column="embalado"
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
@@ -226,12 +240,14 @@ function KanbanColumn({
 }: KanbanColumnProps) {
   const colorClasses = {
     orange: 'bg-orange-500/20 border-orange-500 text-orange-500',
+    yellow: 'bg-yellow-500/20 border-yellow-500 text-yellow-500',
     blue: 'bg-blue-500/20 border-blue-500 text-blue-500',
     green: 'bg-green-500/20 border-green-500 text-green-500',
   };
 
   const bgClasses = {
     orange: 'bg-orange-500',
+    yellow: 'bg-yellow-500',
     blue: 'bg-blue-500',
     green: 'bg-green-500',
   };

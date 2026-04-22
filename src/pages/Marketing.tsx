@@ -33,7 +33,7 @@ export default function Marketing() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({ date: '', amount: '' });
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('month');
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [fbMetrics, setFbMetrics] = useState<FBMetrics | null>(null);
@@ -325,17 +325,20 @@ export default function Marketing() {
               <div key={i} className="bg-gray-800 rounded-xl p-6 border border-gray-700">
                 <h3 className="text-base font-semibold text-white mb-4">{chart.title}</h3>
                 {dailyMetrics.length === 0 ? <div className="text-gray-400 text-center py-8">Sem dados para o período</div> :
+                  timeFilter === 'today' ? <div className="text-gray-500 text-sm text-center py-8">Sem dados suficientes para o gráfico — selecione Semana ou Mês para ver a evolução</div> :
                   <DualBarChart data={chart.data as Parameters<typeof DualBarChart>[0]['data']} height="h-56" label1={chart.label1} label2={chart.label2} />}
               </div>
             ))}
             <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
               <h3 className="text-base font-semibold text-white mb-4">ROAS ao Longo do Tempo</h3>
               {dailyMetrics.length === 0 ? <div className="text-gray-400 text-center py-8">Sem dados</div> :
+                timeFilter === 'today' ? <div className="text-gray-500 text-sm text-center py-8">Sem dados suficientes para o gráfico — selecione Semana ou Mês para ver a evolução</div> :
                 <BarChart data={dailyMetrics.slice(0, 10).reverse().map(d => ({ label: new Date(d.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), value: d.roas, color: 'bg-orange-500' }))} height="h-56" />}
             </div>
             <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
               <h3 className="text-base font-semibold text-white mb-4">Volume de Vendas</h3>
               {dailyMetrics.length === 0 ? <div className="text-gray-400 text-center py-8">Sem dados</div> :
+                timeFilter === 'today' ? <div className="text-gray-500 text-sm text-center py-8">Sem dados suficientes para o gráfico — selecione Semana ou Mês para ver a evolução</div> :
                 <BarChart data={dailyMetrics.slice(0, 10).reverse().map(d => ({ label: new Date(d.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), value: d.sales, color: 'bg-green-500' }))} height="h-56" />}
             </div>
           </div>

@@ -6,7 +6,6 @@ import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
 interface EditSaleProps {
   saleId: string;
   onClose: () => void;
-  onSaved: () => void;
 }
 
 interface PaymentEntry {
@@ -52,7 +51,7 @@ interface SaleAccessory {
   };
 }
 
-export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
+export default function EditSale({ saleId, onClose }: EditSaleProps) {
   const [sale, setSale] = useState<SaleData | null>(null);
   const [items, setItems] = useState<SaleItem[]>([]);
   const [accessories, setAccessories] = useState<SaleAccessory[]>([]);
@@ -68,6 +67,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
     motoboy_id: '',
     supplier_id: '',
     volumes: 1,
+    totalSalePrice: 0,
   });
 
   const [paymentMethods, setPaymentMethods] = useState<PaymentEntry[]>([
@@ -104,6 +104,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
         motoboy_id: saleResponse.data.motoboy_id || '',
         supplier_id: saleResponse.data.supplier_id || '',
         volumes: saleResponse.data.volumes || 1,
+        totalSalePrice: saleResponse.data.total_sale_price || 0,
       });
 
       const existing = saleResponse.data.payment_methods;
@@ -128,11 +129,11 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
   const updatePaymentMethod = (index: number, field: string, value: string | number) => {
     const updated = [...paymentMethods];
     updated[index] = { ...updated[index], [field]: value };
-    if (field === 'method' && value !== 'credit_card' && value !== 'debit_card') {
+    if (field === 'method' && value !== 'credit_card' && value !== 'debit_card' && value !== 'payment_link') {
       updated[index].card_brand = '';
       updated[index].installments = 0;
     }
-    if (field === 'method' && value !== 'credit_card') {
+    if (field === 'method' && value !== 'credit_card' && value !== 'payment_link') {
       updated[index].installments = 0;
     }
     setPaymentMethods(updated);
@@ -159,13 +160,13 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
 
     const allAmountsZero = paymentMethods.every((pm) => pm.amount === 0);
     const cardFee = allAmountsZero
-      ? calculateCardFee(sale.total_sale_price, paymentMethods[0]?.method || 'pix', paymentMethods[0]?.card_brand || '', paymentMethods[0]?.installments || 0)
+      ? calculateCardFee(editData.totalSalePrice, paymentMethods[0]?.method || 'pix', paymentMethods[0]?.card_brand || '', paymentMethods[0]?.installments || 0)
       : paymentMethods.reduce((sum, pm) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0), 0);
 
     const deliveryFee = editData.delivery_type === 'motoboy' ? editData.delivery_fee : 0;
     const deliveryCost = editData.delivery_type === 'correios' ? editData.delivery_cost : 0;
     const totalCost = totalProductCost + totalAccessoryCost + deliveryFee + deliveryCost;
-    const netReceived = sale.total_sale_price - cardFee;
+    const netReceived = editData.totalSalePrice - cardFee;
     const profit = netReceived - totalCost;
 
     return {
@@ -184,8 +185,8 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
     const allAmountsZero = paymentMethods.every((pm) => pm.amount === 0);
     if (!allAmountsZero) {
       const totalAllocated = paymentMethods.reduce((s, pm) => s + pm.amount, 0);
-      if (Math.abs(totalAllocated - sale.total_sale_price) > 0.01) {
-        alert(`Total alocado (R$ ${totalAllocated.toFixed(2)}) não bate com o valor da venda (R$ ${sale.total_sale_price.toFixed(2)})`);
+      if (Math.abs(totalAllocated - editData.totalSalePrice) > 0.01) {
+        alert(`Total alocado (R$ ${totalAllocated.toFixed(2)}) não bate com o valor da venda (R$ ${editData.totalSalePrice.toFixed(2)})`);
         return;
       }
     }
@@ -199,14 +200,15 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
         .from('sales')
         .update({
           payment_method: paymentMethods[0]?.method || 'pix',
-          card_brand: paymentMethods.find((pm) => pm.method === 'credit_card' || pm.method === 'debit_card')?.card_brand || null,
-          installments: paymentMethods.find((pm) => pm.method === 'credit_card')?.installments || 1,
+          card_brand: paymentMethods.find((pm) => pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link')?.card_brand || null,
+          installments: paymentMethods.find((pm) => pm.method === 'credit_card' || pm.method === 'payment_link')?.installments || 1,
           payment_methods: paymentMethods,
           delivery_type: editData.delivery_type,
           delivery_fee: updated.deliveryFee,
           delivery_cost: updated.deliveryCost,
           motoboy_id: editData.delivery_type === 'motoboy' ? (editData.motoboy_id || null) : null,
           supplier_id: editData.supplier_id || null,
+          total_sale_price: editData.totalSalePrice,
           card_fee: updated.cardFee,
           total_cost: updated.totalCost,
           net_received: updated.netReceived,
@@ -218,10 +220,12 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
       if (error) throw error;
 
       alert('Venda atualizada com sucesso!');
-      onSaved();
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating sale:', error);
+      console.log('Detalhes do erro:', JSON.stringify(error, null, 2));
+      console.log('Mensagem:', error?.message);
+      console.log('Stack:', error?.stack);
       alert('Erro ao atualizar venda');
     } finally {
       setSaving(false);
@@ -280,6 +284,18 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
           </div>
 
           <div className="space-y-2">
+            <label className="block text-white font-semibold">Valor Total da Venda (R$)</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={editData.totalSalePrice}
+              onChange={(e) => setEditData({ ...editData, totalSalePrice: parseFloat(e.target.value) || 0 })}
+              className="w-full bg-gray-800 text-white rounded-lg px-4 py-3 border border-gray-600 focus:border-orange-500 focus:outline-none font-semibold text-lg"
+            />
+          </div>
+
+          <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="block text-white font-semibold">Formas de Pagamento</label>
               <button
@@ -304,6 +320,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
                       <option value="cash">Dinheiro (Sem taxa)</option>
                       <option value="debit_card">Débito</option>
                       <option value="credit_card">Crédito</option>
+                      <option value="payment_link">Link de Pagamento</option>
                     </select>
 
                     <input
@@ -327,7 +344,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
                     )}
                   </div>
 
-                  {(pm.method === 'credit_card' || pm.method === 'debit_card') && (
+                  {(pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link') && (
                     <div className="flex gap-3">
                       <select
                         value={pm.card_brand}
@@ -339,7 +356,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
                         <option value="elo_amex">Elo / Amex</option>
                       </select>
 
-                      {pm.method === 'credit_card' && (
+                      {(pm.method === 'credit_card' || pm.method === 'payment_link') && (
                         <select
                           value={pm.installments}
                           onChange={(e) => updatePaymentMethod(index, 'installments', parseInt(e.target.value))}
@@ -356,7 +373,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
                     </div>
                   )}
 
-                  {(pm.method === 'credit_card' || pm.method === 'debit_card') && pm.amount > 0 && pm.card_brand && (
+                  {(pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link') && pm.amount > 0 && pm.card_brand && (
                     <div className="text-xs text-red-400">
                       Taxa: R$ {calculateCardFee(pm.amount, pm.method, pm.card_brand, pm.installments).toFixed(2)} ({getFeePercentageLabel(pm.method, pm.card_brand, pm.installments)})
                     </div>
@@ -367,14 +384,14 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
 
             {(() => {
               const totalAllocated = paymentMethods.reduce((s, pm) => s + pm.amount, 0);
-              const remaining = sale.total_sale_price - totalAllocated;
+              const remaining = editData.totalSalePrice - totalAllocated;
               const isBalanced = Math.abs(remaining) < 0.01;
               const hasAmounts = totalAllocated > 0;
               return (
                 <div className="mt-2 pt-3 border-t border-gray-600 grid grid-cols-3 gap-3 text-sm">
                   <div>
                     <div className="text-gray-400 text-xs mb-0.5">Total da Venda</div>
-                    <div className="text-white font-bold">R$ {sale.total_sale_price.toFixed(2)}</div>
+                    <div className="text-white font-bold">R$ {editData.totalSalePrice.toFixed(2)}</div>
                   </div>
                   <div>
                     <div className="text-gray-400 text-xs mb-0.5">Alocado</div>

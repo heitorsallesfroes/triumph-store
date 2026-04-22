@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
-import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers } from 'lucide-react';
+import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers, Link } from 'lucide-react';
 import Receipt from '../components/Receipt';
 import EditSale from '../components/EditSale';
 import { generateShippingLabel } from '../lib/superfrete';
@@ -32,9 +32,10 @@ const DELIVERY_CONFIG: Record<string, { label: string; icon: React.ElementType; 
 const PAYMENT_CONFIG: Record<string, { label: string; icon: React.ElementType; color: string; bg: string }> = {
   pix:         { label: 'PIX',      icon: Zap,     color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/30'   },
   cash:        { label: 'Dinheiro', icon: Banknote, color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/30'   },
-  credit_card: { label: 'Crédito',  icon: Edit,     color: 'text-blue-400',   bg: 'bg-blue-500/10 border-blue-500/30'     },
-  debit_card:  { label: 'Débito',   icon: Edit,     color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/30' },
-  mixed:       { label: 'Misto',    icon: Layers,   color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/30' },
+  credit_card:  { label: 'Crédito',       icon: Edit,   color: 'text-blue-400',   bg: 'bg-blue-500/10 border-blue-500/30'     },
+  debit_card:   { label: 'Débito',        icon: Edit,   color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/30' },
+  payment_link: { label: 'Link de Pag',   icon: Link,   color: 'text-violet-400', bg: 'bg-violet-500/10 border-violet-500/30' },
+  mixed:        { label: 'Misto',         icon: Layers, color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/30' },
 };
 
 const EMPTY_PERIOD_LABELS: Record<Period, string> = {
@@ -63,6 +64,9 @@ interface Sale {
   status: SaleStatus;
   sale_date: string;
   payment_method: string;
+  installments?: number;
+  motoboy_id?: string | null;
+  motoboy_name?: string;
   main_product?: string;
   additional_items?: number;
   delivery_type?: string;
@@ -83,7 +87,7 @@ export default function SalesHistory() {
   const [filteredSales, setFilteredSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterLoading, setFilterLoading] = useState(false);
-  const [period, setPeriod] = useState<Period>('month');
+  const [period, setPeriod] = useState<Period>('today');
   const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
   const [statusFilter, setStatusFilter] = useState<SaleStatus | 'all'>('all');
   const [deliveryTypeFilter, setDeliveryTypeFilter] = useState('all');
@@ -114,14 +118,15 @@ export default function SalesHistory() {
 
   const loadSales = async () => {
     try {
-      const { data: salesData, error: salesError } = await supabase
-        .from('sales')
-        .select('*')
-        .order('sale_date', { ascending: false });
+      const [{ data: salesData, error: salesError }, { data: motoboysData }] = await Promise.all([
+        supabase.from('sales').select('*').order('sale_date', { ascending: false }),
+        supabase.from('motoboys').select('id, name'),
+      ]);
       if (salesError) throw salesError;
 
       const rawSales: any[] = salesData || [];
-      const salesWithProducts = await enrichWithProducts(rawSales);
+      const motoboysMap = new Map((motoboysData || []).map((m: any) => [m.id, m.name]));
+      const salesWithProducts = await enrichWithProducts(rawSales, motoboysMap);
       setSales(salesWithProducts);
     } catch (error) {
       console.error('Error loading sales:', error);
@@ -130,7 +135,7 @@ export default function SalesHistory() {
     }
   };
 
-  const enrichWithProducts = async (rawSales: any[]): Promise<Sale[]> => {
+  const enrichWithProducts = async (rawSales: any[], motoboysMap: Map<string, string> = new Map()): Promise<Sale[]> => {
     if (rawSales.length === 0) return [];
     const saleIds = rawSales.map((s: any) => s.id);
 
@@ -161,7 +166,12 @@ export default function SalesHistory() {
         if (p) main_product = `${p.model} ${p.color}`;
         additional_items = items.length - 1;
       }
-      return { ...sale, main_product, additional_items } as Sale;
+      return {
+        ...sale,
+        main_product,
+        additional_items,
+        motoboy_name: sale.motoboy_id ? (motoboysMap.get(sale.motoboy_id) || undefined) : undefined,
+      } as Sale;
     });
   };
 
@@ -204,6 +214,10 @@ export default function SalesHistory() {
 
       let itemsData: any[] = [];
       let productsData: any[] = [];
+      let motoboysMap = new Map<string, string>();
+
+      const { data: motoboysData } = await supabase.from('motoboys').select('id, name');
+      motoboysMap = new Map((motoboysData || []).map((m: any) => [m.id, m.name]));
 
       if (saleIds.length > 0) {
         const { data: items } = await supabase
@@ -246,7 +260,12 @@ export default function SalesHistory() {
           if (p) main_product = `${p.model} ${p.color}`;
           additional_items = items.length - 1;
         }
-        return { ...sale, main_product, additional_items } as Sale;
+        return {
+          ...sale,
+          main_product,
+          additional_items,
+          motoboy_name: sale.motoboy_id ? (motoboysMap.get(sale.motoboy_id) || undefined) : undefined,
+        } as Sale;
       });
       setFilteredSales(salesWithProducts);
     } catch (error) {
@@ -704,9 +723,12 @@ export default function SalesHistory() {
                           {sale.delivery_type && DELIVERY_CONFIG[sale.delivery_type] && (() => {
                             const cfg = DELIVERY_CONFIG[sale.delivery_type!];
                             const Icon = cfg.icon;
+                            const deliveryLabel = sale.delivery_type === 'motoboy' && sale.motoboy_name
+                              ? sale.motoboy_name
+                              : cfg.label;
                             return (
                               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium ${cfg.color} ${cfg.bg}`}>
-                                <Icon size={11} />{cfg.label}
+                                <Icon size={11} />{deliveryLabel}
                               </span>
                             );
                           })()}
@@ -715,9 +737,12 @@ export default function SalesHistory() {
                             const cfg = PAYMENT_CONFIG[paymentKey];
                             if (!cfg) return null;
                             const Icon = cfg.icon;
+                            const showInstallments = (sale.installments ?? 0) > 1
+                              && (sale.payment_method === 'credit_card' || sale.payment_method === 'payment_link');
+                            const badgeLabel = showInstallments ? `${cfg.label} ${sale.installments}x` : cfg.label;
                             return (
                               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium ${cfg.color} ${cfg.bg}`}>
-                                <Icon size={11} />{cfg.label}
+                                <Icon size={11} />{badgeLabel}
                               </span>
                             );
                           })()}
@@ -927,6 +952,7 @@ function translatePayment(method: string): string {
     dinheiro: 'Dinheiro',
     debit_card: 'Débito',
     credit_card: 'Crédito até 10x sem juros',
+    payment_link: 'Link de Pagamento',
     debito: 'Débito',
     credito: 'Crédito até 10x sem juros',
   };
