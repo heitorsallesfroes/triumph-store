@@ -39,6 +39,15 @@ export default function Motoboys() {
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [formData, setFormData] = useState({ name: '' });
   const [paymentData, setPaymentData] = useState({ date: new Date(), amount: '', description: '' });
+  const [formularioModal, setFormularioModal] = useState<{ motoboyId: string; motoboyName: string } | null>(null);
+  const [formularioDate, setFormularioDate] = useState(getTodayInBrazil());
+  const [formularioTexto, setFormularioTexto] = useState('');
+  const [formularioLoading, setFormularioLoading] = useState(false);
+  const [formularioCopiado, setFormularioCopiado] = useState(false);
+  const [lancarModal, setLancarModal] = useState<{ motoboyId: string; motoboyName: string } | null>(null);
+  const [lancarDate, setLancarDate] = useState(getTodayInBrazil());
+  const [lancarTexto, setLancarTexto] = useState('');
+  const [lancarLoading, setLancarLoading] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
@@ -193,6 +202,123 @@ export default function Motoboys() {
   };
 
   const resetForm = () => { setFormData({ name: '' }); setEditingMotoboy(null); setShowForm(false); };
+
+  const getDateUTCRange = (dateStr: string) => {
+    const startUTC = dateStr + 'T03:00:00.000Z';
+    const nextDate = new Date(dateStr + 'T12:00:00');
+    nextDate.setDate(nextDate.getDate() + 1);
+    const nextStr = nextDate.toISOString().split('T')[0];
+    return { startUTC, endUTC: nextStr + 'T03:00:00.000Z' };
+  };
+
+  const gerarFormulario = async (motoboyId: string, motoboyName: string, dateStr: string) => {
+    setFormularioLoading(true);
+    setFormularioTexto('');
+    try {
+      const { startUTC, endUTC } = getDateUTCRange(dateStr);
+      const { data: salesData } = await supabase
+        .from('sales')
+        .select('neighborhood, city')
+        .eq('motoboy_id', motoboyId)
+        .eq('delivery_type', 'motoboy')
+        .gte('sale_date', startUTC)
+        .lt('sale_date', endUTC);
+
+      const [year, month, day] = dateStr.split('-');
+      const sales = salesData || [];
+
+      const byCidade = new Map<string, string[]>();
+      for (const s of sales) {
+        const cidade = s.city || '';
+        const bairro = s.neighborhood || '';
+        if (!byCidade.has(cidade)) byCidade.set(cidade, []);
+        byCidade.get(cidade)!.push(bairro);
+      }
+
+      const blocos = [...byCidade.entries()].map(([cidade, bairros]) =>
+        `📍 ${cidade}\n${bairros.map(b => `- ${b}: `).join('\n')}`
+      );
+
+      const texto = [
+        `🛵 Entregas ${motoboyName}`,
+        `📅 ${day}/${month}/${year}`,
+        '',
+        ...blocos.flatMap(b => [b, '']),
+        `💰 Total: R$`,
+        `✅ Obrigado!`,
+      ].join('\n');
+
+      setFormularioTexto(texto);
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao gerar formulário');
+    } finally {
+      setFormularioLoading(false);
+    }
+  };
+
+  const lancarValores = async (motoboyId: string, dateStr: string, texto: string) => {
+    setLancarLoading(true);
+    try {
+      const { startUTC, endUTC } = getDateUTCRange(dateStr);
+      const { data: salesData } = await supabase
+        .from('sales')
+        .select('id, neighborhood, city, delivery_fee, total_cost, net_received')
+        .eq('motoboy_id', motoboyId)
+        .eq('delivery_type', 'motoboy')
+        .gte('sale_date', startUTC)
+        .lt('sale_date', endUTC);
+
+      const salesList = [...(salesData || [])];
+      const deliveryLines = texto.split('\n').filter(l => l.includes(':') && l.includes(' - ') && !l.startsWith('Entregas'));
+
+      const updates: { id: string; delivery_fee: number; total_cost: number; profit: number }[] = [];
+      const matched = new Set<string>();
+
+      for (const line of deliveryLines) {
+        const colonIdx = line.lastIndexOf(':');
+        if (colonIdx === -1) continue;
+        const location = line.substring(0, colonIdx).trim();
+        const valor = parseFloat(line.substring(colonIdx + 1).trim().replace(',', '.'));
+        if (!location || isNaN(valor)) continue;
+
+        const dashIdx = location.indexOf(' - ');
+        if (dashIdx === -1) continue;
+        const bairro = location.substring(0, dashIdx).trim().toLowerCase();
+        const cidade = location.substring(dashIdx + 3).trim().toLowerCase();
+
+        const sale = salesList.find(s =>
+          !matched.has(s.id) &&
+          (s.neighborhood || '').toLowerCase() === bairro &&
+          (s.city || '').toLowerCase() === cidade
+        );
+        if (sale) {
+          matched.add(sale.id);
+          const newTotalCost = (sale.total_cost || 0) - (sale.delivery_fee || 0) + valor;
+          const newProfit = (sale.net_received || 0) - newTotalCost;
+          updates.push({ id: sale.id, delivery_fee: valor, total_cost: newTotalCost, profit: newProfit });
+        }
+      }
+
+      if (updates.length === 0) {
+        alert('Nenhuma venda correspondente encontrada. Verifique os bairros e cidades.');
+        return;
+      }
+
+      await Promise.all(updates.map(u =>
+        supabase.from('sales').update({ delivery_fee: u.delivery_fee, total_cost: u.total_cost, profit: u.profit }).eq('id', u.id)
+      ));
+
+      alert(`✅ ${updates.length} venda${updates.length !== 1 ? 's' : ''} atualizada${updates.length !== 1 ? 's' : ''} com sucesso!`);
+      setLancarModal(null);
+      setLancarTexto('');
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao lançar valores');
+    } finally {
+      setLancarLoading(false);
+    }
+  };
 
   const handlePeriodChange = (period: TimePeriod) => {
     setSelectedPeriod(period);
@@ -403,6 +529,81 @@ export default function Motoboys() {
         </div>
       )}
 
+      {/* Modal Gerar Formulário */}
+      {formularioModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+            <div className="flex justify-between items-center mb-5">
+              <h2 className="text-xl font-bold text-white">📋 Gerar Formulário — {formularioModal.motoboyName}</h2>
+              <button onClick={() => setFormularioModal(null)} className="text-gray-400 hover:text-white"><X size={24} /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Data</label>
+                <input type="date" value={formularioDate}
+                  onChange={e => { setFormularioDate(e.target.value); setFormularioTexto(''); }}
+                  max={getTodayInBrazil()}
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" />
+              </div>
+              <button
+                onClick={() => gerarFormulario(formularioModal.motoboyId, formularioModal.motoboyName, formularioDate)}
+                disabled={formularioLoading}
+                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors font-semibold">
+                {formularioLoading ? 'Gerando...' : 'Gerar'}
+              </button>
+              {formularioTexto && (
+                <>
+                  <textarea readOnly value={formularioTexto} rows={8}
+                    className="w-full bg-gray-900 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm font-mono resize-none focus:outline-none" />
+                  <button
+                    onClick={async () => { await navigator.clipboard.writeText(formularioTexto); setFormularioCopiado(true); setTimeout(() => setFormularioCopiado(false), 2000); }}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-semibold">
+                    {formularioCopiado ? '✅ Copiado!' : '📋 Copiar'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Lançar Valores */}
+      {lancarModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+            <div className="flex justify-between items-center mb-5">
+              <h2 className="text-xl font-bold text-white">💰 Lançar Valores — {lancarModal.motoboyName}</h2>
+              <button onClick={() => { setLancarModal(null); setLancarTexto(''); }} className="text-gray-400 hover:text-white"><X size={24} /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Data das entregas</label>
+                <input type="date" value={lancarDate}
+                  onChange={e => setLancarDate(e.target.value)}
+                  max={getTodayInBrazil()}
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Cole o formulário preenchido</label>
+                <textarea
+                  value={lancarTexto}
+                  onChange={e => setLancarTexto(e.target.value)}
+                  rows={10}
+                  placeholder={'Entregas João - 24/04/2026\n\nCentro - Niterói: 20\nIcaraí - Niterói: 15'}
+                  className="w-full bg-gray-900 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm font-mono resize-none"
+                />
+              </div>
+              <button
+                onClick={() => lancarValores(lancarModal.motoboyId, lancarDate, lancarTexto)}
+                disabled={lancarLoading || !lancarTexto.trim()}
+                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition-colors font-semibold">
+                {lancarLoading ? 'Atualizando...' : 'Atualizar Valores'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Lista de Motoboys */}
         <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
@@ -423,10 +624,18 @@ export default function Motoboys() {
                 <tr key={motoboy.id} className="hover:bg-gray-700/30">
                   <td className="px-6 py-4 text-white">{motoboy.name}</td>
                   <td className="px-6 py-4">
-                    <div className="flex gap-3">
+                    <div className="flex flex-wrap gap-2">
                       <button onClick={() => { setShowPaymentForm(motoboy.id); setPaymentData({ date: new Date(), amount: '', description: '' }); }}
                         className="text-green-400 hover:text-green-300 flex items-center gap-1 text-xs">
                         <PlusCircle size={15} /> Pagamento
+                      </button>
+                      <button onClick={() => { setFormularioModal({ motoboyId: motoboy.id, motoboyName: motoboy.name }); setFormularioDate(getTodayInBrazil()); setFormularioTexto(''); }}
+                        className="text-purple-400 hover:text-purple-300 text-xs whitespace-nowrap">
+                        📋 Formulário
+                      </button>
+                      <button onClick={() => { setLancarModal({ motoboyId: motoboy.id, motoboyName: motoboy.name }); setLancarDate(getTodayInBrazil()); setLancarTexto(''); }}
+                        className="text-yellow-400 hover:text-yellow-300 text-xs whitespace-nowrap">
+                        💰 Valores
                       </button>
                       <button onClick={() => handleEdit(motoboy)} className="text-blue-400 hover:text-blue-300"><Pencil size={16} /></button>
                       <button onClick={() => handleDelete(motoboy.id)} className="text-red-400 hover:text-red-300"><Trash2 size={16} /></button>

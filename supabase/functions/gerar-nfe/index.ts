@@ -153,17 +153,30 @@ Deno.serve(async (req: Request) => {
 
     console.log("nfe_url resolvida:", nfeUrl);
 
-    // Salva o ID numérico da nota em nfe_chave para montar a URL de acesso
-    const notaNumericId = nfData?.id ? String(nfData.id) : null;
+    // Extrai a chave de acesso de 44 dígitos
+    const chaveRaw =
+      nfData?.chave_nfe ||
+      nfData?.chave_acesso ||
+      nfData?.chave ||
+      null;
+
+    const chaveClean = chaveRaw ? String(chaveRaw).replace(/\D/g, "") : null;
+    const nfeChave = chaveClean && chaveClean.length === 44 ? chaveClean : null;
+
+    if (!nfeChave) {
+      console.warn("Chave de acesso de 44 dígitos não encontrada. nfData:", JSON.stringify(nfData));
+    }
+
+    console.log("nfe_chave extraída:", nfeChave);
 
     await supabase.from("sales").update({
       nfe_url: nfeUrl,
-      nfe_chave: notaNumericId,
+      nfe_chave: nfeChave,
       nfe_status: "emitida",
     }).eq("id", sale_id);
 
     return new Response(
-      JSON.stringify({ success: true, nfe_url: nfeUrl, nfe_chave: notaNumericId }),
+      JSON.stringify({ success: true, nfe_url: nfeUrl, nfe_chave: nfeChave }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 

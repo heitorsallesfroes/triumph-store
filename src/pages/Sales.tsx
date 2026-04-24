@@ -641,7 +641,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
 
   const handleCepChange = async (cep: string) => {
     const cleanCep = cep.replace(/\D/g, '');
-    setFormData({ ...formData, zip_code: cleanCep });
+    setFormData(prev => ({ ...prev, zip_code: cleanCep }));
     setCepError('');
 
     if (cleanCep.length === 8) {
@@ -726,6 +726,8 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
     setFormData(prev => ({ ...prev, ...updates }));
     if (bairro) setNeighborhoodSearch(bairro);
     if (cidade) setCitySearch(cidade);
+
+    if (cep) handleCepChange(cep);
 
     setShowPasteForm(false);
   };
@@ -1418,7 +1420,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
           <div className="grid md:grid-cols-3 gap-4">
             <select
               value={formData.delivery_type}
-              onChange={(e) => setFormData({ ...formData, delivery_type: e.target.value, motoboy_id: '', delivery_fee: 0, delivery_cost: 0 })}
+              onChange={(e) => setFormData({ ...formData, delivery_type: e.target.value, motoboy_id: '', delivery_fee: 0, delivery_cost: e.target.value === 'correios' ? 13.11 : 0 })}
               className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
               required
             >
