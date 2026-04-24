@@ -8,6 +8,7 @@ import AutocompleteInput from '../components/AutocompleteInput';
 import { validateAddressForDeliveryType } from '../lib/addressValidation';
 import { fetchAddressByCep } from '../lib/viaCep';
 import { formatCpf, cleanCpf, validateCpf } from '../lib/cpfValidation';
+import { getTodayInBrazil } from '../lib/dateUtils';
 
 interface City {
   id: string;
@@ -73,6 +74,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
   const [cepError, setCepError] = useState('');
   const [cpfError, setCpfError] = useState('');
   const [cpfDisplay, setCpfDisplay] = useState('');
+  const [showPasteForm, setShowPasteForm] = useState(false);
 
   const novaSaleRef = useRef<HTMLDivElement>(null);
 
@@ -103,6 +105,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
   const [paymentMethods, setPaymentMethods] = useState<PaymentEntry[]>([
     { method: 'credit_card', card_brand: 'visa_mastercard', installments: 10, amount: 0 },
   ]);
+  const [saleDate, setSaleDate] = useState<string>(getTodayInBrazil());
 
   useEffect(() => {
     loadData();
@@ -550,7 +553,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
             manual_items: manualItems.length > 0 ? manualItems : null,
             payment_status: paymentStatus,
             status: 'em_separacao',
-            sale_date: new Date().toISOString(),
+            sale_date: saleDate + 'T03:00:00.000Z',
           },
         ])
         .select()
@@ -682,6 +685,51 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
     }
   };
 
+  const parsearFormulario = (texto: string) => {
+    const extrair = (...labels: string[]): string => {
+      for (const label of labels) {
+        const regex = new RegExp(`(?:^|\\n)\\s*${label}\\s*:?\\s*(.+)`, 'im');
+        const match = texto.match(regex);
+        if (match) return match[1].trim();
+      }
+      return '';
+    };
+
+    const nome = extrair('Nome');
+    const rua = extrair('Rua', 'Endere[çc]o', 'Logradouro', 'End');
+    const numero = extrair('N[uú]mero', 'Nº', 'N°', 'Num');
+    const complemento = extrair('Complemento', 'Comp');
+    const bairro = extrair('Bairro');
+    const cepRaw = extrair('CEP', 'Cep');
+    const cpfRaw = extrair('CPF', 'Cpf');
+    const cidade = extrair('Cidade');
+    const estadoRaw = extrair('Estado', 'UF');
+
+    const updates: Partial<typeof formData> = {};
+    if (nome) updates.customer_name = nome;
+    if (rua) updates.address_street = rua;
+    if (numero) updates.address_number = numero;
+    if (complemento) updates.address_complement = complemento.slice(0, 18);
+    if (estadoRaw) updates.state = estadoRaw.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 2);
+
+    const cep = cepRaw.replace(/[\s\-\.]/g, '');
+    if (cep) updates.zip_code = cep;
+
+    if (cpfRaw) {
+      const formatted = formatCpf(cpfRaw);
+      setCpfDisplay(formatted);
+      const cleaned = cleanCpf(cpfRaw);
+      updates.customer_cpf = cleaned;
+      setCpfError(cleaned.length === 11 && !validateCpf(cleaned) ? 'CPF inválido' : '');
+    }
+
+    setFormData(prev => ({ ...prev, ...updates }));
+    if (bairro) setNeighborhoodSearch(bairro);
+    if (cidade) setCitySearch(cidade);
+
+    setShowPasteForm(false);
+  };
+
   const resetForm = () => {
     setFormData({
       customer_name: '',
@@ -713,6 +761,8 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
     setCepError('');
     setCpfError('');
     setCpfDisplay('');
+    setShowPasteForm(false);
+    setSaleDate(getTodayInBrazil());
   };
 
   const clearForm = () => {
@@ -763,6 +813,15 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="flex items-center gap-3">
+          <label className="text-gray-400 text-sm whitespace-nowrap">Data da Venda</label>
+          <input
+            type="date"
+            value={saleDate}
+            onChange={(e) => setSaleDate(e.target.value)}
+            className="bg-gray-800 text-white rounded-lg px-3 py-1.5 border border-gray-700 focus:border-orange-500 focus:outline-none text-sm"
+          />
+        </div>
       <QuickAdd
   products={products}
   accessories={accessories}
@@ -1044,6 +1103,27 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
 
               {formData.delivery_type === 'correios' && (
                 <>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setShowPasteForm(v => !v)}
+                      className="text-sm text-gray-400 hover:text-orange-400 transition-colors"
+                    >
+                      📋 Colar Formulário
+                    </button>
+                    {showPasteForm && (
+                      <textarea
+                        autoFocus
+                        rows={5}
+                        placeholder="Cole o texto do formulário aqui e os campos serão preenchidos automaticamente..."
+                        onPaste={(e) => {
+                          e.preventDefault();
+                          parsearFormulario(e.clipboardData.getData('text'));
+                        }}
+                        className="mt-2 w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-orange-500 focus:outline-none text-sm resize-none placeholder-gray-500"
+                      />
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="relative">
                       <input

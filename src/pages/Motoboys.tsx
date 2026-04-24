@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, Motoboy, MotoboyStats } from '../lib/supabase';
+import { getTodayInBrazil } from '../lib/dateUtils';
 import { Plus, Pencil, Trash2, X, Bike, TrendingUp, Trophy, DollarSign, Calendar, PlusCircle } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
@@ -27,6 +28,7 @@ export default function Motoboys() {
   const [motoboys, setMotoboys] = useState<Motoboy[]>([]);
   const [stats, setStats] = useState<MotoboyStats[]>([]);
   const [customStats, setCustomStats] = useState<CustomStats[]>([]);
+  const [todayStats, setTodayStats] = useState<CustomStats[]>([]);
   const [extraPayments, setExtraPayments] = useState<ExtraPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -53,13 +55,56 @@ export default function Motoboys() {
         supabase.from('motoboy_stats').select('*'),
         supabase.from('motoboy_payments').select('*').order('date', { ascending: false }),
       ]);
-      setMotoboys(motoboysRes.data || []);
+      const motoboysList = motoboysRes.data || [];
+      setMotoboys(motoboysList);
       setStats(statsRes.data || []);
       setExtraPayments(paymentsRes.data || []);
+      loadTodayStats(motoboysList);
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadTodayStats = async (motoboysList?: Motoboy[]) => {
+    const list = motoboysList || motoboys;
+    try {
+      const today = getTodayInBrazil();
+      // Brazil is UTC-3: midnight BRT = 03:00 UTC
+      const startUTC = today + 'T03:00:00.000Z';
+      const todayDate = new Date(today + 'T12:00:00');
+      todayDate.setDate(todayDate.getDate() + 1);
+      const tomorrow = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
+      const endUTC = tomorrow + 'T03:00:00.000Z';
+
+      const [salesRes, paymentsRes] = await Promise.all([
+        supabase.from('sales').select('motoboy_id, delivery_fee')
+          .eq('delivery_type', 'motoboy')
+          .eq('status', 'finalizado')
+          .gte('sale_date', startUTC)
+          .lt('sale_date', endUTC),
+        supabase.from('motoboy_payments').select('*').eq('date', today),
+      ]);
+
+      const statsMap = new Map<string, { deliveries: number; earnings: number; extraPayments: number }>();
+      salesRes.data?.forEach(sale => {
+        if (sale.motoboy_id) {
+          const cur = statsMap.get(sale.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+          statsMap.set(sale.motoboy_id, { ...cur, deliveries: cur.deliveries + 1, earnings: cur.earnings + (sale.delivery_fee || 0) });
+        }
+      });
+      paymentsRes.data?.forEach(p => {
+        const cur = statsMap.get(p.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+        statsMap.set(p.motoboy_id, { ...cur, extraPayments: cur.extraPayments + Number(p.amount) });
+      });
+
+      setTodayStats(list.map(m => {
+        const s = statsMap.get(m.id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+        return { id: m.id, name: m.name, ...s };
+      }));
+    } catch (error) {
+      console.error('Error loading today stats:', error);
     }
   };
 
@@ -152,32 +197,37 @@ export default function Motoboys() {
   const handlePeriodChange = (period: TimePeriod) => {
     setSelectedPeriod(period);
     if (period !== 'custom') { setStartDate(null); setEndDate(null); }
+    if (period === 'today') loadTodayStats();
   };
 
   const getSortedStats = () => {
     if (selectedPeriod === 'custom') return [...customStats].sort((a, b) => (b.earnings + b.extraPayments) - (a.earnings + a.extraPayments));
+    if (selectedPeriod === 'today') return [...todayStats].sort((a, b) => (b.earnings + b.extraPayments) - (a.earnings + a.extraPayments));
     return [...stats].sort((a, b) => {
-      const val = (s: MotoboyStats) => selectedPeriod === 'today' ? s.earnings_today : selectedPeriod === 'week' ? s.earnings_this_week : selectedPeriod === 'month' ? s.earnings_this_month : s.total_earnings;
+      const val = (s: MotoboyStats) => selectedPeriod === 'week' ? s.earnings_this_week : selectedPeriod === 'month' ? s.earnings_this_month : s.total_earnings;
       return val(b) - val(a);
     });
   };
 
   const getDeliveriesForPeriod = (stat: MotoboyStats | CustomStats) => {
-    if (selectedPeriod === 'custom') return (stat as CustomStats).deliveries;
+    if (selectedPeriod === 'custom' || selectedPeriod === 'today') return (stat as CustomStats).deliveries;
     const s = stat as MotoboyStats;
-    return selectedPeriod === 'today' ? s.deliveries_today : selectedPeriod === 'week' ? s.deliveries_this_week : selectedPeriod === 'month' ? s.deliveries_this_month : s.total_deliveries;
+    return selectedPeriod === 'week' ? s.deliveries_this_week : selectedPeriod === 'month' ? s.deliveries_this_month : s.total_deliveries;
   };
 
   const getEarningsForPeriod = (stat: MotoboyStats | CustomStats) => {
-    if (selectedPeriod === 'custom') return (stat as CustomStats).earnings;
+    if (selectedPeriod === 'custom' || selectedPeriod === 'today') return (stat as CustomStats).earnings;
     const s = stat as MotoboyStats;
-    return selectedPeriod === 'today' ? s.earnings_today : selectedPeriod === 'week' ? s.earnings_this_week : selectedPeriod === 'month' ? s.earnings_this_month : s.total_earnings;
+    return selectedPeriod === 'week' ? s.earnings_this_week : selectedPeriod === 'month' ? s.earnings_this_month : s.total_earnings;
   };
 
   const getExtraPaymentsForPeriod = (motoboyId: string) => {
     if (selectedPeriod === 'custom') {
       const cs = customStats.find(s => s.id === motoboyId);
       return cs?.extraPayments || 0;
+    }
+    if (selectedPeriod === 'today') {
+      return todayStats.find(s => s.id === motoboyId)?.extraPayments || 0;
     }
     return extraPayments.filter(p => {
       if (p.motoboy_id !== motoboyId) return false;

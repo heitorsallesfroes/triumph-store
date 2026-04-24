@@ -287,6 +287,17 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
     return method;
   };
 
+  const abreviarCidade = (cidade: string | undefined): string => {
+    if (!cidade) return '';
+    const abreviacoes: Record<string, string> = {
+      'São Gonçalo': 'SG',
+      'Rio de Janeiro': 'RJ',
+      'Belo Horizonte': 'BH',
+      'São Paulo': 'SP',
+    };
+    return abreviacoes[cidade] ?? cidade;
+  };
+
   const renderDeliveryLabel = (volumeNumber: number, totalVolumes: number) => {
     return (
       <div key={volumeNumber} className="delivery-label">
@@ -311,7 +322,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
                 street: sale?.address_street || undefined,
                 number: sale?.address_number || undefined,
                 neighborhood: sale?.neighborhood || undefined,
-                city: sale?.city || undefined,
+                city: abreviarCidade(sale?.city) || undefined,
                 state: sale?.state || undefined,
                 zip_code: sale?.zip_code || undefined,
               }, sale?.delivery_type || 'loja_fisica').split('\n').map((line, i) => (
