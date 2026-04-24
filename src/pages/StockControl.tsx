@@ -1,6 +1,29 @@
 import { useEffect, useState } from 'react';
 import { supabase, Product } from '../lib/supabase';
-import { AlertTriangle, CheckCircle, Plus, Minus, History, Search, Package, ShoppingCart } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Plus, Minus, History, Search, Package, ShoppingCart, RefreshCw } from 'lucide-react';
+
+const MODEL_ORDER = [
+  'GT5 Mini', 'Ultra 3 Mini', 'W11 Mini', 'S11 Pro', 'Ultra 4 Pro',
+  'MA27 Ultra', 'M-Rex 4', 'HT 43 GPS', 'Zeblaze BTalk 3 GPS', 'HK-08 GPS', 'X5 Raptor GPS',
+];
+const COLOR_ORDER = ['Preto', 'Prata', 'Rose Gold'];
+
+const modelRank = (model: string) => {
+  const i = MODEL_ORDER.findIndex(m => model.includes(m));
+  return i === -1 ? MODEL_ORDER.length : i;
+};
+const colorRank = (color: string) => {
+  const i = COLOR_ORDER.findIndex(c => color.startsWith(c));
+  return i === -1 ? COLOR_ORDER.length : i;
+};
+const sortProducts = (list: any[]) =>
+  [...list].sort((a, b) => {
+    const md = modelRank(a.model) - modelRank(b.model);
+    if (md !== 0) return md;
+    const cd = colorRank(a.color) - colorRank(b.color);
+    if (cd !== 0) return cd;
+    return (a.color || '').localeCompare(b.color || '');
+  });
 
 export default function StockControl() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -19,9 +42,21 @@ export default function StockControl() {
   const [editingIdealStock, setEditingIdealStock] = useState<string | null>(null);
   const [idealStockValue, setIdealStockValue] = useState('');
   const [copied, setCopied] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [syncErrors, setSyncErrors] = useState<string[]>([]);
+  const [showSyncErrors, setShowSyncErrors] = useState(false);
+  const [showStockSummary, setShowStockSummary] = useState(false);
+  const [copiedSummary, setCopiedSummary] = useState(false);
+  const [stockOrders, setStockOrders] = useState<any[]>([]);
+  const [showOrderForm, setShowOrderForm] = useState(false);
+  const [orderQty, setOrderQty] = useState('');
+  const [orderNotes, setOrderNotes] = useState('');
+  const [savingOrder, setSavingOrder] = useState(false);
 
   useEffect(() => {
     loadProducts();
+    loadStockOrders();
   }, []);
 
   const loadProducts = async () => {
@@ -36,6 +71,47 @@ export default function StockControl() {
       console.error('Error loading products:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadStockOrders = async () => {
+    const { data } = await supabase
+      .from('stock_orders')
+      .select('*')
+      .eq('status', 'pending');
+    setStockOrders(data || []);
+  };
+
+  const getPendingQty = (productId: string) =>
+    stockOrders
+      .filter(o => o.product_id === productId)
+      .reduce((sum, o) => sum + (o.quantity || 0), 0);
+
+  const handleAddOrder = async () => {
+    if (!selectedProduct || !orderQty || parseInt(orderQty) <= 0) {
+      alert('Informe uma quantidade válida');
+      return;
+    }
+    setSavingOrder(true);
+    try {
+      const { error } = await supabase.from('stock_orders').insert([{
+        product_id: selectedProduct.id,
+        quantity: parseInt(orderQty),
+        notes: orderNotes.trim() || null,
+        status: 'pending',
+      }]);
+      if (error) throw error;
+      alert('Encomenda registrada!');
+      setShowOrderForm(false);
+      setOrderQty('');
+      setOrderNotes('');
+      setSelectedProduct(null);
+      loadStockOrders();
+    } catch (err: any) {
+      console.error('Erro ao registrar encomenda:', err);
+      alert(`Erro ao registrar encomenda: ${err?.message || JSON.stringify(err)}`);
+    } finally {
+      setSavingOrder(false);
     }
   };
 
@@ -88,12 +164,33 @@ export default function StockControl() {
         });
       }
 
-      alert(`Estoque ${movementType === 'entrada' ? 'adicionado' : 'removido'} com sucesso!`);
+      // Abate received qty from pending orders (oldest first)
+      if (movementType === 'entrada') {
+        const pendingOrders = [...stockOrders]
+          .filter(o => o.product_id === selectedProduct.id)
+          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+        let remaining = qty;
+        for (const order of pendingOrders) {
+          if (remaining <= 0) break;
+          const apply = Math.min(remaining, order.quantity);
+          remaining -= apply;
+          const newQty = order.quantity - apply;
+          if (newQty <= 0) {
+            await supabase.from('stock_orders').update({ status: 'received', quantity: 0 }).eq('id', order.id);
+          } else {
+            await supabase.from('stock_orders').update({ quantity: newQty }).eq('id', order.id);
+          }
+        }
+        loadStockOrders();
+      }
+
       setShowMovementForm(false);
       setMovementQty('');
       setMovementReason('');
       setSelectedProduct(null);
       loadProducts();
+      alert(`Estoque ${movementType === 'entrada' ? 'adicionado' : 'removido'} com sucesso!`);
     } catch (error) {
       alert('Erro ao atualizar estoque');
     } finally {
@@ -115,15 +212,101 @@ export default function StockControl() {
     }
   };
 
-  const filteredProducts = products.filter((p: any) => {
-    const matchSearch = searchTerm === '' ||
-      `${p.model} ${p.color}`.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchCategory = categoryFilter === 'all' || p.category === categoryFilter;
-    return matchSearch && matchCategory;
-  });
+  const handleSyncTiny = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    setSyncErrors([]);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sync-tiny-stock`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await response.json();
+      console.log('sync-tiny-stock response:', data);
+      if (data.success) {
+        const msg = `✅ ${data.updated} atualizado(s), ${data.unchanged} sem alteração, ${data.total} total` +
+          (data.errors?.length > 0 ? ` — ${data.errors.length} erro(s)` : '');
+        setSyncResult(msg);
+        if (data.errors?.length > 0) setSyncErrors(data.errors);
+        if (data.updated > 0) loadProducts();
+      } else {
+        setSyncResult(`❌ Erro: ${data.error}`);
+      }
+    } catch (e: any) {
+      setSyncResult(`❌ Erro ao conectar com a Edge Function: ${e?.message || ''}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
-  const needsToBuy = products.filter((p: any) => p.current_stock < (p.ideal_stock || 0));
-  const totalToBuy = needsToBuy.reduce((sum: number, p: any) => sum + Math.max(0, (p.ideal_stock || 0) - p.current_stock), 0);
+  const filteredProducts = sortProducts(
+    products.filter((p: any) => {
+      const matchSearch = searchTerm === '' ||
+        `${p.model} ${p.color}`.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchCategory = categoryFilter === 'all' || p.category === categoryFilter;
+      return matchSearch && matchCategory;
+    })
+  );
+
+  const aToBuyNet = (p: any) =>
+    Math.max(0, (p.ideal_stock || 0) - p.current_stock - getPendingQty(p.id));
+
+  const needsToBuy = products.filter((p: any) => aToBuyNet(p) > 0);
+  const totalToBuy = needsToBuy.reduce((sum: number, p: any) => sum + aToBuyNet(p), 0);
+
+  const getCanonicalModel = (model: string): string => {
+    const match = MODEL_ORDER.find(m => model.includes(m));
+    if (match) return match;
+    return model.replace(/^Smartwatch\s+/i, '').trim();
+  };
+
+  const getVariant = (model: string, color: string): string => {
+    const canonical = getCanonicalModel(model);
+    const suffix = model.replace(/^Smartwatch\s+/i, '').replace(canonical, '').trim();
+    const raw = suffix ? `${suffix} ${color}`.trim() : color;
+    return raw.replace(/^\/\s*/, '').trim();
+  };
+
+  const buildWhatsAppSummary = (): string => {
+    const MIN_STOCK = 5;
+    const smartwatches = sortProducts(products.filter((p: any) => p.category === 'smartwatch'));
+
+    const grouped = new Map<string, any[]>();
+    for (const p of smartwatches) {
+      const key = getCanonicalModel(p.model);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(p);
+    }
+
+    const today = new Date().toLocaleDateString('pt-BR');
+    let text = `📦 *ESTOQUE SMARTWATCHES*\n📅 ${today}\n`;
+    let totalStock = 0;
+    let totalComprar = 0;
+
+    for (const [modelKey, items] of grouped) {
+      text += `\n*${modelKey}*\n`;
+      for (const p of items) {
+        const stock = p.current_stock ?? 0;
+        const ideal = p.ideal_stock || MIN_STOCK;
+        const pending = getPendingQty(p.id);
+        const comprar = Math.max(0, ideal - stock - pending);
+        const variant = getVariant(p.model, p.color);
+        const emoji = stock <= 0 ? '🔴' : stock < ideal ? '🟡' : '🟢';
+        const compraPart = comprar > 0 ? ` +${comprar}` : '';
+        const pendingPart = pending > 0 ? ` (+${pending} a chegar)` : '';
+        text += `▸ ${variant}: ${stock}${pendingPart} / ${ideal} ${emoji}${compraPart}\n`;
+        totalStock += stock;
+        totalComprar += comprar;
+      }
+    }
+
+    text += `\n📊 *Total em estoque: ${totalStock} un*`;
+    if (totalComprar > 0) text += `\n🛒 *Total a comprar: ${totalComprar} un*`;
+    return text;
+  };
 
   const handleCopyWhatsApp = () => {
     const grouped = products
@@ -167,7 +350,38 @@ export default function StockControl() {
 
   return (
     <div className="p-8">
-      <h1 className="text-3xl font-bold text-white mb-8">Controle de Estoque</h1>
+      <div className="flex items-center justify-between mb-8">
+        <h1 className="text-3xl font-bold text-white">Controle de Estoque</h1>
+        <div className="flex items-center gap-3">
+          {syncResult && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-300">{syncResult}</span>
+              {syncErrors.length > 0 && (
+                <button
+                  onClick={() => setShowSyncErrors(true)}
+                  className="text-xs text-red-400 hover:text-red-300 underline whitespace-nowrap"
+                >
+                  Ver erros
+                </button>
+              )}
+            </div>
+          )}
+          <button
+            onClick={() => setShowStockSummary(true)}
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium"
+          >
+            📋 Resumo para WhatsApp
+          </button>
+          <button
+            onClick={handleSyncTiny}
+            disabled={syncing}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium"
+          >
+            <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Sincronizando...' : 'Sincronizar com Tiny'}
+          </button>
+        </div>
+      </div>
 
       {/* Cards resumo */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
@@ -225,8 +439,9 @@ export default function StockControl() {
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Produto</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">SKU</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Estoque em Loja</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Estoque Ideal</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Em Loja</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">A Chegar</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Ideal</th>
               <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">A Comprar</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Ações</th>
             </tr>
@@ -234,11 +449,12 @@ export default function StockControl() {
           <tbody className="divide-y divide-gray-700">
             {filteredProducts.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-gray-400">Nenhum produto encontrado.</td>
+                <td colSpan={7} className="px-6 py-8 text-center text-gray-400">Nenhum produto encontrado.</td>
               </tr>
             ) : (
               filteredProducts.map((product: any) => {
-                const aToBuy = Math.max(0, (product.ideal_stock || 0) - product.current_stock);
+                const pending = getPendingQty(product.id);
+                const aToBuy = aToBuyNet(product);
                 const isLow = aToBuy > 0;
                 return (
                   <tr key={product.id} className={`hover:bg-gray-700/50 ${isLow ? 'bg-red-500/5' : ''}`}>
@@ -251,6 +467,15 @@ export default function StockControl() {
                       <span className={`text-2xl font-bold ${isLow ? 'text-red-400' : 'text-white'}`}>
                         {product.current_stock}
                       </span>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      {pending > 0 ? (
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold bg-blue-500/20 text-blue-400 border border-blue-500/50">
+                          {pending}
+                        </span>
+                      ) : (
+                        <span className="text-gray-600 text-sm">—</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-center">
                       {editingIdealStock === product.id ? (
@@ -293,7 +518,13 @@ export default function StockControl() {
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
                         <button
-                          onClick={() => { setSelectedProduct(product); setMovementType('entrada'); setShowMovementForm(true); }}
+                          onClick={() => {
+                            const pendingTotal = getPendingQty(product.id);
+                            setSelectedProduct(product);
+                            setMovementType('entrada');
+                            setMovementQty(pendingTotal > 0 ? String(pendingTotal) : '');
+                            setShowMovementForm(true);
+                          }}
                           className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1"
                         >
                           <Plus size={14} /> Entrada
@@ -303,6 +534,12 @@ export default function StockControl() {
                           className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1"
                         >
                           <Minus size={14} /> Saída
+                        </button>
+                        <button
+                          onClick={() => { setSelectedProduct(product); setShowOrderForm(true); }}
+                          className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1"
+                        >
+                          <Package size={14} /> Encomenda
                         </button>
                         <button
                           onClick={() => loadHistory(product)}
@@ -321,7 +558,12 @@ export default function StockControl() {
       </div>
 
       {/* Modal lançamento */}
-      {showMovementForm && selectedProduct && (
+      {showMovementForm && selectedProduct && (() => {
+        const pendingOrders = stockOrders
+          .filter(o => o.product_id === selectedProduct.id)
+          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        const hasPending = movementType === 'entrada' && pendingOrders.length > 0;
+        return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
             <h2 className="text-xl font-bold text-white mb-2">
@@ -329,9 +571,30 @@ export default function StockControl() {
             </h2>
             <p className="text-gray-400 mb-1">{selectedProduct.model} {selectedProduct.color}</p>
             <p className="text-gray-300 mb-4">Estoque atual: <span className="text-white font-bold">{selectedProduct.current_stock}</span></p>
+
+            {hasPending && (
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-4">
+                <p className="text-blue-400 text-sm font-semibold mb-2">📦 Encomendas a caminho</p>
+                <div className="space-y-1">
+                  {pendingOrders.map(o => (
+                    <div key={o.id} className="flex justify-between text-sm">
+                      <span className="text-gray-300">{o.notes || 'Sem observação'}</span>
+                      <span className="text-blue-400 font-bold">{o.quantity} un</span>
+                    </div>
+                  ))}
+                  <div className="border-t border-blue-500/30 mt-2 pt-2 flex justify-between text-sm font-semibold">
+                    <span className="text-gray-300">Total a caminho:</span>
+                    <span className="text-blue-400">{pendingOrders.reduce((s, o) => s + o.quantity, 0)} un</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Quantidade*</label>
+                <label className="block text-sm text-gray-400 mb-2">
+                  {hasPending ? 'Quantidade recebida agora*' : 'Quantidade*'}
+                </label>
                 <input
                   type="number"
                   min="1"
@@ -339,8 +602,13 @@ export default function StockControl() {
                   onChange={(e) => setMovementQty(e.target.value)}
                   className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                   placeholder="Ex: 10"
-                  autoFocus
+                  autoFocus={!hasPending}
                 />
+                {hasPending && (
+                  <p className="text-gray-500 text-xs mt-1">
+                    Entrada parcial permitida — o saldo restante da encomenda será mantido como pendente.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Motivo (opcional)</label>
@@ -365,6 +633,56 @@ export default function StockControl() {
               </button>
               <button
                 onClick={() => { setShowMovementForm(false); setMovementQty(''); setMovementReason(''); }}
+                className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-600"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* Modal encomenda */}
+      {showOrderForm && selectedProduct && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
+            <h2 className="text-xl font-bold text-white mb-1">📦 Registrar Encomenda</h2>
+            <p className="text-gray-400 mb-4">{selectedProduct.model} {selectedProduct.color}</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Quantidade*</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={orderQty}
+                  onChange={e => setOrderQty(e.target.value)}
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  placeholder="Ex: 10"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Observação (opcional)</label>
+                <input
+                  type="text"
+                  value={orderNotes}
+                  onChange={e => setOrderNotes(e.target.value)}
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  placeholder="Ex: Pedido fornecedor 24/04"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={handleAddOrder}
+                disabled={savingOrder}
+                className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-medium"
+              >
+                {savingOrder ? 'Salvando...' : 'Registrar'}
+              </button>
+              <button
+                onClick={() => { setShowOrderForm(false); setOrderQty(''); setOrderNotes(''); }}
                 className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-600"
               >
                 Cancelar
@@ -484,6 +802,53 @@ export default function StockControl() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal resumo WhatsApp */}
+      {showStockSummary && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg border border-gray-700 max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-white">📋 Resumo de Estoque</h2>
+              <button onClick={() => setShowStockSummary(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
+            </div>
+            <pre className="flex-1 overflow-y-auto bg-gray-900 rounded-lg p-4 text-sm text-gray-200 font-mono whitespace-pre-wrap mb-4 select-all">
+              {buildWhatsAppSummary()}
+            </pre>
+            <button
+              onClick={async () => {
+                await navigator.clipboard.writeText(buildWhatsAppSummary());
+                setCopiedSummary(true);
+                setTimeout(() => setCopiedSummary(false), 2000);
+              }}
+              className="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg font-semibold transition-colors"
+            >
+              {copiedSummary ? '✅ Copiado!' : '📋 Copiar para WhatsApp'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal erros de sincronização */}
+      {showSyncErrors && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-xl border border-gray-700 max-h-[80vh] flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <div>
+                <h2 className="text-xl font-bold text-white">⚠️ Erros na Sincronização</h2>
+                <p className="text-gray-400 text-sm">{syncErrors.length} produto(s) com problema</p>
+              </div>
+              <button onClick={() => setShowSyncErrors(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
+            </div>
+            <div className="overflow-y-auto flex-1 space-y-1">
+              {syncErrors.map((err, i) => (
+                <div key={i} className="bg-red-500/10 border border-red-500/30 rounded px-3 py-2 text-sm text-red-300 font-mono">
+                  {err}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

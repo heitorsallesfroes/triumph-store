@@ -598,6 +598,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
           await supabase.from('products').insert([{
             category: 'acessorio',
             model: modelName,
+            color: '',
             cost: mi.cost,
             price: mi.price,
             current_stock: 0,
@@ -618,14 +619,22 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
           // Atualizar estoque no Tiny
           if ((product as any).tiny_id) {
             const novoEstoque = product.current_stock - sp.quantity;
-            await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-tiny-stock`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ tiny_id: (product as any).tiny_id, quantidade: novoEstoque }),
-            });
+            try {
+              const tinyRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-tiny-stock`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ tiny_id: (product as any).tiny_id, quantidade: novoEstoque }),
+              });
+              const tinyData = await tinyRes.json();
+              if (!tinyData.success) {
+                console.error(`Tiny stock update failed for ${(product as any).tiny_id}:`, tinyData.error);
+              }
+            } catch (tinyErr) {
+              console.error('Erro ao atualizar estoque no Tiny:', tinyErr);
+            }
           }
         }
       }

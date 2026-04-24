@@ -16,11 +16,14 @@ export default function Products() {
   const [searchTerm, setSearchTerm] = useState('');
   const [editingCost, setEditingCost] = useState<string | null>(null);
   const [costValue, setCostValue] = useState('');
+  const [editingNcm, setEditingNcm] = useState<string | null>(null);
+  const [ncmValue, setNcmValue] = useState('');
   const [formData, setFormData] = useState({
     model: '',
     color: '',
     cost: '',
     price: '',
+    ncm: '',
   });
 
   useEffect(() => {
@@ -77,6 +80,7 @@ export default function Products() {
         supplier: '',
         cost: parseFloat(formData.cost) || 0,
         price: parseFloat(formData.price) || 0,
+        ncm: formData.ncm || null,
         updated_at: new Date().toISOString(),
       };
 
@@ -103,6 +107,7 @@ export default function Products() {
       color: product.color,
       cost: product.cost?.toString() || '0',
       price: product.price?.toString() || '0',
+      ncm: product.ncm || '',
     });
     setShowForm(true);
   };
@@ -110,11 +115,21 @@ export default function Products() {
   const handleDelete = async (id: string) => {
     if (!confirm('Tem certeza que deseja excluir este produto?')) return;
     try {
+      const { count } = await supabase
+        .from('sale_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('product_id', id);
+
+      if (count && count > 0) {
+        alert(`Este produto não pode ser excluído pois está vinculado a ${count} venda(s). Exclua as vendas primeiro.`);
+        return;
+      }
+
       const { error } = await supabase.from('products').delete().eq('id', id);
       if (error) throw error;
       loadProducts();
-    } catch (error) {
-      alert('Erro ao excluir produto');
+    } catch (error: any) {
+      alert(`Erro ao excluir produto: ${error?.message || 'Erro desconhecido'}`);
     }
   };
 
@@ -132,8 +147,22 @@ export default function Products() {
     }
   };
 
+  const handleSaveNcm = async (productId: string) => {
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update({ ncm: ncmValue.trim() || null })
+        .eq('id', productId);
+      if (error) throw error;
+      setEditingNcm(null);
+      loadProducts();
+    } catch {
+      alert('Erro ao salvar NCM');
+    }
+  };
+
   const resetForm = () => {
-    setFormData({ model: '', color: '', cost: '', price: '' });
+    setFormData({ model: '', color: '', cost: '', price: '', ncm: '' });
     setEditingProduct(null);
     setShowForm(false);
   };
@@ -244,6 +273,10 @@ export default function Products() {
                   <label className="block text-sm font-medium text-gray-300 mb-2">Preço de Venda (R$)</label>
                   <input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="299.00" />
                 </div>
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">NCM</label>
+                  <input type="text" value={formData.ncm} onChange={(e) => setFormData({ ...formData, ncm: e.target.value })} className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" placeholder="Ex: 91021110" maxLength={8} />
+                </div>
               </div>
               <div className="flex gap-4 pt-4">
                 <button type="submit" className="flex-1 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">
@@ -266,6 +299,7 @@ export default function Products() {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Modelo</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Cor</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">SKU</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">NCM</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Custo</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Preço</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Estoque</th>
@@ -275,7 +309,7 @@ export default function Products() {
           <tbody className="divide-y divide-gray-700">
             {filteredProducts.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-gray-400">Nenhum produto encontrado.</td>
+                <td colSpan={8} className="px-6 py-8 text-center text-gray-400">Nenhum produto encontrado.</td>
               </tr>
             ) : (
               filteredProducts.map((product: any) => (
@@ -283,6 +317,33 @@ export default function Products() {
                   <td className="px-6 py-4 text-white font-medium">{product.model}</td>
                   <td className="px-6 py-4 text-gray-300">{product.color}</td>
                   <td className="px-6 py-4 text-gray-400 text-sm">{product.sku || '-'}</td>
+                  <td className="px-6 py-4 text-sm">
+                    {editingNcm === product.id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={ncmValue}
+                          onChange={(e) => setNcmValue(e.target.value)}
+                          maxLength={8}
+                          className="w-24 bg-gray-700 text-white rounded px-2 py-1 border border-orange-500 text-sm"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveNcm(product.id);
+                            if (e.key === 'Escape') setEditingNcm(null);
+                          }}
+                        />
+                        <button onClick={() => handleSaveNcm(product.id)} className="text-green-400 text-xs">✓</button>
+                        <button onClick={() => setEditingNcm(null)} className="text-red-400 text-xs">✕</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setEditingNcm(product.id); setNcmValue(product.ncm || ''); }}
+                        className="text-gray-400 hover:text-orange-400 hover:underline"
+                      >
+                        {product.ncm || '-'}
+                      </button>
+                    )}
+                  </td>
                   <td className="px-6 py-4">
                     {editingCost === product.id ? (
                       <div className="flex items-center gap-2">

@@ -270,27 +270,45 @@ export default function Motoboys() {
         .lt('sale_date', endUTC);
 
       const salesList = [...(salesData || [])];
-      const deliveryLines = texto.split('\n').filter(l => l.includes(':') && l.includes(' - ') && !l.startsWith('Entregas'));
+
+      // Parse grouped format:
+      // city headers: any non-bullet, non-footer line (strips leading emoji)
+      // delivery lines: start with "- " and contain ":"
+      const skipPrefixes = ['🛵', '📅', '💰', '✅', '🙏', '☑'];
+      const deliveryEntries: { bairro: string; cidade: string; valor: number }[] = [];
+      let currentCity = '';
+
+      for (const line of texto.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        if (trimmed.startsWith('- ') && trimmed.includes(':')) {
+          const withoutBullet = trimmed.substring(2);
+          const colonIdx = withoutBullet.lastIndexOf(':');
+          if (colonIdx === -1) continue;
+          const bairro = withoutBullet.substring(0, colonIdx).trim();
+          const valor = parseFloat(withoutBullet.substring(colonIdx + 1).trim().replace(',', '.'));
+          if (bairro && !isNaN(valor) && currentCity) {
+            deliveryEntries.push({ bairro, cidade: currentCity, valor });
+          }
+          continue;
+        }
+
+        if (skipPrefixes.some(p => trimmed.startsWith(p))) continue;
+
+        // Strip leading emoji characters to get city name
+        const cityName = trimmed.replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\s]+/u, '').trim();
+        if (cityName) currentCity = cityName;
+      }
 
       const updates: { id: string; delivery_fee: number; total_cost: number; profit: number }[] = [];
       const matched = new Set<string>();
 
-      for (const line of deliveryLines) {
-        const colonIdx = line.lastIndexOf(':');
-        if (colonIdx === -1) continue;
-        const location = line.substring(0, colonIdx).trim();
-        const valor = parseFloat(line.substring(colonIdx + 1).trim().replace(',', '.'));
-        if (!location || isNaN(valor)) continue;
-
-        const dashIdx = location.indexOf(' - ');
-        if (dashIdx === -1) continue;
-        const bairro = location.substring(0, dashIdx).trim().toLowerCase();
-        const cidade = location.substring(dashIdx + 3).trim().toLowerCase();
-
+      for (const { bairro, cidade, valor } of deliveryEntries) {
         const sale = salesList.find(s =>
           !matched.has(s.id) &&
-          (s.neighborhood || '').toLowerCase() === bairro &&
-          (s.city || '').toLowerCase() === cidade
+          (s.neighborhood || '').toLowerCase() === bairro.toLowerCase() &&
+          (s.city || '').toLowerCase() === cidade.toLowerCase()
         );
         if (sale) {
           matched.add(sale.id);

@@ -7,18 +7,24 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-async function buscarProdutosTiny(pesquisa: string, token: string) {
+async function buscarProdutosTiny(
+  pesquisa: string,
+  token: string,
+  pagina: number
+): Promise<{ produtos: any[]; numeroPaginas: number }> {
   const response = await fetch("https://api.tiny.com.br/api2/produtos.pesquisa.php", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `token=${token}&pesquisa=${pesquisa}&formato=JSON&situacao=A`,
+    body: `token=${token}&pesquisa=${encodeURIComponent(pesquisa)}&formato=JSON&situacao=A&pagina=${pagina}`,
   });
-  const text = await response.text();
-  const data = JSON.parse(text);
+  const data = JSON.parse(await response.text());
   if (data?.retorno?.status === "OK" && Array.isArray(data?.retorno?.produtos)) {
-    return data.retorno.produtos.map((p: any) => p?.produto).filter((p: any) => p != null);
+    return {
+      produtos: data.retorno.produtos.map((p: any) => p?.produto).filter((p: any) => p != null),
+      numeroPaginas: parseInt(data?.retorno?.numero_paginas) || 1,
+    };
   }
-  return [];
+  return { produtos: [], numeroPaginas: 0 };
 }
 
 function detectarCategoria(nome: string): string {
@@ -52,50 +58,62 @@ Deno.serve(async (req: Request) => {
     const processados = new Set<string>();
 
     for (const termo of termosBusca) {
-      const produtos = await buscarProdutosTiny(termo, TINY_TOKEN);
+      let pagina = 1;
+      let numeroPaginas = 1;
 
-      for (const p of produtos) {
-        if (processados.has(p.id)) continue;
-        processados.add(p.id);
+      do {
+        console.log(`Buscando termo="${termo}" página ${pagina}/${numeroPaginas}`);
+        const resultado = await buscarProdutosTiny(termo, TINY_TOKEN, pagina);
+        numeroPaginas = resultado.numeroPaginas;
+        const produtos = resultado.produtos;
 
-        try {
-          const nome: string = p.nome || "";
-          const categoriaDetectada = categoria === "smartwatch" ? "smartwatch" : detectarCategoria(nome);
+        if (produtos.length === 0) break;
 
-          if (categoria === "acessorio" && categoriaDetectada === "smartwatch") continue;
+        for (const p of produtos) {
+          if (processados.has(p.id)) continue;
+          processados.add(p.id);
 
-          const palavras = nome.split(" ");
-          const cor = palavras[palavras.length - 1];
-          const modelo = palavras.slice(0, -1).join(" ");
+          try {
+            const nome: string = p.nome || "";
+            const categoriaDetectada = categoria === "smartwatch" ? "smartwatch" : detectarCategoria(nome);
 
-          const produto = {
-            model: modelo,
-            color: cor,
-            supplier: "",
-            cost: parseFloat(p.preco_custo) || 0,
-            price: parseFloat(p.preco) || 0,
-            current_stock: 0,
-            minimum_stock: 0,
-            tiny_id: parseInt(p.id),
-            sku: p.codigo || "",
-            category: categoriaDetectada,
-            updated_at: new Date().toISOString(),
-          };
+            if (categoria === "acessorio" && categoriaDetectada === "smartwatch") continue;
 
-          const { error } = await supabase
-            .from("products")
-            .upsert(produto, { onConflict: "tiny_id" });
+            const palavras = nome.split(" ");
+            const cor = palavras[palavras.length - 1];
+            const modelo = palavras.slice(0, -1).join(" ");
 
-          if (error) {
-            console.error("Erro:", error.message);
+            const produto = {
+              model: modelo,
+              color: cor,
+              supplier: "",
+              cost: parseFloat(p.preco_custo) || 0,
+              price: parseFloat(p.preco) || 0,
+              current_stock: 0,
+
+              tiny_id: parseInt(p.id),
+              sku: p.codigo || "",
+              category: categoriaDetectada,
+              updated_at: new Date().toISOString(),
+            };
+
+            const { error } = await supabase
+              .from("products")
+              .upsert(produto, { onConflict: "tiny_id" });
+
+            if (error) {
+              console.error("Erro:", error.message);
+              errors++;
+            } else {
+              imported++;
+            }
+          } catch (e) {
             errors++;
-          } else {
-            imported++;
           }
-        } catch (e) {
-          errors++;
         }
-      }
+
+        pagina++;
+      } while (pagina <= numeroPaginas);
     }
 
     return new Response(
