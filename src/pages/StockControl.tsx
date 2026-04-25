@@ -53,6 +53,11 @@ export default function StockControl() {
   const [orderQty, setOrderQty] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
   const [savingOrder, setSavingOrder] = useState(false);
+  const [historyTypeFilter, setHistoryTypeFilter] = useState<'all' | 'venda' | 'entrada' | 'encomenda_recebida' | 'saida'>('all');
+  const [historyPeriodFilter, setHistoryPeriodFilter] = useState<'7' | '30' | '90' | 'all'>('all');
+  const [allHistoryEvents, setAllHistoryEvents] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
 
   useEffect(() => {
     loadProducts();
@@ -116,18 +121,65 @@ export default function StockControl() {
   };
 
   const loadHistory = async (product: any) => {
+    setHistoryLoading(true);
+    setAllHistoryEvents([]);
+    setHistoryTypeFilter('all');
+    setHistoryPeriodFilter('all');
+    setHistoryPage(1);
+    setSelectedProduct(product);
+    setShowHistory(true);
     try {
-      const { data: saleItems } = await supabase
-        .from('sale_items')
-        .select('*, sales(customer_name, sale_date, status)')
-        .eq('product_id', product.id)
-        .order('created_at', { ascending: false })
-        .limit(20);
-      setMovements(saleItems || []);
-      setSelectedProduct(product);
-      setShowHistory(true);
+      const [saleItemsRes, movementsRes] = await Promise.all([
+        supabase
+          .from('sale_items')
+          .select('id, quantity, unit_price, sale_id, sales(id, customer_name, sale_date, status)')
+          .eq('product_id', product.id),
+        supabase
+          .from('stock_movements')
+          .select('*')
+          .eq('product_id', product.id),
+      ]);
+
+      const events: any[] = [];
+
+      (saleItemsRes.data || []).forEach((item: any) => {
+        if (!item.sales?.sale_date) return;
+        events.push({
+          id: `sale-${item.id}`,
+          type: 'venda',
+          date: item.sales.sale_date,
+          qty: item.quantity,
+          delta: -item.quantity,
+          customer: item.sales.customer_name,
+          saleId: (item.sales.id || '').slice(0, 8).toUpperCase(),
+          price: item.unit_price || 0,
+        });
+      });
+
+      (movementsRes.data || []).forEach((m: any) => {
+        events.push({
+          id: `mov-${m.id}`,
+          type: m.type,
+          date: m.created_at,
+          qty: m.quantity,
+          delta: (m.type === 'entrada' || m.type === 'encomenda_recebida') ? m.quantity : -m.quantity,
+          notes: m.notes,
+        });
+      });
+
+      events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      let balance = product.current_stock;
+      for (const event of events) {
+        event.saldo = balance;
+        balance -= event.delta;
+      }
+
+      setAllHistoryEvents(events);
     } catch (error) {
       console.error('Error loading history:', error);
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -152,6 +204,20 @@ export default function StockControl() {
         .update({ current_stock: novoEstoque })
         .eq('id', selectedProduct.id);
       if (error) throw error;
+
+      const pendingForProduct = movementType === 'entrada'
+        ? stockOrders.filter((o: any) => o.product_id === selectedProduct.id)
+        : [];
+      const isReceivingOrder = pendingForProduct.length > 0;
+      const autoNotes = isReceivingOrder
+        ? pendingForProduct.map((o: any) => o.notes).filter(Boolean).join(', ') || null
+        : null;
+      await supabase.from('stock_movements').insert([{
+        product_id: selectedProduct.id,
+        type: isReceivingOrder ? 'encomenda_recebida' : movementType,
+        quantity: qty,
+        notes: movementReason.trim() || autoNotes,
+      }]);
 
       if (selectedProduct.tiny_id) {
         await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-tiny-stock`, {
@@ -343,6 +409,23 @@ export default function StockControl() {
       acc[p.model].push(p);
       return acc;
     }, {});
+
+  const filteredHistoryEvents = allHistoryEvents.filter(event => {
+    if (historyTypeFilter !== 'all' && event.type !== historyTypeFilter) return false;
+    if (historyPeriodFilter !== 'all') {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - parseInt(historyPeriodFilter));
+      if (new Date(event.date) < cutoff) return false;
+    }
+    return true;
+  });
+  const HISTORY_PAGE_SIZE = 20;
+  const historyTotalPages = Math.max(1, Math.ceil(filteredHistoryEvents.length / HISTORY_PAGE_SIZE));
+  const historyPageSafe = Math.min(historyPage, historyTotalPages);
+  const paginatedHistoryEvents = filteredHistoryEvents.slice(
+    (historyPageSafe - 1) * HISTORY_PAGE_SIZE,
+    historyPageSafe * HISTORY_PAGE_SIZE
+  );
 
   if (loading) {
     return <div className="p-8"><div className="text-white">Carregando...</div></div>;
@@ -695,45 +778,197 @@ export default function StockControl() {
       {/* Modal histórico */}
       {showHistory && selectedProduct && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl border border-gray-700 max-h-[80vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4">
+          <div className="bg-gray-800 rounded-xl w-full max-w-3xl border border-gray-700 max-h-[90vh] flex flex-col">
+
+            {/* Header */}
+            <div className="flex justify-between items-start p-6 border-b border-gray-700 flex-shrink-0">
               <div>
                 <h2 className="text-xl font-bold text-white">{selectedProduct.model} {selectedProduct.color}</h2>
-                <p className="text-gray-400 text-sm">Histórico de vendas</p>
+                <p className="text-gray-400 text-sm mt-0.5">Histórico de movimentações</p>
               </div>
-              <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
+              <div className="flex items-center gap-5">
+                <div className="text-right">
+                  <p className="text-xs text-gray-500">Estoque atual</p>
+                  <p className="text-2xl font-bold text-white">
+                    {selectedProduct.current_stock}
+                    <span className="text-sm font-normal text-gray-400 ml-1">un</span>
+                  </p>
+                </div>
+                <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-white text-2xl leading-none">×</button>
+              </div>
             </div>
-            {movements.length === 0 ? (
-              <div className="text-center py-8">
-                <Package size={48} className="mx-auto text-gray-600 mb-3" />
-                <p className="text-gray-400">Nenhuma venda encontrada para este produto</p>
+
+            {/* Filtros */}
+            <div className="flex flex-wrap items-center gap-2 px-6 py-3 border-b border-gray-700 flex-shrink-0">
+              <div className="flex gap-0.5 bg-gray-900 rounded-lg p-1">
+                {(['all', 'venda', 'entrada', 'encomenda_recebida', 'saida'] as const).map(v => {
+                  const labels: Record<string, string> = {
+                    all: 'Todos',
+                    venda: '🛒 Vendas',
+                    entrada: '📦 Entradas',
+                    encomenda_recebida: '🏭 Encomendas',
+                    saida: '➖ Saídas',
+                  };
+                  return (
+                    <button
+                      key={v}
+                      onClick={() => { setHistoryTypeFilter(v); setHistoryPage(1); }}
+                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                        historyTypeFilter === v ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      {labels[v]}
+                    </button>
+                  );
+                })}
               </div>
-            ) : (
-              <table className="w-full">
-                <thead className="bg-gray-900">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs text-gray-400 uppercase">Data</th>
-                    <th className="px-4 py-3 text-left text-xs text-gray-400 uppercase">Cliente</th>
-                    <th className="px-4 py-3 text-left text-xs text-gray-400 uppercase">Qtd</th>
-                    <th className="px-4 py-3 text-left text-xs text-gray-400 uppercase">Valor Unit.</th>
-                    <th className="px-4 py-3 text-left text-xs text-gray-400 uppercase">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-700">
-                  {movements.map((m) => (
-                    <tr key={m.id} className="hover:bg-gray-700/50">
-                      <td className="px-4 py-3 text-gray-300 text-sm">
-                        {new Date(m.sales?.sale_date).toLocaleDateString('pt-BR')}
-                      </td>
-                      <td className="px-4 py-3 text-white">{m.sales?.customer_name}</td>
-                      <td className="px-4 py-3 text-red-400 font-bold">-{m.quantity}</td>
-                      <td className="px-4 py-3 text-green-400">R$ {m.unit_price?.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-gray-300 text-sm">{m.sales?.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="flex gap-0.5 bg-gray-900 rounded-lg p-1 ml-auto">
+                {(['7', '30', '90', 'all'] as const).map(v => {
+                  const labels: Record<string, string> = { '7': '7 dias', '30': '30 dias', '90': '90 dias', all: 'Tudo' };
+                  return (
+                    <button
+                      key={v}
+                      onClick={() => { setHistoryPeriodFilter(v); setHistoryPage(1); }}
+                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                        historyPeriodFilter === v ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      {labels[v]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Lista de eventos */}
+            <div className="overflow-y-auto flex-1 p-6 space-y-2">
+              {historyLoading ? (
+                <div className="text-center py-12 text-gray-400">Carregando...</div>
+              ) : filteredHistoryEvents.length === 0 ? (
+                <div className="text-center py-12">
+                  <Package size={48} className="mx-auto text-gray-600 mb-3" />
+                  <p className="text-gray-400">Nenhuma movimentação encontrada</p>
+                  {allHistoryEvents.length > 0 && (
+                    <p className="text-gray-600 text-xs mt-1">Tente remover os filtros</p>
+                  )}
+                </div>
+              ) : (
+                paginatedHistoryEvents.map(event => {
+                  const cfgMap: Record<string, { emoji: string; label: string; bar: string; qty: string; bg: string }> = {
+                    venda:             { emoji: '🛒', label: 'VENDA',              bar: 'bg-red-500',    qty: 'text-red-400',    bg: 'bg-red-500/5' },
+                    entrada:           { emoji: '📦', label: 'ENTRADA',            bar: 'bg-green-500',  qty: 'text-green-400',  bg: 'bg-green-500/5' },
+                    encomenda_recebida:{ emoji: '🏭', label: 'ENCOMENDA RECEBIDA', bar: 'bg-blue-500',   qty: 'text-blue-400',   bg: 'bg-blue-500/5' },
+                    saida:             { emoji: '➖', label: 'SAÍDA MANUAL',       bar: 'bg-yellow-500', qty: 'text-yellow-400', bg: 'bg-yellow-500/5' },
+                  };
+                  const c = cfgMap[event.type] || cfgMap.saida;
+                  const d = new Date(event.date);
+                  const dateStr = d.toLocaleDateString('pt-BR');
+                  const timeStr = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                  const isPositive = event.type === 'entrada' || event.type === 'encomenda_recebida';
+
+                  return (
+                    <div key={event.id} className={`flex rounded-lg border border-gray-700 ${c.bg} overflow-hidden`}>
+                      <div className={`w-1 ${c.bar} flex-shrink-0`} />
+                      <div className="flex-1 flex items-start justify-between gap-4 p-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            <span className="text-xs font-bold tracking-wide text-gray-200">
+                              {c.emoji} {c.label}
+                            </span>
+                            <span className="text-gray-600 text-xs">•</span>
+                            <span className="text-xs text-gray-500">{dateStr} às {timeStr}</span>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-xl font-bold ${c.qty}`}>
+                              {isPositive ? '+' : '-'}{event.qty} un
+                            </span>
+                            {event.type === 'venda' && (
+                              <>
+                                <span className="text-gray-600">•</span>
+                                <span className="text-gray-400 text-sm">Pedido #{event.saleId}</span>
+                                {event.customer && (
+                                  <>
+                                    <span className="text-gray-600">•</span>
+                                    <span className="text-white text-sm font-medium">{event.customer}</span>
+                                  </>
+                                )}
+                                {event.price > 0 && (
+                                  <>
+                                    <span className="text-gray-600">•</span>
+                                    <span className="text-green-400 text-sm font-medium">
+                                      R$ {(event.price * event.qty).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  </>
+                                )}
+                              </>
+                            )}
+                            {event.type !== 'venda' && event.notes && (
+                              <>
+                                <span className="text-gray-600">•</span>
+                                <span className="text-gray-300 text-sm">{event.notes}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0 pl-2">
+                          <p className="text-xs text-gray-500 mb-0.5">Saldo</p>
+                          <span className={`text-xl font-bold ${event.saldo < 0 ? 'text-red-400' : 'text-white'}`}>
+                            {event.saldo}
+                          </span>
+                          <span className="text-xs text-gray-500 ml-1">un</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Rodapé com totais */}
+            {!historyLoading && allHistoryEvents.length > 0 && (
+              <div className="px-6 py-3 border-t border-gray-700 flex items-center justify-between gap-4 flex-shrink-0">
+                <span className="text-xs text-gray-500 whitespace-nowrap">
+                  {filteredHistoryEvents.length} movimentaç{filteredHistoryEvents.length !== 1 ? 'ões' : 'ão'}
+                  {filteredHistoryEvents.length !== allHistoryEvents.length && (
+                    <span className="ml-1 text-gray-600">(de {allHistoryEvents.length})</span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setHistoryPage(p => Math.max(1, p - 1))}
+                    disabled={historyPageSafe === 1}
+                    className="px-3 py-1 rounded-lg text-sm font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    ← Anterior
+                  </button>
+                  <span className="text-xs text-gray-400 whitespace-nowrap">
+                    Página {historyPageSafe} de {historyTotalPages}
+                  </span>
+                  <button
+                    onClick={() => setHistoryPage(p => Math.min(historyTotalPages, p + 1))}
+                    disabled={historyPageSafe === historyTotalPages}
+                    className="px-3 py-1 rounded-lg text-sm font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Próximo →
+                  </button>
+                </div>
+                <div className="flex gap-3 text-xs whitespace-nowrap">
+                  <span className="text-green-400">
+                    +{allHistoryEvents
+                      .filter(e => e.type === 'entrada' || e.type === 'encomenda_recebida')
+                      .reduce((s: number, e: any) => s + e.qty, 0)
+                    } un
+                  </span>
+                  <span className="text-red-400">
+                    -{allHistoryEvents
+                      .filter(e => e.type === 'venda' || e.type === 'saida')
+                      .reduce((s: number, e: any) => s + e.qty, 0)
+                    } un
+                  </span>
+                </div>
+              </div>
             )}
+
           </div>
         </div>
       )}
