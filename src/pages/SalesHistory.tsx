@@ -80,6 +80,7 @@ interface Sale {
   nfe_url?: string;
   nfe_chave?: string;
   nfe_status?: string;
+  delivery_notes?: string | null;
 }
 
 export default function SalesHistory() {
@@ -102,6 +103,7 @@ export default function SalesHistory() {
   const [whatsappSale, setWhatsappSale] = useState<Sale | null>(null);
   const [receiptChoiceSale, setReceiptChoiceSale] = useState<Sale | null>(null);
   const [receiptHideDelivery, setReceiptHideDelivery] = useState(false);
+  const [giftSale, setGiftSale] = useState<Sale | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<SaleStatus>('finalizado');
   const [bulkUpdating, setBulkUpdating] = useState(false);
@@ -267,6 +269,27 @@ export default function SalesHistory() {
           motoboy_name: sale.motoboy_id ? (motoboysMap.get(sale.motoboy_id) || undefined) : undefined,
         } as Sale;
       });
+      if (period === 'today') {
+        const norm = (s: string) =>
+          s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        const todayPriority = (s: Sale): number => {
+          if (s.delivery_type === 'loja_fisica') return 0;
+          if (s.delivery_type === 'correios') return 1;
+          if (s.delivery_type === 'motoboy') {
+            const city = norm(s.city || '');
+            if (city.includes('rio de janeiro')) return 2;
+            if (city.includes('niteroi')) return 3;
+            return 4;
+          }
+          return 5;
+        };
+        salesWithProducts.sort((a, b) => {
+          const pd = todayPriority(a) - todayPriority(b);
+          if (pd !== 0) return pd;
+          return new Date(b.sale_date).getTime() - new Date(a.sale_date).getTime();
+        });
+      }
+
       setFilteredSales(salesWithProducts);
     } catch (error) {
       console.error('Error filtering sales:', error);
@@ -754,6 +777,9 @@ export default function SalesHistory() {
                           </p>
                         )}
                         <p className="text-gray-400 text-sm">{sale.neighborhood} - {sale.city}</p>
+                        {sale.delivery_notes && (
+                          <p className="text-amber-400 text-xs mt-1">📝 {sale.delivery_notes}</p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -784,6 +810,9 @@ export default function SalesHistory() {
                     <button onClick={() => setReceiptChoiceSale(sale)} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
                       <FileText size={14} />
                       <span className="text-xs font-semibold">Recibo</span>
+                    </button>
+                    <button onClick={() => setGiftSale(sale)} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
+                      <span className="text-xs font-semibold">🎁 Presente</span>
                     </button>
                     <button onClick={() => setWhatsappSale(sale)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 w-full">
                       <MessageCircle size={14} />
@@ -898,6 +927,7 @@ export default function SalesHistory() {
       )}
 
       {selectedSale && <Receipt saleData={selectedSale} hideDeliveryControl={receiptHideDelivery} onClose={() => setSelectedSale(null)} />}
+      {giftSale && <Receipt saleData={giftSale} giftMode={true} onClose={() => setGiftSale(null)} />}
       {receiptChoiceSale && (
         <ReceiptChoiceModal
           onClose={() => setReceiptChoiceSale(null)}

@@ -271,9 +271,19 @@ export default function Motoboys() {
 
       const salesList = [...(salesData || [])];
 
+      console.log('=== PARSER DEBUG ===');
+      console.log(`Intervalo UTC: ${startUTC} → ${endUTC}`);
+      console.log(`Vendas encontradas no DB (${salesList.length}):`, salesList.map(s => ({
+        id: s.id.slice(0, 8),
+        city: s.city,
+        neighborhood: s.neighborhood,
+        cityBytes: [...(s.city || '')].map(c => c.codePointAt(0)?.toString(16)).join(' '),
+        neighborhoodBytes: [...(s.neighborhood || '')].map(c => c.codePointAt(0)?.toString(16)).join(' '),
+      })));
+
       // Parse grouped format:
       // city headers: any non-bullet, non-footer line (strips leading emoji)
-      // delivery lines: start with "- " and contain ":"
+      // delivery lines: start with "- " or "• " and contain ":"
       const skipPrefixes = ['🛵', '📅', '💰', '✅', '🙏', '☑'];
       const deliveryEntries: { bairro: string; cidade: string; valor: number }[] = [];
       let currentCity = '';
@@ -282,24 +292,34 @@ export default function Motoboys() {
         const trimmed = line.trim();
         if (!trimmed) continue;
 
-        if (trimmed.startsWith('- ') && trimmed.includes(':')) {
-          const withoutBullet = trimmed.substring(2);
+        const bulletMatch = trimmed.match(/^[-•]\s+(.+)$/);
+        if (bulletMatch && trimmed.includes(':')) {
+          const withoutBullet = bulletMatch[1];
           const colonIdx = withoutBullet.lastIndexOf(':');
           if (colonIdx === -1) continue;
           const bairro = withoutBullet.substring(0, colonIdx).trim();
           const valor = parseFloat(withoutBullet.substring(colonIdx + 1).trim().replace(',', '.'));
+          console.log(`  [BAIRRO] linha="${trimmed}" → bairro="${bairro}" valor=${valor} cidade="${currentCity}"`);
           if (bairro && !isNaN(valor) && currentCity) {
             deliveryEntries.push({ bairro, cidade: currentCity, valor });
+          } else {
+            console.warn(`  [BAIRRO IGNORADO] bairro="${bairro}" isNaN=${isNaN(valor)} currentCity="${currentCity}"`);
           }
           continue;
         }
 
-        if (skipPrefixes.some(p => trimmed.startsWith(p))) continue;
+        if (skipPrefixes.some(p => trimmed.startsWith(p))) {
+          console.log(`  [SKIP] "${trimmed}"`);
+          continue;
+        }
 
         // Strip leading emoji characters to get city name
         const cityName = trimmed.replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\s]+/u, '').trim();
+        console.log(`  [CIDADE] linha="${trimmed}" → cityName="${cityName}" bytes=[${[...trimmed].map(c => c.codePointAt(0)?.toString(16)).join(' ')}]`);
         if (cityName) currentCity = cityName;
       }
+
+      console.log('Entries parseadas:', deliveryEntries);
 
       const updates: { id: string; delivery_fee: number; total_cost: number; profit: number }[] = [];
       const matched = new Set<string>();
@@ -310,6 +330,11 @@ export default function Motoboys() {
           (s.neighborhood || '').toLowerCase() === bairro.toLowerCase() &&
           (s.city || '').toLowerCase() === cidade.toLowerCase()
         );
+        console.log(`  [MATCH] bairro="${bairro}" cidade="${cidade}" → ${sale ? `ENCONTRADO id=${sale.id.slice(0, 8)}` : 'NÃO ENCONTRADO'}`);
+        if (!sale) {
+          const cityMatches = salesList.filter(s => (s.city || '').toLowerCase() === cidade.toLowerCase());
+          console.log(`    Vendas com cidade "${cidade}" (${cityMatches.length}):`, cityMatches.map(s => `"${s.neighborhood}"`));
+        }
         if (sale) {
           matched.add(sale.id);
           const newTotalCost = (sale.total_cost || 0) - (sale.delivery_fee || 0) + valor;
@@ -317,6 +342,9 @@ export default function Motoboys() {
           updates.push({ id: sale.id, delivery_fee: valor, total_cost: newTotalCost, profit: newProfit });
         }
       }
+
+      console.log(`Updates a aplicar: ${updates.length}`, updates);
+      console.log('=== FIM DEBUG ===');
 
       if (updates.length === 0) {
         alert('Nenhuma venda correspondente encontrada. Verifique os bairros e cidades.');

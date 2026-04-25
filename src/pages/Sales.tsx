@@ -95,6 +95,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
     delivery_fee: 20,
     delivery_cost: 0,
     volumes: 1,
+    delivery_notes: '',
   });
 
   const [saleProducts, setSaleProducts] = useState<SaleProduct[]>([]);
@@ -333,6 +334,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
         totalSalePrice: totalWithManual,
         totalProductCost,
         totalAccessoryCost,
+        totalManualCost,
         cardFee,
         deliveryFee,
         deliveryCost,
@@ -551,9 +553,10 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
             profit: totals.profit,
             volumes: formData.volumes,
             manual_items: manualItems.length > 0 ? manualItems : null,
+            delivery_notes: formData.delivery_notes.trim() || null,
             payment_status: paymentStatus,
             status: 'em_separacao',
-            sale_date: saleDate + 'T03:00:00.000Z',
+            sale_date: saleDate + 'T' + new Date().toISOString().split('T')[1],
           },
         ])
         .select()
@@ -759,6 +762,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
       delivery_fee: 0,
       delivery_cost: 0,
       volumes: 1,
+      delivery_notes: '',
     });
     setSaleProducts([]);
     setSaleAccessories([]);
@@ -1082,35 +1086,20 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
                 className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
               />
 
-              {formData.delivery_type === 'correios' && (
-                <div>
-                  <input
-                    type="text"
-                    placeholder="CPF*"
-                    maxLength={14}
-                    value={cpfDisplay}
-                    onChange={(e) => handleCpfChange(e.target.value)}
-                    className={`w-full bg-gray-700 text-white rounded-lg px-4 py-2 border ${
-                      cpfError ? 'border-red-500' : 'border-orange-500'
-                    } focus:border-orange-500 focus:outline-none`}
-                    required
-                  />
-                  {cpfError && (
-                    <p className="text-red-500 text-sm mt-1">{cpfError}</p>
-                  )}
-                </div>
-              )}
-
-              {formData.delivery_type === 'motoboy' && (
+              <div>
                 <input
                   type="text"
-                  placeholder="CPF (opcional)"
+                  placeholder={formData.delivery_type === 'correios' ? 'CPF*' : 'CPF (opcional)'}
                   maxLength={14}
                   value={cpfDisplay}
                   onChange={(e) => handleCpfChange(e.target.value)}
-                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className={`w-full bg-gray-700 text-white rounded-lg px-4 py-2 border ${
+                    cpfError ? 'border-red-500' : formData.delivery_type === 'correios' ? 'border-orange-500' : 'border-gray-600'
+                  } focus:border-orange-500 focus:outline-none`}
+                  required={formData.delivery_type === 'correios'}
                 />
-              )}
+                {cpfError && <p className="text-red-500 text-sm mt-1">{cpfError}</p>}
+              </div>
 
               {formData.delivery_type === 'correios' && (
                 <>
@@ -1211,6 +1200,82 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
                   <input
                     type="text"
                     placeholder="Complemento (opcional)"
+                    value={formData.address_complement}
+                    onChange={(e) => setFormData({ ...formData, address_complement: e.target.value })}
+                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  />
+                </>
+              )}
+
+              {formData.delivery_type === 'loja_fisica' && (
+                <>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setShowPasteForm(v => !v)}
+                      className="text-sm text-gray-400 hover:text-orange-400 transition-colors"
+                    >
+                      📋 Colar Formulário
+                    </button>
+                    {showPasteForm && (
+                      <textarea
+                        autoFocus
+                        rows={5}
+                        placeholder="Cole o texto do formulário aqui e os campos serão preenchidos automaticamente..."
+                        onPaste={(e) => {
+                          e.preventDefault();
+                          parsearFormulario(e.clipboardData.getData('text'));
+                        }}
+                        className="mt-2 w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-orange-500 focus:outline-none text-sm resize-none placeholder-gray-500"
+                      />
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="CEP (opcional)"
+                        maxLength={8}
+                        value={formData.zip_code}
+                        onChange={(e) => handleCepChange(e.target.value)}
+                        className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      />
+                      {loadingCep && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          <Loader2 className="w-4 h-4 text-orange-500 animate-spin" />
+                        </div>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Estado (UF)"
+                      maxLength={2}
+                      value={formData.state}
+                      onChange={(e) => setFormData({ ...formData, state: e.target.value.toUpperCase() })}
+                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                    />
+                  </div>
+                  {cepError && <p className="text-red-500 text-sm">{cepError}</p>}
+                  <div className="grid grid-cols-3 gap-2">
+                    <input
+                      type="text"
+                      placeholder="Rua (opcional)"
+                      value={formData.address_street}
+                      onChange={(e) => setFormData({ ...formData, address_street: e.target.value })}
+                      className="col-span-2 w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Número"
+                      value={formData.address_number}
+                      onChange={(e) => setFormData({ ...formData, address_number: e.target.value })}
+                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Complemento (opcional)"
+                    maxLength={18}
                     value={formData.address_complement}
                     onChange={(e) => setFormData({ ...formData, address_complement: e.target.value })}
                     className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
@@ -1482,6 +1547,16 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
               />
             )}
           </div>
+          <div className="mt-4">
+            <input
+              type="text"
+              placeholder="📝 Observações (ex: Deixar na portaria, Entregar para Bernardo)"
+              value={formData.delivery_notes}
+              onChange={(e) => setFormData({ ...formData, delivery_notes: e.target.value })}
+              className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+              maxLength={200}
+            />
+          </div>
         </div>
 
         {/* Volumes and Shipping Info */}
@@ -1569,6 +1644,14 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
                   R$ {totals.totalAccessoryCost.toFixed(2)}
                 </span>
               </div>
+              {totals.totalManualCost > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Custo Itens Manuais:</span>
+                  <span className="text-gray-300 font-medium">
+                    R$ {totals.totalManualCost.toFixed(2)}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-gray-400">Taxa Motoboy:</span>
                 <span className="text-gray-300 font-medium">
