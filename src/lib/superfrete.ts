@@ -93,7 +93,7 @@ export async function generateShippingLabel(
       products,
       options: {
         insurance_value: 150,
-        non_commercial: true,
+        non_commercial: !params.invoice_key,
       },
       ...(params.invoice_key ? { invoice: { key: params.invoice_key } } : {}),
       platform: "TriumphStore",

@@ -174,19 +174,17 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
               </p>
             </div>
           )}
-          {!isPago && (
-            <div style={{ marginTop: '4px' }}>
-              <p style={{ fontSize: '9px', color: '#666', marginBottom: '4px' }}>STATUS DO PAGAMENTO</p>
-              <div style={{ display: 'flex', gap: '16px' }}>
-                <span style={{ fontSize: '11px', fontWeight: '500', color: '#000', fontFamily: 'monospace' }}>
-                  {sale?.payment_status === 'pago' ? '[X]' : '[ ]'} Pago
-                </span>
-                <span style={{ fontSize: '11px', fontWeight: '500', color: '#000', fontFamily: 'monospace' }}>
-                  {sale?.payment_status === 'a_cobrar' ? '[X]' : '[ ]'} A cobrar
-                </span>
-              </div>
+          <div style={{ marginTop: '4px' }}>
+            <p style={{ fontSize: '9px', color: '#666', marginBottom: '4px' }}>STATUS DO PAGAMENTO</p>
+            <div style={{ display: 'flex', gap: '16px' }}>
+              <span style={{ fontSize: '11px', fontWeight: '500', color: '#000', fontFamily: 'monospace' }}>
+                {sale?.payment_status === 'pago' ? '[X]' : '[ ]'} Pago
+              </span>
+              <span style={{ fontSize: '11px', fontWeight: '500', color: '#000', fontFamily: 'monospace' }}>
+                {sale?.payment_status === 'a_cobrar' ? '[X]' : '[ ]'} A cobrar
+              </span>
             </div>
-          )}
+          </div>
           {sale?.delivery_notes && (
             <div style={{ marginTop: '4px', padding: '5px 8px', background: '#fffbe6', border: '1px solid #e6b800', borderRadius: '3px' }}>
               <p style={{ fontSize: '10px', fontWeight: 'bold', color: '#7a5a00' }}>📝 {sale.delivery_notes}</p>
@@ -279,7 +277,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
           <div className="receipt-section">
 
             {/* ════════ CABEÇALHO ════════ */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', paddingBottom: '10px', marginBottom: '10px', borderBottom: '2px solid #000' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', paddingBottom: '6px', marginBottom: '6px', borderBottom: '2px solid #000' }}>
               {/* Esquerda: logo + empresa */}
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
                 <img src="/Logo2p-1.png" alt="Triumph Store" style={{ maxWidth: '115px' }} />
@@ -473,16 +471,16 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
 
           .receipt-section {
             background: white;
-            padding: 20px;
+            padding: 12px 16px;
           }
 
           .delivery-label-container {
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
-            padding: 20px;
+            padding: 12px 16px;
             border-top: 1px solid #ccc;
-            margin-top: 8px;
+            margin-top: 4px;
             background: white;
           }
 
@@ -511,7 +509,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
             }
 
             .receipt-section {
-              padding: 6mm 10mm;
+              padding: 4mm 8mm;
               background: white !important;
             }
 
@@ -519,7 +517,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
               display: flex;
               flex-wrap: wrap;
               gap: 8px;
-              padding: 5mm 10mm;
+              padding: 3mm 8mm;
               margin-top: 0;
               background: white !important;
               border-top: 1px solid #000 !important;
@@ -542,7 +540,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
 
             @page {
               size: A4 portrait;
-              margin: 8mm 10mm;
+              margin: 5mm 8mm;
             }
           }
         `}</style>

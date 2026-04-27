@@ -204,7 +204,7 @@ export default function SalesHistory() {
         .limit(200);
       if (statusFilter !== 'all') query = query.eq('status', statusFilter);
       if (deliveryTypeFilter !== 'all') query = query.eq('delivery_type', deliveryTypeFilter);
-      if (searchTerm) query = query.ilike('customer_name', `%${searchTerm}%`);
+      if (searchTerm) query = query.or(`customer_name.ilike.%${searchTerm}%,neighborhood.ilike.%${searchTerm}%,city.ilike.%${searchTerm}%`);
       if (startDate) query = query.gte('sale_date', `${startDate}T00:00:00`);
       if (endDate) query = query.lte('sale_date', `${endDate}T23:59:59`);
 
@@ -299,8 +299,8 @@ export default function SalesHistory() {
     }
   };
 
-  const updateNFeInState = (saleId: string, nfe_url: string, nfe_status: string) => {
-    const patch = (s: Sale) => s.id === saleId ? { ...s, nfe_url, nfe_status } : s;
+  const updateNFeInState = (saleId: string, nfe_url: string, nfe_status: string, nfe_chave?: string) => {
+    const patch = (s: Sale) => s.id === saleId ? { ...s, nfe_url, nfe_status, ...(nfe_chave ? { nfe_chave } : {}) } : s;
     setFilteredSales(prev => prev.map(patch));
     setSales(prev => prev.map(patch));
   };
@@ -330,7 +330,7 @@ export default function SalesHistory() {
       }
 
       const nfeUrl = data.nfe_url || '';
-      updateNFeInState(sale.id, nfeUrl, 'emitida');
+      updateNFeInState(sale.id, nfeUrl, 'emitida', data.nfe_chave || undefined);
 
       // Abre antes do alert para não ser bloqueado como popup
       if (nfeUrl) window.open(nfeUrl, '_blank');
@@ -568,7 +568,7 @@ export default function SalesHistory() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
             <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar cliente" className="w-full bg-gray-700 text-white rounded-lg pl-9 pr-3 py-2.5 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm" />
+              placeholder="Cliente, bairro ou cidade" className="w-full bg-gray-700 text-white rounded-lg pl-9 pr-3 py-2.5 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm" />
           </div>
 
           {/* Produto */}
