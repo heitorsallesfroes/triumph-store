@@ -49,6 +49,10 @@ export default function StockControl() {
   const [showStockSummary, setShowStockSummary] = useState(false);
   const [copiedSummary, setCopiedSummary] = useState(false);
   const [stockOrders, setStockOrders] = useState<any[]>([]);
+  const [allStockOrders, setAllStockOrders] = useState<any[]>([]);
+  const [allOrdersLoading, setAllOrdersLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'produtos' | 'encomendas'>('produtos');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'pending' | 'received'>('all');
   const [showOrderForm, setShowOrderForm] = useState(false);
   const [orderQty, setOrderQty] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
@@ -58,11 +62,16 @@ export default function StockControl() {
   const [allHistoryEvents, setAllHistoryEvents] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyPage, setHistoryPage] = useState(1);
+  const [salesVelocity, setSalesVelocity] = useState<Map<string, number>>(new Map());
 
   useEffect(() => {
     loadProducts();
     loadStockOrders();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'encomendas') loadAllStockOrders();
+  }, [activeTab]);
 
   const loadProducts = async () => {
     try {
@@ -72,11 +81,57 @@ export default function StockControl() {
         .order('model', { ascending: true });
       if (error) throw error;
       setProducts(data || []);
+      loadSalesVelocity(data || []);
     } catch (error) {
       console.error('Error loading products:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadSalesVelocity = async (productList: any[]) => {
+    const smartwatchIds = productList
+      .filter((p: any) => p.category === 'smartwatch')
+      .map((p: any) => p.id);
+    if (smartwatchIds.length === 0) return;
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+
+    const { data: salesData } = await supabase
+      .from('sales')
+      .select('id')
+      .gte('sale_date', cutoff.toISOString());
+
+    const saleIds = (salesData || []).map((s: any) => s.id);
+    if (saleIds.length === 0) { setSalesVelocity(new Map()); return; }
+
+    const { data: itemsData } = await supabase
+      .from('sale_items')
+      .select('product_id, quantity')
+      .in('sale_id', saleIds)
+      .in('product_id', smartwatchIds);
+
+    const totals = new Map<string, number>();
+    for (const item of (itemsData || [])) {
+      totals.set(item.product_id, (totals.get(item.product_id) || 0) + item.quantity);
+    }
+
+    const velocity = new Map<string, number>();
+    for (const [id, total] of totals) {
+      velocity.set(id, total / 30);
+    }
+    setSalesVelocity(velocity);
+  };
+
+  const getForecast = (product: any): { label: string; className: string } | null => {
+    if ((product.category as string) !== 'smartwatch') return null;
+    const rate = salesVelocity.get(product.id);
+    if (!rate) return { label: '⚫ Sem dados', className: 'text-gray-500 bg-gray-500/10 border-gray-600/30' };
+    const days = Math.floor(product.current_stock / rate);
+    if (days < 10)  return { label: `🔴 ~${days}d`, className: 'text-red-400 bg-red-500/10 border-red-500/30' };
+    if (days < 30)  return { label: `🟡 ~${days}d`, className: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30' };
+    return              { label: `🟢 ~${days}d`, className: 'text-green-400 bg-green-500/10 border-green-500/30' };
   };
 
   const loadStockOrders = async () => {
@@ -85,6 +140,23 @@ export default function StockControl() {
       .select('*')
       .eq('status', 'pending');
     setStockOrders(data || []);
+  };
+
+  const loadAllStockOrders = async () => {
+    setAllOrdersLoading(true);
+    const { data } = await supabase
+      .from('stock_orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+    setAllStockOrders(data || []);
+    setAllOrdersLoading(false);
+  };
+
+  const handleCancelOrder = async (orderId: string) => {
+    if (!confirm('Cancelar esta encomenda pendente?')) return;
+    await supabase.from('stock_orders').delete().eq('id', orderId);
+    loadStockOrders();
+    loadAllStockOrders();
   };
 
   const getPendingQty = (productId: string) =>
@@ -490,6 +562,150 @@ export default function StockControl() {
         </button>
       </div>
 
+      {/* Abas */}
+      <div className="flex gap-1 bg-gray-800 border border-gray-700 rounded-xl p-1 mb-6 w-fit">
+        <button
+          onClick={() => setActiveTab('produtos')}
+          className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === 'produtos' ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'}`}
+        >
+          📦 Produtos
+        </button>
+        <button
+          onClick={() => setActiveTab('encomendas')}
+          className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 ${activeTab === 'encomendas' ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'}`}
+        >
+          📋 Histórico de Encomendas
+          {stockOrders.length > 0 && (
+            <span className="bg-blue-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">
+              {stockOrders.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {activeTab === 'encomendas' && (() => {
+        const productMap = new Map(products.map((p: any) => [p.id, p]));
+        const filtered = allStockOrders.filter(o =>
+          orderStatusFilter === 'all' ? true : o.status === orderStatusFilter
+        );
+        const totalPending = allStockOrders
+          .filter(o => o.status === 'pending')
+          .reduce((sum, o) => sum + (o.quantity || 0), 0);
+
+        return (
+          <div>
+            {/* Destaque de pendentes */}
+            {totalPending > 0 && (
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl px-5 py-4 mb-5 flex items-center gap-4">
+                <span className="text-3xl font-bold text-blue-400">{totalPending}</span>
+                <div>
+                  <p className="text-blue-300 font-semibold text-sm">unidades pendentes a caminho</p>
+                  <p className="text-gray-500 text-xs">Total acumulado de todas as encomendas ainda não recebidas</p>
+                </div>
+              </div>
+            )}
+
+            {/* Filtro de status */}
+            <div className="flex gap-2 mb-4">
+              {(['all', 'pending', 'received'] as const).map(f => {
+                const labels = { all: 'Todas', pending: '🟡 Pendentes', received: '✅ Recebidas' };
+                return (
+                  <button
+                    key={f}
+                    onClick={() => setOrderStatusFilter(f)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${orderStatusFilter === f ? 'bg-orange-500 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-700'}`}
+                  >
+                    {labels[f]}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Tabela */}
+            <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+              {allOrdersLoading ? (
+                <div className="py-16 text-center text-gray-400">Carregando encomendas...</div>
+              ) : filtered.length === 0 ? (
+                <div className="py-16 text-center">
+                  <Package size={40} className="mx-auto text-gray-600 mb-3" />
+                  <p className="text-gray-400">Nenhuma encomenda encontrada</p>
+                </div>
+              ) : (
+                <table className="w-full">
+                  <thead className="bg-gray-900">
+                    <tr>
+                      <th className="px-5 py-3 text-left text-xs font-medium text-gray-400 uppercase">Produto</th>
+                      <th className="px-5 py-3 text-center text-xs font-medium text-gray-400 uppercase">Qtd</th>
+                      <th className="px-5 py-3 text-left text-xs font-medium text-gray-400 uppercase">Observação</th>
+                      <th className="px-5 py-3 text-left text-xs font-medium text-gray-400 uppercase">Data</th>
+                      <th className="px-5 py-3 text-center text-xs font-medium text-gray-400 uppercase">Status</th>
+                      <th className="px-5 py-3 text-center text-xs font-medium text-gray-400 uppercase"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700">
+                    {filtered.map((order: any) => {
+                      const p = productMap.get(order.product_id);
+                      const isPending = order.status === 'pending';
+                      return (
+                        <tr key={order.id} className="hover:bg-gray-700/40">
+                          <td className="px-5 py-3.5">
+                            {p ? (
+                              <>
+                                <p className="text-white font-medium text-sm">{p.model}</p>
+                                <p className="text-gray-400 text-xs">{p.color}</p>
+                              </>
+                            ) : (
+                              <p className="text-gray-500 text-sm italic">Produto removido</p>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-center">
+                            <span className="text-lg font-bold text-white">{order.quantity}</span>
+                            <span className="text-gray-500 text-xs ml-1">un</span>
+                          </td>
+                          <td className="px-5 py-3.5 text-gray-300 text-sm">
+                            {order.notes || <span className="text-gray-600 italic">—</span>}
+                          </td>
+                          <td className="px-5 py-3.5 text-gray-400 text-sm whitespace-nowrap">
+                            {new Date(order.created_at).toLocaleDateString('pt-BR')}
+                            <span className="text-gray-600 text-xs ml-1">
+                              {new Date(order.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </td>
+                          <td className="px-5 py-3.5 text-center">
+                            {isPending ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-yellow-500/15 text-yellow-400 border border-yellow-500/30">
+                                🟡 Pendente
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-500/15 text-green-400 border border-green-500/30">
+                                ✅ Recebida
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-center">
+                            {isPending && (
+                              <button
+                                onClick={() => handleCancelOrder(order.id)}
+                                className="text-xs text-red-400 hover:text-red-300 hover:underline transition-colors"
+                              >
+                                Cancelar
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <p className="text-gray-600 text-xs mt-3 text-right">{filtered.length} encomenda{filtered.length !== 1 ? 's' : ''}</p>
+          </div>
+        );
+      })()}
+
+      {activeTab === 'produtos' && <>
+
       {/* Filtros */}
       <div className="flex gap-4 mb-6 flex-wrap">
         <div className="relative flex-1 min-w-48">
@@ -526,13 +742,14 @@ export default function StockControl() {
               <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">A Chegar</th>
               <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Ideal</th>
               <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">A Comprar</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Previsão</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-700">
             {filteredProducts.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-gray-400">Nenhum produto encontrado.</td>
+                <td colSpan={8} className="px-6 py-8 text-center text-gray-400">Nenhum produto encontrado.</td>
               </tr>
             ) : (
               filteredProducts.map((product: any) => {
@@ -598,6 +815,17 @@ export default function StockControl() {
                         </span>
                       )}
                     </td>
+                    <td className="px-6 py-4 text-center">
+                      {(() => {
+                        const fc = getForecast(product);
+                        if (!fc) return <span className="text-gray-600 text-sm">—</span>;
+                        return (
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${fc.className}`}>
+                            {fc.label}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
                         <button
@@ -639,6 +867,8 @@ export default function StockControl() {
           </tbody>
         </table>
       </div>
+
+      </> /* fim aba produtos */}
 
       {/* Modal lançamento */}
       {showMovementForm && selectedProduct && (() => {

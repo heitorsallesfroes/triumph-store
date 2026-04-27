@@ -24,6 +24,14 @@ export default function Logistics() {
   const [loading, setLoading] = useState(true);
   const [draggedSale, setDraggedSale] = useState<Sale | null>(null);
   const [currentDate, setCurrentDate] = useState(getTodayInBrazil());
+  const [activeMotoboy, setActiveMotoboy] = useState<string>('all');
+
+  useEffect(() => {
+    if (activeMotoboy !== 'all') {
+      const stillActive = sales.some(s => s.motoboy_id === activeMotoboy && s.status !== 'finalizado');
+      if (!stillActive) setActiveMotoboy('all');
+    }
+  }, [sales, activeMotoboy]);
 
   useEffect(() => {
     loadSales();
@@ -150,10 +158,30 @@ export default function Logistics() {
     );
   }
 
-  const paraEmbalar = sales.filter(s => getLogisticsColumn(s.status) === 'para_embalar');
-  const embalado = sales.filter(s => getLogisticsColumn(s.status) === 'embalado');
-  const saiuEntrega = sales.filter(s => getLogisticsColumn(s.status) === 'saiu_entrega');
-  const concluido = sales.filter(s => getLogisticsColumn(s.status) === 'concluido');
+  // Motoboys com entregas ainda não concluídas (derivado do estado compartilhado)
+  const motoboyTabs = (() => {
+    const seen = new Map<string, string>();
+    for (const s of sales) {
+      if (s.motoboy_id && s.status !== 'finalizado') {
+        seen.set(s.motoboy_id, s.motoboy?.name || s.motoboy_id);
+      }
+    }
+    return [...seen.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  })();
+
+  const countActive = (motoboyId: string) =>
+    sales.filter(s => s.motoboy_id === motoboyId && s.status !== 'finalizado').length;
+
+  const visibleSales = activeMotoboy === 'all'
+    ? sales
+    : sales.filter(s => s.motoboy_id === activeMotoboy);
+
+  const paraEmbalar = visibleSales.filter(s => getLogisticsColumn(s.status) === 'para_embalar');
+  const embalado    = visibleSales.filter(s => getLogisticsColumn(s.status) === 'embalado');
+  const saiuEntrega = visibleSales.filter(s => getLogisticsColumn(s.status) === 'saiu_entrega');
+  const concluido   = visibleSales.filter(s => getLogisticsColumn(s.status) === 'concluido');
 
   return (
     <div className="p-8">
@@ -163,6 +191,32 @@ export default function Logistics() {
           <Calendar size={18} />
           <span>Pedidos de hoje: {formatDateDisplay(currentDate)}</span>
         </div>
+      </div>
+
+      {/* Filtro por motoboy */}
+      <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-xl p-1 mb-6 flex-wrap">
+        <button
+          onClick={() => setActiveMotoboy('all')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${activeMotoboy === 'all' ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'}`}
+        >
+          Geral
+          <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full leading-none ${activeMotoboy === 'all' ? 'bg-orange-600' : 'bg-gray-700 text-gray-300'}`}>
+            {sales.filter(s => s.status !== 'finalizado').length}
+          </span>
+        </button>
+        {motoboyTabs.map(mb => (
+          <button
+            key={mb.id}
+            onClick={() => setActiveMotoboy(mb.id)}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${activeMotoboy === mb.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+          >
+            <Bike size={13} />
+            {mb.name}
+            <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full leading-none ${activeMotoboy === mb.id ? 'bg-blue-700' : 'bg-gray-700 text-gray-300'}`}>
+              {countActive(mb.id)}
+            </span>
+          </button>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
