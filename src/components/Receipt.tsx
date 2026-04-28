@@ -186,8 +186,9 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
             </div>
           </div>
           {sale?.delivery_notes && (
-            <div style={{ marginTop: '4px', padding: '5px 8px', background: '#fffbe6', border: '1px solid #e6b800', borderRadius: '3px' }}>
-              <p style={{ fontSize: '10px', fontWeight: 'bold', color: '#7a5a00' }}>📝 {sale.delivery_notes}</p>
+            <div style={{ marginTop: '6px', borderTop: '1px solid #ccc', paddingTop: '6px' }}>
+              <p style={{ fontSize: '9px', color: '#666', marginBottom: '2px' }}>OBSERVAÇÃO</p>
+              <p style={{ fontSize: '11px', fontWeight: 'bold', color: '#000' }}>{sale.delivery_notes}</p>
             </div>
           )}
         </div>
@@ -432,13 +433,6 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
                 <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#000' }}>
                   {getPaymentMethodText(sale.payment_method || 'pix', sale.card_brand, sale.installments || 1)}
                 </span>
-              </div>
-            )}
-
-            {/* ════════ OBSERVAÇÕES ════════ */}
-            {sale?.delivery_notes && (
-              <div style={{ border: '2px solid #e6b800', background: '#fffbe6', padding: '6px 10px', marginBottom: '8px' }}>
-                <p style={{ fontSize: '10px', fontWeight: 'bold', color: '#7a5a00' }}>📝 Obs: {sale.delivery_notes}</p>
               </div>
             )}
 
