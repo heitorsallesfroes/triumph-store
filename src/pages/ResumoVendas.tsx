@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { getTodayInBrazil } from '../lib/dateUtils';
+import { getTodayInBrazil, getYesterdayInBrazil } from '../lib/dateUtils';
 import { calculateCardFee } from '../lib/cardFees';
 import {
   TrendingUp, DollarSign, CreditCard, Package, ShoppingCart,
   Truck, BarChart3, Zap, Calendar, Bike, MapPin, Watch, Target, Eye, X,
 } from 'lucide-react';
 
-type Period = 'today' | 'week' | 'month' | 'custom';
+type Period = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
 
 interface Summary {
   totalBruto: number;
@@ -30,6 +30,7 @@ interface CardConciliation { credit: CardBucket; debit: CardBucket; }
 
 const PERIOD_LABELS: Record<Period, string> = {
   today: 'Hoje',
+  yesterday: 'Ontem',
   week: 'Últimos 7 dias',
   month: 'Mês atual',
   custom: 'Período personalizado',
@@ -55,6 +56,7 @@ const EMPTY_SUMMARY: Summary = {
 };
 
 export default function ResumoVendas() {
+  const loadIdRef = useRef(0);
   const [period, setPeriod] = useState<Period>('today');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -79,6 +81,10 @@ export default function ResumoVendas() {
     const today = getTodayInBrazil();
     const now = new Date(today + 'T00:00:00');
     if (period === 'today') return { start: today, end: today };
+    if (period === 'yesterday') {
+      const yesterday = getYesterdayInBrazil();
+      return { start: yesterday, end: yesterday };
+    }
     if (period === 'week') {
       const d = new Date(now);
       d.setDate(d.getDate() - 6);
@@ -92,6 +98,7 @@ export default function ResumoVendas() {
   };
 
   const loadData = async () => {
+    const loadId = ++loadIdRef.current;
     setLoading(true);
     try {
       const { start, end } = getDateRange();
@@ -233,10 +240,12 @@ export default function ResumoVendas() {
       } else {
         setSmartwatches([]);
       }
+      if (loadId !== loadIdRef.current) return;
     } catch (e) {
+      if (loadId !== loadIdRef.current) return;
       console.error(e);
     } finally {
-      setLoading(false);
+      if (loadId === loadIdRef.current) setLoading(false);
     }
   };
 
@@ -253,7 +262,7 @@ export default function ResumoVendas() {
       {/* Filtros */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 mb-6">
         <div className="flex flex-wrap gap-2">
-          {(['today', 'week', 'month', 'custom'] as Period[]).map(p => (
+          {(['today', 'yesterday', 'week', 'month', 'custom'] as Period[]).map(p => (
             <button
               key={p}
               onClick={() => setPeriod(p)}

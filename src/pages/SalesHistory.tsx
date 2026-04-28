@@ -5,12 +5,13 @@ import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, T
 import Receipt from '../components/Receipt';
 import EditSale from '../components/EditSale';
 import { generateShippingLabel } from '../lib/superfrete';
-import { getTodayInBrazil } from '../lib/dateUtils';
+import { getTodayInBrazil, getYesterdayInBrazil } from '../lib/dateUtils';
 
-type Period = 'today' | 'week' | 'month' | 'custom';
+type Period = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
 
 const PERIOD_LABELS: Record<Period, string> = {
   today: 'Hoje',
+  yesterday: 'Ontem',
   week: 'Semana',
   month: 'Mês',
   custom: 'Personalizado',
@@ -187,6 +188,9 @@ export default function SalesHistory() {
       let endDate = '';
       if (period === 'today') {
         startDate = today; endDate = today;
+      } else if (period === 'yesterday') {
+        const yesterday = getYesterdayInBrazil();
+        startDate = yesterday; endDate = yesterday;
       } else if (period === 'week') {
         const d = new Date(now); d.setDate(d.getDate() - 6);
         startDate = d.toISOString().split('T')[0]; endDate = today;
@@ -269,7 +273,7 @@ export default function SalesHistory() {
           motoboy_name: sale.motoboy_id ? (motoboysMap.get(sale.motoboy_id) || undefined) : undefined,
         } as Sale;
       });
-      if (period === 'today') {
+      if (period === 'today' || period === 'yesterday') {
         const norm = (s: string) =>
           s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
         const todayPriority = (s: Sale): number => {
@@ -540,7 +544,7 @@ export default function SalesHistory() {
 
         {/* Período */}
         <div className="flex flex-wrap gap-2">
-          {(['today', 'week', 'month', 'custom'] as Period[]).map(p => (
+          {(['today', 'yesterday', 'week', 'month', 'custom'] as Period[]).map(p => (
             <button key={p} onClick={() => setPeriod(p)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${period === p ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
               {PERIOD_LABELS[p]}

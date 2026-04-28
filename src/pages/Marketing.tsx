@@ -11,7 +11,7 @@ import { ptBR } from 'date-fns/locale';
 import BarChart from '../components/BarChart';
 import DualBarChart from '../components/DualBarChart';
 import {
-  getTodayInBrazil, formatDateDisplay, getWeekRangeInBrazil,
+  getTodayInBrazil, getYesterdayInBrazil, formatDateDisplay, getWeekRangeInBrazil,
   getMonthRangeInBrazil, isDateInRange, normalizeDateFromDB
 } from '../lib/dateUtils';
 
@@ -24,7 +24,7 @@ interface DailyMetrics { date: string; adSpend: number; revenue: number; profit:
 interface PeriodSummary { totalAdSpend: number; totalRevenue: number; totalProfit: number; totalSales: number; avgRoas: number; avgRoi: number; avgCpv: number; }
 interface FBMetrics { spend: string; impressions: string; clicks: string; reach: string; cpm: string; cpc: string; ctr: string; purchases: string; purchase_value: string; profit: string; roas: string; cpv: string; }
 
-type TimeFilter = 'today' | 'week' | 'month' | 'custom';
+type TimeFilter = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
 
 export default function Marketing() {
   const [dailyMetrics, setDailyMetrics] = useState<DailyMetrics[]>([]);
@@ -51,6 +51,7 @@ export default function Marketing() {
 
   const getDateRange = () => {
     if (timeFilter === 'today') { const t = getTodayInBrazil(); return { start: t, end: t }; }
+    if (timeFilter === 'yesterday') { const y = getYesterdayInBrazil(); return { start: y, end: y }; }
     if (timeFilter === 'week') return getWeekRangeInBrazil();
     if (timeFilter === 'month') return getMonthRangeInBrazil();
     if (timeFilter === 'custom' && customStartDate && customEndDate) return { start: customStartDate, end: customEndDate };
@@ -92,6 +93,7 @@ export default function Marketing() {
 
   const getFBPeriodPayload = () => {
     if (timeFilter === 'today') return { period: 'today' };
+    if (timeFilter === 'yesterday') { const y = getYesterdayInBrazil(); return { period: 'custom', dateStart: y, dateEnd: y }; }
     if (timeFilter === 'week') return { period: 'week' };
     if (timeFilter === 'custom' && customStartDate && customEndDate) {
       return { period: 'custom', dateStart: customStartDate, dateEnd: customEndDate };
@@ -218,10 +220,10 @@ export default function Marketing() {
       <div className="bg-gray-800 rounded-xl p-4 border border-gray-700 mb-6">
         <div className="flex flex-wrap gap-2 items-center">
           <Calendar size={18} className="text-gray-400" />
-          {(['today', 'week', 'month', 'custom'] as TimeFilter[]).map(f => (
+          {(['today', 'yesterday', 'week', 'month', 'custom'] as TimeFilter[]).map(f => (
             <button key={f} onClick={() => { setTimeFilter(f); setFbMetrics(null); }}
               className={`px-4 py-2 rounded-lg transition-colors text-sm ${timeFilter === f ? 'bg-orange-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
-              {f === 'today' ? 'Hoje' : f === 'week' ? 'Semana' : f === 'month' ? 'Mês' : 'Personalizado'}
+              {f === 'today' ? 'Hoje' : f === 'yesterday' ? 'Ontem' : f === 'week' ? 'Semana' : f === 'month' ? 'Mês' : 'Personalizado'}
             </button>
           ))}
           {timeFilter === 'custom' && (

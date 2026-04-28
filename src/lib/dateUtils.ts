@@ -9,6 +9,17 @@ export function getTodayInBrazil(): string {
   return `${year}-${month}-${day}`;
 }
 
+export function getYesterdayInBrazil(): string {
+  const date = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const brazilDate = new Date(date.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+
+  const year = brazilDate.getFullYear();
+  const month = String(brazilDate.getMonth() + 1).padStart(2, '0');
+  const day = String(brazilDate.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
 export function formatDateToBrazil(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date + 'T00:00:00') : date;
 

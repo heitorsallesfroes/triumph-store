@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
+import { getYesterdayInBrazil } from '../lib/dateUtils';
 import { ShoppingBag, Plus, Trash2 } from 'lucide-react';
 
 interface SmallSale {
@@ -15,7 +16,7 @@ interface SmallSale {
   created_at: string;
 }
 
-type FilterPeriod = 'today' | 'week' | 'month';
+type FilterPeriod = 'today' | 'yesterday' | 'week' | 'month';
 
 const PAYMENT_LABELS: Record<string, string> = {
   pix: 'PIX',
@@ -55,28 +56,36 @@ export default function SmallSales() {
 
   const getDateRange = () => {
     const now = new Date();
+    const endOfNow = now.toISOString();
     if (filter === 'today') {
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-      return { start };
+      return { start, end: endOfNow };
+    }
+    if (filter === 'yesterday') {
+      const y = getYesterdayInBrazil();
+      const start = new Date(y + 'T00:00:00').toISOString();
+      const end = new Date(y + 'T23:59:59').toISOString();
+      return { start, end };
     }
     if (filter === 'week') {
       const day = now.getDay();
       const diff = now.getDate() - day + (day === 0 ? -6 : 1);
       const start = new Date(now.getFullYear(), now.getMonth(), diff).toISOString();
-      return { start };
+      return { start, end: endOfNow };
     }
     const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    return { start };
+    return { start, end: endOfNow };
   };
 
   const loadSales = async () => {
     setLoading(true);
     try {
-      const { start } = getDateRange();
+      const { start, end } = getDateRange();
       const { data, error } = await supabase
         .from('small_sales')
         .select('*')
         .gte('created_at', start)
+        .lte('created_at', end)
         .order('created_at', { ascending: false });
       if (error) throw error;
       setSales(data || []);
@@ -144,6 +153,7 @@ export default function SmallSales() {
 
   const filterLabels: Record<FilterPeriod, string> = {
     today: 'Hoje',
+    yesterday: 'Ontem',
     week: 'Semana',
     month: 'Mês',
   };
