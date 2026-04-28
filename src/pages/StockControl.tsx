@@ -63,6 +63,12 @@ export default function StockControl() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyPage, setHistoryPage] = useState(1);
   const [salesVelocity, setSalesVelocity] = useState<Map<string, number>>(new Map());
+  const [showBulkOrderModal, setShowBulkOrderModal] = useState(false);
+  const [bulkOrderName, setBulkOrderName] = useState('');
+  const [bulkOrderQtys, setBulkOrderQtys] = useState<Record<string, string>>({});
+  const [savingBulkOrder, setSavingBulkOrder] = useState(false);
+  const [confirmReceiveGroup, setConfirmReceiveGroup] = useState<string | null>(null);
+  const [receivingGroup, setReceivingGroup] = useState(false);
 
   useEffect(() => {
     loadProducts();
@@ -189,6 +195,80 @@ export default function StockControl() {
       alert(`Erro ao registrar encomenda: ${err?.message || JSON.stringify(err)}`);
     } finally {
       setSavingOrder(false);
+    }
+  };
+
+  const handleBulkOrder = async () => {
+    if (!bulkOrderName.trim()) { alert('Informe o nome do pedido'); return; }
+    const smartwatches = sortProducts(products.filter((p: any) => p.category === 'smartwatch'));
+    const toOrder = smartwatches.filter((p: any) => parseInt(bulkOrderQtys[p.id] || '0') > 0);
+    if (toOrder.length === 0) { alert('Informe ao menos uma quantidade > 0'); return; }
+    setSavingBulkOrder(true);
+    try {
+      const { error } = await supabase.from('stock_orders').insert(
+        toOrder.map((p: any) => ({
+          product_id: p.id,
+          quantity: parseInt(bulkOrderQtys[p.id]),
+          notes: bulkOrderName.trim(),
+          status: 'pending',
+        }))
+      );
+      if (error) throw error;
+      setShowBulkOrderModal(false);
+      setBulkOrderName('');
+      setBulkOrderQtys({});
+      loadStockOrders();
+      loadAllStockOrders();
+    } catch (err: any) {
+      alert(`Erro ao registrar pedido: ${err?.message || JSON.stringify(err)}`);
+    } finally {
+      setSavingBulkOrder(false);
+    }
+  };
+
+  const handleReceiveGroup = async (groupKey: string) => {
+    setReceivingGroup(true);
+    try {
+      const groupOrders = allStockOrders.filter(o =>
+        o.status === 'pending' &&
+        (o.notes?.trim() || '(Sem observação)') === groupKey
+      );
+      const stockUpdates = new Map<string, number>();
+      for (const order of groupOrders) {
+        const base = stockUpdates.get(order.product_id)
+          ?? (products.find((p: any) => p.id === order.product_id)?.current_stock ?? 0);
+        stockUpdates.set(order.product_id, base + order.quantity);
+      }
+      for (const order of groupOrders) {
+        const newStock = stockUpdates.get(order.product_id)!;
+        await supabase.from('products').update({ current_stock: newStock }).eq('id', order.product_id);
+        await supabase.from('stock_movements').insert([{
+          product_id: order.product_id,
+          type: 'encomenda_recebida',
+          quantity: order.quantity,
+          notes: order.notes,
+        }]);
+        await supabase.from('stock_orders').update({ status: 'received' }).eq('id', order.id);
+        const product = products.find((p: any) => p.id === order.product_id);
+        if (product?.tiny_id) {
+          await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-tiny-stock`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ tiny_id: product.tiny_id, quantidade: newStock }),
+          });
+        }
+      }
+      setConfirmReceiveGroup(null);
+      loadProducts();
+      loadStockOrders();
+      loadAllStockOrders();
+    } catch (err: any) {
+      alert(`Erro ao receber pedido: ${err?.message}`);
+    } finally {
+      setReceivingGroup(false);
     }
   };
 
@@ -592,6 +672,15 @@ export default function StockControl() {
           .filter(o => o.status === 'pending')
           .reduce((sum, o) => sum + (o.quantity || 0), 0);
 
+        const noteKey = (n: string | null | undefined) => n?.trim() || '(Sem observação)';
+        const groupedOrders = new Map<string, any[]>();
+        for (const order of filtered) {
+          const key = noteKey(order.notes);
+          if (!groupedOrders.has(key)) groupedOrders.set(key, []);
+          groupedOrders.get(key)!.push(order);
+        }
+        const groupKeys = Array.from(groupedOrders.keys());
+
         return (
           <div>
             {/* Destaque de pendentes */}
@@ -605,100 +694,133 @@ export default function StockControl() {
               </div>
             )}
 
-            {/* Filtro de status */}
-            <div className="flex gap-2 mb-4">
-              {(['all', 'pending', 'received'] as const).map(f => {
-                const labels = { all: 'Todas', pending: '🟡 Pendentes', received: '✅ Recebidas' };
-                return (
-                  <button
-                    key={f}
-                    onClick={() => setOrderStatusFilter(f)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${orderStatusFilter === f ? 'bg-orange-500 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-700'}`}
-                  >
-                    {labels[f]}
-                  </button>
-                );
-              })}
+            {/* Barra de ações */}
+            <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+              <div className="flex gap-2">
+                {(['all', 'pending', 'received'] as const).map(f => {
+                  const labels = { all: 'Todas', pending: '🟡 Pendentes', received: '✅ Recebidas' };
+                  return (
+                    <button
+                      key={f}
+                      onClick={() => setOrderStatusFilter(f)}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${orderStatusFilter === f ? 'bg-orange-500 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-700'}`}
+                    >
+                      {labels[f]}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => setShowBulkOrderModal(true)}
+                className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+              >
+                📦 Novo Pedido em Massa
+              </button>
             </div>
 
-            {/* Tabela */}
-            <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-              {allOrdersLoading ? (
-                <div className="py-16 text-center text-gray-400">Carregando encomendas...</div>
-              ) : filtered.length === 0 ? (
-                <div className="py-16 text-center">
-                  <Package size={40} className="mx-auto text-gray-600 mb-3" />
-                  <p className="text-gray-400">Nenhuma encomenda encontrada</p>
-                </div>
-              ) : (
-                <table className="w-full">
-                  <thead className="bg-gray-900">
-                    <tr>
-                      <th className="px-5 py-3 text-left text-xs font-medium text-gray-400 uppercase">Produto</th>
-                      <th className="px-5 py-3 text-center text-xs font-medium text-gray-400 uppercase">Qtd</th>
-                      <th className="px-5 py-3 text-left text-xs font-medium text-gray-400 uppercase">Observação</th>
-                      <th className="px-5 py-3 text-left text-xs font-medium text-gray-400 uppercase">Data</th>
-                      <th className="px-5 py-3 text-center text-xs font-medium text-gray-400 uppercase">Status</th>
-                      <th className="px-5 py-3 text-center text-xs font-medium text-gray-400 uppercase"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-700">
-                    {filtered.map((order: any) => {
-                      const p = productMap.get(order.product_id);
-                      const isPending = order.status === 'pending';
-                      return (
-                        <tr key={order.id} className="hover:bg-gray-700/40">
-                          <td className="px-5 py-3.5">
-                            {p ? (
-                              <>
-                                <p className="text-white font-medium text-sm">{p.model}</p>
-                                <p className="text-gray-400 text-xs">{p.color}</p>
-                              </>
-                            ) : (
-                              <p className="text-gray-500 text-sm italic">Produto removido</p>
-                            )}
-                          </td>
-                          <td className="px-5 py-3.5 text-center">
-                            <span className="text-lg font-bold text-white">{order.quantity}</span>
-                            <span className="text-gray-500 text-xs ml-1">un</span>
-                          </td>
-                          <td className="px-5 py-3.5 text-gray-300 text-sm">
-                            {order.notes || <span className="text-gray-600 italic">—</span>}
-                          </td>
-                          <td className="px-5 py-3.5 text-gray-400 text-sm whitespace-nowrap">
-                            {new Date(order.created_at).toLocaleDateString('pt-BR')}
-                            <span className="text-gray-600 text-xs ml-1">
-                              {new Date(order.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+            {/* Grupos de encomendas */}
+            {allOrdersLoading ? (
+              <div className="py-16 text-center text-gray-400">Carregando encomendas...</div>
+            ) : groupKeys.length === 0 ? (
+              <div className="py-16 text-center bg-gray-800 rounded-xl border border-gray-700">
+                <Package size={40} className="mx-auto text-gray-600 mb-3" />
+                <p className="text-gray-400">Nenhuma encomenda encontrada</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {groupKeys.map(groupKey => {
+                  const groupItems = groupedOrders.get(groupKey)!;
+                  const pendingInGroup = groupItems.filter(o => o.status === 'pending');
+                  const hasPending = pendingInGroup.length > 0;
+                  const pendingQty = pendingInGroup.reduce((s, o) => s + (o.quantity || 0), 0);
+                  return (
+                    <div key={groupKey} className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+                      <div className="bg-gray-900 px-5 py-3 flex items-center justify-between gap-3 border-b border-gray-700">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <span className="text-white font-semibold">{groupKey}</span>
+                          <span className="text-gray-600 text-xs">{groupItems.length} item{groupItems.length !== 1 ? 's' : ''}</span>
+                          {hasPending && (
+                            <span className="bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 text-xs px-2 py-0.5 rounded-full font-semibold">
+                              {pendingQty} un pendentes
                             </span>
-                          </td>
-                          <td className="px-5 py-3.5 text-center">
-                            {isPending ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-yellow-500/15 text-yellow-400 border border-yellow-500/30">
-                                🟡 Pendente
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-500/15 text-green-400 border border-green-500/30">
-                                ✅ Recebida
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-5 py-3.5 text-center">
-                            {isPending && (
-                              <button
-                                onClick={() => handleCancelOrder(order.id)}
-                                className="text-xs text-red-400 hover:text-red-300 hover:underline transition-colors"
-                              >
-                                Cancelar
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
+                          )}
+                        </div>
+                        {hasPending && (
+                          <button
+                            onClick={() => setConfirmReceiveGroup(groupKey)}
+                            className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap"
+                          >
+                            ✅ Receber Pedido
+                          </button>
+                        )}
+                      </div>
+                      <table className="w-full">
+                        <thead className="bg-gray-900/40">
+                          <tr>
+                            <th className="px-5 py-2.5 text-left text-xs font-medium text-gray-400 uppercase">Produto</th>
+                            <th className="px-5 py-2.5 text-center text-xs font-medium text-gray-400 uppercase">Qtd</th>
+                            <th className="px-5 py-2.5 text-left text-xs font-medium text-gray-400 uppercase">Data</th>
+                            <th className="px-5 py-2.5 text-center text-xs font-medium text-gray-400 uppercase">Status</th>
+                            <th className="px-5 py-2.5 text-center text-xs font-medium text-gray-400 uppercase"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-700">
+                          {groupItems.map((order: any) => {
+                            const p = productMap.get(order.product_id);
+                            const isPending = order.status === 'pending';
+                            return (
+                              <tr key={order.id} className="hover:bg-gray-700/40">
+                                <td className="px-5 py-3">
+                                  {p ? (
+                                    <>
+                                      <p className="text-white font-medium text-sm">{p.model}</p>
+                                      <p className="text-gray-400 text-xs">{p.color}</p>
+                                    </>
+                                  ) : (
+                                    <p className="text-gray-500 text-sm italic">Produto removido</p>
+                                  )}
+                                </td>
+                                <td className="px-5 py-3 text-center">
+                                  <span className="text-lg font-bold text-white">{order.quantity}</span>
+                                  <span className="text-gray-500 text-xs ml-1">un</span>
+                                </td>
+                                <td className="px-5 py-3 text-gray-400 text-sm whitespace-nowrap">
+                                  {new Date(order.created_at).toLocaleDateString('pt-BR')}
+                                  <span className="text-gray-600 text-xs ml-1">
+                                    {new Date(order.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </td>
+                                <td className="px-5 py-3 text-center">
+                                  {isPending ? (
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-yellow-500/15 text-yellow-400 border border-yellow-500/30">
+                                      🟡 Pendente
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-500/15 text-green-400 border border-green-500/30">
+                                      ✅ Recebida
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-5 py-3 text-center">
+                                  {isPending && (
+                                    <button
+                                      onClick={() => handleCancelOrder(order.id)}
+                                      className="text-xs text-red-400 hover:text-red-300 hover:underline transition-colors"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <p className="text-gray-600 text-xs mt-3 text-right">{filtered.length} encomenda{filtered.length !== 1 ? 's' : ''}</p>
           </div>
         );
@@ -869,6 +991,132 @@ export default function StockControl() {
       </div>
 
       </> /* fim aba produtos */}
+
+      {/* Modal pedido em massa */}
+      {showBulkOrderModal && (() => {
+        const smartwatches = sortProducts(products.filter((p: any) => p.category === 'smartwatch'));
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 rounded-xl w-full max-w-xl border border-gray-700 max-h-[90vh] flex flex-col">
+              <div className="flex justify-between items-center p-6 border-b border-gray-700 flex-shrink-0">
+                <div>
+                  <h2 className="text-xl font-bold text-white">📦 Novo Pedido em Massa</h2>
+                  <p className="text-gray-400 text-sm mt-0.5">Preencha as quantidades desejadas</p>
+                </div>
+                <button onClick={() => { setShowBulkOrderModal(false); setBulkOrderName(''); setBulkOrderQtys({}); }} className="text-gray-400 hover:text-white text-2xl leading-none">×</button>
+              </div>
+              <div className="p-5 border-b border-gray-700 flex-shrink-0">
+                <label className="block text-sm text-gray-400 mb-2">Nome do Pedido*</label>
+                <input
+                  type="text"
+                  value={bulkOrderName}
+                  onChange={e => setBulkOrderName(e.target.value)}
+                  placeholder="Ex: Pedido Alex 28/04"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  autoFocus
+                />
+              </div>
+              <div className="overflow-y-auto flex-1 p-5">
+                <table className="w-full">
+                  <thead>
+                    <tr>
+                      <th className="text-left text-xs text-gray-400 uppercase pb-3">Produto</th>
+                      <th className="text-center text-xs text-gray-400 uppercase pb-3 w-28">Quantidade</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700">
+                    {smartwatches.map((p: any) => (
+                      <tr key={p.id}>
+                        <td className="py-2.5">
+                          <p className="text-white text-sm font-medium">{p.model}</p>
+                          <p className="text-gray-400 text-xs">{p.color}</p>
+                        </td>
+                        <td className="py-2.5 text-center">
+                          <input
+                            type="number"
+                            min="0"
+                            value={bulkOrderQtys[p.id] ?? '0'}
+                            onChange={e => setBulkOrderQtys(prev => ({ ...prev, [p.id]: e.target.value }))}
+                            className="w-20 bg-gray-700 text-white rounded-lg px-3 py-1.5 border border-gray-600 focus:border-orange-500 focus:outline-none text-center"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="p-5 border-t border-gray-700 flex gap-3 flex-shrink-0">
+                <button
+                  onClick={handleBulkOrder}
+                  disabled={savingBulkOrder}
+                  className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg font-semibold transition-colors"
+                >
+                  {savingBulkOrder ? 'Salvando...' : 'Confirmar Pedido'}
+                </button>
+                <button
+                  onClick={() => { setShowBulkOrderModal(false); setBulkOrderName(''); setBulkOrderQtys({}); }}
+                  className="flex-1 bg-gray-700 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-gray-600"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Modal confirmar receber pedido */}
+      {confirmReceiveGroup !== null && (() => {
+        const groupOrders = allStockOrders.filter(o =>
+          o.status === 'pending' &&
+          (o.notes?.trim() || '(Sem observação)') === confirmReceiveGroup
+        );
+        const productMap = new Map(products.map((p: any) => [p.id, p]));
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 rounded-xl w-full max-w-md border border-gray-700">
+              <div className="p-6 border-b border-gray-700">
+                <h2 className="text-xl font-bold text-white mb-1">✅ Receber Pedido</h2>
+                <p className="text-gray-400 text-sm">{confirmReceiveGroup}</p>
+              </div>
+              <div className="p-5">
+                <p className="text-gray-300 text-sm font-medium mb-3">Itens que serão adicionados ao estoque:</p>
+                <div className="space-y-2 mb-4">
+                  {groupOrders.map(order => {
+                    const p = productMap.get(order.product_id);
+                    return (
+                      <div key={order.id} className="flex items-center justify-between bg-gray-900 rounded-lg px-4 py-2.5">
+                        <p className="text-white text-sm">{p ? `${p.model} ${p.color}` : 'Produto removido'}</p>
+                        <span className="text-green-400 font-bold text-sm">+{order.quantity} un</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between bg-green-500/10 border border-green-500/30 rounded-lg px-4 py-2.5 mb-5">
+                  <span className="text-green-300 text-sm font-semibold">Total a receber</span>
+                  <span className="text-green-400 font-bold">{groupOrders.reduce((s, o) => s + (o.quantity || 0), 0)} unidades</span>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handleReceiveGroup(confirmReceiveGroup)}
+                    disabled={receivingGroup}
+                    className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg font-semibold transition-colors"
+                  >
+                    {receivingGroup ? 'Recebendo...' : 'Confirmar Recebimento'}
+                  </button>
+                  <button
+                    onClick={() => setConfirmReceiveGroup(null)}
+                    disabled={receivingGroup}
+                    className="flex-1 bg-gray-700 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-gray-600 disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal lançamento */}
       {showMovementForm && selectedProduct && (() => {
