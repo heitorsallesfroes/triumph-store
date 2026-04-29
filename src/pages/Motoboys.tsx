@@ -88,17 +88,22 @@ export default function Motoboys() {
       const tomorrow = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
       const endUTC = tomorrow + 'T03:00:00.000Z';
 
-      const [salesRes, paymentsRes] = await Promise.all([
+      const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
           .eq('status', 'finalizado')
           .gte('sale_date', startUTC)
           .lt('sale_date', endUTC),
+        supabase.from('small_sales').select('motoboy_id, delivery_fee')
+          .eq('delivery_type', 'motoboy')
+          .not('motoboy_id', 'is', null)
+          .gte('created_at', startUTC)
+          .lt('created_at', endUTC),
         supabase.from('motoboy_payments').select('*').eq('date', today),
       ]);
 
       const statsMap = new Map<string, { deliveries: number; earnings: number; extraPayments: number }>();
-      salesRes.data?.forEach(sale => {
+      [...(salesRes.data || []), ...(smallSalesRes.data || [])].forEach(sale => {
         if (sale.motoboy_id) {
           const cur = statsMap.get(sale.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
           statsMap.set(sale.motoboy_id, { ...cur, deliveries: cur.deliveries + 1, earnings: cur.earnings + (sale.delivery_fee || 0) });
@@ -126,17 +131,22 @@ export default function Motoboys() {
       const startUTC = yesterday + 'T03:00:00.000Z';
       const endUTC = today + 'T03:00:00.000Z';
 
-      const [salesRes, paymentsRes] = await Promise.all([
+      const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
           .eq('status', 'finalizado')
           .gte('sale_date', startUTC)
           .lt('sale_date', endUTC),
+        supabase.from('small_sales').select('motoboy_id, delivery_fee')
+          .eq('delivery_type', 'motoboy')
+          .not('motoboy_id', 'is', null)
+          .gte('created_at', startUTC)
+          .lt('created_at', endUTC),
         supabase.from('motoboy_payments').select('*').eq('date', yesterday),
       ]);
 
       const statsMap = new Map<string, { deliveries: number; earnings: number; extraPayments: number }>();
-      salesRes.data?.forEach(sale => {
+      [...(salesRes.data || []), ...(smallSalesRes.data || [])].forEach(sale => {
         if (sale.motoboy_id) {
           const cur = statsMap.get(sale.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
           statsMap.set(sale.motoboy_id, { ...cur, deliveries: cur.deliveries + 1, earnings: cur.earnings + (sale.delivery_fee || 0) });
