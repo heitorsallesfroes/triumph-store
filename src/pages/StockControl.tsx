@@ -69,6 +69,7 @@ export default function StockControl() {
   const [savingBulkOrder, setSavingBulkOrder] = useState(false);
   const [confirmReceiveGroup, setConfirmReceiveGroup] = useState<string | null>(null);
   const [receivingGroup, setReceivingGroup] = useState(false);
+  const [receiveQtys, setReceiveQtys] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadProducts();
@@ -78,6 +79,18 @@ export default function StockControl() {
   useEffect(() => {
     if (activeTab === 'encomendas') loadAllStockOrders();
   }, [activeTab]);
+
+  useEffect(() => {
+    if (confirmReceiveGroup !== null) {
+      const groupOrders = allStockOrders.filter(o =>
+        o.status === 'pending' &&
+        (o.notes?.trim() || '(Sem observação)') === confirmReceiveGroup
+      );
+      const qtys: Record<string, string> = {};
+      groupOrders.forEach(o => { qtys[o.id] = String(o.quantity); });
+      setReceiveQtys(qtys);
+    }
+  }, [confirmReceiveGroup]);
 
   const loadProducts = async () => {
     try {
@@ -233,22 +246,39 @@ export default function StockControl() {
         o.status === 'pending' &&
         (o.notes?.trim() || '(Sem observação)') === groupKey
       );
+
+      // Usa quantidades editadas pelo usuário; pula itens com 0
+      const getReceived = (order: any) => Math.max(0, parseInt(receiveQtys[order.id] || '0'));
+
       const stockUpdates = new Map<string, number>();
       for (const order of groupOrders) {
+        const received = getReceived(order);
+        if (received <= 0) continue;
         const base = stockUpdates.get(order.product_id)
           ?? (products.find((p: any) => p.id === order.product_id)?.current_stock ?? 0);
-        stockUpdates.set(order.product_id, base + order.quantity);
+        stockUpdates.set(order.product_id, base + received);
       }
+
       for (const order of groupOrders) {
+        const received = getReceived(order);
+        if (received <= 0) continue;
+
         const newStock = stockUpdates.get(order.product_id)!;
         await supabase.from('products').update({ current_stock: newStock }).eq('id', order.product_id);
         await supabase.from('stock_movements').insert([{
           product_id: order.product_id,
           type: 'encomenda_recebida',
-          quantity: order.quantity,
+          quantity: received,
           notes: order.notes,
         }]);
-        await supabase.from('stock_orders').update({ status: 'received' }).eq('id', order.id);
+
+        if (received >= order.quantity) {
+          await supabase.from('stock_orders').update({ status: 'received', quantity: 0 }).eq('id', order.id);
+        } else {
+          // Recebimento parcial — reduz a quantidade pendente, mantém como pendente
+          await supabase.from('stock_orders').update({ quantity: order.quantity - received }).eq('id', order.id);
+        }
+
         const product = products.find((p: any) => p.id === order.product_id);
         if (product?.tiny_id) {
           await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-tiny-stock`, {
@@ -261,7 +291,9 @@ export default function StockControl() {
           });
         }
       }
+
       setConfirmReceiveGroup(null);
+      setReceiveQtys({});
       loadProducts();
       loadStockOrders();
       loadAllStockOrders();
@@ -1091,21 +1123,43 @@ export default function StockControl() {
                 <p className="text-gray-400 text-sm">{confirmReceiveGroup}</p>
               </div>
               <div className="p-5">
-                <p className="text-gray-300 text-sm font-medium mb-3">Itens que serão adicionados ao estoque:</p>
+                <p className="text-gray-300 text-sm font-medium mb-3">Edite as quantidades recebidas:</p>
                 <div className="space-y-2 mb-4">
                   {groupOrders.map(order => {
                     const p = productMap.get(order.product_id);
+                    const received = parseInt(receiveQtys[order.id] || '0');
+                    const isPartial = received > 0 && received < order.quantity;
                     return (
-                      <div key={order.id} className="flex items-center justify-between bg-gray-900 rounded-lg px-4 py-2.5">
-                        <p className="text-white text-sm">{p ? `${p.model} ${p.color}` : 'Produto removido'}</p>
-                        <span className="text-green-400 font-bold text-sm">+{order.quantity} un</span>
+                      <div key={order.id} className="bg-gray-900 rounded-lg px-4 py-2.5">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-white text-sm flex-1">{p ? `${p.model} ${p.color}` : 'Produto removido'}</p>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span className="text-gray-500 text-xs">de {order.quantity}</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max={order.quantity}
+                              value={receiveQtys[order.id] ?? order.quantity}
+                              onChange={e => setReceiveQtys(prev => ({ ...prev, [order.id]: e.target.value }))}
+                              className="w-16 bg-gray-700 text-white text-center rounded-lg px-2 py-1 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm font-bold"
+                            />
+                            <span className="text-gray-400 text-xs">un</span>
+                          </div>
+                        </div>
+                        {isPartial && (
+                          <p className="text-yellow-400 text-xs mt-1">
+                            Parcial — {order.quantity - received} un continuam pendentes
+                          </p>
+                        )}
                       </div>
                     );
                   })}
                 </div>
                 <div className="flex items-center justify-between bg-green-500/10 border border-green-500/30 rounded-lg px-4 py-2.5 mb-5">
                   <span className="text-green-300 text-sm font-semibold">Total a receber</span>
-                  <span className="text-green-400 font-bold">{groupOrders.reduce((s, o) => s + (o.quantity || 0), 0)} unidades</span>
+                  <span className="text-green-400 font-bold">
+                    {groupOrders.reduce((s, o) => s + Math.max(0, parseInt(receiveQtys[o.id] || '0')), 0)} unidades
+                  </span>
                 </div>
                 <div className="flex gap-3">
                   <button
