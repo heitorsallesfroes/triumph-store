@@ -368,7 +368,10 @@ export default function ResumoVendas() {
             const roiCfg = roi !== null ? getRoiConfig(roi) : null;
             return (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-                <FinCard label="Total de Vendas" value={String(summary.totalSales)}  icon={ShoppingCart} accent="blue"   sub="Vendas no período" />
+                <FinCard label="Total de Vendas" value={String(summary.totalSales)}  icon={ShoppingCart} accent="blue"
+                  sub={smartwatches.reduce((s, sw) => s + sw.quantity, 0) > 0
+                    ? `${smartwatches.reduce((s, sw) => s + sw.quantity, 0)} smartwatches`
+                    : 'Vendas no período'} />
                 <FinCard label="Ticket Médio"    value={fmt(summary.averageTicket)}  icon={TrendingUp}   accent="orange" sub="Faturamento ÷ vendas" />
                 <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 border-l-4 border-l-blue-500">
                   <div className="flex items-center gap-2 mb-2">

@@ -96,6 +96,7 @@ interface Sale {
 export default function SalesHistory() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [filteredSales, setFilteredSales] = useState<Sale[]>([]);
+  const [filteredSmartwatch, setFilteredSmartwatch] = useState(0);
   const [loading, setLoading] = useState(true);
   const [filterLoading, setFilterLoading] = useState(false);
   const [period, setPeriod] = useState<Period>('today');
@@ -245,7 +246,7 @@ export default function SalesHistory() {
 
         const productIds = [...new Set(itemsData.map((i: any) => i.product_id).filter(Boolean))];
         if (productIds.length > 0) {
-          const { data: prods } = await supabase.from('products').select('id, model, color').in('id', productIds);
+          const { data: prods } = await supabase.from('products').select('id, model, color, category').in('id', productIds);
           productsData = prods || [];
         }
       }
@@ -305,6 +306,10 @@ export default function SalesHistory() {
         });
       }
 
+      const swCount = itemsData
+        .filter((i: any) => (productMap.get(i.product_id) as any)?.category === 'smartwatch')
+        .reduce((s: number, i: any) => s + i.quantity, 0);
+      setFilteredSmartwatch(swCount);
       setFilteredSales(salesWithProducts);
     } catch (error) {
       console.error('Error filtering sales:', error);
@@ -658,6 +663,9 @@ export default function SalesHistory() {
               <div>
                 <p className="text-xs text-gray-400">Total de Vendas</p>
                 <p className="text-lg font-bold text-white">{filteredSales.length}</p>
+                {filteredSmartwatch > 0 && (
+                  <p className="text-xs text-blue-400 mt-0.5">{filteredSmartwatch} smartwatches</p>
+                )}
               </div>
             </div>
             <div className="bg-gray-800 rounded-lg px-4 py-3 border border-gray-700 flex items-center gap-3">

@@ -230,7 +230,8 @@ export default function ResumoMensal() {
                     subtitle={`Desconto taxas: R$ ${(totalBruto - totalLiquido).toFixed(2)}`} />
                   <MetricCard label="Pequenas Vendas" value={smallSalesRevenue} color="green" icon={ShoppingBag}
                     subtitle={`Líquido: R$ ${smallSalesNet.toFixed(2)} | Taxas: R$ ${smallSalesCardFees.toFixed(2)}`} />
-                  <MetricCard label="Total de Vendas" value={sales.length} color="blue" icon={ShoppingCart} isCount />
+                  <MetricCard label="Total de Vendas" value={sales.length} color="blue" icon={ShoppingCart} isCount
+                    subtitle={`${saleItems.filter(i => (i.products as any)?.category === 'smartwatch').reduce((s, i) => s + i.quantity, 0)} smartwatches`} />
                 </div>
               </div>
 
