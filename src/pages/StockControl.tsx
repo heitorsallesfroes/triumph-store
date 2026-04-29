@@ -860,8 +860,9 @@ export default function StockControl() {
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Produto</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">SKU</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Em Loja</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">A Chegar</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-blue-400 uppercase">Em Loja</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-orange-400 uppercase">A Chegar</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-green-400 uppercase">Total</th>
               <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Ideal</th>
               <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">A Comprar</th>
               <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase">Previsão</th>
@@ -871,7 +872,7 @@ export default function StockControl() {
           <tbody className="divide-y divide-gray-700">
             {filteredProducts.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-6 py-8 text-center text-gray-400">Nenhum produto encontrado.</td>
+                <td colSpan={9} className="px-6 py-8 text-center text-gray-400">Nenhum produto encontrado.</td>
               </tr>
             ) : (
               filteredProducts.map((product: any) => {
@@ -886,18 +887,23 @@ export default function StockControl() {
                     </td>
                     <td className="px-6 py-4 text-gray-400 text-sm">{product.sku || '-'}</td>
                     <td className="px-6 py-4 text-center">
-                      <span className={`text-2xl font-bold ${isLow ? 'text-red-400' : 'text-white'}`}>
+                      <span className={`text-2xl font-bold ${isLow ? 'text-red-400' : 'text-blue-400'}`}>
                         {product.current_stock}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center">
                       {pending > 0 ? (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold bg-blue-500/20 text-blue-400 border border-blue-500/50">
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold bg-orange-500/20 text-orange-400 border border-orange-500/50">
                           {pending}
                         </span>
                       ) : (
                         <span className="text-gray-600 text-sm">—</span>
                       )}
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <span className="text-2xl font-bold text-green-400">
+                        {product.current_stock + pending}
+                      </span>
                     </td>
                     <td className="px-6 py-4 text-center">
                       {editingIdealStock === product.id ? (
@@ -934,6 +940,11 @@ export default function StockControl() {
                       ) : (
                         <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-green-500/20 text-green-400 border border-green-500/50">
                           <CheckCircle size={14} /> OK
+                          {(product.current_stock + pending - (product.ideal_stock || 0)) > 0 && (
+                            <span className="text-green-300 font-bold">
+                              / +{product.current_stock + pending - (product.ideal_stock || 0)}
+                            </span>
+                          )}
                         </span>
                       )}
                     </td>
