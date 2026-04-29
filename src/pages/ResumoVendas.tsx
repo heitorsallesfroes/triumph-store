@@ -26,7 +26,7 @@ interface MotoboyRow { name: string; deliveries: number; earned: number; }
 interface SmartWatchRow { product_id: string; model: string; color: string; quantity: number; }
 
 interface CardBucket { count: number; bruto: number; fees: number; liquid: number; }
-interface CardConciliation { credit: CardBucket; debit: CardBucket; }
+interface CardConciliation { credit: CardBucket; debit: CardBucket; link: CardBucket; }
 
 const PERIOD_LABELS: Record<Period, string> = {
   today: 'Hoje',
@@ -41,6 +41,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Dinheiro',
   debit_card: 'Débito',
   credit_card: 'Crédito',
+  payment_link: 'Link de Pagamento',
 };
 
 const CHANNEL_LABELS: Record<string, string> = {
@@ -69,6 +70,7 @@ export default function ResumoVendas() {
   const [cardConciliation, setCardConciliation] = useState<CardConciliation>({
     credit: { count: 0, bruto: 0, fees: 0, liquid: 0 },
     debit:  { count: 0, bruto: 0, fees: 0, liquid: 0 },
+    link:   { count: 0, bruto: 0, fees: 0, liquid: 0 },
   });
   const [loading, setLoading] = useState(true);
   const [showShareModal, setShowShareModal] = useState(false);
@@ -116,7 +118,7 @@ export default function ResumoVendas() {
         supabase
           .from('small_sales')
           .select('sale_price, quantity, payment_method, card_brand, installments')
-          .in('payment_method', ['credit_card', 'debit_card'])
+          .in('payment_method', ['credit_card', 'debit_card', 'payment_link'])
           .gte('created_at', `${start}T00:00:00`)
           .lte('created_at', `${end}T23:59:59`),
       ]);
@@ -138,11 +140,17 @@ export default function ResumoVendas() {
       const conciliation: CardConciliation = {
         credit: { count: 0, bruto: 0, fees: 0, liquid: 0 },
         debit:  { count: 0, bruto: 0, fees: 0, liquid: 0 },
+        link:   { count: 0, bruto: 0, fees: 0, liquid: 0 },
       };
 
+      const getBucket = (method: string) =>
+        method === 'credit_card' ? conciliation.credit
+        : method === 'debit_card' ? conciliation.debit
+        : conciliation.link;
+
       // vendas principais
-      s.filter(v => v.payment_method === 'credit_card' || v.payment_method === 'debit_card').forEach(v => {
-        const bucket = v.payment_method === 'credit_card' ? conciliation.credit : conciliation.debit;
+      s.filter(v => v.payment_method === 'credit_card' || v.payment_method === 'debit_card' || v.payment_method === 'payment_link').forEach(v => {
+        const bucket = getBucket(v.payment_method);
         const bruto = Number(v.total_sale_price);
         const fee   = Number(v.card_fee || 0);
         bucket.count  += 1;
@@ -153,10 +161,10 @@ export default function ResumoVendas() {
 
       // pequenas vendas
       (smallSalesRaw || []).forEach(v => {
-        const bucket = v.payment_method === 'credit_card' ? conciliation.credit : conciliation.debit;
+        const bucket = getBucket(v.payment_method);
         const bruto = Number(v.sale_price) * Number(v.quantity);
-        const fee   = v.payment_method === 'credit_card' && v.card_brand && v.installments
-          ? calculateCardFee(bruto, 'credit_card', v.card_brand, v.installments)
+        const fee   = (v.payment_method === 'credit_card' || v.payment_method === 'payment_link') && v.card_brand && v.installments
+          ? calculateCardFee(bruto, v.payment_method, v.card_brand, v.installments)
           : 0;
         bucket.count  += 1;
         bucket.bruto  += bruto;
@@ -428,12 +436,12 @@ export default function ResumoVendas() {
           </div>
 
           {/* Conciliação com Maquininha */}
-          {(cardConciliation.credit.count > 0 || cardConciliation.debit.count > 0) && (() => {
+          {(cardConciliation.credit.count > 0 || cardConciliation.debit.count > 0 || cardConciliation.link.count > 0) && (() => {
             const total = {
-              count:  cardConciliation.credit.count  + cardConciliation.debit.count,
-              bruto:  cardConciliation.credit.bruto  + cardConciliation.debit.bruto,
-              fees:   cardConciliation.credit.fees   + cardConciliation.debit.fees,
-              liquid: cardConciliation.credit.liquid + cardConciliation.debit.liquid,
+              count:  cardConciliation.credit.count  + cardConciliation.debit.count  + cardConciliation.link.count,
+              bruto:  cardConciliation.credit.bruto  + cardConciliation.debit.bruto  + cardConciliation.link.bruto,
+              fees:   cardConciliation.credit.fees   + cardConciliation.debit.fees   + cardConciliation.link.fees,
+              liquid: cardConciliation.credit.liquid + cardConciliation.debit.liquid + cardConciliation.link.liquid,
             };
             return (
               <div className="bg-gray-800 rounded-xl border border-blue-500/30 p-6 mb-6">
@@ -454,8 +462,9 @@ export default function ResumoVendas() {
                 {/* Breakdown por tipo */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {[
-                    { label: 'Crédito', bucket: cardConciliation.credit,  color: 'border-blue-500/40',   badge: 'bg-blue-500/10 text-blue-400 border border-blue-500/30' },
-                    { label: 'Débito',  bucket: cardConciliation.debit,   color: 'border-gray-600',      badge: 'bg-gray-700 text-gray-300 border border-gray-600' },
+                    { label: 'Crédito',           bucket: cardConciliation.credit, color: 'border-blue-500/40',   badge: 'bg-blue-500/10 text-blue-400 border border-blue-500/30' },
+                    { label: 'Débito',             bucket: cardConciliation.debit,  color: 'border-gray-600',      badge: 'bg-gray-700 text-gray-300 border border-gray-600' },
+                    { label: 'Link de Pagamento',  bucket: cardConciliation.link,   color: 'border-violet-500/40', badge: 'bg-violet-500/10 text-violet-400 border border-violet-500/30' },
                   ].filter(t => t.bucket.count > 0).map(({ label, bucket, color, badge }) => (
                     <div key={label} className={`rounded-xl border p-4 ${color}`} style={{ background: '#0d0d14' }}>
                       <div className="flex items-center justify-between mb-3">
