@@ -103,7 +103,9 @@ export default function SalesHistory() {
   const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
   const [statusFilter, setStatusFilter] = useState<SaleStatus | 'all'>('all');
   const [deliveryTypeFilter, setDeliveryTypeFilter] = useState('all');
+  const [motoboyFilter, setMotoboyFilter] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('all');
+  const [motoboys, setMotoboys] = useState<{ id: string; name: string }[]>([]);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -128,7 +130,7 @@ export default function SalesHistory() {
     return () => clearTimeout(timer);
   }, [productFilter]);
 
-  useEffect(() => { filterSales(); }, [statusFilter, deliveryTypeFilter, paymentFilter, searchTerm, debouncedProductFilter, period, dateFilter]);
+  useEffect(() => { filterSales(); }, [statusFilter, deliveryTypeFilter, motoboyFilter, paymentFilter, searchTerm, debouncedProductFilter, period, dateFilter]);
 
   const loadSales = async () => {
     try {
@@ -140,6 +142,7 @@ export default function SalesHistory() {
 
       const rawSales: any[] = salesData || [];
       const motoboysMap = new Map((motoboysData || []).map((m: any) => [m.id, m.name]));
+      setMotoboys((motoboysData || []).map((m: any) => ({ id: m.id, name: m.name })));
       const salesWithProducts = await enrichWithProducts(rawSales, motoboysMap);
       setSales(salesWithProducts);
     } catch (error) {
@@ -219,6 +222,7 @@ export default function SalesHistory() {
         .limit(200);
       if (statusFilter !== 'all') query = query.eq('status', statusFilter);
       if (deliveryTypeFilter !== 'all') query = query.eq('delivery_type', deliveryTypeFilter);
+      if (deliveryTypeFilter === 'motoboy' && motoboyFilter !== 'all') query = query.eq('motoboy_id', motoboyFilter);
       if (paymentFilter !== 'all') query = query.eq('payment_method', paymentFilter);
       if (searchTerm) query = query.or(`customer_name.ilike.%${searchTerm}%,neighborhood.ilike.%${searchTerm}%,city.ilike.%${searchTerm}%`);
       if (startDate) query = query.gte('sale_date', `${startDate}T00:00:00`);
@@ -622,12 +626,31 @@ export default function SalesHistory() {
           {/* Tipo de entrega */}
           <div className="flex gap-1.5 flex-wrap">
             {Object.entries(DELIVERY_LABELS).map(([val, label]) => (
-              <button key={val} onClick={() => setDeliveryTypeFilter(val)}
+              <button key={val}
+                onClick={() => { setDeliveryTypeFilter(val); if (val !== 'motoboy') setMotoboyFilter('all'); }}
                 className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors flex-1 min-w-fit ${deliveryTypeFilter === val ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
                 {label}
               </button>
             ))}
           </div>
+
+          {/* Sub-filtro de motoboys — aparece só quando Motoboy está selecionado */}
+          {deliveryTypeFilter === 'motoboy' && motoboys.length > 0 && (
+            <div className="flex gap-1.5 flex-wrap pl-2 border-l-2 border-orange-500/40">
+              <button
+                onClick={() => setMotoboyFilter('all')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${motoboyFilter === 'all' ? 'bg-orange-500/80 text-white' : 'bg-gray-700/70 text-gray-400 hover:bg-gray-600'}`}>
+                Todos os Motoboys
+              </button>
+              {motoboys.map(m => (
+                <button key={m.id}
+                  onClick={() => setMotoboyFilter(m.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${motoboyFilter === m.id ? 'bg-orange-500/80 text-white' : 'bg-gray-700/70 text-gray-400 hover:bg-gray-600'}`}>
+                  {m.name}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Forma de pagamento */}
           <div className="flex gap-1.5 flex-wrap">
@@ -641,10 +664,10 @@ export default function SalesHistory() {
         </div>
 
         {/* Limpar */}
-        {(searchTerm || productFilter || statusFilter !== 'all' || deliveryTypeFilter !== 'all' || paymentFilter !== 'all' || period !== 'month' || dateFilter.start || dateFilter.end) && (
+        {(searchTerm || productFilter || statusFilter !== 'all' || deliveryTypeFilter !== 'all' || motoboyFilter !== 'all' || paymentFilter !== 'all' || period !== 'month' || dateFilter.start || dateFilter.end) && (
           <button onClick={() => {
             setSearchTerm(''); setProductFilter(''); setStatusFilter('all');
-            setDeliveryTypeFilter('all'); setPaymentFilter('all'); setPeriod('month'); setDateFilter({ start: '', end: '' });
+            setDeliveryTypeFilter('all'); setMotoboyFilter('all'); setPaymentFilter('all'); setPeriod('month'); setDateFilter({ start: '', end: '' });
           }} className="text-orange-500 hover:text-orange-400 text-sm font-medium">
             Limpar Filtros
           </button>
