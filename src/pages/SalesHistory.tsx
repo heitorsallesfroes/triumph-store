@@ -24,6 +24,15 @@ const DELIVERY_LABELS: Record<string, string> = {
   loja_fisica: 'Loja Física',
 };
 
+const PAYMENT_FILTER_LABELS: Record<string, string> = {
+  all: 'Todos',
+  pix: 'PIX',
+  cash: 'Dinheiro',
+  debit_card: 'Débito',
+  credit_card: 'Crédito',
+  payment_link: 'Link de Pagamento',
+};
+
 const DELIVERY_CONFIG: Record<string, { label: string; icon: React.ElementType; color: string; bg: string }> = {
   motoboy:    { label: 'Motoboy',    icon: Bike,         color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/30' },
   correios:   { label: 'Correios',   icon: Truck,        color: 'text-blue-400',   bg: 'bg-blue-500/10 border-blue-500/30'     },
@@ -93,6 +102,7 @@ export default function SalesHistory() {
   const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
   const [statusFilter, setStatusFilter] = useState<SaleStatus | 'all'>('all');
   const [deliveryTypeFilter, setDeliveryTypeFilter] = useState('all');
+  const [paymentFilter, setPaymentFilter] = useState('all');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -117,7 +127,7 @@ export default function SalesHistory() {
     return () => clearTimeout(timer);
   }, [productFilter]);
 
-  useEffect(() => { filterSales(); }, [statusFilter, deliveryTypeFilter, searchTerm, debouncedProductFilter, period, dateFilter]);
+  useEffect(() => { filterSales(); }, [statusFilter, deliveryTypeFilter, paymentFilter, searchTerm, debouncedProductFilter, period, dateFilter]);
 
   const loadSales = async () => {
     try {
@@ -208,6 +218,7 @@ export default function SalesHistory() {
         .limit(200);
       if (statusFilter !== 'all') query = query.eq('status', statusFilter);
       if (deliveryTypeFilter !== 'all') query = query.eq('delivery_type', deliveryTypeFilter);
+      if (paymentFilter !== 'all') query = query.eq('payment_method', paymentFilter);
       if (searchTerm) query = query.or(`customer_name.ilike.%${searchTerm}%,neighborhood.ilike.%${searchTerm}%,city.ilike.%${searchTerm}%`);
       if (startDate) query = query.gte('sale_date', `${startDate}T00:00:00`);
       if (endDate) query = query.lte('sale_date', `${endDate}T23:59:59`);
@@ -612,13 +623,23 @@ export default function SalesHistory() {
               </button>
             ))}
           </div>
+
+          {/* Forma de pagamento */}
+          <div className="flex gap-1.5 flex-wrap">
+            {Object.entries(PAYMENT_FILTER_LABELS).map(([val, label]) => (
+              <button key={val} onClick={() => setPaymentFilter(val)}
+                className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors flex-1 min-w-fit ${paymentFilter === val ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Limpar */}
-        {(searchTerm || productFilter || statusFilter !== 'all' || deliveryTypeFilter !== 'all' || period !== 'month' || dateFilter.start || dateFilter.end) && (
+        {(searchTerm || productFilter || statusFilter !== 'all' || deliveryTypeFilter !== 'all' || paymentFilter !== 'all' || period !== 'month' || dateFilter.start || dateFilter.end) && (
           <button onClick={() => {
             setSearchTerm(''); setProductFilter(''); setStatusFilter('all');
-            setDeliveryTypeFilter('all'); setPeriod('month'); setDateFilter({ start: '', end: '' });
+            setDeliveryTypeFilter('all'); setPaymentFilter('all'); setPeriod('month'); setDateFilter({ start: '', end: '' });
           }} className="text-orange-500 hover:text-orange-400 text-sm font-medium">
             Limpar Filtros
           </button>
@@ -709,7 +730,7 @@ export default function SalesHistory() {
               Nenhuma venda encontrada {EMPTY_PERIOD_LABELS[period]}
             </h3>
             <p className="text-gray-400">
-              {searchTerm || productFilter || statusFilter !== 'all' || deliveryTypeFilter !== 'all'
+              {searchTerm || productFilter || statusFilter !== 'all' || deliveryTypeFilter !== 'all' || paymentFilter !== 'all'
                 ? 'Tente ajustar os filtros para ver mais resultados'
                 : 'As vendas realizadas aparecerão aqui'}
             </p>
