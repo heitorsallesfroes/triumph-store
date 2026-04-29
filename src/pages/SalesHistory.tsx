@@ -77,6 +77,7 @@ interface Sale {
   installments?: number;
   motoboy_id?: string | null;
   motoboy_name?: string;
+  delivery_fee?: number | null;
   main_product?: string;
   additional_items?: number;
   delivery_type?: string;
@@ -864,6 +865,11 @@ export default function SalesHistory() {
                           <p className={`text-sm font-semibold ${Number(sale.profit) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                             lucro {formatCurrency(Number(sale.profit))}
                           </p>
+                          {sale.delivery_type === 'motoboy' && Number(sale.delivery_fee) > 0 && (
+                            <p className="text-sm font-medium text-orange-400">
+                              🛵 {formatCurrency(Number(sale.delivery_fee))}
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
