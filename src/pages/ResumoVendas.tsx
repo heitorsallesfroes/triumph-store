@@ -74,7 +74,6 @@ export default function ResumoVendas() {
   });
   const [loading, setLoading] = useState(true);
   const [showShareModal, setShowShareModal] = useState(false);
-  const loadIdRef = useRef(0);
 
   useEffect(() => {
     if (period !== 'custom') loadData();
@@ -252,12 +251,12 @@ export default function ResumoVendas() {
       } else {
         setSmartwatches([]);
       }
-      if (loadId !== loadIdRef.current) return;
+      if (myId !== loadIdRef.current) return;
     } catch (e) {
-      if (loadId !== loadIdRef.current) return;
+      if (myId !== loadIdRef.current) return;
       console.error(e);
     } finally {
-      if (loadId === loadIdRef.current) setLoading(false);
+      if (myId === loadIdRef.current) setLoading(false);
     }
   };
 
@@ -651,6 +650,7 @@ export default function ResumoVendas() {
         const today = getTodayInBrazil();
         const [year, month, day] = today.split('-');
         const dateLabel = `${day}/${month}/${year}`;
+        const totalSmartwatches = smartwatches.reduce((s, sw) => s + sw.quantity, 0);
         return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -691,6 +691,9 @@ export default function ResumoVendas() {
                     <p className="text-xs font-semibold text-green-600 uppercase tracking-widest mb-1">🚀 Faturamento</p>
                     <p className="text-3xl font-black text-green-400 tracking-tight">{fmt(summary.totalBruto)}</p>
                     <p className="text-xs text-green-800 mt-1">{summary.totalSales} {summary.totalSales === 1 ? 'venda' : 'vendas'} no período</p>
+                    {totalSmartwatches > 0 && (
+                      <p className="text-xs text-green-700 mt-0.5">{totalSmartwatches} {totalSmartwatches === 1 ? 'smartwatch' : 'smartwatches'}</p>
+                    )}
                   </div>
 
                   {/* Investido em Ads */}
