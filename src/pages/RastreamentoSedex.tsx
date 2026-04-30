@@ -24,7 +24,8 @@ interface Sale {
   neighborhood: string;
   city: string;
   state: string;
-  tracking_code: string;
+  tracking_code: string | null;
+  shipping_label_url: string | null;
   sale_date: string;
   status: TrackingStatus;
   lastEvent?: TrackingEvent;
@@ -109,10 +110,9 @@ export default function RastreamentoSedex() {
     setLoading(true);
     const { data } = await supabase
       .from('sales')
-      .select('id, customer_name, address_street, address_number, address_complement, neighborhood, city, state, tracking_code, sale_date')
+      .select('id, customer_name, address_street, address_number, address_complement, neighborhood, city, state, tracking_code, shipping_label_url, sale_date')
       .eq('delivery_type', 'correios')
-      .not('tracking_code', 'is', null)
-      .neq('tracking_code', '')
+      .eq('shipping_status', 'Etiqueta gerada')
       .order('sale_date', { ascending: false });
 
     setSales(
@@ -132,7 +132,7 @@ export default function RastreamentoSedex() {
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
       const tracking_code = sales.find(s => s.id === id)?.tracking_code;
-      if (!tracking_code) continue;
+      if (!tracking_code || tracking_code.trim() === '') continue; // sem código = pula
 
       setSales(prev => prev.map(s => s.id === id ? { ...s, tracking_loading: true } : s));
       const result = await fetchTracking(tracking_code);
@@ -278,17 +278,33 @@ export default function RastreamentoSedex() {
                 <div className="flex items-center justify-between mb-3 py-2.5 px-3 rounded-lg bg-black/25 border border-white/5">
                   <div>
                     <p className="text-xs text-gray-500 mb-0.5">Rastreio</p>
-                    <p className="text-sm font-mono font-bold text-white tracking-wide">{sale.tracking_code}</p>
+                    {sale.tracking_code && sale.tracking_code.trim() !== '' ? (
+                      <p className="text-sm font-mono font-bold text-white tracking-wide">{sale.tracking_code}</p>
+                    ) : (
+                      <p className="text-sm text-gray-600 italic">Código pendente</p>
+                    )}
                   </div>
-                  <a
-                    href={`https://rastreamento.correios.com.br/app/index.php?objeto=${sale.tracking_code}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="p-1.5 rounded text-gray-500 hover:text-orange-400 hover:bg-white/10 transition-colors"
-                    title="Abrir no site dos Correios"
-                  >
-                    <ExternalLink size={14} />
-                  </a>
+                  {sale.tracking_code && sale.tracking_code.trim() !== '' ? (
+                    <a
+                      href={`https://rastreamento.correios.com.br/app/index.php?objeto=${sale.tracking_code}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1.5 rounded text-gray-500 hover:text-orange-400 hover:bg-white/10 transition-colors"
+                      title="Abrir no site dos Correios"
+                    >
+                      <ExternalLink size={14} />
+                    </a>
+                  ) : sale.shipping_label_url ? (
+                    <a
+                      href={sale.shipping_label_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1.5 rounded text-gray-500 hover:text-blue-400 hover:bg-white/10 transition-colors"
+                      title="Abrir etiqueta no SuperFrete"
+                    >
+                      <ExternalLink size={14} />
+                    </a>
+                  ) : null}
                 </div>
 
                 {/* Status do rastreamento */}
@@ -315,7 +331,9 @@ export default function RastreamentoSedex() {
                   </div>
                 ) : (
                   <p className="text-xs text-gray-600 py-1 italic">
-                    Clique em "Atualizar Rastreamentos" para buscar o status atual
+                    {sale.tracking_code && sale.tracking_code.trim() !== ''
+                      ? 'Clique em "Atualizar Rastreamentos" para buscar o status'
+                      : 'Código de rastreio ainda não disponível — verifique os logs da Edge Function'}
                   </p>
                 )}
 
