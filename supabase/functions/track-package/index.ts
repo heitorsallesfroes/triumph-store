@@ -14,8 +14,18 @@ interface TrackingEvent {
   location: string;
 }
 
-// Gera um novo Bearer Token usando o código de acesso
-async function generateToken(codigoAcesso: string): Promise<string | null> {
+interface DebugInfo {
+  has_token: boolean;
+  has_codigo_acesso: boolean;
+  token_generation?: { status: number; body: string };
+  correios_api?: { status: number; body: string; expired: boolean };
+  correios_api_retry?: { status: number; body: string };
+  proxy?: { status: number; body: string };
+}
+
+async function generateToken(
+  codigoAcesso: string,
+): Promise<{ token: string | null; status: number; body: string }> {
   try {
     const credentials = btoa(`${CORREIOS_CNPJ}:${codigoAcesso}`);
     const res = await fetch("https://api.correios.com.br/token/v1/autentica", {
@@ -25,60 +35,45 @@ async function generateToken(codigoAcesso: string): Promise<string | null> {
         "Content-Type": "application/json",
       },
     });
-    if (!res.ok) {
-      const body = await res.text();
-      console.error("[Correios] Falha ao gerar token:", res.status, body);
-      return null;
-    }
-    const data = await res.json();
+    const body = await res.text();
+    if (!res.ok) return { token: null, status: res.status, body };
+    const data = JSON.parse(body);
     console.log("[Correios] Novo token gerado, expira em:", data.expiraEm);
-    return data.token ?? null;
-  } catch (err) {
-    console.error("[Correios] Erro ao gerar token:", err);
-    return null;
+    return { token: data.token ?? null, status: res.status, body };
+  } catch (err: any) {
+    return { token: null, status: 0, body: String(err) };
   }
 }
 
-// Chama a API de rastreamento com um token — retorna null se 401 (expirado)
 async function callTrackingAPI(
   code: string,
   token: string,
-): Promise<{ events: TrackingEvent[] | null; expired: boolean }> {
+): Promise<{ events: TrackingEvent[] | null; expired: boolean; status: number; body: string }> {
   try {
     const res = await fetch(
       `https://api.correios.com.br/srorastro/v1/objetos/${code}/eventos`,
-      {
-        headers: {
-          "Accept": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-      },
+      { headers: { "Accept": "application/json", "Authorization": `Bearer ${token}` } },
     );
+    const body = await res.text();
+    if (res.status === 401) return { events: null, expired: true, status: 401, body };
+    if (!res.ok) return { events: null, expired: false, status: res.status, body };
 
-    if (res.status === 401) return { events: null, expired: true };
-    if (!res.ok) {
-      console.error("[Correios] Tracking API erro:", res.status, await res.text());
-      return { events: null, expired: false };
-    }
-
-    const data = await res.json();
+    const data = JSON.parse(body);
     const eventos = data?.objetos?.[0]?.eventos || [];
     const events: TrackingEvent[] = eventos.map((e: any) => ({
       date: e.dtHrCriado || "",
       description: e.descricao || e.detalhe || "",
-      location: [e.unidade?.endereco?.cidade, e.unidade?.endereco?.uf]
-        .filter(Boolean)
-        .join("/"),
+      location: [e.unidade?.endereco?.cidade, e.unidade?.endereco?.uf].filter(Boolean).join("/"),
     }));
-    return { events, expired: false };
-  } catch (err) {
-    console.error("[Correios] Erro na chamada de tracking:", err);
-    return { events: null, expired: false };
+    return { events, expired: false, status: res.status, body };
+  } catch (err: any) {
+    return { events: null, expired: false, status: 0, body: String(err) };
   }
 }
 
-// Tenta o proxy não-oficial dos Correios (fallback sem auth)
-async function tryCorreiosProxy(code: string): Promise<TrackingEvent[] | null> {
+async function tryCorreiosProxy(
+  code: string,
+): Promise<{ events: TrackingEvent[] | null; status: number; body: string }> {
   try {
     const res = await fetch(`https://proxyapp.correios.com.br/v1/sro-rastro/${code}`, {
       headers: {
@@ -88,19 +83,19 @@ async function tryCorreiosProxy(code: string): Promise<TrackingEvent[] | null> {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       },
     });
-    if (!res.ok) return null;
-    const data = await res.json();
+    const body = await res.text();
+    if (!res.ok) return { events: null, status: res.status, body };
+    const data = JSON.parse(body);
     const eventos = data?.objetos?.[0]?.eventos || [];
-    if (!eventos.length) return null;
-    return eventos.map((e: any) => ({
+    if (!eventos.length) return { events: [], status: res.status, body };
+    const events: TrackingEvent[] = eventos.map((e: any) => ({
       date: e.dtHrCriado || "",
       description: e.descricao || "",
-      location: [e.unidade?.endereco?.cidade, e.unidade?.endereco?.uf]
-        .filter(Boolean)
-        .join("/"),
+      location: [e.unidade?.endereco?.cidade, e.unidade?.endereco?.uf].filter(Boolean).join("/"),
     }));
-  } catch {
-    return null;
+    return { events, status: res.status, body };
+  } catch (err: any) {
+    return { events: null, status: 0, body: String(err) };
   }
 }
 
@@ -116,52 +111,55 @@ Deno.serve(async (req: Request) => {
     let token = Deno.env.get("CORREIOS_API_TOKEN") || null;
     const codigoAcesso = Deno.env.get("CORREIOS_CODIGO_ACESSO") || null;
 
+    const debug: DebugInfo = {
+      has_token: !!token,
+      has_codigo_acesso: !!codigoAcesso,
+    };
+
     let events: TrackingEvent[] | null = null;
     let source = "";
 
     // 1. Tenta API oficial com token atual
     if (token) {
       const result = await callTrackingAPI(tracking_code, token);
+      debug.correios_api = { status: result.status, body: result.body, expired: result.expired };
 
       if (result.expired && codigoAcesso) {
-        // 2. Token expirou — gera novo usando o código de acesso
+        // Token expirou — gera novo
         console.log("[Correios] Token expirado, renovando...");
-        const newToken = await generateToken(codigoAcesso);
+        const gen = await generateToken(codigoAcesso);
+        debug.token_generation = { status: gen.status, body: gen.body };
 
-        if (newToken) {
-          token = newToken;
-          const retry = await callTrackingAPI(tracking_code, newToken);
-          if (retry.events) {
-            events = retry.events;
-            source = "correios_oficial_token_renovado";
-          }
+        if (gen.token) {
+          const retry = await callTrackingAPI(tracking_code, gen.token);
+          debug.correios_api_retry = { status: retry.status, body: retry.body };
+          if (retry.events) { events = retry.events; source = "correios_oficial_renovado"; }
         }
       } else if (result.events) {
         events = result.events;
         source = "correios_oficial";
       }
     } else if (codigoAcesso) {
-      // Sem token salvo — gera direto do código de acesso
-      console.log("[Correios] Sem token salvo, gerando do código de acesso...");
-      const newToken = await generateToken(codigoAcesso);
-      if (newToken) {
-        const result = await callTrackingAPI(tracking_code, newToken);
-        if (result.events) {
-          events = result.events;
-          source = "correios_oficial_gerado";
-        }
+      // Sem token — gera do código de acesso
+      console.log("[Correios] Sem token, gerando do código de acesso...");
+      const gen = await generateToken(codigoAcesso);
+      debug.token_generation = { status: gen.status, body: gen.body };
+
+      if (gen.token) {
+        const result = await callTrackingAPI(tracking_code, gen.token);
+        debug.correios_api = { status: result.status, body: result.body, expired: result.expired };
+        if (result.events) { events = result.events; source = "correios_oficial_gerado"; }
       }
     }
 
-    // 3. Fallback: proxy não-oficial
+    // 2. Fallback: proxy não-oficial
     if (!events) {
-      events = await tryCorreiosProxy(tracking_code);
-      if (events) source = "correios_proxy";
+      const proxyResult = await tryCorreiosProxy(tracking_code);
+      debug.proxy = { status: proxyResult.status, body: proxyResult.body };
+      if (proxyResult.events?.length) { events = proxyResult.events; source = "correios_proxy"; }
     }
 
-    console.log(
-      `[Tracking] ${tracking_code} | source: ${source || "none"} | events: ${events?.length ?? 0}`,
-    );
+    console.log(`[Tracking] ${tracking_code} | source: ${source || "none"} | events: ${events?.length ?? 0}`);
 
     if (!events || events.length === 0) {
       return new Response(
@@ -169,24 +167,22 @@ Deno.serve(async (req: Request) => {
           success: false,
           error: !token && !codigoAcesso
             ? "Configure CORREIOS_API_TOKEN ou CORREIOS_CODIGO_ACESSO no Supabase."
-            : "Nenhum evento de rastreamento encontrado para este código.",
+            : "Nenhum evento encontrado.",
           needs_config: !token && !codigoAcesso,
+          _debug: debug,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     return new Response(
-      JSON.stringify({ success: true, events, source }),
+      JSON.stringify({ success: true, events, source, _debug: debug }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
 
   } catch (error) {
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : "Erro desconhecido",
-      }),
+      JSON.stringify({ success: false, error: error instanceof Error ? error.message : "Erro desconhecido" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
