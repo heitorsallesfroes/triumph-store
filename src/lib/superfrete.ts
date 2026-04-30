@@ -95,7 +95,16 @@ export async function generateShippingLabel(
         insurance_value: 150,
         non_commercial: !params.invoice_key,
       },
-      ...(params.invoice_key ? { invoice: { number: params.invoice_key, key: params.invoice_key } } : {}),
+      ...(params.invoice_key ? {
+        invoice: {
+          // invoice.key = chave de acesso de 44 dígitos
+          // invoice.number = número sequencial da NF extraído da chave (posição 25–33)
+          number: params.invoice_key.length === 44
+            ? String(parseInt(params.invoice_key.substring(25, 34), 10))
+            : params.invoice_key,
+          key: params.invoice_key,
+        },
+      } : {}),
       platform: "TriumphStore",
     };
 

@@ -26,6 +26,8 @@ Deno.serve(async (req: Request) => {
       "User-Agent": "TriumphStore/1.0 (integracao@triumphstore.com.br)",
     };
 
+    console.log('[SuperFrete] Payload enviado ao cart:', JSON.stringify(payload));
+
     const cartResponse = await fetch("https://api.superfrete.com/api/v0/cart", {
       method: "POST",
       headers,
@@ -33,6 +35,9 @@ Deno.serve(async (req: Request) => {
     });
 
     const cartText = await cartResponse.text();
+    console.log('[SuperFrete] Cart status:', cartResponse.status);
+    console.log('[SuperFrete] Cart response completo:', cartText);
+
     let cartData;
     try {
       cartData = JSON.parse(cartText);
@@ -56,6 +61,9 @@ Deno.serve(async (req: Request) => {
     });
 
     const checkoutText = await checkoutResponse.text();
+    console.log('[SuperFrete] Checkout status:', checkoutResponse.status);
+    console.log('[SuperFrete] Checkout response completo:', checkoutText);
+
     let checkoutData;
     try {
       checkoutData = JSON.parse(checkoutText);
@@ -74,6 +82,8 @@ Deno.serve(async (req: Request) => {
     });
 
     const printText = await printResponse.text();
+    console.log('[SuperFrete] Generate status:', printResponse.status);
+    console.log('[SuperFrete] Generate response completo:', printText);
     let printData: Record<string, string> = {};
     try {
       printData = JSON.parse(printText);
