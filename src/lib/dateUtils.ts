@@ -47,18 +47,6 @@ export function getDateRangeInBrazil(daysAgo: number): { start: string; end: str
   };
 }
 
-export function getYesterdayInBrazil(): string {
-  const date = new Date();
-  const yesterday = new Date(date.getTime() - 24 * 60 * 60 * 1000);
-  const brazilDate = new Date(yesterday.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
-
-  const year = brazilDate.getFullYear();
-  const month = String(brazilDate.getMonth() + 1).padStart(2, '0');
-  const day = String(brazilDate.getDate()).padStart(2, '0');
-
-  return `${year}-${month}-${day}`;
-}
-
 export function getWeekRangeInBrazil(): { start: string; end: string } {
   return getDateRangeInBrazil(7);
 }
