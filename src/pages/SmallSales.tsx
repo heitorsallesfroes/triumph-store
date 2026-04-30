@@ -32,6 +32,7 @@ interface MotoboyOption {
   name: string;
 }
 
+
 type FilterPeriod = 'today' | 'yesterday' | 'week' | 'month';
 
 const PAYMENT_LABELS: Record<string, string> = {

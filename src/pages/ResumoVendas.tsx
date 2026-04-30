@@ -74,6 +74,7 @@ export default function ResumoVendas() {
   });
   const [loading, setLoading] = useState(true);
   const [showShareModal, setShowShareModal] = useState(false);
+  const loadIdRef = useRef(0);
 
   useEffect(() => {
     if (period !== 'custom') loadData();
@@ -100,7 +101,7 @@ export default function ResumoVendas() {
   };
 
   const loadData = async () => {
-    const loadId = ++loadIdRef.current;
+    const myId = ++loadIdRef.current;
     setLoading(true);
     try {
       const { start, end } = getDateRange();
@@ -122,6 +123,8 @@ export default function ResumoVendas() {
           .gte('created_at', `${start}T00:00:00`)
           .lte('created_at', `${end}T23:59:59`),
       ]);
+
+      if (myId !== loadIdRef.current) return;
 
       const s = salesRaw || [];
 
@@ -235,6 +238,7 @@ export default function ResumoVendas() {
           .from('sale_items')
           .select('product_id, quantity')
           .in('sale_id', saleIds);
+        if (myId !== loadIdRef.current) return;
 
         const swMap = new Map<string, SmartWatchRow>();
         (saleItems || []).forEach(item => {

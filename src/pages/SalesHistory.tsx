@@ -50,6 +50,7 @@ const PAYMENT_CONFIG: Record<string, { label: string; icon: React.ElementType; c
 
 const EMPTY_PERIOD_LABELS: Record<Period, string> = {
   today: 'para hoje',
+  yesterday: 'para ontem',
   week: 'para esta semana',
   month: 'para este mês',
   custom: 'para o período selecionado',
