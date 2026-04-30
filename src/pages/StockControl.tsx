@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, Product } from '../lib/supabase';
-import { AlertTriangle, CheckCircle, Plus, Minus, History, Search, Package, ShoppingCart, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Plus, Minus, History, Search, Package, ShoppingCart } from 'lucide-react';
 
 const MODEL_ORDER = [
   'GT5 Mini', 'Ultra 3 Mini', 'W11 Mini', 'S11 Pro', 'Ultra 4 Pro',
@@ -42,11 +42,7 @@ export default function StockControl() {
   const [editingIdealStock, setEditingIdealStock] = useState<string | null>(null);
   const [idealStockValue, setIdealStockValue] = useState('');
   const [copied, setCopied] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<string | null>(null);
-  const [syncErrors, setSyncErrors] = useState<string[]>([]);
-  const [showSyncErrors, setShowSyncErrors] = useState(false);
-  const [showStockSummary, setShowStockSummary] = useState(false);
+const [showStockSummary, setShowStockSummary] = useState(false);
   const [copiedSummary, setCopiedSummary] = useState(false);
   const [stockOrders, setStockOrders] = useState<any[]>([]);
   const [allStockOrders, setAllStockOrders] = useState<any[]>([]);
@@ -462,35 +458,6 @@ export default function StockControl() {
     }
   };
 
-  const handleSyncTiny = async () => {
-    setSyncing(true);
-    setSyncResult(null);
-    setSyncErrors([]);
-    try {
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sync-tiny-stock`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      const data = await response.json();
-      console.log('sync-tiny-stock response:', data);
-      if (data.success) {
-        const msg = `✅ ${data.updated} atualizado(s), ${data.unchanged} sem alteração, ${data.total} total` +
-          (data.errors?.length > 0 ? ` — ${data.errors.length} erro(s)` : '');
-        setSyncResult(msg);
-        if (data.errors?.length > 0) setSyncErrors(data.errors);
-        if (data.updated > 0) loadProducts();
-      } else {
-        setSyncResult(`❌ Erro: ${data.error}`);
-      }
-    } catch (e: any) {
-      setSyncResult(`❌ Erro ao conectar com a Edge Function: ${e?.message || ''}`);
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   const filteredProducts = sortProducts(
     products.filter((p: any) => {
@@ -545,9 +512,9 @@ export default function StockControl() {
         const comprar = Math.max(0, ideal - stock - pending);
         const variant = getVariant(p.model, p.color);
         const emoji = stock <= 0 ? '🔴' : stock < ideal ? '🟡' : '🟢';
-        const compraPart = comprar > 0 ? ` +${comprar}` : '';
+        const indicatorPart = comprar > 0 ? ` -${comprar}` : stock > ideal ? ` +${stock - ideal}` : '';
         const pendingPart = pending > 0 ? ` (+${pending} a chegar)` : '';
-        text += `▸ ${variant}: ${stock}${pendingPart} / ${ideal} ${emoji}${compraPart}\n`;
+        text += `▸ ${variant}: ${stock}${pendingPart} / ${ideal} ${emoji}${indicatorPart}\n`;
         totalStock += stock;
         totalComprar += comprar;
       }
@@ -620,32 +587,11 @@ export default function StockControl() {
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold text-white">Controle de Estoque</h1>
         <div className="flex items-center gap-3">
-          {syncResult && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-300">{syncResult}</span>
-              {syncErrors.length > 0 && (
-                <button
-                  onClick={() => setShowSyncErrors(true)}
-                  className="text-xs text-red-400 hover:text-red-300 underline whitespace-nowrap"
-                >
-                  Ver erros
-                </button>
-              )}
-            </div>
-          )}
           <button
             onClick={() => setShowStockSummary(true)}
             className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium"
           >
             📋 Resumo para WhatsApp
-          </button>
-          <button
-            onClick={handleSyncTiny}
-            disabled={syncing}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium"
-          >
-            <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Sincronizando...' : 'Sincronizar com Tiny'}
           </button>
         </div>
       </div>
@@ -1609,27 +1555,6 @@ export default function StockControl() {
         </div>
       )}
 
-      {/* Modal erros de sincronização */}
-      {showSyncErrors && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-xl border border-gray-700 max-h-[80vh] flex flex-col">
-            <div className="flex justify-between items-center mb-4">
-              <div>
-                <h2 className="text-xl font-bold text-white">⚠️ Erros na Sincronização</h2>
-                <p className="text-gray-400 text-sm">{syncErrors.length} produto(s) com problema</p>
-              </div>
-              <button onClick={() => setShowSyncErrors(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
-            </div>
-            <div className="overflow-y-auto flex-1 space-y-1">
-              {syncErrors.map((err, i) => (
-                <div key={i} className="bg-red-500/10 border border-red-500/30 rounded px-3 py-2 text-sm text-red-300 font-mono">
-                  {err}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
