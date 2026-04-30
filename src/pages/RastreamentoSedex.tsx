@@ -66,34 +66,35 @@ async function fetchTracking(
   code: string,
 ): Promise<{ events: TrackingEvent[]; status: TrackingStatus; error?: string }> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(`https://api.linkcorreios.com.br/?id=${code}`, {
-      signal: controller.signal,
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/track-package`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tracking_code: code }),
+      signal: AbortSignal.timeout(15000),
     });
-    clearTimeout(timeout);
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const raw = await res.json();
+    const data = await res.json();
 
-    // API may return array or object with various keys
-    const list: any[] = Array.isArray(raw)
-      ? raw
-      : (raw?.events || raw?.eventos || raw?.data || []);
+    if (!data.success || !data.events?.length) {
+      return { events: [], status: 'sem_info', error: data.error };
+    }
 
-    const events: TrackingEvent[] = list
-      .map((e: any) => ({
-        date: [e.date || e.data, e.hour || e.hora].filter(Boolean).join(' '),
-        description: e.description || e.descricao || e.status || '',
-        location: e.city
-          ? `${e.city}${e.state ? `/${e.state}` : ''}`
-          : (e.local || e.localidade || ''),
-      }))
-      .filter(e => e.description);
+    const events: TrackingEvent[] = (data.events as any[]).map(e => ({
+      date: e.date || '',
+      description: e.description || '',
+      location: e.location || '',
+    })).filter(e => e.description);
 
     return { events, status: inferStatus(events) };
   } catch (err: any) {
-    return { events: [], status: 'sem_info', error: err?.name === 'AbortError' ? 'Tempo esgotado' : (err?.message || 'Erro ao rastrear') };
+    return {
+      events: [],
+      status: 'sem_info',
+      error: err?.name === 'TimeoutError' ? 'Tempo esgotado' : (err?.message || 'Erro ao rastrear'),
+    };
   }
 }
 
