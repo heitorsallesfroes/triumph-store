@@ -97,12 +97,24 @@ async function fetchTracking(
   }
 }
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+// Extrai o order_id do SuperFrete a partir da shipping_label_url
+// Formato: https://api.superfrete.com/api/v0/shipment/print?orders[]=<ID>
+function extractOrderId(url: string | null): string | null {
+  if (!url) return null;
+  const match = url.split('orders[]=')[1];
+  return match?.trim() || null;
+}
+
 export default function RastreamentoSedex() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [filter, setFilter] = useState<Filter>('todos');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [fetchingCodeIds, setFetchingCodeIds] = useState<string[]>([]);
 
   useEffect(() => { loadSales(); }, []);
 
@@ -123,6 +135,41 @@ export default function RastreamentoSedex() {
       }))
     );
     setLoading(false);
+  };
+
+  const fetchCode = async (sale: Sale) => {
+    const orderId = extractOrderId(sale.shipping_label_url);
+    if (!orderId) {
+      alert('Não foi possível extrair o ID do pedido da URL da etiqueta.');
+      return;
+    }
+
+    setFetchingCodeIds(prev => [...prev, sale.id]);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/get-order-tracking`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ order_id: orderId }),
+      });
+      const data = await res.json();
+      console.log('[Rastreamento] Order data completo:', data);
+
+      if (data.success && data.tracking_code) {
+        await supabase.from('sales').update({ tracking_code: data.tracking_code }).eq('id', sale.id);
+        setSales(prev => prev.map(s => s.id === sale.id ? { ...s, tracking_code: data.tracking_code } : s));
+      } else {
+        alert(data.tracking_code === null
+          ? 'O código de rastreio ainda não foi atribuído pelo SuperFrete. Tente novamente em alguns minutos.'
+          : (data.error || 'Código não disponível'));
+      }
+    } catch {
+      alert('Erro ao conectar com a Edge Function.');
+    } finally {
+      setFetchingCodeIds(prev => prev.filter(id => id !== sale.id));
+    }
   };
 
   const updateAll = async () => {
@@ -275,37 +322,58 @@ export default function RastreamentoSedex() {
                 </div>
 
                 {/* Código de rastreio */}
-                <div className="flex items-center justify-between mb-3 py-2.5 px-3 rounded-lg bg-black/25 border border-white/5">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-0.5">Rastreio</p>
-                    {sale.tracking_code && sale.tracking_code.trim() !== '' ? (
-                      <p className="text-sm font-mono font-bold text-white tracking-wide">{sale.tracking_code}</p>
-                    ) : (
-                      <p className="text-sm text-gray-600 italic">Etiqueta gerada — código não disponível</p>
-                    )}
-                  </div>
-                  {sale.tracking_code && sale.tracking_code.trim() !== '' ? (
-                    <a
-                      href={`https://rastreamento.correios.com.br/app/index.php?objeto=${sale.tracking_code}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-1.5 rounded text-gray-500 hover:text-orange-400 hover:bg-white/10 transition-colors"
-                      title="Abrir no site dos Correios"
-                    >
-                      <ExternalLink size={14} />
-                    </a>
-                  ) : sale.shipping_label_url ? (
-                    <a
-                      href={sale.shipping_label_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-1.5 rounded text-gray-500 hover:text-blue-400 hover:bg-white/10 transition-colors"
-                      title="Abrir etiqueta no SuperFrete"
-                    >
-                      <ExternalLink size={14} />
-                    </a>
-                  ) : null}
-                </div>
+                {(() => {
+                  const hasCode = sale.tracking_code && sale.tracking_code.trim() !== '';
+                  const isFetching = fetchingCodeIds.includes(sale.id);
+                  return (
+                    <div className="flex items-center justify-between mb-3 py-2.5 px-3 rounded-lg bg-black/25 border border-white/5">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-gray-500 mb-0.5">Rastreio</p>
+                        {hasCode ? (
+                          <p className="text-sm font-mono font-bold text-white tracking-wide">{sale.tracking_code}</p>
+                        ) : (
+                          <p className="text-sm text-gray-600 italic">Código não disponível</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                        {!hasCode && extractOrderId(sale.shipping_label_url) && (
+                          <button
+                            onClick={() => fetchCode(sale)}
+                            disabled={isFetching}
+                            className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-blue-600/30"
+                            title="Buscar código de rastreio no SuperFrete"
+                          >
+                            {isFetching
+                              ? <span className="w-3 h-3 border border-t-transparent border-blue-400 rounded-full animate-spin inline-block" />
+                              : '🔄'}
+                            <span>{isFetching ? 'Buscando...' : 'Buscar Código'}</span>
+                          </button>
+                        )}
+                        {hasCode ? (
+                          <a
+                            href={`https://rastreamento.correios.com.br/app/index.php?objeto=${sale.tracking_code}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded text-gray-500 hover:text-orange-400 hover:bg-white/10 transition-colors"
+                            title="Abrir no site dos Correios"
+                          >
+                            <ExternalLink size={14} />
+                          </a>
+                        ) : sale.shipping_label_url ? (
+                          <a
+                            href={sale.shipping_label_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded text-gray-500 hover:text-blue-400 hover:bg-white/10 transition-colors"
+                            title="Abrir etiqueta no SuperFrete"
+                          >
+                            <ExternalLink size={14} />
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Status do rastreamento */}
                 {sale.tracking_loading ? (

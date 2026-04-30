@@ -95,7 +95,10 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({
         success: true,
         tracking_code: checkoutData?.purchase?.orders?.[0]?.tracking ?? orderId,
-        label_url: printData?.url ?? `https://api.superfrete.com/api/v0/shipment/print?orders[]=${orderId}`,
+        label_url:
+          checkoutData?.purchase?.orders?.[0]?.print?.url ??
+          printData?.url ??
+          `https://api.superfrete.com/api/v0/shipment/print?orders[]=${orderId}`,
         order_id: orderId,
         _debug: {
           cart: cartData,
