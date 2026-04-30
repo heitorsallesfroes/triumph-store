@@ -281,7 +281,7 @@ export default function RastreamentoSedex() {
                     {sale.tracking_code && sale.tracking_code.trim() !== '' ? (
                       <p className="text-sm font-mono font-bold text-white tracking-wide">{sale.tracking_code}</p>
                     ) : (
-                      <p className="text-sm text-gray-600 italic">Código pendente</p>
+                      <p className="text-sm text-gray-600 italic">Etiqueta gerada — código não disponível</p>
                     )}
                   </div>
                   {sale.tracking_code && sale.tracking_code.trim() !== '' ? (
@@ -339,7 +339,11 @@ export default function RastreamentoSedex() {
 
                 {/* Rodapé */}
                 <p className="text-xs text-gray-700 mt-3">
-                  Venda em {new Date(sale.sale_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                  {(() => {
+                    if (!sale.sale_date) return 'Data não disponível';
+                    const d = new Date(sale.sale_date.includes('T') ? sale.sale_date : sale.sale_date + 'T00:00:00');
+                    return isNaN(d.getTime()) ? 'Data não disponível' : `Venda em ${d.toLocaleDateString('pt-BR')}`;
+                  })()}
                 </p>
               </div>
             );
