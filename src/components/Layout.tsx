@@ -14,6 +14,7 @@ import {
   Zap,
   Receipt,
   DollarSign,
+  PackageSearch,
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -30,7 +31,8 @@ const menuGroups = [
       { id: 'sales', label: 'Nova Venda', icon: ShoppingCart },
       { id: 'small-sales', label: 'Pequenas Vendas', icon: ShoppingBag },
       { id: 'history', label: 'Histórico de Vendas', icon: History },
-      { id: 'logistics', label: 'Logística', icon: Truck },
+      { id: 'logistics', label: 'Logística Motoboy', icon: Truck },
+      { id: 'rastreamento-sedex', label: 'Rastreamento SEDEX', icon: PackageSearch },
     ],
   },
   {

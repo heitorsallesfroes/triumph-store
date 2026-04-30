@@ -14,6 +14,7 @@ import OperationalCosts from './pages/OperationalCosts';
 import ResumoMensal from './pages/ResumoMensal';
 import ResumoVendas from './pages/ResumoVendas';
 import SmallSales from './pages/SmallSales';
+import RastreamentoSedex from './pages/RastreamentoSedex';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -53,6 +54,8 @@ function App() {
         return <Motoboys />;
       case 'logistics':
         return <Logistics />;
+      case 'rastreamento-sedex':
+        return <RastreamentoSedex />;
       case 'marketing':
         return <Marketing />;
       case 'reports':
