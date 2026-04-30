@@ -18,7 +18,7 @@ Deno.serve(async (req: Request) => {
     const { order_id } = await req.json();
     if (!order_id) throw new Error("order_id é obrigatório");
 
-    const response = await fetch(`https://api.superfrete.com/api/v0/order/${order_id}`, {
+    const response = await fetch(`https://api.superfrete.com/api/v0/order/info/${order_id}`, {
       method: "GET",
       headers: {
         "Accept": "application/json",
@@ -28,8 +28,8 @@ Deno.serve(async (req: Request) => {
     });
 
     const text = await response.text();
-    console.log(`[SuperFrete] GET /order/${order_id} status:`, response.status);
-    console.log(`[SuperFrete] GET /order/${order_id} response:`, text);
+    console.log(`[SuperFrete] GET /order/info/${order_id} status:`, response.status);
+    console.log(`[SuperFrete] GET /order/info/${order_id} response:`, text);
 
     let data: any;
     try {
