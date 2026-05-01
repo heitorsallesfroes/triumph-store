@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { supabase, Motoboy, MotoboyStats } from '../lib/supabase';
-import { getTodayInBrazil, getYesterdayInBrazil } from '../lib/dateUtils';
+import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
 import { Plus, Pencil, Trash2, X, Bike, TrendingUp, Trophy, DollarSign, Calendar, PlusCircle } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { ptBR } from 'date-fns/locale';
 
-type TimePeriod = 'today' | 'yesterday' | 'week' | 'month' | 'total' | 'custom';
+type TimePeriod = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'total' | 'custom';
 
 interface CustomStats {
   id: string;
@@ -192,6 +192,34 @@ export default function Motoboys() {
         statsMap.set(p.motoboy_id, { ...cur, extraPayments: cur.extraPayments + Number(p.amount) });
       });
 
+      setCustomStats(motoboys.map(m => {
+        const s = statsMap.get(m.id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+        return { id: m.id, name: m.name, ...s };
+      }));
+    } catch (error) { console.error(error); }
+  };
+
+  const loadLastMonthStats = async () => {
+    try {
+      const { start, end } = getLastMonthRangeInBrazil();
+      const [salesRes, paymentsRes] = await Promise.all([
+        supabase.from('sales').select('motoboy_id, delivery_fee')
+          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
+          .gte('sale_date', start).lte('sale_date', end + 'T23:59:59'),
+        supabase.from('motoboy_payments').select('*')
+          .gte('date', start).lte('date', end),
+      ]);
+      const statsMap = new Map<string, { deliveries: number; earnings: number; extraPayments: number }>();
+      salesRes.data?.forEach(sale => {
+        if (sale.motoboy_id) {
+          const cur = statsMap.get(sale.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+          statsMap.set(sale.motoboy_id, { ...cur, deliveries: cur.deliveries + 1, earnings: cur.earnings + (sale.delivery_fee || 0) });
+        }
+      });
+      paymentsRes.data?.forEach(p => {
+        const cur = statsMap.get(p.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+        statsMap.set(p.motoboy_id, { ...cur, extraPayments: cur.extraPayments + Number(p.amount) });
+      });
       setCustomStats(motoboys.map(m => {
         const s = statsMap.get(m.id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
         return { id: m.id, name: m.name, ...s };
@@ -420,10 +448,11 @@ export default function Motoboys() {
     if (period !== 'custom') { setStartDate(null); setEndDate(null); }
     if (period === 'today') loadTodayStats();
     if (period === 'yesterday') loadYesterdayStats();
+    if (period === 'last_month') loadLastMonthStats();
   };
 
   const getSortedStats = () => {
-    if (selectedPeriod === 'custom') return [...customStats].sort((a, b) => (b.earnings + b.extraPayments) - (a.earnings + a.extraPayments));
+    if (selectedPeriod === 'custom' || selectedPeriod === 'last_month') return [...customStats].sort((a, b) => (b.earnings + b.extraPayments) - (a.earnings + a.extraPayments));
     if (selectedPeriod === 'today') return [...todayStats].sort((a, b) => (b.earnings + b.extraPayments) - (a.earnings + a.extraPayments));
     if (selectedPeriod === 'yesterday') return [...yesterdayStats].sort((a, b) => (b.earnings + b.extraPayments) - (a.earnings + a.extraPayments));
     return [...stats].sort((a, b) => {
@@ -433,19 +462,19 @@ export default function Motoboys() {
   };
 
   const getDeliveriesForPeriod = (stat: MotoboyStats | CustomStats) => {
-    if (selectedPeriod === 'custom' || selectedPeriod === 'today' || selectedPeriod === 'yesterday') return (stat as CustomStats).deliveries;
+    if (selectedPeriod === 'custom' || selectedPeriod === 'last_month' || selectedPeriod === 'today' || selectedPeriod === 'yesterday') return (stat as CustomStats).deliveries;
     const s = stat as MotoboyStats;
     return selectedPeriod === 'week' ? s.deliveries_this_week : selectedPeriod === 'month' ? s.deliveries_this_month : s.total_deliveries;
   };
 
   const getEarningsForPeriod = (stat: MotoboyStats | CustomStats) => {
-    if (selectedPeriod === 'custom' || selectedPeriod === 'today' || selectedPeriod === 'yesterday') return (stat as CustomStats).earnings;
+    if (selectedPeriod === 'custom' || selectedPeriod === 'last_month' || selectedPeriod === 'today' || selectedPeriod === 'yesterday') return (stat as CustomStats).earnings;
     const s = stat as MotoboyStats;
     return selectedPeriod === 'week' ? s.earnings_this_week : selectedPeriod === 'month' ? s.earnings_this_month : s.total_earnings;
   };
 
   const getExtraPaymentsForPeriod = (motoboyId: string) => {
-    if (selectedPeriod === 'custom') {
+    if (selectedPeriod === 'custom' || selectedPeriod === 'last_month') {
       const cs = customStats.find(s => s.id === motoboyId);
       return cs?.extraPayments || 0;
     }
@@ -474,7 +503,7 @@ export default function Motoboys() {
       if (startDate) return startDate.toLocaleDateString('pt-BR');
       return 'Período Personalizado';
     }
-    return selectedPeriod === 'today' ? 'Hoje' : selectedPeriod === 'yesterday' ? 'Ontem' : selectedPeriod === 'week' ? 'Esta Semana' : selectedPeriod === 'month' ? 'Este Mês' : 'Total Geral';
+    return selectedPeriod === 'today' ? 'Hoje' : selectedPeriod === 'yesterday' ? 'Ontem' : selectedPeriod === 'week' ? 'Esta Semana' : selectedPeriod === 'month' ? 'Este Mês' : selectedPeriod === 'last_month' ? 'Mês Anterior' : 'Total Geral';
   };
 
   if (loading) return <div className="p-8"><div className="text-white">Carregando...</div></div>;
@@ -505,10 +534,10 @@ export default function Motoboys() {
           <h3 className="text-base font-semibold text-white">Filtro de Período</h3>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
-          {(['today', 'yesterday', 'week', 'month', 'total', 'custom'] as TimePeriod[]).map(p => (
+          {(['today', 'yesterday', 'week', 'month', 'last_month', 'total', 'custom'] as TimePeriod[]).map(p => (
             <button key={p} onClick={() => handlePeriodChange(p)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedPeriod === p ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
-              {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === 'week' ? 'Semana' : p === 'month' ? 'Mês' : p === 'total' ? 'Total' : 'Personalizado'}
+              {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === 'week' ? 'Semana' : p === 'month' ? 'Mês' : p === 'last_month' ? 'Mês Anterior' : p === 'total' ? 'Total' : 'Personalizado'}
             </button>
           ))}
           {selectedPeriod === 'custom' && (
@@ -781,10 +810,10 @@ export default function Motoboys() {
             </h2>
             {selectedPeriod !== 'custom' && (
               <div className="flex gap-2 mt-3">
-                {(['today', 'yesterday', 'week', 'month', 'total'] as TimePeriod[]).map(p => (
+                {(['today', 'yesterday', 'week', 'month', 'last_month', 'total'] as TimePeriod[]).map(p => (
                   <button key={p} onClick={() => handlePeriodChange(p)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedPeriod === p ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-                    {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === 'week' ? 'Semana' : p === 'month' ? 'Mês' : 'Total'}
+                    {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === 'week' ? 'Semana' : p === 'month' ? 'Mês' : p === 'last_month' ? 'Mês Ant.' : 'Total'}
                   </button>
                 ))}
               </div>

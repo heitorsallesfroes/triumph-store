@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
-import { getYesterdayInBrazil } from '../lib/dateUtils';
+import { getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
 import { ShoppingBag, Plus, Trash2, Bike, Truck, ShoppingCart } from 'lucide-react';
 
 interface PaymentEntry {
@@ -33,7 +33,7 @@ interface MotoboyOption {
 }
 
 
-type FilterPeriod = 'today' | 'yesterday' | 'week' | 'month';
+type FilterPeriod = 'today' | 'yesterday' | 'week' | 'month' | 'last_month';
 
 const PAYMENT_LABELS: Record<string, string> = {
   pix: 'PIX',
@@ -104,6 +104,10 @@ export default function SmallSales() {
       const day = now.getDay();
       const diff = now.getDate() - day + (day === 0 ? -6 : 1);
       return { start: new Date(now.getFullYear(), now.getMonth(), diff).toISOString(), end: endOfNow };
+    }
+    if (filter === 'last_month') {
+      const { start, end } = getLastMonthRangeInBrazil();
+      return { start: new Date(start + 'T00:00:00').toISOString(), end: new Date(end + 'T23:59:59').toISOString() };
     }
     return { start: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(), end: endOfNow };
   };
@@ -232,7 +236,7 @@ export default function SmallSales() {
   const totalProfit     = totalRevenue - totalCost - totalCardFees;
 
   const filterLabels: Record<FilterPeriod, string> = {
-    today: 'Hoje', yesterday: 'Ontem', week: 'Semana', month: 'Mês',
+    today: 'Hoje', yesterday: 'Ontem', week: 'Semana', month: 'Mês', last_month: 'Mês Anterior',
   };
 
   return (

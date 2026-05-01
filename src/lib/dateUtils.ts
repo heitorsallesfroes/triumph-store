@@ -55,6 +55,14 @@ export function getMonthRangeInBrazil(): { start: string; end: string } {
   return getDateRangeInBrazil(30);
 }
 
+export function getLastMonthRangeInBrazil(): { start: string; end: string } {
+  const date = new Date();
+  const brazilDate = new Date(date.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const first = new Date(brazilDate.getFullYear(), brazilDate.getMonth() - 1, 1);
+  const last = new Date(brazilDate.getFullYear(), brazilDate.getMonth(), 0);
+  return { start: formatDateToBrazil(first), end: formatDateToBrazil(last) };
+}
+
 export function isDateInRange(dateStr: string, startStr: string, endStr: string): boolean {
   const date = new Date(dateStr + 'T00:00:00');
   const start = new Date(startStr + 'T00:00:00');

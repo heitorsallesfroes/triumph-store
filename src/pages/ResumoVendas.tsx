@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { getTodayInBrazil, getYesterdayInBrazil } from '../lib/dateUtils';
+import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
 import { calculateCardFee } from '../lib/cardFees';
 import {
   TrendingUp, DollarSign, CreditCard, Package, ShoppingCart,
   Truck, BarChart3, Zap, Calendar, Bike, MapPin, Watch, Target, Eye, X,
 } from 'lucide-react';
 
-type Period = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
+type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
 
 interface Summary {
   totalBruto: number;
@@ -33,6 +33,7 @@ const PERIOD_LABELS: Record<Period, string> = {
   yesterday: 'Ontem',
   week: 'Últimos 7 dias',
   month: 'Mês atual',
+  last_month: 'Mês Anterior',
   custom: 'Período personalizado',
 };
 
@@ -96,6 +97,7 @@ export default function ResumoVendas() {
       const first = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
       return { start: first, end: today };
     }
+    if (period === 'last_month') return getLastMonthRangeInBrazil();
     return { start: customStart, end: customEnd };
   };
 
@@ -273,7 +275,7 @@ export default function ResumoVendas() {
       {/* Filtros */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 mb-6">
         <div className="flex flex-wrap gap-2">
-          {(['today', 'yesterday', 'week', 'month', 'custom'] as Period[]).map(p => (
+          {(['today', 'yesterday', 'week', 'month', 'last_month', 'custom'] as Period[]).map(p => (
             <button
               key={p}
               onClick={() => setPeriod(p)}

@@ -5,15 +5,16 @@ import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, T
 import Receipt from '../components/Receipt';
 import EditSale from '../components/EditSale';
 import { generateShippingLabel } from '../lib/superfrete';
-import { getTodayInBrazil, getYesterdayInBrazil } from '../lib/dateUtils';
+import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
 
-type Period = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
+type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
 
 const PERIOD_LABELS: Record<Period, string> = {
   today: 'Hoje',
   yesterday: 'Ontem',
   week: 'Semana',
   month: 'Mês',
+  last_month: 'Mês Anterior',
   custom: 'Personalizado',
 };
 
@@ -213,6 +214,9 @@ export default function SalesHistory() {
       } else if (period === 'month') {
         startDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
         endDate = today;
+      } else if (period === 'last_month') {
+        const { start: lmStart, end: lmEnd } = getLastMonthRangeInBrazil();
+        startDate = lmStart; endDate = lmEnd;
       } else {
         startDate = dateFilter.start; endDate = dateFilter.end;
       }
@@ -577,7 +581,7 @@ export default function SalesHistory() {
 
         {/* Período */}
         <div className="flex flex-wrap gap-2">
-          {(['today', 'yesterday', 'week', 'month', 'custom'] as Period[]).map(p => (
+          {(['today', 'yesterday', 'week', 'month', 'last_month', 'custom'] as Period[]).map(p => (
             <button key={p} onClick={() => setPeriod(p)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${period === p ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
               {PERIOD_LABELS[p]}
