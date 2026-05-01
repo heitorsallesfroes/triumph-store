@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { supabase } from '../lib/supabase';
 import {
@@ -28,6 +28,7 @@ interface Sale {
   tracking_code: string | null;
   shipping_label_url: string | null;
   sale_date: string;
+  productLabel: string;
   status: TrackingStatus;
   lastEvent?: TrackingEvent;
   tracking_loading: boolean;
@@ -49,6 +50,8 @@ const STATUS_CONFIG: Record<TrackingStatus, StatusCfg> = {
   saiu_entrega: { label: 'Saiu p/ entrega', emoji: '🛵', color: 'text-orange-400', borderLeft: 'border-l-orange-500', icon: MapPin      },
   entregue:     { label: 'Entregue',        emoji: '✅', color: 'text-green-400',  borderLeft: 'border-l-green-600',  icon: CheckCircle },
 };
+
+const REFRESH_SEC = 600; // 10 minutos
 
 function normalizeStr(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -77,6 +80,22 @@ function inferStatus(description: string): TrackingStatus {
   return 'em_transito';
 }
 
+function buildProductLabel(items: Array<{ quantity: number; products: { model: string; color: string } | null }>): string {
+  if (!items || items.length === 0) return '';
+  const sorted = [...items].sort((a, b) => (b.quantity || 1) - (a.quantity || 1));
+  const first = sorted[0];
+  const name = [first.products?.model, first.products?.color].filter(Boolean).join(' ');
+  if (!name) return '';
+  const extra = items.length - 1;
+  return extra > 0 ? `${name} + ${extra} ${extra === 1 ? 'item' : 'itens'}` : name;
+}
+
+function formatCountdown(secs: number): string {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -100,8 +119,6 @@ async function fetchTracking(
       return { event: null, status: 'sem_info', error: data.error };
     }
 
-    // Suporta formato novo (SeuRastreio: description/detail/date/location/destination)
-    // e formato antigo (events[]) caso a Edge Function não tenha sido deployada ainda
     let description: string;
     let detail: string;
     let date: string;
@@ -163,21 +180,53 @@ export default function RastreamentoSedex() {
   const [updating, setUpdating] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [fetchingCodeIds, setFetchingCodeIds] = useState<string[]>([]);
+  const [countdown, setCountdown] = useState(REFRESH_SEC);
+
+  // Refs para evitar closure stale no intervalo
+  const salesRef = useRef<Sale[]>([]);
+  salesRef.current = sales;
+  const isUpdatingRef = useRef(false);
 
   useEffect(() => { loadSales(); }, []);
+
+  // Reseta o contador após cada atualização
+  useEffect(() => {
+    if (lastUpdated) setCountdown(REFRESH_SEC);
+  }, [lastUpdated]);
+
+  // Contador regressivo + auto-atualização dos "Em andamento"
+  useEffect(() => {
+    if (loading) return;
+    const timer = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          setTimeout(() => {
+            const ids = salesRef.current
+              .filter(s => s.status !== 'entregue' && !!s.tracking_code?.trim())
+              .map(s => s.id);
+            if (ids.length > 0) updateAll(ids);
+          }, 0);
+          return REFRESH_SEC;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSales = async () => {
     setLoading(true);
     const { data } = await supabase
       .from('sales')
-      .select('id, customer_name, address_street, address_number, address_complement, neighborhood, city, state, tracking_code, shipping_label_url, sale_date')
+      .select('id, customer_name, address_street, address_number, address_complement, neighborhood, city, state, tracking_code, shipping_label_url, sale_date, sale_items(quantity, products(model, color))')
       .eq('delivery_type', 'correios')
       .eq('shipping_status', 'Etiqueta gerada')
       .order('sale_date', { ascending: false });
 
     setSales(
-      (data || []).map(s => ({
+      (data || []).map((s: any) => ({
         ...s,
+        productLabel: buildProductLabel(s.sale_items || []),
         status: 'sem_info' as TrackingStatus,
         tracking_loading: false,
       }))
@@ -217,13 +266,17 @@ export default function RastreamentoSedex() {
     }
   };
 
-  const updateAll = async () => {
+  const updateAll = async (onlyIds?: string[]) => {
+    if (isUpdatingRef.current) return;
+    isUpdatingRef.current = true;
     setUpdating(true);
-    const ids = sales.map(s => s.id);
+
+    const ids = onlyIds ?? salesRef.current.map(s => s.id);
+
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
-      const tracking_code = sales.find(s => s.id === id)?.tracking_code;
-      if (!tracking_code || tracking_code.trim() === '') continue;
+      const tracking_code = salesRef.current.find(s => s.id === id)?.tracking_code;
+      if (!tracking_code?.trim()) continue;
 
       setSales(prev => prev.map(s => s.id === id ? { ...s, tracking_loading: true } : s));
       const result = await fetchTracking(tracking_code);
@@ -237,8 +290,10 @@ export default function RastreamentoSedex() {
 
       if (i < ids.length - 1) await new Promise(r => setTimeout(r, 350));
     }
+
     setLastUpdated(new Date());
     setUpdating(false);
+    isUpdatingRef.current = false;
   };
 
   const emAndamento = sales.filter(s => s.status !== 'entregue');
@@ -283,6 +338,11 @@ export default function RastreamentoSedex() {
             <p className={`text-xs mt-0.5 truncate ${compact ? 'text-gray-600' : 'text-gray-500'}`}>
               {address}
             </p>
+            {sale.productLabel && (
+              <p className={`text-xs mt-1 truncate font-medium ${compact ? 'text-gray-600' : 'text-gray-400'}`}>
+                📦 {sale.productLabel}
+              </p>
+            )}
           </div>
           <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0 ${cfg.color} bg-black/20 border border-white/5`}>
             <span>{cfg.emoji}</span>
@@ -415,14 +475,22 @@ export default function RastreamentoSedex() {
             </p>
           </div>
         </div>
-        <button
-          onClick={updateAll}
-          disabled={updating || sales.length === 0}
-          className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors flex-shrink-0"
-        >
-          <RefreshCw size={15} className={updating ? 'animate-spin' : ''} />
-          {updating ? 'Atualizando...' : 'Atualizar Rastreamentos'}
-        </button>
+        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+          <button
+            onClick={() => updateAll()}
+            disabled={updating || sales.length === 0}
+            className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+          >
+            <RefreshCw size={15} className={updating ? 'animate-spin' : ''} />
+            {updating ? 'Atualizando...' : 'Atualizar Rastreamentos'}
+          </button>
+          {!updating && lastUpdated && emAndamento.some(s => s.tracking_code?.trim()) && (
+            <p className="text-xs text-gray-600 flex items-center gap-1">
+              <Clock size={10} />
+              Próxima em {formatCountdown(countdown)}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Empty state */}

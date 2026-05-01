@@ -134,7 +134,7 @@ export default function ResumoMensal() {
   const canais = [
     { label: 'Motoboy', key: 'motoboy', icon: Bike, color: 'text-orange-400' },
     { label: 'Correios', key: 'correios', icon: Truck, color: 'text-blue-400' },
-    { label: 'Loja Física', key: 'pickup', icon: ShoppingCart, color: 'text-green-400' },
+    { label: 'Loja Física', key: 'loja_fisica', icon: ShoppingCart, color: 'text-green-400' },
   ].map(c => ({
     ...c,
     count: sales.filter(s => s.delivery_type === c.key).length,
@@ -153,19 +153,15 @@ export default function ResumoMensal() {
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
 
-  // Produtos mais vendidos (apenas smartwatches)
-  const modelMap = new Map<string, number>();
-  const colorMap = new Map<string, number>();
+  // Produtos mais vendidos (apenas smartwatches, agrupado por modelo + cor)
+  const modelColorMap = new Map<string, number>();
   saleItems.forEach(item => {
     if (item.products && item.products.category === 'smartwatch') {
-      const model = item.products.model;
-      const color = item.products.color;
-      modelMap.set(model, (modelMap.get(model) || 0) + item.quantity);
-      colorMap.set(color, (colorMap.get(color) || 0) + item.quantity);
+      const key = `${item.products.model} - ${item.products.color}`;
+      modelColorMap.set(key, (modelColorMap.get(key) || 0) + item.quantity);
     }
   });
-  const topModels = Array.from(modelMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const topColors = Array.from(colorMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const topModels = Array.from(modelColorMap.entries()).sort((a, b) => b[1] - a[1]);
 
   // Métodos de pagamento
   const paymentMap = new Map<string, number>();
@@ -391,19 +387,18 @@ export default function ResumoMensal() {
           </div>
 
           {/* SEÇÃO 3 — Produtos */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Modelos mais vendidos */}
-            <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-700">
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Star size={18} className="text-orange-500" /> Modelos Mais Vendidos
-                </h2>
-              </div>
-              <div className="p-6 space-y-3">
-                {topModels.length === 0 ? (
-                  <p className="text-gray-400 text-sm">Nenhum dado de produto disponível</p>
-                ) : topModels.map(([model, qty], i) => {
-                  const total = topModels.reduce((s, [, q]) => s + q, 0);
+          <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-700">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Star size={18} className="text-orange-500" /> Modelos Mais Vendidos
+              </h2>
+            </div>
+            <div className="p-6 space-y-3">
+              {topModels.length === 0 ? (
+                <p className="text-gray-400 text-sm">Nenhum dado de produto disponível</p>
+              ) : (() => {
+                const total = topModels.reduce((s, [, q]) => s + q, 0);
+                return topModels.map(([model, qty], i) => {
                   const pct = total > 0 ? (qty / total) * 100 : 0;
                   return (
                     <div key={model}>
@@ -421,41 +416,8 @@ export default function ResumoMensal() {
                       </div>
                     </div>
                   );
-                })}
-              </div>
-            </div>
-
-            {/* Cores mais vendidas */}
-            <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-700">
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Package size={18} className="text-orange-500" /> Cores Mais Vendidas
-                </h2>
-              </div>
-              <div className="p-6 space-y-3">
-                {topColors.length === 0 ? (
-                  <p className="text-gray-400 text-sm">Nenhum dado de produto disponível</p>
-                ) : topColors.map(([color, qty], i) => {
-                  const total = topColors.reduce((s, [, q]) => s + q, 0);
-                  const pct = total > 0 ? (qty / total) * 100 : 0;
-                  return (
-                    <div key={color}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
-                            #{i + 1}
-                          </span>
-                          <span className="text-white text-sm">{color}</span>
-                        </div>
-                        <span className="text-blue-400 text-sm font-bold">{qty} un.</span>
-                      </div>
-                      <div className="w-full bg-gray-700 rounded-full h-1.5">
-                        <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                });
+              })()}
             </div>
           </div>
         </>

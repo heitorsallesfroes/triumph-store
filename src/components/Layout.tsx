@@ -1,6 +1,5 @@
 import { ReactNode } from 'react';
 import {
-  LayoutDashboard,
   Package,
   Warehouse,
   ShoppingCart,
@@ -27,7 +26,6 @@ const menuGroups = [
   {
     label: 'PRINCIPAL',
     items: [
-      { id: 'dashboard', label: 'Visão Geral', icon: LayoutDashboard },
       { id: 'sales', label: 'Nova Venda', icon: ShoppingCart },
       { id: 'small-sales', label: 'Pequenas Vendas', icon: ShoppingBag },
       { id: 'history', label: 'Histórico de Vendas', icon: History },

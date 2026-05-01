@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import Layout from './components/Layout';
-import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
 import StockControl from './pages/StockControl';
 import Sales from './pages/Sales';
@@ -17,7 +16,7 @@ import SmallSales from './pages/SmallSales';
 import RastreamentoSedex from './pages/RastreamentoSedex';
 
 function App() {
-  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [currentPage, setCurrentPage] = useState('sales');
   const [triggerFastSale, setTriggerFastSale] = useState(0);
 
   useEffect(() => {
@@ -38,8 +37,6 @@ function App() {
 
   const renderPage = () => {
     switch (currentPage) {
-      case 'dashboard':
-        return <Dashboard onNavigate={setCurrentPage} />;
       case 'products':
         return <Products />;
       case 'stock':
@@ -69,7 +66,7 @@ function App() {
       case 'settings':
         return <Settings />;
       default:
-        return <Dashboard />;
+        return <Sales triggerFastSale={triggerFastSale} onNavigate={setCurrentPage} />;
     }
   };
 
