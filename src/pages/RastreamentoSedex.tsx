@@ -6,13 +6,14 @@ import {
   CheckCircle, Clock, ExternalLink, AlertCircle,
 } from 'lucide-react';
 
-type Filter = 'todos' | 'em_andamento' | 'entregues';
 type TrackingStatus = 'sem_info' | 'postado' | 'em_transito' | 'saiu_entrega' | 'entregue';
 
 interface TrackingEvent {
-  date: string;
   description: string;
+  detail: string;
+  date: string;
   location: string;
+  destination: string;
 }
 
 interface Sale {
@@ -37,34 +38,51 @@ interface StatusCfg {
   label: string;
   emoji: string;
   color: string;
-  bg: string;
+  borderLeft: string;
   icon: ComponentType<{ size?: number; className?: string }>;
 }
 
 const STATUS_CONFIG: Record<TrackingStatus, StatusCfg> = {
-  sem_info:     { label: 'Sem informação',  emoji: '❓', color: 'text-gray-400',   bg: 'bg-gray-900',        icon: Clock        },
-  postado:      { label: 'Postado',         emoji: '📦', color: 'text-blue-400',   bg: 'bg-blue-900/10',     icon: Package      },
-  em_transito:  { label: 'Em trânsito',     emoji: '🚚', color: 'text-amber-400',  bg: 'bg-amber-900/10',    icon: Truck        },
-  saiu_entrega: { label: 'Saiu p/ entrega', emoji: '🛵', color: 'text-orange-400', bg: 'bg-orange-900/10',   icon: MapPin       },
-  entregue:     { label: 'Entregue',        emoji: '✅', color: 'text-green-400',  bg: 'bg-green-900/10',    icon: CheckCircle  },
+  sem_info:     { label: 'Sem informação',  emoji: '❓', color: 'text-gray-400',   borderLeft: 'border-l-gray-600',   icon: Clock       },
+  postado:      { label: 'Postado',         emoji: '📦', color: 'text-blue-400',   borderLeft: 'border-l-blue-500',   icon: Package     },
+  em_transito:  { label: 'Em trânsito',     emoji: '🚚', color: 'text-amber-400',  borderLeft: 'border-l-amber-500',  icon: Truck       },
+  saiu_entrega: { label: 'Saiu p/ entrega', emoji: '🛵', color: 'text-orange-400', borderLeft: 'border-l-orange-500', icon: MapPin      },
+  entregue:     { label: 'Entregue',        emoji: '✅', color: 'text-green-400',  borderLeft: 'border-l-green-600',  icon: CheckCircle },
 };
 
-function inferStatus(events: TrackingEvent[]): TrackingStatus {
-  if (!events.length) return 'sem_info';
-  const desc = events[0].description.toLowerCase();
-  if (desc.includes('entregue ao destinatário') || desc.includes('entregue')) return 'entregue';
+function normalizeStr(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function inferStatus(description: string): TrackingStatus {
+  if (!description) return 'sem_info';
+  const desc = normalizeStr(description);
+  if (
+    desc.includes('entregue ao destinatario') ||
+    desc.includes('objeto entregue') ||
+    desc.includes('entregue')
+  ) return 'entregue';
   if (
     desc.includes('saiu para entrega') ||
+    desc.includes('saiu p/ entrega') ||
     desc.includes('em rota de entrega') ||
-    desc.includes('tentativa de entrega')
+    desc.includes('tentativa de entrega') ||
+    desc.includes('aguardando retirada')
   ) return 'saiu_entrega';
-  if (desc.includes('postado') && events.length === 1) return 'postado';
+  if (
+    desc.includes('objeto postado') ||
+    desc.includes('postado') ||
+    desc.includes('coletado')
+  ) return 'postado';
   return 'em_transito';
 }
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
 async function fetchTracking(
   code: string,
-): Promise<{ events: TrackingEvent[]; status: TrackingStatus; error?: string }> {
+): Promise<{ event: TrackingEvent | null; status: TrackingStatus; error?: string }> {
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/track-package`, {
       method: 'POST',
@@ -78,42 +96,71 @@ async function fetchTracking(
 
     const data = await res.json();
 
-    if (!data.success || !data.events?.length) {
-      return { events: [], status: 'sem_info', error: data.error };
+    if (!data.success || data.status === 'not_found') {
+      return { event: null, status: 'sem_info', error: data.error };
     }
 
-    const events: TrackingEvent[] = (data.events as any[]).map(e => ({
-      date: e.date || '',
-      description: e.description || '',
-      location: e.location || '',
-    })).filter(e => e.description);
+    // Suporta formato novo (SeuRastreio: description/detail/date/location/destination)
+    // e formato antigo (events[]) caso a Edge Function não tenha sido deployada ainda
+    let description: string;
+    let detail: string;
+    let date: string;
+    let location: string;
+    let destination: string;
 
-    return { events, status: inferStatus(events) };
+    if (typeof data.description === 'string') {
+      description = data.description;
+      detail = data.detail || '';
+      date = data.date || '';
+      location = data.location || '';
+      destination = data.destination || '';
+    } else if (Array.isArray(data.events) && data.events.length > 0) {
+      const e = data.events[0];
+      description = e.description || '';
+      detail = '';
+      date = e.date || '';
+      location = e.location || '';
+      destination = '';
+    } else {
+      return { event: null, status: 'sem_info', error: 'Nenhum evento retornado' };
+    }
+
+    const event: TrackingEvent = { description, detail, date, location, destination };
+    return { event, status: inferStatus(description) };
   } catch (err: any) {
     return {
-      events: [],
+      event: null,
       status: 'sem_info',
       error: err?.name === 'TimeoutError' ? 'Tempo esgotado' : (err?.message || 'Erro ao rastrear'),
     };
   }
 }
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-
-// Extrai o order_id do SuperFrete a partir da shipping_label_url
-// Formato: https://api.superfrete.com/api/v0/shipment/print?orders[]=<ID>
 function extractOrderId(url: string | null): string | null {
   if (!url) return null;
   const match = url.split('orders[]=')[1];
   return match?.trim() || null;
 }
 
+function formatSaleDate(sale_date: string) {
+  if (!sale_date) return 'Data não disponível';
+  const d = new Date(sale_date.includes('T') ? sale_date : sale_date + 'T00:00:00');
+  return isNaN(d.getTime()) ? 'Data não disponível' : `Venda em ${d.toLocaleDateString('pt-BR')}`;
+}
+
+function formatEventDate(dateStr: string): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  const date = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return `${date} às ${time}`;
+}
+
 export default function RastreamentoSedex() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
-  const [filter, setFilter] = useState<Filter>('todos');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [fetchingCodeIds, setFetchingCodeIds] = useState<string[]>([]);
 
@@ -144,7 +191,6 @@ export default function RastreamentoSedex() {
       alert('Não foi possível extrair o ID do pedido da URL da etiqueta.');
       return;
     }
-
     setFetchingCodeIds(prev => [...prev, sale.id]);
     try {
       const res = await fetch(`${SUPABASE_URL}/functions/v1/get-order-tracking`, {
@@ -156,8 +202,6 @@ export default function RastreamentoSedex() {
         body: JSON.stringify({ order_id: orderId }),
       });
       const data = await res.json();
-      console.log('[Rastreamento] Order data completo:', data);
-
       if (data.success && data.tracking_code) {
         await supabase.from('sales').update({ tracking_code: data.tracking_code }).eq('id', sale.id);
         setSales(prev => prev.map(s => s.id === sale.id ? { ...s, tracking_code: data.tracking_code } : s));
@@ -176,11 +220,10 @@ export default function RastreamentoSedex() {
   const updateAll = async () => {
     setUpdating(true);
     const ids = sales.map(s => s.id);
-
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
       const tracking_code = sales.find(s => s.id === id)?.tracking_code;
-      if (!tracking_code || tracking_code.trim() === '') continue; // sem código = pula
+      if (!tracking_code || tracking_code.trim() === '') continue;
 
       setSales(prev => prev.map(s => s.id === id ? { ...s, tracking_loading: true } : s));
       const result = await fetchTracking(tracking_code);
@@ -188,34 +231,18 @@ export default function RastreamentoSedex() {
         ...s,
         tracking_loading: false,
         status: result.status,
-        lastEvent: result.events[0],
+        lastEvent: result.event ?? undefined,
         tracking_error: result.error,
       } : s));
 
       if (i < ids.length - 1) await new Promise(r => setTimeout(r, 350));
     }
-
     setLastUpdated(new Date());
     setUpdating(false);
   };
 
-  const filtered = sales.filter(s => {
-    if (filter === 'entregues') return s.status === 'entregue';
-    if (filter === 'em_andamento') return s.status !== 'entregue' && s.status !== 'sem_info';
-    return true;
-  });
-
-  const counts = {
-    todos: sales.length,
-    em_andamento: sales.filter(s => s.status !== 'entregue' && s.status !== 'sem_info').length,
-    entregues: sales.filter(s => s.status === 'entregue').length,
-  };
-
-  const FILTER_TABS: { id: Filter; label: string }[] = [
-    { id: 'todos',        label: 'Todos'        },
-    { id: 'em_andamento', label: 'Em andamento' },
-    { id: 'entregues',    label: 'Entregues'    },
-  ];
+  const emAndamento = sales.filter(s => s.status !== 'entregue');
+  const entregues = sales.filter(s => s.status === 'entregue');
 
   if (loading) return (
     <div className="flex items-center justify-center py-24">
@@ -223,11 +250,159 @@ export default function RastreamentoSedex() {
     </div>
   );
 
+  const renderCard = (sale: Sale, compact: boolean) => {
+    const cfg = STATUS_CONFIG[sale.status];
+    const StatusIcon = cfg.icon;
+    const isEntregue = sale.status === 'entregue';
+    const isFetching = fetchingCodeIds.includes(sale.id);
+    const hasCode = !!(sale.tracking_code && sale.tracking_code.trim() !== '');
+
+    const address = [
+      sale.address_street,
+      sale.address_number,
+      sale.address_complement,
+      sale.neighborhood,
+      `${sale.city}/${sale.state}`,
+    ].filter(Boolean).join(', ');
+
+    return (
+      <div
+        key={sale.id}
+        className={`rounded-xl border border-l-4 transition-all ${cfg.borderLeft} ${
+          isEntregue
+            ? 'bg-green-950/30 border-green-900/40'
+            : 'bg-gray-800/80 border-gray-700/60'
+        } ${compact ? 'p-3.5' : 'p-5'}`}
+      >
+        {/* Cliente + status chip */}
+        <div className={`flex items-start justify-between gap-3 ${compact ? 'mb-2' : 'mb-3'}`}>
+          <div className="min-w-0">
+            <p className={`font-semibold text-white truncate ${compact ? 'text-sm' : 'text-base'}`}>
+              {sale.customer_name}
+            </p>
+            <p className={`text-xs mt-0.5 truncate ${compact ? 'text-gray-600' : 'text-gray-500'}`}>
+              {address}
+            </p>
+          </div>
+          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0 ${cfg.color} bg-black/20 border border-white/5`}>
+            <span>{cfg.emoji}</span>
+            <span>{cfg.label}</span>
+          </span>
+        </div>
+
+        {/* Código de rastreio */}
+        <div className={`flex items-center justify-between py-2 px-3 rounded-lg bg-black/25 border border-white/5 ${compact ? 'mb-2' : 'mb-3'}`}>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-gray-500 mb-0.5">Rastreio</p>
+            {hasCode ? (
+              <p className="text-sm font-mono font-bold text-white tracking-wide">{sale.tracking_code}</p>
+            ) : (
+              <p className="text-sm text-gray-600 italic">Código não disponível</p>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+            {!hasCode && extractOrderId(sale.shipping_label_url) && (
+              <button
+                onClick={() => fetchCode(sale)}
+                disabled={isFetching}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-blue-600/30"
+              >
+                {isFetching
+                  ? <span className="w-3 h-3 border border-t-transparent border-blue-400 rounded-full animate-spin inline-block" />
+                  : '🔄'}
+                <span>{isFetching ? 'Buscando...' : 'Buscar Código'}</span>
+              </button>
+            )}
+            {hasCode ? (
+              <a
+                href={`https://seurastreio.com.br/objetos/${sale.tracking_code}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-1.5 rounded text-gray-500 hover:text-orange-400 hover:bg-white/10 transition-colors"
+                title="Abrir no Seu Rastreio"
+              >
+                <ExternalLink size={14} />
+              </a>
+            ) : sale.shipping_label_url ? (
+              <a
+                href={sale.shipping_label_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-1.5 rounded text-gray-500 hover:text-blue-400 hover:bg-white/10 transition-colors"
+                title="Abrir etiqueta no SuperFrete"
+              >
+                <ExternalLink size={14} />
+              </a>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Evento de rastreamento */}
+        {sale.tracking_loading ? (
+          <div className="flex items-center gap-2 py-1.5">
+            <div className="w-3.5 h-3.5 border-2 border-t-transparent border-orange-500 rounded-full animate-spin" />
+            <span className="text-xs text-gray-500">Buscando rastreamento...</span>
+          </div>
+        ) : sale.tracking_error ? (
+          <div className="flex items-center gap-1.5 text-red-400 text-xs py-1">
+            <AlertCircle size={13} />
+            <span>Falha ao buscar — tente atualizar novamente</span>
+          </div>
+        ) : sale.lastEvent ? (
+          <div className={`rounded-lg p-3 ${isEntregue ? 'bg-green-900/20 border border-green-800/30' : 'bg-black/20 border border-white/5'}`}>
+            {/* Descrição */}
+            <div className="flex items-start gap-1.5 mb-1.5">
+              <StatusIcon size={12} className={`${cfg.color} flex-shrink-0 mt-0.5`} />
+              <p className={`text-xs font-semibold leading-snug ${cfg.color}`}>{sale.lastEvent.description}</p>
+            </div>
+            {/* Detalhe adicional */}
+            {sale.lastEvent.detail && !sale.lastEvent.detail.includes('<') && (
+              <p className="text-xs text-gray-400 mb-2 pl-[18px] leading-snug">{sale.lastEvent.detail}</p>
+            )}
+            {/* Local → Destino */}
+            {(sale.lastEvent.location || sale.lastEvent.destination) && (
+              <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1.5 pl-[18px]">
+                {sale.lastEvent.location && (
+                  <span className="flex items-center gap-1">
+                    <MapPin size={10} className="flex-shrink-0" />
+                    <span>{sale.lastEvent.location}</span>
+                  </span>
+                )}
+                {sale.lastEvent.location && sale.lastEvent.destination && (
+                  <span className="text-gray-700">→</span>
+                )}
+                {sale.lastEvent.destination && (
+                  <span className="flex items-center gap-1 text-gray-400">
+                    <MapPin size={10} className="flex-shrink-0" />
+                    <span>{sale.lastEvent.destination}</span>
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Data e hora */}
+            <p className="text-xs text-gray-600 pl-[18px]">{formatEventDate(sale.lastEvent.date)}</p>
+          </div>
+        ) : !compact ? (
+          <p className="text-xs text-gray-600 py-1 italic">
+            {hasCode
+              ? 'Clique em "Atualizar Rastreamentos" para buscar o status'
+              : 'Código de rastreio ainda não disponível'}
+          </p>
+        ) : null}
+
+        {/* Rodapé */}
+        <p className={`text-xs text-gray-700 ${compact ? 'mt-2' : 'mt-3'}`}>
+          {formatSaleDate(sale.sale_date)}
+        </p>
+      </div>
+    );
+  };
+
   return (
     <div className="p-6 md:p-8">
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-6">
+      <div className="flex items-start justify-between gap-4 mb-8">
         <div className="flex items-center gap-3">
           <PackageSearch className="text-orange-400 flex-shrink-0" size={28} />
           <div>
@@ -250,173 +425,51 @@ export default function RastreamentoSedex() {
         </button>
       </div>
 
-      {/* Filtros */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        {FILTER_TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setFilter(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              filter === tab.id
-                ? 'bg-orange-500 text-white'
-                : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white border border-gray-700'
-            }`}
-          >
-            {tab.label}
-            <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
-              filter === tab.id ? 'bg-orange-600' : 'bg-gray-700 text-gray-300'
-            }`}>
-              {counts[tab.id]}
-            </span>
-          </button>
-        ))}
-      </div>
-
       {/* Empty state */}
       {sales.length === 0 ? (
         <div className="text-center py-24 text-gray-500">
           <PackageSearch size={48} className="mx-auto mb-4 opacity-30" />
           <p className="text-base font-medium mb-1">Nenhum envio pelos Correios encontrado</p>
-          <p className="text-sm">Vendas com delivery_type = 'correios' e código de rastreio aparecerão aqui</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-20 text-gray-500">
-          <PackageSearch size={40} className="mx-auto mb-3 opacity-30" />
-          <p className="text-sm">Nenhum envio neste filtro</p>
+          <p className="text-sm">Vendas com delivery_type = 'correios' e etiqueta gerada aparecerão aqui</p>
         </div>
       ) : (
+        <div className="flex flex-col gap-8">
 
-        /* Grid de cards */
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {filtered.map(sale => {
-            const cfg = STATUS_CONFIG[sale.status];
-            const StatusIcon = cfg.icon;
-            const isEntregue = sale.status === 'entregue';
-
-            const address = [
-              sale.address_street,
-              sale.address_number,
-              sale.address_complement,
-              sale.neighborhood,
-              `${sale.city}/${sale.state}`,
-            ].filter(Boolean).join(', ');
-
-            return (
-              <div
-                key={sale.id}
-                className={`rounded-xl border p-5 transition-all ${cfg.bg} ${
-                  isEntregue
-                    ? 'border-green-600/50'
-                    : 'border-gray-700'
-                }`}
-              >
-                {/* Cliente + status chip */}
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-white truncate">{sale.customer_name}</p>
-                    <p className="text-xs text-gray-500 mt-0.5 truncate">{address}</p>
-                  </div>
-                  <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0 ${cfg.color} bg-black/20 border border-white/5`}>
-                    <span>{cfg.emoji}</span>
-                    <span>{cfg.label}</span>
-                  </span>
-                </div>
-
-                {/* Código de rastreio */}
-                {(() => {
-                  const hasCode = sale.tracking_code && sale.tracking_code.trim() !== '';
-                  const isFetching = fetchingCodeIds.includes(sale.id);
-                  return (
-                    <div className="flex items-center justify-between mb-3 py-2.5 px-3 rounded-lg bg-black/25 border border-white/5">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs text-gray-500 mb-0.5">Rastreio</p>
-                        {hasCode ? (
-                          <p className="text-sm font-mono font-bold text-white tracking-wide">{sale.tracking_code}</p>
-                        ) : (
-                          <p className="text-sm text-gray-600 italic">Código não disponível</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                        {!hasCode && extractOrderId(sale.shipping_label_url) && (
-                          <button
-                            onClick={() => fetchCode(sale)}
-                            disabled={isFetching}
-                            className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-blue-600/30"
-                            title="Buscar código de rastreio no SuperFrete"
-                          >
-                            {isFetching
-                              ? <span className="w-3 h-3 border border-t-transparent border-blue-400 rounded-full animate-spin inline-block" />
-                              : '🔄'}
-                            <span>{isFetching ? 'Buscando...' : 'Buscar Código'}</span>
-                          </button>
-                        )}
-                        {hasCode ? (
-                          <a
-                            href={`https://rastreamento.correios.com.br/app/index.php?objeto=${sale.tracking_code}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1.5 rounded text-gray-500 hover:text-orange-400 hover:bg-white/10 transition-colors"
-                            title="Abrir no site dos Correios"
-                          >
-                            <ExternalLink size={14} />
-                          </a>
-                        ) : sale.shipping_label_url ? (
-                          <a
-                            href={sale.shipping_label_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1.5 rounded text-gray-500 hover:text-blue-400 hover:bg-white/10 transition-colors"
-                            title="Abrir etiqueta no SuperFrete"
-                          >
-                            <ExternalLink size={14} />
-                          </a>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Status do rastreamento */}
-                {sale.tracking_loading ? (
-                  <div className="flex items-center gap-2 py-2">
-                    <div className="w-3.5 h-3.5 border-2 border-t-transparent border-orange-500 rounded-full animate-spin" />
-                    <span className="text-xs text-gray-500">Buscando rastreamento...</span>
-                  </div>
-                ) : sale.tracking_error ? (
-                  <div className="flex items-center gap-1.5 text-red-400 text-xs py-1">
-                    <AlertCircle size={13} />
-                    <span>Falha ao buscar — tente atualizar novamente</span>
-                  </div>
-                ) : sale.lastEvent ? (
-                  <div className={`rounded-lg p-3 ${isEntregue ? 'bg-green-900/20 border border-green-800/30' : 'bg-black/20 border border-white/5'}`}>
-                    <div className="flex items-start gap-1.5 mb-1.5">
-                      <StatusIcon size={12} className={`${cfg.color} flex-shrink-0 mt-0.5`} />
-                      <p className={`text-xs font-semibold leading-snug ${cfg.color}`}>{sale.lastEvent.description}</p>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 text-xs text-gray-500">
-                      <span>{sale.lastEvent.date}</span>
-                      {sale.lastEvent.location && <span className="truncate text-right">{sale.lastEvent.location}</span>}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-600 py-1 italic">
-                    {sale.tracking_code && sale.tracking_code.trim() !== ''
-                      ? 'Clique em "Atualizar Rastreamentos" para buscar o status'
-                      : 'Código de rastreio ainda não disponível — verifique os logs da Edge Function'}
-                  </p>
-                )}
-
-                {/* Rodapé */}
-                <p className="text-xs text-gray-700 mt-3">
-                  {(() => {
-                    if (!sale.sale_date) return 'Data não disponível';
-                    const d = new Date(sale.sale_date.includes('T') ? sale.sale_date : sale.sale_date + 'T00:00:00');
-                    return isNaN(d.getTime()) ? 'Data não disponível' : `Venda em ${d.toLocaleDateString('pt-BR')}`;
-                  })()}
-                </p>
+          {/* Seção Em andamento */}
+          {emAndamento.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2.5 mb-4">
+                <h2 className="text-base font-semibold text-white">🚚 Em andamento</h2>
+                <span className="bg-orange-500/15 text-orange-400 text-xs font-bold px-2 py-0.5 rounded-full border border-orange-500/25">
+                  {emAndamento.length}
+                </span>
               </div>
-            );
-          })}
+              <div className="flex flex-col gap-3">
+                {emAndamento.map(sale => renderCard(sale, false))}
+              </div>
+            </div>
+          )}
+
+          {/* Separador */}
+          {emAndamento.length > 0 && entregues.length > 0 && (
+            <hr className="border-gray-700/50" />
+          )}
+
+          {/* Seção Entregues */}
+          {entregues.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2.5 mb-4">
+                <h2 className="text-base font-semibold text-white">✅ Entregues</h2>
+                <span className="bg-green-500/15 text-green-400 text-xs font-bold px-2 py-0.5 rounded-full border border-green-500/25">
+                  {entregues.length}
+                </span>
+              </div>
+              <div className="flex flex-col gap-3">
+                {entregues.map(sale => renderCard(sale, true))}
+              </div>
+            </div>
+          )}
+
         </div>
       )}
     </div>
