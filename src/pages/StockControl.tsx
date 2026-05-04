@@ -385,18 +385,11 @@ const [showStockSummary, setShowStockSummary] = useState(false);
         .eq('id', selectedProduct.id);
       if (error) throw error;
 
-      const pendingForProduct = movementType === 'entrada'
-        ? stockOrders.filter((o: any) => o.product_id === selectedProduct.id)
-        : [];
-      const isReceivingOrder = pendingForProduct.length > 0;
-      const autoNotes = isReceivingOrder
-        ? pendingForProduct.map((o: any) => o.notes).filter(Boolean).join(', ') || null
-        : null;
       await supabase.from('stock_movements').insert([{
         product_id: selectedProduct.id,
-        type: isReceivingOrder ? 'encomenda_recebida' : movementType,
+        type: movementType,
         quantity: qty,
-        notes: movementReason.trim() || autoNotes,
+        notes: movementReason.trim() || null,
       }]);
 
       if (selectedProduct.tiny_id) {
@@ -408,27 +401,6 @@ const [showStockSummary, setShowStockSummary] = useState(false);
           },
           body: JSON.stringify({ tiny_id: selectedProduct.tiny_id, quantidade: novoEstoque }),
         });
-      }
-
-      // Abate received qty from pending orders (oldest first)
-      if (movementType === 'entrada') {
-        const pendingOrders = [...stockOrders]
-          .filter(o => o.product_id === selectedProduct.id)
-          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-        let remaining = qty;
-        for (const order of pendingOrders) {
-          if (remaining <= 0) break;
-          const apply = Math.min(remaining, order.quantity);
-          remaining -= apply;
-          const newQty = order.quantity - apply;
-          if (newQty <= 0) {
-            await supabase.from('stock_orders').update({ status: 'received', quantity: 0 }).eq('id', order.id);
-          } else {
-            await supabase.from('stock_orders').update({ quantity: newQty }).eq('id', order.id);
-          }
-        }
-        loadStockOrders();
       }
 
       setShowMovementForm(false);
@@ -941,10 +913,9 @@ const [showStockSummary, setShowStockSummary] = useState(false);
                       <div className="flex gap-2">
                         <button
                           onClick={() => {
-                            const pendingTotal = getPendingQty(product.id);
                             setSelectedProduct(product);
                             setMovementType('entrada');
-                            setMovementQty(pendingTotal > 0 ? String(pendingTotal) : '');
+                            setMovementQty('');
                             setShowMovementForm(true);
                           }}
                           className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1"
@@ -1130,12 +1101,7 @@ const [showStockSummary, setShowStockSummary] = useState(false);
       })()}
 
       {/* Modal lançamento */}
-      {showMovementForm && selectedProduct && (() => {
-        const pendingOrders = stockOrders
-          .filter(o => o.product_id === selectedProduct.id)
-          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-        const hasPending = movementType === 'entrada' && pendingOrders.length > 0;
-        return (
+      {showMovementForm && selectedProduct && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
             <h2 className="text-xl font-bold text-white mb-2">
@@ -1144,29 +1110,9 @@ const [showStockSummary, setShowStockSummary] = useState(false);
             <p className="text-gray-400 mb-1">{selectedProduct.model} {selectedProduct.color}</p>
             <p className="text-gray-300 mb-4">Estoque atual: <span className="text-white font-bold">{selectedProduct.current_stock}</span></p>
 
-            {hasPending && (
-              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-4">
-                <p className="text-blue-400 text-sm font-semibold mb-2">📦 Encomendas a caminho</p>
-                <div className="space-y-1">
-                  {pendingOrders.map(o => (
-                    <div key={o.id} className="flex justify-between text-sm">
-                      <span className="text-gray-300">{o.notes || 'Sem observação'}</span>
-                      <span className="text-blue-400 font-bold">{o.quantity} un</span>
-                    </div>
-                  ))}
-                  <div className="border-t border-blue-500/30 mt-2 pt-2 flex justify-between text-sm font-semibold">
-                    <span className="text-gray-300">Total a caminho:</span>
-                    <span className="text-blue-400">{pendingOrders.reduce((s, o) => s + o.quantity, 0)} un</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-2">
-                  {hasPending ? 'Quantidade recebida agora*' : 'Quantidade*'}
-                </label>
+                <label className="block text-sm text-gray-400 mb-2">Quantidade*</label>
                 <input
                   type="number"
                   min="1"
@@ -1174,13 +1120,8 @@ const [showStockSummary, setShowStockSummary] = useState(false);
                   onChange={(e) => setMovementQty(e.target.value)}
                   className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                   placeholder="Ex: 10"
-                  autoFocus={!hasPending}
+                  autoFocus
                 />
-                {hasPending && (
-                  <p className="text-gray-500 text-xs mt-1">
-                    Entrada parcial permitida — o saldo restante da encomenda será mantido como pendente.
-                  </p>
-                )}
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Motivo (opcional)</label>
@@ -1212,8 +1153,7 @@ const [showStockSummary, setShowStockSummary] = useState(false);
             </div>
           </div>
         </div>
-        );
-      })()}
+      )}
 
       {/* Modal encomenda */}
       {showOrderForm && selectedProduct && (

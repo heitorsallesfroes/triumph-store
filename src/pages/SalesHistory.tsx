@@ -94,6 +94,7 @@ interface Sale {
   nfe_chave?: string;
   nfe_status?: string;
   delivery_notes?: string | null;
+  payment_confirmed?: boolean;
 }
 
 export default function SalesHistory() {
@@ -124,6 +125,8 @@ export default function SalesHistory() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<SaleStatus>('finalizado');
   const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [paymentPendingFilter, setPaymentPendingFilter] = useState(false);
+  const [confirmingPaymentId, setConfirmingPaymentId] = useState<string | null>(null);
 
   useEffect(() => { loadSales(); }, []);
   useEffect(() => { setVisibleCount(PAGE_SIZE); setSelectedIds(new Set()); }, [filteredSales]);
@@ -133,7 +136,7 @@ export default function SalesHistory() {
     return () => clearTimeout(timer);
   }, [productFilter]);
 
-  useEffect(() => { filterSales(); }, [statusFilter, deliveryTypeFilter, motoboyFilter, paymentFilter, searchTerm, debouncedProductFilter, period, dateFilter]);
+  useEffect(() => { filterSales(); }, [statusFilter, deliveryTypeFilter, motoboyFilter, paymentFilter, paymentPendingFilter, searchTerm, debouncedProductFilter, period, dateFilter]);
 
   const loadSales = async () => {
     try {
@@ -279,7 +282,7 @@ export default function SalesHistory() {
         );
       }
 
-      const salesWithProducts: Sale[] = rawSales.map((sale: any) => {
+      let salesWithProducts: Sale[] = rawSales.map((sale: any) => {
         const items = [...(itemsBySale.get(sale.id) || [])].sort((a: any, b: any) => b.quantity - a.quantity);
         let main_product = '';
         let additional_items = 0;
@@ -295,6 +298,15 @@ export default function SalesHistory() {
           motoboy_name: sale.motoboy_id ? (motoboysMap.get(sale.motoboy_id) || undefined) : undefined,
         } as Sale;
       });
+      if (paymentPendingFilter) {
+        const CARD_METHODS = ['credit_card', 'debit_card', 'payment_link'];
+        salesWithProducts = salesWithProducts.filter(s => {
+          const isCard = CARD_METHODS.includes(s.payment_method) ||
+            (s.payment_methods?.some(pm => CARD_METHODS.includes(pm.method)) ?? false);
+          return isCard && !s.payment_confirmed;
+        });
+      }
+
       if (period === 'today' || period === 'yesterday') {
         const norm = (s: string) =>
           s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -512,6 +524,21 @@ export default function SalesHistory() {
     }
   };
 
+  const handleConfirmPayment = async (saleId: string) => {
+    setConfirmingPaymentId(saleId);
+    try {
+      const { error } = await supabase.from('sales').update({ payment_confirmed: true }).eq('id', saleId);
+      if (error) throw error;
+      const patch = (s: Sale) => s.id === saleId ? { ...s, payment_confirmed: true } : s;
+      setFilteredSales(prev => prev.map(patch));
+      setSales(prev => prev.map(patch));
+    } catch {
+      alert('Erro ao confirmar pagamento');
+    } finally {
+      setConfirmingPaymentId(null);
+    }
+  };
+
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const deleteSale = async (sale: Sale) => {
@@ -667,13 +694,28 @@ export default function SalesHistory() {
               </button>
             ))}
           </div>
+
+          {/* Filtro confirmação de pagamento */}
+          <div className="col-span-1 md:col-span-2 lg:col-span-4">
+            <button
+              onClick={() => setPaymentPendingFilter(v => !v)}
+              className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors border ${
+                paymentPendingFilter
+                  ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/50'
+                  : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-200'
+              }`}
+            >
+              ⚠️ Pagamentos Pendentes de Confirmação
+            </button>
+          </div>
         </div>
 
         {/* Limpar */}
-        {(searchTerm || productFilter || statusFilter !== 'all' || deliveryTypeFilter !== 'all' || motoboyFilter !== 'all' || paymentFilter !== 'all' || period !== 'month' || dateFilter.start || dateFilter.end) && (
+        {(searchTerm || productFilter || statusFilter !== 'all' || deliveryTypeFilter !== 'all' || motoboyFilter !== 'all' || paymentFilter !== 'all' || paymentPendingFilter || period !== 'month' || dateFilter.start || dateFilter.end) && (
           <button onClick={() => {
             setSearchTerm(''); setProductFilter(''); setStatusFilter('all');
-            setDeliveryTypeFilter('all'); setMotoboyFilter('all'); setPaymentFilter('all'); setPeriod('month'); setDateFilter({ start: '', end: '' });
+            setDeliveryTypeFilter('all'); setMotoboyFilter('all'); setPaymentFilter('all');
+            setPaymentPendingFilter(false); setPeriod('month'); setDateFilter({ start: '', end: '' });
           }} className="text-orange-500 hover:text-orange-400 text-sm font-medium">
             Limpar Filtros
           </button>
@@ -982,6 +1024,36 @@ export default function SalesHistory() {
                           </button>
                         )}
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Confirmação de pagamento (cartão/link) */}
+                {(['credit_card', 'debit_card', 'payment_link'].includes(sale.payment_method) ||
+                  sale.payment_methods?.some(pm => ['credit_card', 'debit_card', 'payment_link'].includes(pm.method))) && (
+                  <div className="mt-4 pt-4 border-t border-gray-700">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Edit size={20} className={sale.payment_confirmed ? 'text-green-500' : 'text-yellow-500'} />
+                        <p className="text-sm font-semibold text-white">Confirmação de Pagamento</p>
+                      </div>
+                      {sale.payment_confirmed ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-green-500/20 text-green-400 border border-green-500/30">
+                          ✅ Pagamento Confirmado
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleConfirmPayment(sale.id)}
+                          disabled={confirmingPaymentId === sale.id}
+                          className="bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
+                        >
+                          {confirmingPaymentId === sale.id ? (
+                            <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />Confirmando...</>
+                          ) : (
+                            <>⚠️ Confirmar Pagamento</>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
