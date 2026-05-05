@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Trash2, X, DollarSign, CheckCircle, Clock, Calendar, CreditCard, Pencil } from 'lucide-react';
+import { Plus, Trash2, X, DollarSign, CheckCircle, Clock, Calendar, CreditCard, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { ptBR } from 'date-fns/locale';
@@ -47,18 +47,27 @@ export default function OperationalCosts() {
   const [showPaymentModal, setShowPaymentModal] = useState<Cost | null>(null);
   const [costForm, setCostForm] = useState({ name: '', amount: '', is_fixed: true, due_day: '' });
   const [paymentForm, setPaymentForm] = useState({ paid_date: new Date(), payment_method: 'Nubank PJ', amount_paid: '', notes: '' });
+  const [copyPrompt, setCopyPrompt] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const dismissedMonths = useRef<Set<string>>(new Set());
 
   useEffect(() => { loadData(); }, [selectedMonth]);
 
   const loadData = async () => {
     setLoading(true);
+    setCopyPrompt(false);
     try {
       const [costsRes, paymentsRes] = await Promise.all([
         supabase.from('operational_costs').select('*').order('is_fixed', { ascending: false }).order('name'),
         supabase.from('operational_cost_payments').select('*').eq('month', selectedMonth),
       ]);
-      setCosts(costsRes.data || []);
-      setPayments(paymentsRes.data || []);
+      const loadedCosts    = costsRes.data    || [];
+      const loadedPayments = paymentsRes.data || [];
+      setCosts(loadedCosts);
+      setPayments(loadedPayments);
+      if (loadedCosts.length > 0 && loadedPayments.length === 0 && !dismissedMonths.current.has(selectedMonth)) {
+        setCopyPrompt(true);
+      }
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
@@ -140,16 +149,45 @@ export default function OperationalCosts() {
     return cost.amount;
   };
 
-  const getMonthOptions = () => {
-    const options = [];
-    const now = new Date();
-    for (let i = -3; i <= 3; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-      const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      options.push(val);
-    }
-    return options;
+  const handleCopyFromPrevMonth = async () => {
+    setCopying(true);
+    try {
+      const { data: prevPayments } = await supabase
+        .from('operational_cost_payments')
+        .select('*')
+        .eq('month', prevMonthStr);
+
+      const rows = costs.map(cost => {
+        const prev = prevPayments?.find(p => p.cost_id === cost.id);
+        return {
+          cost_id: cost.id,
+          month: selectedMonth,
+          paid: false,
+          paid_date: null,
+          payment_method: null,
+          amount_paid: prev?.amount_paid ?? cost.amount,
+          notes: null,
+        };
+      });
+
+      if (rows.length > 0) {
+        await supabase.from('operational_cost_payments').insert(rows);
+      }
+      setCopyPrompt(false);
+      loadData();
+    } catch { alert('Erro ao copiar custos'); }
+    finally { setCopying(false); }
   };
+
+  const navigateMonth = (dir: -1 | 1) => {
+    const [y, m] = selectedMonth.split('-').map(Number);
+    const d = new Date(y, m - 1 + dir, 1);
+    setSelectedMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  };
+
+  const [selYear, selMonthNum] = selectedMonth.split('-').map(Number);
+  const prevMonthStr = (() => { const d = new Date(selYear, selMonthNum - 2, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })();
+  const nextMonthStr = (() => { const d = new Date(selYear, selMonthNum, 1);     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })();
 
   const fixedCosts = costs.filter(c => c.is_fixed);
   const variableCosts = costs.filter(c => !c.is_fixed);
@@ -177,17 +215,66 @@ export default function OperationalCosts() {
         </button>
       </div>
 
-      {/* Seletor de Mês */}
+      {/* Modal Copiar Custos do Mês Anterior */}
+      {copyPrompt && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-sm border border-gray-700 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center flex-shrink-0">
+                <Calendar size={20} className="text-orange-400" />
+              </div>
+              <div>
+                <p className="text-white font-semibold">Mês sem custos registrados</p>
+                <p className="text-gray-400 text-sm mt-0.5">
+                  Deseja copiar os custos de <span className="text-orange-300 font-medium">{formatMonthLabel(prevMonthStr)}</span>?
+                </p>
+              </div>
+            </div>
+            <p className="text-gray-500 text-xs mb-5">
+              Os custos serão copiados com status <span className="text-yellow-400">não pago</span> e os valores do mês anterior. Você pode ajustar individualmente depois.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleCopyFromPrevMonth}
+                disabled={copying}
+                className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-semibold px-4 py-2.5 rounded-lg transition-colors text-sm"
+              >
+                {copying ? 'Copiando...' : 'Sim, copiar'}
+              </button>
+              <button
+                onClick={() => { dismissedMonths.current.add(selectedMonth); setCopyPrompt(false); }}
+                className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 font-medium px-4 py-2.5 rounded-lg transition-colors text-sm"
+              >
+                Não, começar vazio
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Navegação de Mês */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 mb-6">
-        <div className="flex items-center gap-3 flex-wrap">
-          <Calendar size={18} className="text-orange-500" />
-          <span className="text-gray-400 text-sm">Mês de referência:</span>
-          {getMonthOptions().map(m => (
-            <button key={m} onClick={() => setSelectedMonth(m)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedMonth === m ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
-              {formatMonthLabel(m)}
-            </button>
-          ))}
+        <div className="flex items-center justify-center gap-1">
+          <button
+            onClick={() => navigateMonth(-1)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+          >
+            <ChevronLeft size={17} />
+            {formatMonthLabel(prevMonthStr)}
+          </button>
+          <span className="text-gray-600 px-1 select-none">|</span>
+          <div className="flex items-center gap-2 px-5 py-2 rounded-lg bg-orange-500/20 border border-orange-500/50">
+            <Calendar size={15} className="text-orange-400 flex-shrink-0" />
+            <span className="text-orange-300 font-bold text-sm">{formatMonthLabel(selectedMonth)}</span>
+          </div>
+          <span className="text-gray-600 px-1 select-none">|</span>
+          <button
+            onClick={() => navigateMonth(1)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700"
+          >
+            {formatMonthLabel(nextMonthStr)}
+            <ChevronRight size={17} />
+          </button>
         </div>
       </div>
 

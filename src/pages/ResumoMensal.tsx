@@ -64,7 +64,7 @@ export default function ResumoMensal() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [salesRes, itemsRes, adRes, costsRes, paymentsRes, motoboyExtrasRes] = await Promise.all([
+      const [salesRes, itemsRes, adRes, costsRes, motoboyExtrasRes] = await Promise.all([
         supabase.from('sales').select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status,city,payment_method')
           .eq('status', 'finalizado')
           .gte('sale_date', startDate)
@@ -72,7 +72,6 @@ export default function ResumoMensal() {
         supabase.from('sale_items').select('sale_id,product_id,quantity,products(model,color)')
           .in('sale_id', []),
         supabase.from('ad_spend').select('amount').gte('date', startDate).lte('date', endDate),
-        supabase.from('operational_cost_payments').select('amount_paid').eq('month', monthStr).eq('paid', true),
         supabase.from('operational_cost_payments').select('amount_paid').eq('month', monthStr).eq('paid', true),
         supabase.from('motoboy_payments').select('amount').gte('date', startDate).lte('date', endDate),
       ]);
@@ -108,10 +107,22 @@ export default function ResumoMensal() {
   // Métricas financeiras
   const totalBruto = sales.reduce((s, v) => s + Number(v.total_sale_price), 0);
   const totalLiquido = sales.reduce((s, v) => s + Number(v.net_received), 0);
-  const totalCustoProdutos = sales.reduce((s, v) => s + Number(v.total_cost), 0);
-  const totalEntregas = sales.reduce((s, v) => s + Number(v.delivery_cost || 0), 0);
+
+  // total_cost embute delivery_fee para vendas motoboy (lancarValores faz isso)
+  // subtraímos delivery_fee do total_cost para não contar duas vezes
+  const totalCustoProdutos = sales.reduce((s, v) => {
+    const deliveryInCost = v.delivery_type === 'motoboy' ? Number(v.delivery_fee || 0) : 0;
+    return s + Number(v.total_cost) - deliveryInCost;
+  }, 0);
+
+  const totalMotoboyDeliveries = sales
+    .filter(v => v.delivery_type === 'motoboy')
+    .reduce((s, v) => s + Number(v.delivery_fee || 0), 0);
+  const totalCorreiosDeliveries = sales
+    .filter(v => v.delivery_type === 'correios')
+    .reduce((s, v) => s + Number(v.delivery_cost || 0), 0);
   const totalMotoboyExtras = motoboyExtras;
-  const totalCustoEntregas = totalEntregas + totalMotoboyExtras;
+  const totalCustoEntregas = totalMotoboyDeliveries + totalCorreiosDeliveries + totalMotoboyExtras;
   const totalCustos = totalCustoProdutos + adSpend + operationalCosts + totalCustoEntregas;
 
   // Pequenas vendas
@@ -241,7 +252,7 @@ export default function ResumoMensal() {
                   <MetricCard label="Investimento em Ads" value={adSpend} color="red" icon={TrendingUp} negative />
                   <MetricCard label="Custos Operacionais" value={operationalCosts} color="red" icon={BarChart3} negative />
                   <MetricCard label="Custo de Entregas" value={totalCustoEntregas} color="red" icon={Truck} negative
-                    subtitle={`Sedex/Motoboy: R$ ${totalEntregas.toFixed(2)} | Avulsos: R$ ${totalMotoboyExtras.toFixed(2)}`} />
+                    subtitle={`Motoboy: R$ ${totalMotoboyDeliveries.toFixed(2)} | Correios: R$ ${totalCorreiosDeliveries.toFixed(2)} | Avulsos: R$ ${totalMotoboyExtras.toFixed(2)}`} />
                 </div>
               </div>
 

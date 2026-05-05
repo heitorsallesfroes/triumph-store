@@ -466,10 +466,17 @@ export default function SalesHistory() {
 
       if (!result.success) { alert(result.error || 'Erro ao gerar etiqueta'); return; }
 
-      const { error } = await supabase.from('sales').update({ tracking_code: result.tracking_code, shipping_label_url: result.label_url, shipping_status: 'Etiqueta gerada' }).eq('id', sale.id);
+      const labelUpdate: Record<string, any> = {
+        tracking_code: result.tracking_code,
+        shipping_label_url: result.label_url,
+        shipping_status: 'Etiqueta gerada',
+      };
+      if (result.label_price != null) labelUpdate.delivery_cost = result.label_price;
+
+      const { error } = await supabase.from('sales').update(labelUpdate).eq('id', sale.id);
       if (error) throw error;
 
-      setFilteredSales(filteredSales.map(s => s.id === sale.id ? { ...s, tracking_code: result.tracking_code, shipping_label_url: result.label_url, shipping_status: 'Etiqueta gerada' } : s));
+      setFilteredSales(filteredSales.map(s => s.id === sale.id ? { ...s, ...labelUpdate } : s));
       alert('Etiqueta gerada com sucesso!');
     } catch (error) {
       alert('Erro ao gerar etiqueta');
@@ -941,9 +948,13 @@ export default function SalesHistory() {
                   </div>
 
                   <div className="col-span-12 lg:col-span-3">
+                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg mb-2 border ${statusConfig.bgColor} ${statusConfig.borderColor}`}>
+                      <span className="text-base leading-none">{statusConfig.icon}</span>
+                      <span className={`text-sm font-bold ${statusConfig.color}`}>{statusConfig.label}</span>
+                    </div>
                     <div className="relative">
                       <select value={sale.status} onChange={(e) => updateSaleStatus(sale.id, e.target.value as SaleStatus)} className={`w-full appearance-none rounded-lg px-4 py-2.5 pr-10 border-2 font-semibold cursor-pointer transition-all ${statusConfig.color} ${statusConfig.bgColor} ${statusConfig.borderColor} hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-orange-500`}>
-                        {SALE_STATUSES.map((status) => (<option key={status.value} value={status.value}>{status.label}</option>))}
+                        {SALE_STATUSES.map((status) => (<option key={status.value} value={status.value}>{status.icon} {status.label}</option>))}
                       </select>
                       <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none" size={20} />
                     </div>
@@ -1005,8 +1016,26 @@ export default function SalesHistory() {
                         <Truck size={20} className="text-blue-500" />
                         <div>
                           <p className="text-sm font-semibold text-white">Envio por Correios</p>
-                          {sale.tracking_code && <p className="text-xs text-gray-400">Rastreio: {sale.tracking_code}</p>}
-                          {sale.shipping_status && <p className="text-xs text-green-500">{sale.shipping_status}</p>}
+                          {sale.tracking_code && (
+                            <p className="text-xs text-gray-400 font-mono mt-0.5">🔍 {sale.tracking_code}</p>
+                          )}
+                          {sale.shipping_status && (() => {
+                            const s = sale.shipping_status.toLowerCase();
+                            const isDelivered = s.includes('entregue');
+                            const isInTransit = s.includes('tr') && (s.includes('nsito') || s.includes('caminho'));
+                            const icon = isDelivered ? '✅' : isInTransit ? '📮' : '🏷️';
+                            const cls = isDelivered
+                              ? 'bg-green-500/20 text-green-400 border-green-500/40'
+                              : isInTransit
+                                ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
+                                : 'bg-gray-700/60 text-gray-300 border-gray-600';
+                            return (
+                              <div className={`mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${cls}`}>
+                                <span>{icon}</span>
+                                <span>{sale.shipping_status}</span>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                       <div className="flex gap-2">

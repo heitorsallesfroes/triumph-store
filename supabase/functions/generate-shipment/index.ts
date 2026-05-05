@@ -100,6 +100,7 @@ Deno.serve(async (req: Request) => {
           printData?.url ??
           `https://api.superfrete.com/api/v0/shipment/print?orders[]=${orderId}`,
         order_id: orderId,
+        label_price: checkoutData?.purchase?.orders?.[0]?.price ?? null,
         _debug: {
           cart: cartData,
           checkout: checkoutData,

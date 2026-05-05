@@ -159,8 +159,11 @@ export default function SmallSales() {
         return sum + calculateCardFee(amt, pm.method, pm.card_brand || null, pm.installments || 0);
       }, 0);
     }
-    if ((sale.payment_method === 'credit_card' || sale.payment_method === 'payment_link') && sale.card_brand && sale.installments) {
-      return calculateCardFee(revenue, sale.payment_method, sale.card_brand, sale.installments);
+    if (
+      (sale.payment_method === 'credit_card' || sale.payment_method === 'debit_card' || sale.payment_method === 'payment_link')
+      && sale.card_brand
+    ) {
+      return calculateCardFee(revenue, sale.payment_method, sale.card_brand, sale.installments || 0);
     }
     return 0;
   };
