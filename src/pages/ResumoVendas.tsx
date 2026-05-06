@@ -110,7 +110,7 @@ export default function ResumoVendas() {
       const [{ data: salesRaw }, { data: adSpend }, { data: motoboysList }, { data: products }, { data: smallSalesRaw }] = await Promise.all([
         supabase
           .from('sales')
-          .select('id, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, delivery_type, motoboy_id, city')
+          .select('id, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, payment_methods, delivery_type, motoboy_id, city')
           .neq('status', 'cancelado')
           .gte('sale_date', `${start}T00:00:00`)
           .lte('sale_date', `${end}T23:59:59`),
@@ -119,10 +119,10 @@ export default function ResumoVendas() {
         supabase.from('products').select('id, model, color, category').eq('category', 'smartwatch'),
         supabase
           .from('small_sales')
-          .select('sale_price, quantity, payment_method, card_brand, installments')
+          .select('sale_price, quantity, payment_method, payment_methods, card_brand, installments')
           .in('payment_method', ['credit_card', 'debit_card', 'payment_link'])
-          .gte('created_at', `${start}T00:00:00`)
-          .lte('created_at', `${end}T23:59:59`),
+          .gte('created_at', `${start}T00:00:00-03:00`)
+          .lte('created_at', `${end}T23:59:59-03:00`),
       ]);
 
       if (myId !== loadIdRef.current) return;
@@ -152,28 +152,58 @@ export default function ResumoVendas() {
         : method === 'debit_card' ? conciliation.debit
         : conciliation.link;
 
+      type PaymentEntry = { method: string; card_brand: string; installments: number; amount: number };
+      const CARD_METHODS = ['credit_card', 'debit_card', 'payment_link'];
+
       // vendas principais
-      s.filter(v => v.payment_method === 'credit_card' || v.payment_method === 'debit_card' || v.payment_method === 'payment_link').forEach(v => {
-        const bucket = getBucket(v.payment_method);
-        const bruto = Number(v.total_sale_price);
-        const fee   = Number(v.card_fee || 0);
-        bucket.count  += 1;
-        bucket.bruto  += bruto;
-        bucket.fees   += fee;
-        bucket.liquid += bruto - fee;
+      s.forEach(v => {
+        const pms = v.payment_methods as PaymentEntry[] | null;
+        if (pms && pms.length > 1) {
+          // múltiplos métodos: soma apenas o valor de cada entrada de cartão
+          pms.filter(pm => CARD_METHODS.includes(pm.method)).forEach(pm => {
+            const bucket = getBucket(pm.method);
+            const bruto = Number(pm.amount);
+            const fee = calculateCardFee(bruto, pm.method, pm.card_brand, pm.installments || 1);
+            bucket.count  += 1;
+            bucket.bruto  += bruto;
+            bucket.fees   += fee;
+            bucket.liquid += bruto - fee;
+          });
+        } else if (CARD_METHODS.includes(v.payment_method)) {
+          // pagamento único: total da venda é o valor do cartão
+          const bucket = getBucket(v.payment_method);
+          const bruto = Number(v.total_sale_price);
+          const fee   = Number(v.card_fee || 0);
+          bucket.count  += 1;
+          bucket.bruto  += bruto;
+          bucket.fees   += fee;
+          bucket.liquid += bruto - fee;
+        }
       });
 
       // pequenas vendas
       (smallSalesRaw || []).forEach(v => {
-        const bucket = getBucket(v.payment_method);
-        const bruto = Number(v.sale_price) * Number(v.quantity);
-        const fee   = (v.payment_method === 'credit_card' || v.payment_method === 'payment_link') && v.card_brand && v.installments
-          ? calculateCardFee(bruto, v.payment_method, v.card_brand, v.installments)
-          : 0;
-        bucket.count  += 1;
-        bucket.bruto  += bruto;
-        bucket.fees   += fee;
-        bucket.liquid += bruto - fee;
+        const pms = v.payment_methods as PaymentEntry[] | null;
+        if (pms && pms.length > 1) {
+          // múltiplos métodos: soma apenas o valor de cada entrada de cartão
+          pms.filter(pm => CARD_METHODS.includes(pm.method)).forEach(pm => {
+            const bucket = getBucket(pm.method);
+            const bruto = Number(pm.amount);
+            const fee = calculateCardFee(bruto, pm.method, pm.card_brand, pm.installments || 1);
+            bucket.count  += 1;
+            bucket.bruto  += bruto;
+            bucket.fees   += fee;
+            bucket.liquid += bruto - fee;
+          });
+        } else {
+          const bucket = getBucket(v.payment_method);
+          const bruto = Number(v.sale_price) * Number(v.quantity);
+          const fee = calculateCardFee(bruto, v.payment_method, v.card_brand, v.installments || 1);
+          bucket.count  += 1;
+          bucket.bruto  += bruto;
+          bucket.fees   += fee;
+          bucket.liquid += bruto - fee;
+        }
       });
 
       setCardConciliation(conciliation);
