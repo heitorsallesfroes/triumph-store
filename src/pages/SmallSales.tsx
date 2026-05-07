@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
 import { getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
-import { ShoppingBag, Plus, Trash2, Bike, Truck, ShoppingCart } from 'lucide-react';
+import { ShoppingBag, Plus, Trash2, Bike, Truck, ShoppingCart, Pencil, X } from 'lucide-react';
 
 interface PaymentEntry {
   method: string;
@@ -74,6 +74,8 @@ export default function SmallSales() {
   const [filter, setFilter] = useState<FilterPeriod>('today');
   const [form, setForm] = useState(emptyForm);
   const [paymentMethods, setPaymentMethods] = useState<PaymentEntry[]>([defaultPaymentEntry()]);
+  const [editingDelivery, setEditingDelivery] = useState<SmallSale | null>(null);
+  const [editDeliveryForm, setEditDeliveryForm] = useState({ delivery_type: 'loja_fisica', motoboy_id: '', delivery_fee: '' });
 
   const saleTotal = (parseFloat(form.sale_price) || 0) * (parseInt(form.quantity) || 1);
   const allAmountsZero = paymentMethods.every(pm => pm.amount === 0);
@@ -230,6 +232,31 @@ export default function SmallSales() {
   const handleDelete = async (id: string) => {
     if (!confirm('Remover esta venda?')) return;
     await supabase.from('small_sales').delete().eq('id', id);
+    loadSales();
+  };
+
+  const handleOpenEditDelivery = (sale: SmallSale) => {
+    setEditingDelivery(sale);
+    setEditDeliveryForm({
+      delivery_type: sale.delivery_type || 'loja_fisica',
+      motoboy_id: sale.motoboy_id || '',
+      delivery_fee: sale.delivery_fee ? sale.delivery_fee.toString() : '',
+    });
+  };
+
+  const handleSaveDeliveryEdit = async () => {
+    if (!editingDelivery) return;
+    if (editDeliveryForm.delivery_type === 'motoboy' && !editDeliveryForm.motoboy_id) {
+      alert('Selecione o motoboy.');
+      return;
+    }
+    const { error } = await supabase.from('small_sales').update({
+      delivery_type: editDeliveryForm.delivery_type,
+      motoboy_id: editDeliveryForm.delivery_type === 'motoboy' ? editDeliveryForm.motoboy_id : null,
+      delivery_fee: editDeliveryForm.delivery_type === 'motoboy' ? (parseFloat(editDeliveryForm.delivery_fee) || 0) : 0,
+    }).eq('id', editingDelivery.id);
+    if (error) { alert('Erro ao salvar.'); return; }
+    setEditingDelivery(null);
     loadSales();
   };
 
@@ -520,6 +547,88 @@ export default function SmallSales() {
         </div>
       </div>
 
+      {/* Modal Editar Entrega */}
+      {editingDelivery && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-bold text-white">Editar Entrega</h2>
+              <button onClick={() => setEditingDelivery(null)} className="text-gray-400 hover:text-white">
+                <X size={22} />
+              </button>
+            </div>
+            <p className="text-sm text-gray-400 mb-4 truncate">{editingDelivery.description}</p>
+
+            <div className="mb-4">
+              <p className="text-xs text-gray-400 mb-2">Tipo de entrega</p>
+              <div className="flex gap-2 flex-wrap">
+                {(['loja_fisica', 'motoboy', 'correios'] as const).map(dt => {
+                  const icons = { loja_fisica: ShoppingCart, motoboy: Bike, correios: Truck };
+                  const Icon = icons[dt];
+                  return (
+                    <button
+                      key={dt}
+                      type="button"
+                      onClick={() => setEditDeliveryForm(f => ({ ...f, delivery_type: dt, motoboy_id: '', delivery_fee: '' }))}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border ${
+                        editDeliveryForm.delivery_type === dt
+                          ? 'bg-orange-500 text-white border-orange-500'
+                          : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'
+                      }`}
+                    >
+                      <Icon size={14} /> {DELIVERY_LABELS[dt]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {editDeliveryForm.delivery_type === 'motoboy' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Motoboy*</label>
+                  <select
+                    value={editDeliveryForm.motoboy_id}
+                    onChange={e => setEditDeliveryForm(f => ({ ...f, motoboy_id: e.target.value }))}
+                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  >
+                    <option value="">Selecionar...</option>
+                    {motoboys.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Valor da entrega (R$)</label>
+                  <input
+                    type="number" min="0" step="0.01"
+                    value={editDeliveryForm.delivery_fee}
+                    onChange={e => setEditDeliveryForm(f => ({ ...f, delivery_fee: e.target.value }))}
+                    placeholder="0,00"
+                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={handleSaveDeliveryEdit}
+                className="flex-1 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg transition-colors font-semibold"
+              >
+                Salvar
+              </button>
+              <button
+                onClick={() => setEditingDelivery(null)}
+                className="flex-1 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Listagem */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
         <table className="w-full">
@@ -589,12 +698,21 @@ export default function SmallSales() {
                       {new Date(sale.created_at).toLocaleDateString('pt-BR')}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <button
-                        onClick={() => handleDelete(sale.id)}
-                        className="text-red-500 hover:text-red-400 transition-colors"
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleOpenEditDelivery(sale)}
+                          className="text-blue-400 hover:text-blue-300 transition-colors"
+                          title="Editar entrega"
+                        >
+                          <Pencil size={15} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(sale.id)}
+                          className="text-red-500 hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

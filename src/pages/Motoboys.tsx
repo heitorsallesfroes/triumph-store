@@ -30,6 +30,8 @@ export default function Motoboys() {
   const [customStats, setCustomStats] = useState<CustomStats[]>([]);
   const [todayStats, setTodayStats] = useState<CustomStats[]>([]);
   const [yesterdayStats, setYesterdayStats] = useState<CustomStats[]>([]);
+  const [weekStats, setWeekStats] = useState<CustomStats[]>([]);
+  const [monthStats, setMonthStats] = useState<CustomStats[]>([]);
   const [extraPayments, setExtraPayments] = useState<ExtraPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -171,17 +173,25 @@ export default function Motoboys() {
     try {
       const start = toDateStr(startDate);
       const end = endDate ? toDateStr(endDate) : start;
+      const startUTC = start + 'T03:00:00.000Z';
+      const endNextDay = new Date(end + 'T12:00:00');
+      endNextDay.setDate(endNextDay.getDate() + 1);
+      const endUTC = endNextDay.toISOString().split('T')[0] + 'T03:00:00.000Z';
 
-      const [salesRes, paymentsRes] = await Promise.all([
+      const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
-          .eq('delivery_type', 'delivery').eq('status', 'finalizado')
-          .gte('sale_date', start).lte('sale_date', end + 'T23:59:59'),
+          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
+          .gte('sale_date', startUTC).lt('sale_date', endUTC),
+        supabase.from('small_sales').select('motoboy_id, delivery_fee')
+          .eq('delivery_type', 'motoboy')
+          .not('motoboy_id', 'is', null)
+          .gte('created_at', startUTC).lt('created_at', endUTC),
         supabase.from('motoboy_payments').select('*')
           .gte('date', start).lte('date', end),
       ]);
 
       const statsMap = new Map<string, { deliveries: number; earnings: number; extraPayments: number }>();
-      salesRes.data?.forEach(sale => {
+      [...(salesRes.data || []), ...(smallSalesRes.data || [])].forEach(sale => {
         if (sale.motoboy_id) {
           const cur = statsMap.get(sale.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
           statsMap.set(sale.motoboy_id, { ...cur, deliveries: cur.deliveries + 1, earnings: cur.earnings + (sale.delivery_fee || 0) });
@@ -202,15 +212,24 @@ export default function Motoboys() {
   const loadLastMonthStats = async () => {
     try {
       const { start, end } = getLastMonthRangeInBrazil();
-      const [salesRes, paymentsRes] = await Promise.all([
+      const startUTC = start + 'T03:00:00.000Z';
+      const endNextDay = new Date(end + 'T12:00:00');
+      endNextDay.setDate(endNextDay.getDate() + 1);
+      const endUTC = endNextDay.toISOString().split('T')[0] + 'T03:00:00.000Z';
+
+      const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
-          .gte('sale_date', start).lte('sale_date', end + 'T23:59:59'),
+          .gte('sale_date', startUTC).lt('sale_date', endUTC),
+        supabase.from('small_sales').select('motoboy_id, delivery_fee')
+          .eq('delivery_type', 'motoboy')
+          .not('motoboy_id', 'is', null)
+          .gte('created_at', startUTC).lt('created_at', endUTC),
         supabase.from('motoboy_payments').select('*')
           .gte('date', start).lte('date', end),
       ]);
       const statsMap = new Map<string, { deliveries: number; earnings: number; extraPayments: number }>();
-      salesRes.data?.forEach(sale => {
+      [...(salesRes.data || []), ...(smallSalesRes.data || [])].forEach(sale => {
         if (sale.motoboy_id) {
           const cur = statsMap.get(sale.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
           statsMap.set(sale.motoboy_id, { ...cur, deliveries: cur.deliveries + 1, earnings: cur.earnings + (sale.delivery_fee || 0) });
@@ -225,6 +244,90 @@ export default function Motoboys() {
         return { id: m.id, name: m.name, ...s };
       }));
     } catch (error) { console.error(error); }
+  };
+
+  const loadWeekStats = async (motoboysList?: Motoboy[]) => {
+    const list = motoboysList || motoboys;
+    try {
+      const now = new Date();
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const weekStart = new Date(now.getFullYear(), now.getMonth(), diff);
+      const startStr = weekStart.toISOString().split('T')[0];
+      const startUTC = startStr + 'T03:00:00.000Z';
+      const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      const endUTC = tomorrow.toISOString().split('T')[0] + 'T03:00:00.000Z';
+
+      const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
+        supabase.from('sales').select('motoboy_id, delivery_fee')
+          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
+          .gte('sale_date', startUTC).lt('sale_date', endUTC),
+        supabase.from('small_sales').select('motoboy_id, delivery_fee')
+          .eq('delivery_type', 'motoboy')
+          .not('motoboy_id', 'is', null)
+          .gte('created_at', startUTC).lt('created_at', endUTC),
+        supabase.from('motoboy_payments').select('*')
+          .gte('date', startStr).lte('date', getTodayInBrazil()),
+      ]);
+
+      const statsMap = new Map<string, { deliveries: number; earnings: number; extraPayments: number }>();
+      [...(salesRes.data || []), ...(smallSalesRes.data || [])].forEach(sale => {
+        if (sale.motoboy_id) {
+          const cur = statsMap.get(sale.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+          statsMap.set(sale.motoboy_id, { ...cur, deliveries: cur.deliveries + 1, earnings: cur.earnings + (sale.delivery_fee || 0) });
+        }
+      });
+      paymentsRes.data?.forEach(p => {
+        const cur = statsMap.get(p.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+        statsMap.set(p.motoboy_id, { ...cur, extraPayments: cur.extraPayments + Number(p.amount) });
+      });
+
+      setWeekStats(list.map(m => {
+        const s = statsMap.get(m.id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+        return { id: m.id, name: m.name, ...s };
+      }));
+    } catch (error) { console.error('Error loading week stats:', error); }
+  };
+
+  const loadMonthStats = async (motoboysList?: Motoboy[]) => {
+    const list = motoboysList || motoboys;
+    try {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const startStr = monthStart.toISOString().split('T')[0];
+      const startUTC = startStr + 'T03:00:00.000Z';
+      const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      const endUTC = tomorrow.toISOString().split('T')[0] + 'T03:00:00.000Z';
+
+      const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
+        supabase.from('sales').select('motoboy_id, delivery_fee')
+          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
+          .gte('sale_date', startUTC).lt('sale_date', endUTC),
+        supabase.from('small_sales').select('motoboy_id, delivery_fee')
+          .eq('delivery_type', 'motoboy')
+          .not('motoboy_id', 'is', null)
+          .gte('created_at', startUTC).lt('created_at', endUTC),
+        supabase.from('motoboy_payments').select('*')
+          .gte('date', startStr).lte('date', getTodayInBrazil()),
+      ]);
+
+      const statsMap = new Map<string, { deliveries: number; earnings: number; extraPayments: number }>();
+      [...(salesRes.data || []), ...(smallSalesRes.data || [])].forEach(sale => {
+        if (sale.motoboy_id) {
+          const cur = statsMap.get(sale.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+          statsMap.set(sale.motoboy_id, { ...cur, deliveries: cur.deliveries + 1, earnings: cur.earnings + (sale.delivery_fee || 0) });
+        }
+      });
+      paymentsRes.data?.forEach(p => {
+        const cur = statsMap.get(p.motoboy_id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+        statsMap.set(p.motoboy_id, { ...cur, extraPayments: cur.extraPayments + Number(p.amount) });
+      });
+
+      setMonthStats(list.map(m => {
+        const s = statsMap.get(m.id) || { deliveries: 0, earnings: 0, extraPayments: 0 };
+        return { id: m.id, name: m.name, ...s };
+      }));
+    } catch (error) { console.error('Error loading month stats:', error); }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -448,51 +551,47 @@ export default function Motoboys() {
     if (period !== 'custom') { setStartDate(null); setEndDate(null); }
     if (period === 'today') loadTodayStats();
     if (period === 'yesterday') loadYesterdayStats();
+    if (period === 'week') loadWeekStats();
+    if (period === 'month') loadMonthStats();
     if (period === 'last_month') loadLastMonthStats();
   };
 
   const getSortedStats = () => {
-    if (selectedPeriod === 'custom' || selectedPeriod === 'last_month') return [...customStats].sort((a, b) => (b.earnings + b.extraPayments) - (a.earnings + a.extraPayments));
-    if (selectedPeriod === 'today') return [...todayStats].sort((a, b) => (b.earnings + b.extraPayments) - (a.earnings + a.extraPayments));
-    if (selectedPeriod === 'yesterday') return [...yesterdayStats].sort((a, b) => (b.earnings + b.extraPayments) - (a.earnings + a.extraPayments));
-    return [...stats].sort((a, b) => {
-      const val = (s: MotoboyStats) => selectedPeriod === 'week' ? s.earnings_this_week : selectedPeriod === 'month' ? s.earnings_this_month : s.total_earnings;
-      return val(b) - val(a);
-    });
+    const byTotal = (a: CustomStats, b: CustomStats) => (b.earnings + b.extraPayments) - (a.earnings + a.extraPayments);
+    if (selectedPeriod === 'custom' || selectedPeriod === 'last_month') return [...customStats].sort(byTotal);
+    if (selectedPeriod === 'today') return [...todayStats].sort(byTotal);
+    if (selectedPeriod === 'yesterday') return [...yesterdayStats].sort(byTotal);
+    if (selectedPeriod === 'week') return [...weekStats].sort(byTotal);
+    if (selectedPeriod === 'month') return [...monthStats].sort(byTotal);
+    return [...stats].sort((a, b) => b.total_earnings - a.total_earnings);
   };
 
   const getDeliveriesForPeriod = (stat: MotoboyStats | CustomStats) => {
-    if (selectedPeriod === 'custom' || selectedPeriod === 'last_month' || selectedPeriod === 'today' || selectedPeriod === 'yesterday') return (stat as CustomStats).deliveries;
-    const s = stat as MotoboyStats;
-    return selectedPeriod === 'week' ? s.deliveries_this_week : selectedPeriod === 'month' ? s.deliveries_this_month : s.total_deliveries;
+    if (['custom', 'last_month', 'today', 'yesterday', 'week', 'month'].includes(selectedPeriod))
+      return (stat as CustomStats).deliveries;
+    return (stat as MotoboyStats).total_deliveries;
   };
 
   const getEarningsForPeriod = (stat: MotoboyStats | CustomStats) => {
-    if (selectedPeriod === 'custom' || selectedPeriod === 'last_month' || selectedPeriod === 'today' || selectedPeriod === 'yesterday') return (stat as CustomStats).earnings;
-    const s = stat as MotoboyStats;
-    return selectedPeriod === 'week' ? s.earnings_this_week : selectedPeriod === 'month' ? s.earnings_this_month : s.total_earnings;
+    if (['custom', 'last_month', 'today', 'yesterday', 'week', 'month'].includes(selectedPeriod))
+      return (stat as CustomStats).earnings;
+    return (stat as MotoboyStats).total_earnings;
   };
 
   const getExtraPaymentsForPeriod = (motoboyId: string) => {
-    if (selectedPeriod === 'custom' || selectedPeriod === 'last_month') {
-      const cs = customStats.find(s => s.id === motoboyId);
-      return cs?.extraPayments || 0;
-    }
-    if (selectedPeriod === 'today') {
+    if (selectedPeriod === 'custom' || selectedPeriod === 'last_month')
+      return customStats.find(s => s.id === motoboyId)?.extraPayments || 0;
+    if (selectedPeriod === 'today')
       return todayStats.find(s => s.id === motoboyId)?.extraPayments || 0;
-    }
-    if (selectedPeriod === 'yesterday') {
+    if (selectedPeriod === 'yesterday')
       return yesterdayStats.find(s => s.id === motoboyId)?.extraPayments || 0;
-    }
-    return extraPayments.filter(p => {
-      if (p.motoboy_id !== motoboyId) return false;
-      const d = new Date(p.date + 'T12:00:00');
-      const now = new Date();
-      if (selectedPeriod === 'today') return toDateStr(d) === toDateStr(now);
-      if (selectedPeriod === 'week') { const w = new Date(now); w.setDate(now.getDate() - 7); return d >= w; }
-      if (selectedPeriod === 'month') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-      return true;
-    }).reduce((sum, p) => sum + Number(p.amount), 0);
+    if (selectedPeriod === 'week')
+      return weekStats.find(s => s.id === motoboyId)?.extraPayments || 0;
+    if (selectedPeriod === 'month')
+      return monthStats.find(s => s.id === motoboyId)?.extraPayments || 0;
+    return extraPayments
+      .filter(p => p.motoboy_id === motoboyId)
+      .reduce((sum, p) => sum + Number(p.amount), 0);
   };
 
   const formatDate = (dateString: string) => new Date(dateString + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
