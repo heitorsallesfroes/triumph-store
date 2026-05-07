@@ -156,13 +156,39 @@ async function fetchTracking(
   }
 }
 
-// Handles both unencoded (orders[]=) and URL-encoded (orders%5B%5D=) bracket formats
+// Tenta extrair o order_id de um JWT na URL (formato etiqueta.superfrete.com/_etiqueta/pdf/eyJ...)
+function decodeJwtOrderId(url: string): string | null {
+  try {
+    const token = url.split('/').pop()?.split('?')[0] ?? '';
+    if (!token.startsWith('eyJ')) return null;
+    // JWT: header.payload.signature — decodifica o payload (2º segmento)
+    const parts = token.split('.');
+    const segment = parts.length >= 2 ? parts[1] : parts[0];
+    const padded = segment + '='.repeat((4 - segment.length % 4) % 4);
+    const decoded = JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/')));
+    // Procura campos comuns que contenham o order_id
+    const id = decoded.id
+      ?? decoded.order_id
+      ?? decoded.orderId
+      ?? (Array.isArray(decoded.order_ids) ? decoded.order_ids[0] : null)
+      ?? (Array.isArray(decoded.orders) ? decoded.orders[0] : null);
+    return id != null ? String(id) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Extrai order_id da URL da etiqueta — suporta dois formatos:
+//   Novo:  ...?orders[]=12345   (ou orders%5B%5D=)
+//   Antigo: etiqueta.superfrete.com/_etiqueta/pdf/eyJ... (JWT com order_id no payload)
 function extractOrderId(url: string | null): string | null {
   if (!url) return null;
+  // Formato 1: query param orders[]=
   const normalized = url.replace(/orders%5B%5D=/gi, 'orders[]=');
   const match = normalized.split('orders[]=')[1];
-  if (!match) return null;
-  return match.split('&')[0].trim() || null;
+  if (match) return match.split('&')[0].trim() || null;
+  // Formato 2: JWT no path
+  return decodeJwtOrderId(url);
 }
 
 function formatSaleDate(sale_date: string) {
@@ -235,6 +261,7 @@ export default function RastreamentoSedex() {
       supabase.from('sales').select(fields)
         .eq('delivery_type', 'correios')
         .eq('shipping_status', 'Entregue')
+        .not('delivered_at', 'is', null)
         .gte('delivered_at', fiveDaysAgo.toISOString())
         .order('sale_date', { ascending: false }),
     ]);
