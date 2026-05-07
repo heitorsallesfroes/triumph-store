@@ -106,7 +106,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
   const handlePrint = () => {
     const originalTitle = document.title;
     document.title = giftMode
-      ? `Comprovante de Entrega - ${sale?.customer_name || 'Cliente'}`
+      ? `Recibo de Venda - ${sale?.customer_name || 'Cliente'}`
       : `Recibo de Compra - ${sale?.customer_name || 'Cliente'}`;
     window.print();
     document.title = originalTitle;
@@ -260,7 +260,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
         {/* ── Toolbar (não imprime) ── */}
         <div className="print:hidden sticky top-0 bg-gray-900 border-b border-gray-700 p-4 flex items-center justify-between z-10">
           <h2 className="text-lg font-bold text-white">
-            {giftMode ? 'Comprovante de Entrega' : 'Recibo de Venda'}
+            {'Recibo de Venda'}
           </h2>
           <div className="flex gap-3">
             <button onClick={handlePrint}
@@ -295,7 +295,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
               {/* Direita: título + número */}
               <div style={{ textAlign: 'right', paddingLeft: '14px', borderLeft: '2px solid #000', minWidth: '160px' }}>
                 <p style={{ fontSize: '15px', fontWeight: '900', letterSpacing: '1px', color: '#000', lineHeight: '1.25' }}>
-                  {giftMode ? 'COMPROVANTE DE ENTREGA' : 'RECIBO DE VENDA'}
+                  {'RECIBO DE VENDA'}
                 </p>
                 <p style={{ fontSize: '9px', color: '#555', marginTop: '5px' }}>
                   Nº {sale.id.slice(0, 8).toUpperCase()}

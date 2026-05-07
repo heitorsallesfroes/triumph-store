@@ -25,8 +25,9 @@ export interface GenerateShippingLabelParams {
 
 export interface ShippingLabelResult {
   success: boolean;
-  tracking_code?: string;
+  tracking_code?: string | null;
   label_url?: string;
+  order_id?: string | number;
   label_price?: number | null;
   error?: string;
 }
@@ -135,8 +136,9 @@ export async function generateShippingLabel(
 
     return {
       success: true,
-      tracking_code: data.tracking_code,
+      tracking_code: data.tracking_code || null,
       label_url: data.label_url,
+      order_id: data.order_id,
       label_price: data.label_price ?? null,
     };
 
