@@ -27,6 +27,8 @@ interface Sale {
   state: string;
   tracking_code: string | null;
   shipping_label_url: string | null;
+  shipping_status: string | null;
+  delivered_at: string | null;
   sale_date: string;
   productLabel: string;
   status: TrackingStatus;
@@ -52,6 +54,7 @@ const STATUS_CONFIG: Record<TrackingStatus, StatusCfg> = {
 };
 
 const REFRESH_SEC = 600; // 10 minutos
+const DELIVERED_HIDE_DAYS = 5;
 
 function normalizeStr(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -153,10 +156,13 @@ async function fetchTracking(
   }
 }
 
+// Handles both unencoded (orders[]=) and URL-encoded (orders%5B%5D=) bracket formats
 function extractOrderId(url: string | null): string | null {
   if (!url) return null;
-  const match = url.split('orders[]=')[1];
-  return match?.trim() || null;
+  const normalized = url.replace(/orders%5B%5D=/gi, 'orders[]=');
+  const match = normalized.split('orders[]=')[1];
+  if (!match) return null;
+  return match.split('&')[0].trim() || null;
 }
 
 function formatSaleDate(sale_date: string) {
@@ -216,18 +222,32 @@ export default function RastreamentoSedex() {
 
   const loadSales = async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('sales')
-      .select('id, customer_name, address_street, address_number, address_complement, neighborhood, city, state, tracking_code, shipping_label_url, sale_date, sale_items(quantity, products(model, color))')
-      .eq('delivery_type', 'correios')
-      .eq('shipping_status', 'Etiqueta gerada')
-      .order('sale_date', { ascending: false });
+    const fiveDaysAgo = new Date();
+    fiveDaysAgo.setDate(fiveDaysAgo.getDate() - DELIVERED_HIDE_DAYS);
+
+    const fields = 'id, customer_name, address_street, address_number, address_complement, neighborhood, city, state, tracking_code, shipping_label_url, shipping_status, delivered_at, sale_date, sale_items(quantity, products(model, color))';
+
+    const [activeRes, deliveredRes] = await Promise.all([
+      supabase.from('sales').select(fields)
+        .eq('delivery_type', 'correios')
+        .eq('shipping_status', 'Etiqueta gerada')
+        .order('sale_date', { ascending: false }),
+      supabase.from('sales').select(fields)
+        .eq('delivery_type', 'correios')
+        .eq('shipping_status', 'Entregue')
+        .gte('delivered_at', fiveDaysAgo.toISOString())
+        .order('sale_date', { ascending: false }),
+    ]);
+
+    const combined = [...(activeRes.data || []), ...(deliveredRes.data || [])]
+      .sort((a: any, b: any) => new Date(b.sale_date).getTime() - new Date(a.sale_date).getTime());
 
     setSales(
-      (data || []).map((s: any) => ({
+      combined.map((s: any) => ({
         ...s,
         productLabel: buildProductLabel(s.sale_items || []),
-        status: 'sem_info' as TrackingStatus,
+        // Pacotes já marcados como Entregue no banco iniciam com status correto
+        status: s.shipping_status === 'Entregue' ? 'entregue' as TrackingStatus : 'sem_info' as TrackingStatus,
         tracking_loading: false,
       }))
     );
@@ -273,13 +293,20 @@ export default function RastreamentoSedex() {
 
     const ids = onlyIds ?? salesRef.current.map(s => s.id);
 
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[i];
-      const tracking_code = salesRef.current.find(s => s.id === id)?.tracking_code;
-      if (!tracking_code?.trim()) continue;
+    // Captura os tracking codes antes das operações async para evitar closure stale
+    const toTrack = ids
+      .map(id => ({ id, tracking_code: salesRef.current.find(s => s.id === id)?.tracking_code }))
+      .filter((t): t is { id: string; tracking_code: string } => !!t.tracking_code?.trim());
 
-      setSales(prev => prev.map(s => s.id === id ? { ...s, tracking_loading: true } : s));
+    // Marca todos como carregando simultaneamente
+    setSales(prev => prev.map(s =>
+      toTrack.find(t => t.id === s.id) ? { ...s, tracking_loading: true } : s
+    ));
+
+    // Dispara todas as requisições em paralelo
+    await Promise.all(toTrack.map(async ({ id, tracking_code }) => {
       const result = await fetchTracking(tracking_code);
+
       setSales(prev => prev.map(s => s.id === id ? {
         ...s,
         tracking_loading: false,
@@ -288,8 +315,14 @@ export default function RastreamentoSedex() {
         tracking_error: result.error,
       } : s));
 
-      if (i < ids.length - 1) await new Promise(r => setTimeout(r, 350));
-    }
+      // Persiste entrega no banco para o filtro de 5 dias funcionar entre sessões
+      if (result.status === 'entregue') {
+        await supabase.from('sales').update({
+          shipping_status: 'Entregue',
+          delivered_at: new Date().toISOString(),
+        }).eq('id', id);
+      }
+    }));
 
     setLastUpdated(new Date());
     setUpdating(false);
@@ -361,7 +394,8 @@ export default function RastreamentoSedex() {
             )}
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-            {!hasCode && extractOrderId(sale.shipping_label_url) && (
+            {/* Mostra botão sempre que não tem código mas tem etiqueta gerada */}
+            {!hasCode && sale.shipping_label_url && (
               <button
                 onClick={() => fetchCode(sale)}
                 disabled={isFetching}
@@ -531,6 +565,7 @@ export default function RastreamentoSedex() {
                 <span className="bg-green-500/15 text-green-400 text-xs font-bold px-2 py-0.5 rounded-full border border-green-500/25">
                   {entregues.length}
                 </span>
+                <span className="text-xs text-gray-600">últimos {DELIVERED_HIDE_DAYS} dias</span>
               </div>
               <div className="flex flex-col gap-3">
                 {entregues.map(sale => renderCard(sale, true))}
