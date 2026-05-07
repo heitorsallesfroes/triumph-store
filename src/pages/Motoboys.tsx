@@ -396,19 +396,23 @@ export default function Motoboys() {
     setFormularioTexto('');
     try {
       const { startUTC, endUTC } = getDateUTCRange(dateStr);
-      const { data: salesData } = await supabase
-        .from('sales')
-        .select('neighborhood, city')
-        .eq('motoboy_id', motoboyId)
-        .eq('delivery_type', 'motoboy')
-        .gte('sale_date', startUTC)
-        .lt('sale_date', endUTC);
+      const [salesRes, smallSalesRes] = await Promise.all([
+        supabase.from('sales').select('neighborhood, city')
+          .eq('motoboy_id', motoboyId)
+          .eq('delivery_type', 'motoboy')
+          .gte('sale_date', startUTC)
+          .lt('sale_date', endUTC),
+        supabase.from('small_sales').select('description')
+          .eq('motoboy_id', motoboyId)
+          .eq('delivery_type', 'motoboy')
+          .gte('created_at', startUTC)
+          .lt('created_at', endUTC),
+      ]);
 
       const [year, month, day] = dateStr.split('-');
-      const sales = salesData || [];
 
       const byCidade = new Map<string, string[]>();
-      for (const s of sales) {
+      for (const s of (salesRes.data || [])) {
         const cidade = s.city || '';
         const bairro = s.neighborhood || '';
         if (!byCidade.has(cidade)) byCidade.set(cidade, []);
@@ -419,11 +423,17 @@ export default function Motoboys() {
         `📍 ${cidade}\n${bairros.map(b => `- ${b}: `).join('\n')}`
       );
 
+      const smallSales = smallSalesRes.data || [];
+      const blocoSmall = smallSales.length > 0
+        ? `📍 Pequenas Vendas\n${smallSales.map(s => `- ${s.description}: `).join('\n')}`
+        : null;
+
       const texto = [
         `🛵 Entregas ${motoboyName}`,
         `📅 ${day}/${month}/${year}`,
         '',
         ...blocos.flatMap(b => [b, '']),
+        ...(blocoSmall ? [blocoSmall, ''] : []),
         `💰 Total: R$`,
         `✅ Obrigado!`,
       ].join('\n');
@@ -439,26 +449,35 @@ export default function Motoboys() {
 
   const lancarValores = async (motoboyId: string, dateStr: string, texto: string) => {
     setLancarLoading(true);
+    const SMALL_SALES_CITY = 'Pequenas Vendas';
     try {
       const { startUTC, endUTC } = getDateUTCRange(dateStr);
-      const { data: salesData } = await supabase
-        .from('sales')
-        .select('id, neighborhood, city, delivery_fee, total_cost, net_received')
-        .eq('motoboy_id', motoboyId)
-        .eq('delivery_type', 'motoboy')
-        .gte('sale_date', startUTC)
-        .lt('sale_date', endUTC);
 
-      const salesList = [...(salesData || [])];
+      const [salesRes, smallSalesRes] = await Promise.all([
+        supabase.from('sales')
+          .select('id, neighborhood, city, delivery_fee, total_cost, net_received')
+          .eq('motoboy_id', motoboyId)
+          .eq('delivery_type', 'motoboy')
+          .gte('sale_date', startUTC)
+          .lt('sale_date', endUTC),
+        supabase.from('small_sales')
+          .select('id, description, delivery_fee')
+          .eq('motoboy_id', motoboyId)
+          .eq('delivery_type', 'motoboy')
+          .gte('created_at', startUTC)
+          .lt('created_at', endUTC),
+      ]);
+
+      const salesList = salesRes.data || [];
+      const smallSalesList = smallSalesRes.data || [];
 
       console.log('=== PARSER DEBUG ===');
       console.log(`Intervalo UTC: ${startUTC} → ${endUTC}`);
-      console.log(`Vendas encontradas no DB (${salesList.length}):`, salesList.map(s => ({
-        id: s.id.slice(0, 8),
-        city: s.city,
-        neighborhood: s.neighborhood,
-        cityBytes: [...(s.city || '')].map(c => c.codePointAt(0)?.toString(16)).join(' '),
-        neighborhoodBytes: [...(s.neighborhood || '')].map(c => c.codePointAt(0)?.toString(16)).join(' '),
+      console.log(`Vendas (${salesList.length}):`, salesList.map(s => ({
+        id: s.id.slice(0, 8), city: s.city, neighborhood: s.neighborhood,
+      })));
+      console.log(`Pequenas vendas (${smallSalesList.length}):`, smallSalesList.map(s => ({
+        id: s.id.slice(0, 8), description: s.description,
       })));
 
       // Parse grouped format:
@@ -479,63 +498,74 @@ export default function Motoboys() {
           if (colonIdx === -1) continue;
           const bairro = withoutBullet.substring(0, colonIdx).trim();
           const valor = parseFloat(withoutBullet.substring(colonIdx + 1).trim().replace(',', '.'));
-          console.log(`  [BAIRRO] linha="${trimmed}" → bairro="${bairro}" valor=${valor} cidade="${currentCity}"`);
           if (bairro && !isNaN(valor) && currentCity) {
             deliveryEntries.push({ bairro, cidade: currentCity, valor });
-          } else {
-            console.warn(`  [BAIRRO IGNORADO] bairro="${bairro}" isNaN=${isNaN(valor)} currentCity="${currentCity}"`);
           }
           continue;
         }
 
-        if (skipPrefixes.some(p => trimmed.startsWith(p))) {
-          console.log(`  [SKIP] "${trimmed}"`);
-          continue;
-        }
+        if (skipPrefixes.some(p => trimmed.startsWith(p))) continue;
 
         // Strip leading emoji characters to get city name
         const cityName = trimmed.replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\s]+/u, '').trim();
-        console.log(`  [CIDADE] linha="${trimmed}" → cityName="${cityName}" bytes=[${[...trimmed].map(c => c.codePointAt(0)?.toString(16)).join(' ')}]`);
         if (cityName) currentCity = cityName;
       }
 
       console.log('Entries parseadas:', deliveryEntries);
 
-      const updates: { id: string; delivery_fee: number; total_cost: number; profit: number }[] = [];
-      const matched = new Set<string>();
+      const salesUpdates: { id: string; delivery_fee: number; total_cost: number; profit: number }[] = [];
+      const smallUpdates: { id: string; delivery_fee: number }[] = [];
+      const matchedSales = new Set<string>();
+      const matchedSmall = new Set<string>();
 
       for (const { bairro, cidade, valor } of deliveryEntries) {
-        const sale = salesList.find(s =>
-          !matched.has(s.id) &&
-          (s.neighborhood || '').toLowerCase() === bairro.toLowerCase() &&
-          (s.city || '').toLowerCase() === cidade.toLowerCase()
-        );
-        console.log(`  [MATCH] bairro="${bairro}" cidade="${cidade}" → ${sale ? `ENCONTRADO id=${sale.id.slice(0, 8)}` : 'NÃO ENCONTRADO'}`);
-        if (!sale) {
-          const cityMatches = salesList.filter(s => (s.city || '').toLowerCase() === cidade.toLowerCase());
-          console.log(`    Vendas com cidade "${cidade}" (${cityMatches.length}):`, cityMatches.map(s => `"${s.neighborhood}"`));
-        }
-        if (sale) {
-          matched.add(sale.id);
-          const newTotalCost = (sale.total_cost || 0) - (sale.delivery_fee || 0) + valor;
-          const newProfit = (sale.net_received || 0) - newTotalCost;
-          updates.push({ id: sale.id, delivery_fee: valor, total_cost: newTotalCost, profit: newProfit });
+        if (cidade.toLowerCase() === SMALL_SALES_CITY.toLowerCase()) {
+          // Pequenas vendas: match por description
+          const ss = smallSalesList.find(s =>
+            !matchedSmall.has(s.id) &&
+            (s.description || '').toLowerCase() === bairro.toLowerCase()
+          );
+          console.log(`  [SMALL] desc="${bairro}" → ${ss ? `ENCONTRADO id=${ss.id.slice(0, 8)}` : 'NÃO ENCONTRADO'}`);
+          if (ss) {
+            matchedSmall.add(ss.id);
+            smallUpdates.push({ id: ss.id, delivery_fee: valor });
+          }
+        } else {
+          // Vendas regulares: match por bairro/cidade
+          const sale = salesList.find(s =>
+            !matchedSales.has(s.id) &&
+            (s.neighborhood || '').toLowerCase() === bairro.toLowerCase() &&
+            (s.city || '').toLowerCase() === cidade.toLowerCase()
+          );
+          console.log(`  [SALE] bairro="${bairro}" cidade="${cidade}" → ${sale ? `ENCONTRADO id=${sale.id.slice(0, 8)}` : 'NÃO ENCONTRADO'}`);
+          if (sale) {
+            matchedSales.add(sale.id);
+            const newTotalCost = (sale.total_cost || 0) - (sale.delivery_fee || 0) + valor;
+            const newProfit = (sale.net_received || 0) - newTotalCost;
+            salesUpdates.push({ id: sale.id, delivery_fee: valor, total_cost: newTotalCost, profit: newProfit });
+          }
         }
       }
 
-      console.log(`Updates a aplicar: ${updates.length}`, updates);
+      const totalUpdates = salesUpdates.length + smallUpdates.length;
+      console.log(`Updates sales: ${salesUpdates.length}, small_sales: ${smallUpdates.length}`);
       console.log('=== FIM DEBUG ===');
 
-      if (updates.length === 0) {
+      if (totalUpdates === 0) {
         alert('Nenhuma venda correspondente encontrada. Verifique os bairros e cidades.');
         return;
       }
 
-      await Promise.all(updates.map(u =>
-        supabase.from('sales').update({ delivery_fee: u.delivery_fee, total_cost: u.total_cost, profit: u.profit }).eq('id', u.id)
-      ));
+      await Promise.all([
+        ...salesUpdates.map(u =>
+          supabase.from('sales').update({ delivery_fee: u.delivery_fee, total_cost: u.total_cost, profit: u.profit }).eq('id', u.id)
+        ),
+        ...smallUpdates.map(u =>
+          supabase.from('small_sales').update({ delivery_fee: u.delivery_fee }).eq('id', u.id)
+        ),
+      ]);
 
-      alert(`✅ ${updates.length} venda${updates.length !== 1 ? 's' : ''} atualizada${updates.length !== 1 ? 's' : ''} com sucesso!`);
+      alert(`✅ ${totalUpdates} venda${totalUpdates !== 1 ? 's' : ''} atualizada${totalUpdates !== 1 ? 's' : ''} com sucesso!`);
       setLancarModal(null);
       setLancarTexto('');
     } catch (err) {
