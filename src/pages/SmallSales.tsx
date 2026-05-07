@@ -24,6 +24,8 @@ interface SmallSale {
   delivery_type?: string;
   motoboy_id?: string | null;
   delivery_fee?: number;
+  city?: string | null;
+  neighborhood?: string | null;
   created_at: string;
 }
 
@@ -57,6 +59,8 @@ const emptyForm = {
   delivery_type: 'loja_fisica',
   motoboy_id: '',
   delivery_fee: '',
+  city: '',
+  neighborhood: '',
 };
 
 const defaultPaymentEntry = (): PaymentEntry => ({
@@ -75,7 +79,7 @@ export default function SmallSales() {
   const [form, setForm] = useState(emptyForm);
   const [paymentMethods, setPaymentMethods] = useState<PaymentEntry[]>([defaultPaymentEntry()]);
   const [editingDelivery, setEditingDelivery] = useState<SmallSale | null>(null);
-  const [editDeliveryForm, setEditDeliveryForm] = useState({ delivery_type: 'loja_fisica', motoboy_id: '', delivery_fee: '' });
+  const [editDeliveryForm, setEditDeliveryForm] = useState({ delivery_type: 'loja_fisica', motoboy_id: '', delivery_fee: '', city: '', neighborhood: '' });
 
   const saleTotal = (parseFloat(form.sale_price) || 0) * (parseInt(form.quantity) || 1);
   const allAmountsZero = paymentMethods.every(pm => pm.amount === 0);
@@ -212,6 +216,8 @@ export default function SmallSales() {
         delivery_type: form.delivery_type,
         motoboy_id: form.delivery_type === 'motoboy' ? form.motoboy_id : null,
         delivery_fee: form.delivery_type === 'motoboy' ? (parseFloat(form.delivery_fee) || 0) : 0,
+        city: form.delivery_type === 'motoboy' ? (form.city.trim() || null) : null,
+        neighborhood: form.delivery_type === 'motoboy' ? (form.neighborhood.trim() || null) : null,
       };
 
       const { error } = await supabase.from('small_sales').insert(payload);
@@ -241,6 +247,8 @@ export default function SmallSales() {
       delivery_type: sale.delivery_type || 'loja_fisica',
       motoboy_id: sale.motoboy_id || '',
       delivery_fee: sale.delivery_fee ? sale.delivery_fee.toString() : '',
+      city: sale.city || '',
+      neighborhood: sale.neighborhood || '',
     });
   };
 
@@ -254,6 +262,8 @@ export default function SmallSales() {
       delivery_type: editDeliveryForm.delivery_type,
       motoboy_id: editDeliveryForm.delivery_type === 'motoboy' ? editDeliveryForm.motoboy_id : null,
       delivery_fee: editDeliveryForm.delivery_type === 'motoboy' ? (parseFloat(editDeliveryForm.delivery_fee) || 0) : 0,
+      city: editDeliveryForm.delivery_type === 'motoboy' ? (editDeliveryForm.city.trim() || null) : null,
+      neighborhood: editDeliveryForm.delivery_type === 'motoboy' ? (editDeliveryForm.neighborhood.trim() || null) : null,
     }).eq('id', editingDelivery.id);
     if (error) { alert('Erro ao salvar.'); return; }
     setEditingDelivery(null);
@@ -457,7 +467,7 @@ export default function SmallSales() {
                   <button
                     key={dt}
                     type="button"
-                    onClick={() => setForm(f => ({ ...f, delivery_type: dt, motoboy_id: '', delivery_fee: '' }))}
+                    onClick={() => setForm(f => ({ ...f, delivery_type: dt, motoboy_id: '', delivery_fee: '', city: '', neighborhood: '' }))}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border ${
                       form.delivery_type === dt
                         ? 'bg-orange-500 text-white border-orange-500'
@@ -491,6 +501,26 @@ export default function SmallSales() {
                     value={form.delivery_fee}
                     onChange={e => setForm(f => ({ ...f, delivery_fee: e.target.value }))}
                     placeholder="0,00"
+                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Cidade <span className="text-gray-600">(opcional)</span></label>
+                  <input
+                    type="text"
+                    value={form.city}
+                    onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+                    placeholder="Ex: Niterói"
+                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Bairro <span className="text-gray-600">(opcional)</span></label>
+                  <input
+                    type="text"
+                    value={form.neighborhood}
+                    onChange={e => setForm(f => ({ ...f, neighborhood: e.target.value }))}
+                    placeholder="Ex: Icaraí"
                     className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
                   />
                 </div>
@@ -569,7 +599,7 @@ export default function SmallSales() {
                     <button
                       key={dt}
                       type="button"
-                      onClick={() => setEditDeliveryForm(f => ({ ...f, delivery_type: dt, motoboy_id: '', delivery_fee: '' }))}
+                      onClick={() => setEditDeliveryForm(f => ({ ...f, delivery_type: dt, motoboy_id: '', delivery_fee: '', city: '', neighborhood: '' }))}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border ${
                         editDeliveryForm.delivery_type === dt
                           ? 'bg-orange-500 text-white border-orange-500'
@@ -605,6 +635,26 @@ export default function SmallSales() {
                     value={editDeliveryForm.delivery_fee}
                     onChange={e => setEditDeliveryForm(f => ({ ...f, delivery_fee: e.target.value }))}
                     placeholder="0,00"
+                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Cidade <span className="text-gray-600">(opcional)</span></label>
+                  <input
+                    type="text"
+                    value={editDeliveryForm.city}
+                    onChange={e => setEditDeliveryForm(f => ({ ...f, city: e.target.value }))}
+                    placeholder="Ex: Niterói"
+                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Bairro <span className="text-gray-600">(opcional)</span></label>
+                  <input
+                    type="text"
+                    value={editDeliveryForm.neighborhood}
+                    onChange={e => setEditDeliveryForm(f => ({ ...f, neighborhood: e.target.value }))}
+                    placeholder="Ex: Icaraí"
                     className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
                   />
                 </div>

@@ -403,7 +403,7 @@ export default function Motoboys() {
           .in('status', ['em_rota', 'finalizado'])
           .gte('sale_date', startUTC)
           .lt('sale_date', endUTC),
-        supabase.from('small_sales').select('description')
+        supabase.from('small_sales').select('description, city, neighborhood')
           .eq('motoboy_id', motoboyId)
           .eq('delivery_type', 'motoboy')
           .gte('created_at', startUTC)
@@ -420,13 +420,24 @@ export default function Motoboys() {
         byCidade.get(cidade)!.push(bairro);
       }
 
+      // Small_sales com cidade/bairro entram na seção da cidade correspondente
+      const smallSalesWithAddr = (smallSalesRes.data || []).filter(s => s.city && s.neighborhood);
+      const smallSalesNoAddr   = (smallSalesRes.data || []).filter(s => !s.city || !s.neighborhood);
+
+      for (const s of smallSalesWithAddr) {
+        const cidade = s.city!;
+        const bairro = s.neighborhood!;
+        if (!byCidade.has(cidade)) byCidade.set(cidade, []);
+        byCidade.get(cidade)!.push(bairro);
+      }
+
       const blocos = [...byCidade.entries()].map(([cidade, bairros]) =>
         `📍 ${cidade}\n${bairros.map(b => `- ${b}: `).join('\n')}`
       );
 
-      const smallSales = smallSalesRes.data || [];
-      const blocoSmall = smallSales.length > 0
-        ? `📍 Pequenas Vendas\n${smallSales.map(s => `- ${s.description}: `).join('\n')}`
+      // Small_sales sem endereço ficam na seção "Pequenas Vendas"
+      const blocoSmall = smallSalesNoAddr.length > 0
+        ? `📍 Pequenas Vendas\n${smallSalesNoAddr.map(s => `- ${s.description}: `).join('\n')}`
         : null;
 
       const texto = [
@@ -462,7 +473,7 @@ export default function Motoboys() {
           .gte('sale_date', startUTC)
           .lt('sale_date', endUTC),
         supabase.from('small_sales')
-          .select('id, description, delivery_fee')
+          .select('id, description, delivery_fee, city, neighborhood')
           .eq('motoboy_id', motoboyId)
           .eq('delivery_type', 'motoboy')
           .gte('created_at', startUTC)
@@ -538,12 +549,25 @@ export default function Motoboys() {
             (s.neighborhood || '').toLowerCase() === bairro.toLowerCase() &&
             (s.city || '').toLowerCase() === cidade.toLowerCase()
           );
-          console.log(`  [SALE] bairro="${bairro}" cidade="${cidade}" → ${sale ? `ENCONTRADO id=${sale.id.slice(0, 8)}` : 'NÃO ENCONTRADO'}`);
           if (sale) {
+            console.log(`  [SALE] bairro="${bairro}" cidade="${cidade}" → ENCONTRADO id=${sale.id.slice(0, 8)}`);
             matchedSales.add(sale.id);
             const newTotalCost = (sale.total_cost || 0) - (sale.delivery_fee || 0) + valor;
             const newProfit = (sale.net_received || 0) - newTotalCost;
             salesUpdates.push({ id: sale.id, delivery_fee: valor, total_cost: newTotalCost, profit: newProfit });
+          } else {
+            // Tenta small_sales com cidade/bairro preenchidos
+            const ss = smallSalesList.find(s =>
+              !matchedSmall.has(s.id) &&
+              s.city && s.neighborhood &&
+              (s.neighborhood || '').toLowerCase() === bairro.toLowerCase() &&
+              (s.city || '').toLowerCase() === cidade.toLowerCase()
+            );
+            console.log(`  [SMALL_ADDR] bairro="${bairro}" cidade="${cidade}" → ${ss ? `ENCONTRADO id=${ss.id.slice(0, 8)}` : 'NÃO ENCONTRADO'}`);
+            if (ss) {
+              matchedSmall.add(ss.id);
+              smallUpdates.push({ id: ss.id, delivery_fee: valor });
+            }
           }
         }
       }
