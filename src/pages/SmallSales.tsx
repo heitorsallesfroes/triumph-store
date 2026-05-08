@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
 import { getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
 import { ShoppingBag, Plus, Trash2, Bike, Truck, ShoppingCart, Pencil, X } from 'lucide-react';
+import AutocompleteInput from '../components/AutocompleteInput';
 
 interface PaymentEntry {
   method: string;
@@ -30,6 +31,11 @@ interface SmallSale {
 }
 
 interface MotoboyOption {
+  id: string;
+  name: string;
+}
+
+interface LocationItem {
   id: string;
   name: string;
 }
@@ -73,6 +79,8 @@ const defaultPaymentEntry = (): PaymentEntry => ({
 export default function SmallSales() {
   const [sales, setSales] = useState<SmallSale[]>([]);
   const [motoboys, setMotoboys] = useState<MotoboyOption[]>([]);
+  const [cities, setCities] = useState<LocationItem[]>([]);
+  const [neighborhoods, setNeighborhoods] = useState<LocationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState<FilterPeriod>('today');
@@ -138,8 +146,14 @@ export default function SmallSales() {
   };
 
   const loadMotoboys = async () => {
-    const { data } = await supabase.from('motoboys').select('id, name').order('name');
-    setMotoboys(data || []);
+    const [motoboysRes, citiesRes, neighborhoodsRes] = await Promise.all([
+      supabase.from('motoboys').select('id, name').order('name'),
+      supabase.from('cities').select('id, name').order('name'),
+      supabase.from('neighborhoods').select('id, name').order('name'),
+    ]);
+    setMotoboys(motoboysRes.data || []);
+    setCities(citiesRes.data || []);
+    setNeighborhoods(neighborhoodsRes.data || []);
   };
 
   const updatePaymentEntry = (index: number, field: string, value: string | number) => {
@@ -506,20 +520,20 @@ export default function SmallSales() {
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Cidade <span className="text-gray-600">(opcional)</span></label>
-                  <input
-                    type="text"
+                  <AutocompleteInput
                     value={form.city}
-                    onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+                    onChange={v => setForm(f => ({ ...f, city: v }))}
+                    items={cities}
                     placeholder="Ex: Niterói"
                     className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
                   />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Bairro <span className="text-gray-600">(opcional)</span></label>
-                  <input
-                    type="text"
+                  <AutocompleteInput
                     value={form.neighborhood}
-                    onChange={e => setForm(f => ({ ...f, neighborhood: e.target.value }))}
+                    onChange={v => setForm(f => ({ ...f, neighborhood: v }))}
+                    items={neighborhoods}
                     placeholder="Ex: Icaraí"
                     className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
                   />
@@ -640,20 +654,20 @@ export default function SmallSales() {
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Cidade <span className="text-gray-600">(opcional)</span></label>
-                  <input
-                    type="text"
+                  <AutocompleteInput
                     value={editDeliveryForm.city}
-                    onChange={e => setEditDeliveryForm(f => ({ ...f, city: e.target.value }))}
+                    onChange={v => setEditDeliveryForm(f => ({ ...f, city: v }))}
+                    items={cities}
                     placeholder="Ex: Niterói"
                     className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
                   />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Bairro <span className="text-gray-600">(opcional)</span></label>
-                  <input
-                    type="text"
+                  <AutocompleteInput
                     value={editDeliveryForm.neighborhood}
-                    onChange={e => setEditDeliveryForm(f => ({ ...f, neighborhood: e.target.value }))}
+                    onChange={v => setEditDeliveryForm(f => ({ ...f, neighborhood: v }))}
+                    items={neighborhoods}
                     placeholder="Ex: Icaraí"
                     className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
                   />
