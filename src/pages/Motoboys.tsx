@@ -180,7 +180,7 @@ export default function Motoboys() {
 
       const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
-          .eq('delivery_type', 'motoboy').in('status', ['finalizado', 'concluido'])
+          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
           .gte('sale_date', startUTC).lt('sale_date', endUTC),
         supabase.from('small_sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
@@ -219,7 +219,7 @@ export default function Motoboys() {
 
       const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
-          .eq('delivery_type', 'motoboy').in('status', ['finalizado', 'concluido'])
+          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
           .gte('sale_date', startUTC).lt('sale_date', endUTC),
         supabase.from('small_sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
@@ -260,7 +260,7 @@ export default function Motoboys() {
 
       const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
-          .eq('delivery_type', 'motoboy').in('status', ['finalizado', 'concluido'])
+          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
           .gte('sale_date', startUTC).lt('sale_date', endUTC),
         supabase.from('small_sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
@@ -301,7 +301,7 @@ export default function Motoboys() {
 
       const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
-          .eq('delivery_type', 'motoboy').in('status', ['finalizado', 'concluido'])
+          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
           .gte('sale_date', startUTC).lt('sale_date', endUTC),
         supabase.from('small_sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
@@ -400,7 +400,7 @@ export default function Motoboys() {
         supabase.from('sales').select('neighborhood, city')
           .eq('motoboy_id', motoboyId)
           .eq('delivery_type', 'motoboy')
-          .in('status', ['em_rota', 'finalizado', 'concluido'])
+          .in('status', ['em_rota', 'finalizado'])
           .gte('sale_date', startUTC)
           .lt('sale_date', endUTC),
         supabase.from('small_sales').select('description, city, neighborhood')

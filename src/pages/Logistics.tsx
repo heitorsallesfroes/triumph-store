@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard, X } from 'lucide-react';
+import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard } from 'lucide-react';
 import { getTodayInBrazil, formatDateDisplay } from '../lib/dateUtils';
 
 interface Sale {
@@ -86,7 +86,7 @@ export default function Logistics() {
     if (status === 'em_separacao') return 'para_embalar';
     if (status === 'embalado') return 'embalado';
     if (status === 'em_rota') return 'saiu_entrega';
-    if (status === 'concluido') return 'concluido';
+    if (status === 'finalizado') return 'concluido';
     return 'para_embalar';
   };
 
@@ -94,7 +94,7 @@ export default function Logistics() {
     if (column === 'para_embalar') return 'em_separacao';
     if (column === 'embalado') return 'embalado';
     if (column === 'saiu_entrega') return 'em_rota';
-    if (column === 'concluido') return 'concluido';
+    if (column === 'concluido') return 'finalizado';
     return 'em_separacao';
   };
 
@@ -118,17 +118,6 @@ export default function Logistics() {
       console.error('Error updating sale status:', error);
       alert('Erro ao atualizar status do pedido');
       loadSales();
-    }
-  };
-
-  const handleFinalize = async (saleId: string) => {
-    if (!confirm('Marcar como finalizado?')) return;
-    try {
-      const { error } = await supabase.from('sales').update({ status: 'finalizado' }).eq('id', saleId);
-      if (error) throw error;
-      setSales(prev => prev.filter(s => s.id !== saleId));
-    } catch {
-      alert('Erro ao finalizar pedido');
     }
   };
 
@@ -236,7 +225,6 @@ export default function Logistics() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
-          onFinalize={handleFinalize}
           formatPaymentMethod={formatPaymentMethod}
         />
         <KanbanColumn
@@ -248,7 +236,6 @@ export default function Logistics() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
-          onFinalize={handleFinalize}
           formatPaymentMethod={formatPaymentMethod}
         />
         <KanbanColumn
@@ -260,7 +247,6 @@ export default function Logistics() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
-          onFinalize={handleFinalize}
           formatPaymentMethod={formatPaymentMethod}
         />
         <KanbanColumn
@@ -272,7 +258,6 @@ export default function Logistics() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
-          onFinalize={handleFinalize}
           formatPaymentMethod={formatPaymentMethod}
         />
       </div>
@@ -289,7 +274,6 @@ interface KanbanColumnProps {
   onDragStart: (sale: Sale) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (column: LogisticsColumn) => void;
-  onFinalize: (saleId: string) => void;
   formatPaymentMethod: (method: string) => string;
 }
 
@@ -302,7 +286,6 @@ function KanbanColumn({
   onDragStart,
   onDragOver,
   onDrop,
-  onFinalize,
   formatPaymentMethod,
 }: KanbanColumnProps) {
   const colorClasses = {
@@ -348,17 +331,10 @@ function KanbanColumn({
               key={sale.id}
               draggable
               onDragStart={() => onDragStart(sale)}
-              className="relative bg-gray-900 rounded-lg p-2.5 border border-gray-700 cursor-move hover:border-orange-500 transition-colors space-y-1.5"
+              className="bg-gray-900 rounded-lg p-2.5 border border-gray-700 cursor-move hover:border-orange-500 transition-colors space-y-1.5"
             >
-              <button
-                onClick={e => { e.stopPropagation(); onFinalize(sale.id); }}
-                className="absolute top-1.5 right-1.5 text-gray-600 hover:text-red-400 hover:bg-red-400/10 rounded transition-colors p-0.5"
-                title="Finalizar pedido"
-              >
-                <X size={13} />
-              </button>
               {/* Cliente + localização */}
-              <div className="pr-4">
+              <div>
                 <h3 className="text-white text-sm font-bold leading-tight">{sale.customer_name}</h3>
                 <p className="text-gray-400 text-xs mt-0.5">
                   {sale.neighborhood}{sale.city ? ` · ${sale.city}` : ''}
