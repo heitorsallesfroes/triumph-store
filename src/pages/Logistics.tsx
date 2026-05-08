@@ -49,15 +49,11 @@ export default function Logistics() {
 
   const loadSales = async () => {
     try {
-      const today = getTodayInBrazil();
-
       const { data: salesData, error: salesError } = await supabase
         .from('sales')
         .select('*, sale_items(quantity, product_id, products(model, color, category)), motoboys(name)')
-        .in('status', ['em_separacao', 'embalado', 'em_rota', 'finalizado'])
+        .in('status', ['em_separacao', 'embalado', 'em_rota'])
         .eq('delivery_type', 'motoboy')
-        .gte('sale_date', `${today}T00:00:00`)
-        .lte('sale_date', `${today}T23:59:59`)
         .order('sale_date', { ascending: false });
 
       if (salesError) throw salesError;
@@ -189,7 +185,7 @@ export default function Logistics() {
         <h1 className="text-3xl font-bold text-white mb-2">Logística</h1>
         <div className="flex items-center gap-2 text-gray-400">
           <Calendar size={18} />
-          <span>Pedidos de hoje: {formatDateDisplay(currentDate)}</span>
+          <span>Pedidos pendentes — {formatDateDisplay(currentDate)}</span>
         </div>
       </div>
 
