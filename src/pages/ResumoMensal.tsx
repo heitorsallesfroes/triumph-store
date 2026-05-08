@@ -66,7 +66,7 @@ export default function ResumoMensal() {
     try {
       const [salesRes, itemsRes, adRes, costsRes, motoboyExtrasRes] = await Promise.all([
         supabase.from('sales').select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status,city,payment_method')
-          .eq('status', 'finalizado')
+          .neq('status', 'cancelado')
           .gte('sale_date', startDate)
           .lte('sale_date', endDate + 'T23:59:59'),
         supabase.from('sale_items').select('sale_id,product_id,quantity,products(model,color)')
@@ -79,7 +79,7 @@ export default function ResumoMensal() {
       const salesData = salesRes.data || [];
       setSales(salesData);
 
-      // Buscar itens das vendas finalizadas
+      // Buscar itens de todas as vendas do período
       if (salesData.length > 0) {
         const saleIds = salesData.map(s => s.id);
         const { data: itemsData } = await supabase
@@ -114,10 +114,12 @@ export default function ResumoMensal() {
     return s + Number(v.total_cost || 0) - deliveryInCost;
   }, 0);
 
-  const totalMotoboyDeliveries = sales
+  // Custo de entrega: só quando finalizado (entregue de fato)
+  const salesFinalizadas = sales.filter(v => v.status === 'finalizado');
+  const totalMotoboyDeliveries = salesFinalizadas
     .filter(v => v.delivery_type === 'motoboy')
     .reduce((s, v) => s + Number(v.delivery_fee || 0), 0);
-  const totalCorreiosDeliveries = sales
+  const totalCorreiosDeliveries = salesFinalizadas
     .filter(v => v.delivery_type === 'correios')
     .reduce((s, v) => s + Number(v.delivery_cost || 0), 0);
   const totalMotoboyExtras = motoboyExtras;
