@@ -52,7 +52,7 @@ export default function Logistics() {
       const { data: salesData, error: salesError } = await supabase
         .from('sales')
         .select('*, sale_items(quantity, product_id, products(model, color, category)), motoboys(name)')
-        .in('status', ['em_separacao', 'embalado', 'em_rota'])
+        .in('status', ['em_separacao', 'embalado', 'em_rota', 'concluido'])
         .eq('delivery_type', 'motoboy')
         .order('sale_date', { ascending: false });
 
@@ -86,7 +86,7 @@ export default function Logistics() {
     if (status === 'em_separacao') return 'para_embalar';
     if (status === 'embalado') return 'embalado';
     if (status === 'em_rota') return 'saiu_entrega';
-    if (status === 'finalizado') return 'concluido';
+    if (status === 'concluido') return 'concluido';
     return 'para_embalar';
   };
 
@@ -94,7 +94,7 @@ export default function Logistics() {
     if (column === 'para_embalar') return 'em_separacao';
     if (column === 'embalado') return 'embalado';
     if (column === 'saiu_entrega') return 'em_rota';
-    if (column === 'concluido') return 'finalizado';
+    if (column === 'concluido') return 'concluido';
     return 'em_separacao';
   };
 
