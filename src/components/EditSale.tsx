@@ -30,6 +30,13 @@ interface SaleData {
   supplier_id: string | null;
   volumes: number;
   payment_methods?: PaymentEntry[] | null;
+  address_street?: string | null;
+  address_number?: string | null;
+  address_complement?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip_code?: string | null;
 }
 
 interface SaleItem {
@@ -68,6 +75,13 @@ export default function EditSale({ saleId, onClose }: EditSaleProps) {
     supplier_id: '',
     volumes: 1,
     totalSalePrice: 0,
+    address_street: '',
+    address_number: '',
+    address_complement: '',
+    neighborhood: '',
+    city: '',
+    state: '',
+    zip_code: '',
   });
 
   const [paymentMethods, setPaymentMethods] = useState<PaymentEntry[]>([
@@ -105,6 +119,13 @@ export default function EditSale({ saleId, onClose }: EditSaleProps) {
         supplier_id: saleResponse.data.supplier_id || '',
         volumes: saleResponse.data.volumes || 1,
         totalSalePrice: saleResponse.data.total_sale_price || 0,
+        address_street: saleResponse.data.address_street || '',
+        address_number: saleResponse.data.address_number || '',
+        address_complement: saleResponse.data.address_complement || '',
+        neighborhood: saleResponse.data.neighborhood || '',
+        city: saleResponse.data.city || '',
+        state: saleResponse.data.state || '',
+        zip_code: saleResponse.data.zip_code || '',
       });
 
       const existing = saleResponse.data.payment_methods;
@@ -214,6 +235,13 @@ export default function EditSale({ saleId, onClose }: EditSaleProps) {
           net_received: updated.netReceived,
           profit: updated.profit,
           volumes: editData.volumes,
+          address_street: editData.address_street.trim() || null,
+          address_number: editData.address_number.trim() || null,
+          address_complement: editData.address_complement.trim() || null,
+          neighborhood: editData.neighborhood.trim() || null,
+          city: editData.city.trim() || null,
+          state: editData.state.trim() || null,
+          zip_code: editData.zip_code.trim() || null,
         })
         .eq('id', saleId);
 
@@ -466,6 +494,89 @@ export default function EditSale({ saleId, onClose }: EditSaleProps) {
                 onChange={(e) => setEditData({ ...editData, delivery_cost: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-gray-800 text-white rounded-lg px-4 py-3 border border-gray-600 focus:border-orange-500 focus:outline-none"
               />
+            </div>
+          )}
+
+          {editData.delivery_type !== 'loja_fisica' && (
+            <div className="space-y-3">
+              <label className="block text-white font-semibold">Endereço de Entrega</label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs text-gray-400 mb-1">Rua</label>
+                  <input
+                    type="text"
+                    value={editData.address_street}
+                    onChange={e => setEditData({ ...editData, address_street: e.target.value })}
+                    placeholder="Ex: Rua das Flores"
+                    className="w-full bg-gray-800 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Número</label>
+                  <input
+                    type="text"
+                    value={editData.address_number}
+                    onChange={e => setEditData({ ...editData, address_number: e.target.value })}
+                    placeholder="Ex: 123"
+                    className="w-full bg-gray-800 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Complemento</label>
+                  <input
+                    type="text"
+                    value={editData.address_complement}
+                    onChange={e => setEditData({ ...editData, address_complement: e.target.value })}
+                    placeholder="Ex: Apto 201"
+                    className="w-full bg-gray-800 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Bairro</label>
+                  <input
+                    type="text"
+                    value={editData.neighborhood}
+                    onChange={e => setEditData({ ...editData, neighborhood: e.target.value })}
+                    placeholder="Ex: Centro"
+                    className="w-full bg-gray-800 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Cidade</label>
+                  <input
+                    type="text"
+                    value={editData.city}
+                    onChange={e => setEditData({ ...editData, city: e.target.value })}
+                    placeholder="Ex: Niterói"
+                    className="w-full bg-gray-800 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">CEP</label>
+                  <input
+                    type="text"
+                    value={editData.zip_code}
+                    onChange={e => setEditData({ ...editData, zip_code: e.target.value })}
+                    placeholder="Ex: 24020-125"
+                    className="w-full bg-gray-800 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Estado (UF)</label>
+                  <input
+                    type="text"
+                    value={editData.state}
+                    onChange={e => setEditData({ ...editData, state: e.target.value.toUpperCase().slice(0, 2) })}
+                    placeholder="Ex: RJ"
+                    maxLength={2}
+                    className="w-full bg-gray-800 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm uppercase"
+                  />
+                </div>
+              </div>
             </div>
           )}
 
