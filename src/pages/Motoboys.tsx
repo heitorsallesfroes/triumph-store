@@ -401,8 +401,8 @@ export default function Motoboys() {
           .eq('motoboy_id', motoboyId)
           .eq('delivery_type', 'motoboy')
           .in('status', ['em_rota', 'finalizado'])
-          .gte('sale_date', startUTC)
-          .lt('sale_date', endUTC),
+          .gte('updated_at', startUTC)
+          .lt('updated_at', endUTC),
         supabase.from('small_sales').select('description, city, neighborhood')
           .eq('motoboy_id', motoboyId)
           .eq('delivery_type', 'motoboy')
@@ -470,8 +470,8 @@ export default function Motoboys() {
           .select('id, neighborhood, city, delivery_fee, total_cost, net_received')
           .eq('motoboy_id', motoboyId)
           .eq('delivery_type', 'motoboy')
-          .gte('sale_date', startUTC)
-          .lt('sale_date', endUTC),
+          .gte('updated_at', startUTC)
+          .lt('updated_at', endUTC),
         supabase.from('small_sales')
           .select('id, description, delivery_fee, city, neighborhood')
           .eq('motoboy_id', motoboyId)
