@@ -98,8 +98,8 @@ export default function ResumoMensal() {
       const { data: ssData } = await supabase
         .from('small_sales')
         .select('*')
-        .gte('created_at', startDate)
-        .lte('created_at', endDate + 'T23:59:59');
+        .gte('created_at', startDate + 'T00:00:00-03:00')
+        .lte('created_at', endDate + 'T23:59:59-03:00');
       setSmallSales(ssData || []);
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
@@ -108,11 +108,10 @@ export default function ResumoMensal() {
   const totalBruto = sales.reduce((s, v) => s + Number(v.total_sale_price), 0);
   const totalLiquido = sales.reduce((s, v) => s + Number(v.net_received), 0);
 
-  // total_cost embute delivery_fee para vendas motoboy (lancarValores faz isso)
-  // subtraímos delivery_fee do total_cost para não contar duas vezes
+  // total_cost embute delivery_fee e delivery_cost — subtraímos ambos para não contar duas vezes
   const totalCustoProdutos = sales.reduce((s, v) => {
-    const deliveryInCost = v.delivery_type === 'motoboy' ? Number(v.delivery_fee || 0) : 0;
-    return s + Number(v.total_cost) - deliveryInCost;
+    const deliveryInCost = Number(v.delivery_fee || 0) + Number(v.delivery_cost || 0);
+    return s + Number(v.total_cost || 0) - deliveryInCost;
   }, 0);
 
   const totalMotoboyDeliveries = sales
@@ -128,9 +127,17 @@ export default function ResumoMensal() {
   // Pequenas vendas
   const smallSalesRevenue = smallSales.reduce((s, v) => s + Number(v.sale_price) * Number(v.quantity), 0);
   const smallSalesCost = smallSales.reduce((s, v) => s + Number(v.cost) * Number(v.quantity), 0);
+  const CARD_METHODS = ['credit_card', 'debit_card', 'payment_link'];
   const smallSalesCardFees = smallSales.reduce((s, v) => {
-    if (v.payment_method === 'credit_card' && v.card_brand && v.installments) {
-      return s + calculateCardFee(Number(v.sale_price) * Number(v.quantity), 'credit_card', v.card_brand, v.installments);
+    type PM = { method: string; card_brand: string; installments: number; amount: number };
+    const pms = v.payment_methods as PM[] | null;
+    if (pms && Array.isArray(pms) && pms.length > 1) {
+      return s + pms
+        .filter(pm => CARD_METHODS.includes(pm.method))
+        .reduce((sum, pm) => sum + calculateCardFee(Number(pm.amount), pm.method, pm.card_brand || '', pm.installments || 0), 0);
+    }
+    if (CARD_METHODS.includes(v.payment_method)) {
+      return s + calculateCardFee(Number(v.sale_price) * Number(v.quantity), v.payment_method, v.card_brand || '', v.installments || 0);
     }
     return s;
   }, 0);
