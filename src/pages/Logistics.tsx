@@ -49,16 +49,31 @@ export default function Logistics() {
 
   const loadSales = async () => {
     try {
-      const { data: salesData, error: salesError } = await supabase
-        .from('sales')
-        .select('*, sale_items(quantity, product_id, products(model, color, category)), motoboys(name)')
-        .in('status', ['em_separacao', 'embalado', 'em_rota', 'concluido'])
-        .eq('delivery_type', 'motoboy')
-        .order('sale_date', { ascending: false });
+      const today = getTodayInBrazil();
+      const fields = '*, sale_items(quantity, product_id, products(model, color, category)), motoboys(name)';
 
-      if (salesError) throw salesError;
+      const [pendingRes, finalizadoRes] = await Promise.all([
+        // Pendentes: sem filtro de data — mostrar até serem finalizados
+        supabase.from('sales').select(fields)
+          .in('status', ['em_separacao', 'embalado', 'em_rota'])
+          .eq('delivery_type', 'motoboy')
+          .order('sale_date', { ascending: false }),
+        // Finalizados: só do dia de hoje
+        supabase.from('sales').select(fields)
+          .eq('status', 'finalizado')
+          .eq('delivery_type', 'motoboy')
+          .gte('sale_date', `${today}T00:00:00`)
+          .lte('sale_date', `${today}T23:59:59`)
+          .order('sale_date', { ascending: false }),
+      ]);
 
-      const salesWithDetails = (salesData || []).map((sale: any) => ({
+      if (pendingRes.error) throw pendingRes.error;
+      if (finalizadoRes.error) throw finalizadoRes.error;
+
+      const combined = [...(pendingRes.data || []), ...(finalizadoRes.data || [])]
+        .sort((a: any, b: any) => new Date(b.sale_date).getTime() - new Date(a.sale_date).getTime());
+
+      const salesWithDetails = combined.map((sale: any) => ({
         id: sale.id,
         customer_name: sale.customer_name,
         neighborhood: sale.neighborhood,
