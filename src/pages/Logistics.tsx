@@ -116,6 +116,13 @@ export default function Logistics() {
   const updateSaleStatus = async (saleId: string, newColumn: LogisticsColumn) => {
     const newStatus = getSalesStatus(newColumn);
 
+    // Optimistic update: move o card imediatamente sem esperar o banco
+    setSales(prevSales =>
+      prevSales.map(sale =>
+        sale.id === saleId ? { ...sale, status: newStatus } : sale
+      )
+    );
+
     try {
       const { error } = await supabase
         .from('sales')
@@ -123,16 +130,10 @@ export default function Logistics() {
         .eq('id', saleId);
 
       if (error) throw error;
-
-      setSales(prevSales =>
-        prevSales.map(sale =>
-          sale.id === saleId ? { ...sale, status: newStatus } : sale
-        )
-      );
     } catch (error) {
       console.error('Error updating sale status:', error);
       alert('Erro ao atualizar status do pedido');
-      loadSales();
+      loadSales(); // restaura estado correto em caso de erro
     }
   };
 
