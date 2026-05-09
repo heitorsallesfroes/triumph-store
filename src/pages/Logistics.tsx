@@ -12,6 +12,7 @@ interface Sale {
   payment_method: string;
   status: string;
   sale_date: string;
+  updated_at?: string;
   motoboy_id: string | null;
   motoboy?: { name: string };
   products: Array<{ model: string; color: string }>;
@@ -86,6 +87,7 @@ export default function Logistics() {
         payment_method: sale.payment_method,
         status: sale.status,
         sale_date: sale.sale_date,
+        updated_at: sale.updated_at,
         motoboy_id: sale.motoboy_id,
         products: (sale.sale_items || [])
           .filter((item: any) => item.products?.category === 'smartwatch')
@@ -209,7 +211,9 @@ export default function Logistics() {
   const paraEmbalar = visibleSales.filter(s => getLogisticsColumn(s.status) === 'para_embalar');
   const embalado    = visibleSales.filter(s => getLogisticsColumn(s.status) === 'embalado');
   const saiuEntrega = visibleSales.filter(s => getLogisticsColumn(s.status) === 'saiu_entrega');
-  const concluido   = visibleSales.filter(s => getLogisticsColumn(s.status) === 'concluido');
+  const concluido   = visibleSales
+    .filter(s => getLogisticsColumn(s.status) === 'concluido')
+    .sort((a, b) => new Date(b.updated_at || b.sale_date).getTime() - new Date(a.updated_at || a.sale_date).getTime());
 
   return (
     <div className="p-8">
