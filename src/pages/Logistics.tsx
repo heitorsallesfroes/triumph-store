@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard } from 'lucide-react';
+import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard, X } from 'lucide-react';
 import { getTodayInBrazil, formatDateDisplay } from '../lib/dateUtils';
 
 interface Sale {
@@ -141,6 +141,18 @@ export default function Logistics() {
     }
   };
 
+  const handleFinalize = async (saleId: string) => {
+    if (!confirm('Marcar como finalizado?')) return;
+    setSales(prev => prev.filter(s => s.id !== saleId));
+    try {
+      const { error } = await supabase.from('sales').update({ status: 'finalizado' }).eq('id', saleId);
+      if (error) throw error;
+    } catch {
+      alert('Erro ao finalizar pedido');
+      loadSales();
+    }
+  };
+
   const handleDragStart = (sale: Sale) => {
     setDraggedSale(sale);
   };
@@ -245,6 +257,7 @@ export default function Logistics() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
+          onFinalize={handleFinalize}
           formatPaymentMethod={formatPaymentMethod}
         />
         <KanbanColumn
@@ -256,6 +269,7 @@ export default function Logistics() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
+          onFinalize={handleFinalize}
           formatPaymentMethod={formatPaymentMethod}
         />
         <KanbanColumn
@@ -267,6 +281,7 @@ export default function Logistics() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
+          onFinalize={handleFinalize}
           formatPaymentMethod={formatPaymentMethod}
         />
         <KanbanColumn
@@ -278,6 +293,7 @@ export default function Logistics() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
+          onFinalize={handleFinalize}
           formatPaymentMethod={formatPaymentMethod}
         />
       </div>
@@ -294,6 +310,7 @@ interface KanbanColumnProps {
   onDragStart: (sale: Sale) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (column: LogisticsColumn) => void;
+  onFinalize: (saleId: string) => void;
   formatPaymentMethod: (method: string) => string;
 }
 
@@ -306,6 +323,7 @@ function KanbanColumn({
   onDragStart,
   onDragOver,
   onDrop,
+  onFinalize,
   formatPaymentMethod,
 }: KanbanColumnProps) {
   const colorClasses = {
@@ -351,10 +369,17 @@ function KanbanColumn({
               key={sale.id}
               draggable
               onDragStart={() => onDragStart(sale)}
-              className="bg-gray-900 rounded-lg p-2.5 border border-gray-700 cursor-move hover:border-orange-500 transition-colors space-y-1.5"
+              className="relative bg-gray-900 rounded-lg p-2.5 border border-gray-700 cursor-move hover:border-orange-500 transition-colors space-y-1.5"
             >
+              <button
+                onClick={e => { e.stopPropagation(); onFinalize(sale.id); }}
+                className="absolute top-1.5 right-1.5 text-gray-600 hover:text-red-400 hover:bg-red-400/10 rounded transition-colors p-0.5"
+                title="Finalizar pedido"
+              >
+                <X size={13} />
+              </button>
               {/* Cliente + localização */}
-              <div>
+              <div className="pr-4">
                 <h3 className="text-white text-sm font-bold leading-tight">{sale.customer_name}</h3>
                 <p className="text-gray-400 text-xs mt-0.5">
                   {sale.neighborhood}{sale.city ? ` · ${sale.city}` : ''}
