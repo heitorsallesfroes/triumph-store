@@ -50,6 +50,10 @@ export default function Logistics() {
   const loadSales = async () => {
     try {
       const today = getTodayInBrazil();
+      const todayStartUTC = `${today}T03:00:00.000Z`;
+      const tomorrowDate = new Date(`${today}T12:00:00`);
+      tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+      const tomorrowStartUTC = `${tomorrowDate.toISOString().split('T')[0]}T03:00:00.000Z`;
       const fields = '*, sale_items(quantity, product_id, products(model, color, category)), motoboys(name)';
 
       const [pendingRes, finalizadoRes] = await Promise.all([
@@ -58,13 +62,13 @@ export default function Logistics() {
           .in('status', ['em_separacao', 'embalado', 'em_rota'])
           .eq('delivery_type', 'motoboy')
           .order('sale_date', { ascending: false }),
-        // Finalizados: só do dia de hoje
+        // Finalizados: só do dia de hoje — filtra por updated_at (quando foi finalizado, não quando foi criado)
         supabase.from('sales').select(fields)
           .eq('status', 'finalizado')
           .eq('delivery_type', 'motoboy')
-          .gte('sale_date', `${today}T00:00:00`)
-          .lte('sale_date', `${today}T23:59:59`)
-          .order('sale_date', { ascending: false }),
+          .gte('updated_at', todayStartUTC)
+          .lt('updated_at', tomorrowStartUTC)
+          .order('updated_at', { ascending: false }),
       ]);
 
       if (pendingRes.error) throw pendingRes.error;
