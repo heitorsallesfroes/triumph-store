@@ -6,6 +6,7 @@ import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
 interface EditSaleProps {
   saleId: string;
   onClose: () => void;
+  onSaved?: (saleId: string, updates: Record<string, any>) => void;
 }
 
 interface PaymentEntry {
@@ -58,7 +59,7 @@ interface SaleAccessory {
   };
 }
 
-export default function EditSale({ saleId, onClose }: EditSaleProps) {
+export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
   const [sale, setSale] = useState<SaleData | null>(null);
   const [items, setItems] = useState<SaleItem[]>([]);
   const [accessories, setAccessories] = useState<SaleAccessory[]>([]);
@@ -246,6 +247,26 @@ export default function EditSale({ saleId, onClose }: EditSaleProps) {
         .eq('id', saleId);
 
       if (error) throw error;
+
+      onSaved?.(saleId, {
+        payment_method: paymentMethods[0]?.method || 'pix',
+        card_brand: paymentMethods.find(pm => pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link')?.card_brand || null,
+        installments: paymentMethods.find(pm => pm.method === 'credit_card' || pm.method === 'payment_link')?.installments || 1,
+        payment_methods: paymentMethods,
+        delivery_type: editData.delivery_type,
+        delivery_fee: updated.deliveryFee,
+        delivery_cost: updated.deliveryCost,
+        motoboy_id: editData.delivery_type === 'motoboy' ? (editData.motoboy_id || null) : null,
+        total_sale_price: editData.totalSalePrice,
+        profit: updated.profit,
+        address_street: editData.address_street.trim() || null,
+        address_number: editData.address_number.trim() || null,
+        address_complement: editData.address_complement.trim() || null,
+        neighborhood: editData.neighborhood.trim() || null,
+        city: editData.city.trim() || null,
+        state: editData.state.trim() || null,
+        zip_code: editData.zip_code.trim() || null,
+      });
 
       alert('Venda atualizada com sucesso!');
       onClose();

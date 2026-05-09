@@ -1117,7 +1117,17 @@ export default function SalesHistory() {
           }}
         />
       )}
-      {editingSaleId && <EditSale saleId={editingSaleId} onClose={() => { setEditingSaleId(null); loadSales(); }} />}
+      {editingSaleId && (
+        <EditSale
+          saleId={editingSaleId}
+          onClose={() => setEditingSaleId(null)}
+          onSaved={(id, updates) => {
+            const patch = (s: any) => s.id === id ? { ...s, ...updates } : s;
+            setSales(prev => prev.map(patch));
+            setFilteredSales(prev => prev.map(patch));
+          }}
+        />
+      )}
       {whatsappSale && <WhatsAppModal sale={whatsappSale} onClose={() => setWhatsappSale(null)} />}
     </div>
   );
