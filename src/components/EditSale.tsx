@@ -239,8 +239,8 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
           address_street: editData.address_street.trim() || null,
           address_number: editData.address_number.trim() || null,
           address_complement: editData.address_complement.trim() || null,
-          neighborhood: editData.neighborhood.trim() || null,
-          city: editData.city.trim() || null,
+          neighborhood: editData.neighborhood.trim() || '',
+          city: editData.city.trim() || '',
           state: editData.state.trim() || null,
           zip_code: editData.zip_code.trim() || null,
         })
@@ -262,8 +262,8 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
         address_street: editData.address_street.trim() || null,
         address_number: editData.address_number.trim() || null,
         address_complement: editData.address_complement.trim() || null,
-        neighborhood: editData.neighborhood.trim() || null,
-        city: editData.city.trim() || null,
+        neighborhood: editData.neighborhood.trim() || '',
+        city: editData.city.trim() || '',
         state: editData.state.trim() || null,
         zip_code: editData.zip_code.trim() || null,
       });
