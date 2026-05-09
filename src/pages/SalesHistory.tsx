@@ -898,7 +898,12 @@ export default function SalesHistory() {
                             {sale.additional_items > 0 && <span className="text-gray-500"> +{sale.additional_items} {sale.additional_items === 1 ? 'item' : 'itens'}</span>}
                           </p>
                         )}
-                        <p className="text-gray-400 text-sm">{sale.neighborhood} - {sale.city}</p>
+                        <p className="text-gray-400 text-sm">
+                          {sale.delivery_type === 'loja_fisica' && (
+                            <span className="text-green-400 font-medium">Loja Física · </span>
+                          )}
+                          {sale.neighborhood} - {sale.city}
+                        </p>
                         {sale.delivery_notes && (
                           <p className="text-amber-400 text-xs mt-1">📝 {sale.delivery_notes}</p>
                         )}
