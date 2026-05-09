@@ -116,8 +116,8 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
     if (method === 'pix') return 'PIX';
     if (method === 'cash') return 'Dinheiro';
     if (method === 'debit_card') return 'Débito';
-    if (method === 'credit_card') return installments > 1 ? `Crédito ${installments}x` : 'Crédito';
-    if (method === 'payment_link') return installments > 1 ? `Link de Pagamento ${installments}x` : 'Link de Pagamento';
+    if (method === 'credit_card') return 'Crédito';
+    if (method === 'payment_link') return 'Link de Pagamento';
     return method;
   };
 
