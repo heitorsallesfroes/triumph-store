@@ -279,7 +279,7 @@ export default function ResumoVendas() {
           cur.quantity += item.quantity;
           swMap.set(item.product_id, cur);
         });
-        setSmartwatches([...swMap.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 8));
+        setSmartwatches([...swMap.values()].sort((a, b) => b.quantity - a.quantity));
       } else {
         setSmartwatches([]);
       }
@@ -299,7 +299,7 @@ export default function ResumoVendas() {
     <div className="p-6 md:p-8">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Resumo de Vendas</h1>
-        <p className="text-sm text-gray-400 mt-1">Métricas financeiras por período — vendas canceladas excluídas</p>
+        <p className="text-sm text-gray-400 mt-1">Smartwatches — métricas financeiras por período (vendas canceladas excluídas · pequenas vendas no Resumo Mensal)</p>
       </div>
 
       {/* Filtros */}
@@ -451,7 +451,7 @@ export default function ResumoVendas() {
             <p className={`text-3xl font-bold ${summary.lucroFinal >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {fmt(summary.lucroFinal)}
             </p>
-            <p className="text-xs text-gray-500 mt-1">Líquido − produtos − entregas − ads</p>
+            <p className="text-xs text-gray-500 mt-1">Apenas smartwatches: líquido − produtos − entregas − ads</p>
           </div>
 
           {/* Detalhamento P&L */}
@@ -652,7 +652,7 @@ export default function ResumoVendas() {
           <Section title="Top Smartwatches Mais Vendidos" icon={Watch}>
             {smartwatches.length === 0 ? <Empty text="Nenhum smartwatch vendido no período" /> : (
               <div className="space-y-3">
-                {smartwatches.map((sw, i) => {
+                {smartwatches.slice(0, 8).map((sw, i) => {
                   const pct = (sw.quantity / smartwatches[0].quantity) * 100;
                   return (
                     <div key={sw.product_id}>

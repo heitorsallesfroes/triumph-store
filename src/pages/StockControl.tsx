@@ -1034,7 +1034,7 @@ const [showStockSummary, setShowStockSummary] = useState(false);
         const productMap = new Map(products.map((p: any) => [p.id, p]));
         return (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-gray-800 rounded-xl w-full max-w-md border border-gray-700">
+            <div className="bg-gray-800 rounded-xl w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
               <div className="p-6 border-b border-gray-700">
                 <h2 className="text-xl font-bold text-white mb-1">✅ Receber Pedido</h2>
                 <p className="text-gray-400 text-sm">{confirmReceiveGroup}</p>
@@ -1103,7 +1103,7 @@ const [showStockSummary, setShowStockSummary] = useState(false);
       {/* Modal lançamento */}
       {showMovementForm && selectedProduct && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold text-white mb-2">
               {movementType === 'entrada' ? '➕ Entrada de Estoque' : '➖ Saída de Estoque'}
             </h2>
@@ -1158,7 +1158,7 @@ const [showStockSummary, setShowStockSummary] = useState(false);
       {/* Modal encomenda */}
       {showOrderForm && selectedProduct && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold text-white mb-1">📦 Registrar Encomenda</h2>
             <p className="text-gray-400 mb-4">{selectedProduct.model} {selectedProduct.color}</p>
             <div className="space-y-4">

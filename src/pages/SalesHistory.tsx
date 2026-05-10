@@ -1141,7 +1141,7 @@ export default function SalesHistory() {
 function ReceiptChoiceModal({ onClose, onSelect }: { onClose: () => void; onSelect: (hideDelivery: boolean) => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
-      <div className="w-full max-w-xs rounded-2xl p-5" style={{ background: '#111118', border: '1px solid #1a1a2a' }}>
+      <div className="w-full max-w-xs rounded-2xl p-5 max-h-[90vh] overflow-y-auto" style={{ background: '#111118', border: '1px solid #1a1a2a' }}>
         <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-semibold text-white">Abrir Recibo</span>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-700 transition-colors">
@@ -1274,7 +1274,7 @@ function WhatsAppModal({ sale, onClose }: { sale: any; onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
-      <div className="w-full max-w-md rounded-2xl p-6" style={{ background: '#111118', border: '1px solid #1a1a2a' }}>
+      <div className="w-full max-w-md rounded-2xl p-6 max-h-[90vh] overflow-y-auto" style={{ background: '#111118', border: '1px solid #1a1a2a' }}>
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2">
             <MessageCircle size={18} style={{ color: '#22c55e' }} />

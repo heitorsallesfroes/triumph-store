@@ -594,7 +594,7 @@ export default function SmallSales() {
       {/* Modal Editar Entrega */}
       {editingDelivery && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-bold text-white">Editar Entrega</h2>
               <button onClick={() => setEditingDelivery(null)} className="text-gray-400 hover:text-white">
@@ -702,6 +702,7 @@ export default function SmallSales() {
               <th className="px-4 py-3 text-center  text-xs font-medium text-gray-400 uppercase">Qtd</th>
               <th className="px-4 py-3 text-right   text-xs font-medium text-gray-400 uppercase">Valor</th>
               <th className="px-4 py-3 text-right   text-xs font-medium text-gray-400 uppercase">Custo</th>
+              <th className="px-4 py-3 text-right   text-xs font-medium text-gray-400 uppercase">C. Entrega</th>
               <th className="px-4 py-3 text-right   text-xs font-medium text-gray-400 uppercase">Taxa</th>
               <th className="px-4 py-3 text-right   text-xs font-medium text-gray-400 uppercase">Lucro</th>
               <th className="px-4 py-3 text-center  text-xs font-medium text-gray-400 uppercase">Pagamento</th>
@@ -712,9 +713,9 @@ export default function SmallSales() {
           </thead>
           <tbody className="divide-y divide-gray-700">
             {loading ? (
-              <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">Carregando...</td></tr>
+              <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400">Carregando...</td></tr>
             ) : sales.length === 0 ? (
-              <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">Nenhuma venda no período.</td></tr>
+              <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400">Nenhuma venda no período.</td></tr>
             ) : (
               sales.map(sale => {
                 const revenue  = sale.sale_price * sale.quantity;
@@ -730,6 +731,9 @@ export default function SmallSales() {
                     <td className="px-4 py-3 text-center text-gray-300">{sale.quantity}</td>
                     <td className="px-4 py-3 text-right text-blue-400 font-medium">R$ {revenue.toFixed(2)}</td>
                     <td className="px-4 py-3 text-right text-red-400">R$ {costLine.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-orange-400 text-sm">
+                      {(sale.delivery_fee || 0) > 0 ? `R$ ${(sale.delivery_fee || 0).toFixed(2)}` : '—'}
+                    </td>
                     <td className="px-4 py-3 text-right text-yellow-400 text-sm">
                       {fee > 0 ? `- R$ ${fee.toFixed(2)}` : '—'}
                     </td>

@@ -743,7 +743,7 @@ export default function Motoboys() {
       {/* Modal Adicionar Motoboy */}
       {showForm && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-white">{editingMotoboy ? 'Editar Motoboy' : 'Adicionar Motoboy'}</h2>
               <button onClick={resetForm} className="text-gray-400 hover:text-white"><X size={24} /></button>
@@ -770,7 +770,7 @@ export default function Motoboys() {
       {/* Modal Pagamento Avulso */}
       {showPaymentForm && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-white">Adicionar Pagamento Avulso</h2>
               <button onClick={() => setShowPaymentForm(null)} className="text-gray-400 hover:text-white"><X size={24} /></button>
@@ -817,7 +817,7 @@ export default function Motoboys() {
       {/* Modal Gerar Formulário */}
       {formularioModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-5">
               <h2 className="text-xl font-bold text-white">📋 Gerar Formulário — {formularioModal.motoboyName}</h2>
               <button onClick={() => setFormularioModal(null)} className="text-gray-400 hover:text-white"><X size={24} /></button>
@@ -855,7 +855,7 @@ export default function Motoboys() {
       {/* Modal Lançar Valores */}
       {lancarModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-5">
               <h2 className="text-xl font-bold text-white">💰 Lançar Valores — {lancarModal.motoboyName}</h2>
               <button onClick={() => { setLancarModal(null); setLancarTexto(''); }} className="text-gray-400 hover:text-white"><X size={24} /></button>

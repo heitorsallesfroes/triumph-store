@@ -218,7 +218,7 @@ export default function OperationalCosts() {
       {/* Modal Copiar Custos do Mês Anterior */}
       {copyPrompt && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-sm border border-gray-700 shadow-2xl">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-sm border border-gray-700 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center flex-shrink-0">
                 <Calendar size={20} className="text-orange-400" />
@@ -296,7 +296,7 @@ export default function OperationalCosts() {
       {/* Modal Adicionar Custo */}
       {showCostForm && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-white">Novo Custo</h2>
               <button onClick={() => setShowCostForm(false)} className="text-gray-400 hover:text-white"><X size={24} /></button>
@@ -350,7 +350,7 @@ export default function OperationalCosts() {
       {/* Modal Registrar/Editar Pagamento */}
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-2">
               <h2 className="text-xl font-bold text-white">
                 {getPayment(showPaymentModal.id)?.paid ? 'Editar Pagamento' : 'Registrar Pagamento'}

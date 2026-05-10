@@ -246,7 +246,7 @@ export default function Products() {
       {/* Modal editar/adicionar */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg border border-gray-700">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-white">
                 {editingProduct ? 'Editar Produto' : 'Adicionar Novo Produto'}

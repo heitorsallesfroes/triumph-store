@@ -297,8 +297,8 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-900 rounded-lg max-w-2xl w-full border border-gray-700">
-        <div className="flex items-center justify-between p-6 border-b border-gray-700">
+      <div className="bg-gray-900 rounded-lg max-w-2xl w-full border border-gray-700 max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between p-6 border-b border-gray-700 flex-shrink-0">
           <h2 className="text-2xl font-bold text-white">Editar Venda</h2>
           <button
             onClick={onClose}
@@ -308,7 +308,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
           </button>
         </div>
 
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 overflow-y-auto flex-1">
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
             <div className="text-white font-semibold mb-1">{sale.customer_name}</div>
             <div className="text-gray-400 text-sm">
@@ -652,7 +652,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
           )}
         </div>
 
-        <div className="flex gap-3 p-6 border-t border-gray-700">
+        <div className="flex gap-3 p-6 border-t border-gray-700 flex-shrink-0">
           <button
             onClick={handleSave}
             disabled={saving}
