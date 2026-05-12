@@ -20,23 +20,7 @@ export function validateAddressForDeliveryType(
 ): ValidationResult {
   const missingFields: string[] = [];
 
-  if (deliveryType === 'correios') {
-    if (!addressData.customer_name?.trim()) missingFields.push('Nome do cliente');
-    if (!addressData.street?.trim()) missingFields.push('Rua');
-    if (!addressData.number?.trim()) missingFields.push('Número');
-    if (!addressData.neighborhood?.trim()) missingFields.push('Bairro');
-    if (!addressData.city?.trim()) missingFields.push('Cidade');
-    if (!addressData.state?.trim()) missingFields.push('Estado');
-    if (!addressData.zip_code?.trim()) missingFields.push('CEP');
-
-    if (missingFields.length > 0) {
-      return {
-        isValid: false,
-        missingFields,
-        message: `Preencha o endereço completo para envio pelos Correios: ${missingFields.join(', ')}`,
-      };
-    }
-  } else if (deliveryType === 'motoboy') {
+  if (deliveryType === 'motoboy') {
     if (!addressData.customer_name?.trim()) missingFields.push('Nome do cliente');
     if (!addressData.neighborhood?.trim()) missingFields.push('Bairro');
     if (!addressData.city?.trim()) missingFields.push('Cidade');

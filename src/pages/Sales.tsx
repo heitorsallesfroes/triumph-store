@@ -386,13 +386,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
       return;
     }
 
-    if (formData.delivery_type === 'correios') {
-      if (!formData.address_street || !formData.address_number || !neighborhoodSearch.trim() ||
-          !citySearch.trim() || !formData.state || !formData.zip_code || !formData.customer_cpf) {
-        alert('Preencha todos os dados para envio pelos Correios');
-        return;
-      }
-
+    if (formData.customer_cpf) {
       const cleanedCpf = cleanCpf(formData.customer_cpf);
       if (!validateCpf(cleanedCpf)) {
         alert('CPF inválido');
@@ -1089,14 +1083,13 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
               <div>
                 <input
                   type="text"
-                  placeholder={formData.delivery_type === 'correios' ? 'CPF*' : 'CPF (opcional)'}
+                  placeholder="CPF (opcional)"
                   maxLength={14}
                   value={cpfDisplay}
                   onChange={(e) => handleCpfChange(e.target.value)}
                   className={`w-full bg-gray-700 text-white rounded-lg px-4 py-2 border ${
-                    cpfError ? 'border-red-500' : formData.delivery_type === 'correios' ? 'border-orange-500' : 'border-gray-600'
+                    cpfError ? 'border-red-500' : 'border-gray-600'
                   } focus:border-orange-500 focus:outline-none`}
-                  required={formData.delivery_type === 'correios'}
                 />
                 {cpfError && <p className="text-red-500 text-sm mt-1">{cpfError}</p>}
               </div>
@@ -1128,7 +1121,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
                     <div className="relative">
                       <input
                         type="text"
-                        placeholder="CEP*"
+                        placeholder="CEP"
                         maxLength={8}
                         value={formData.zip_code}
                         onChange={(e) => handleCepChange(e.target.value)}
@@ -1142,7 +1135,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
                     </div>
                     <input
                       type="text"
-                      placeholder="Estado (UF)*"
+                      placeholder="Estado (UF)"
                       maxLength={2}
                       value={formData.state}
                       onChange={(e) => setFormData({ ...formData, state: e.target.value.toUpperCase() })}
@@ -1155,14 +1148,14 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
                   <div className="grid grid-cols-3 gap-2">
                     <input
                       type="text"
-                      placeholder="Rua*"
+                      placeholder="Rua"
                       value={formData.address_street}
                       onChange={(e) => setFormData({ ...formData, address_street: e.target.value })}
                       className="col-span-2 w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                     <input
                       type="text"
-                      placeholder="Número*"
+                      placeholder="Número"
                       value={formData.address_number}
                       onChange={(e) => setFormData({ ...formData, address_number: e.target.value })}
                       className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
