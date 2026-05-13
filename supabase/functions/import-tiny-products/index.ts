@@ -83,23 +83,27 @@ Deno.serve(async (req: Request) => {
             const cor = palavras[palavras.length - 1];
             const modelo = palavras.slice(0, -1).join(" ");
 
-            const produto = {
+            const produtoBase = {
               model: modelo,
               color: cor,
               supplier: "",
               cost: parseFloat(p.preco_custo) || 0,
               price: parseFloat(p.preco) || 0,
-              current_stock: 0,
-
               tiny_id: parseInt(p.id),
               sku: p.codigo || "",
               category: categoriaDetectada,
               updated_at: new Date().toISOString(),
             };
 
-            const { error } = await supabase
+            const { data: existing } = await supabase
               .from("products")
-              .upsert(produto, { onConflict: "tiny_id" });
+              .select("id")
+              .eq("tiny_id", parseInt(p.id))
+              .maybeSingle();
+
+            const { error } = existing
+              ? await supabase.from("products").update(produtoBase).eq("tiny_id", parseInt(p.id))
+              : await supabase.from("products").insert({ ...produtoBase, current_stock: 0 });
 
             if (error) {
               console.error("Erro:", error.message);

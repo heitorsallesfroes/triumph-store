@@ -376,16 +376,6 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
     const smartwatchItems = saleProducts.filter(sp => (sp.product as any)?.category === 'smartwatch');
     const isMultiSupplier = smartwatchItems.length >= 2;
 
-    if (isMultiSupplier) {
-      if (smartwatchItems.some(sp => !perProductSupplierIds[sp.product_id])) {
-        alert('Por favor, selecione o fornecedor para cada smartwatch');
-        return;
-      }
-    } else if (supplierSearch.trim() === '') {
-      alert('Por favor, informe o fornecedor');
-      return;
-    }
-
     if (formData.customer_cpf) {
       const cleanedCpf = cleanCpf(formData.customer_cpf);
       if (!validateCpf(cleanedCpf)) {
@@ -1308,7 +1298,6 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
                         value={perProductSupplierIds[sp.product_id] || ''}
                         onChange={(e) => setPerProductSupplierIds(prev => ({ ...prev, [sp.product_id]: e.target.value }))}
                         className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
-                        required
                       >
                         <option value="">Selecionar fornecedor</option>
                         {suppliers.map(s => (
@@ -1330,7 +1319,6 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
                   }}
                   items={suppliers}
                   placeholder="Selecionar fornecedor"
-                  required
                   className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 />
               )}
