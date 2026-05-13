@@ -51,7 +51,7 @@ Deno.serve(async (req: Request) => {
 
     const termosBusca = categoria === "smartwatch"
       ? ["smartwatch"]
-      : ["pulseira", "fone", "powerbank", "carregador", "cabo"];
+      : ["pulseira", "kit", "fone", "powerbank", "carregador", "cabo"];
 
     let imported = 0;
     let errors = 0;
