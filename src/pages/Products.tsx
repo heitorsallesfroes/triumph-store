@@ -115,15 +115,12 @@ export default function Products() {
   const handleDelete = async (id: string) => {
     if (!confirm('Tem certeza que deseja excluir este produto?')) return;
     try {
-      const { count } = await supabase
+      const { error: unlinkError } = await supabase
         .from('sale_items')
-        .select('id', { count: 'exact', head: true })
+        .update({ product_id: null })
         .eq('product_id', id);
 
-      if (count && count > 0) {
-        alert(`Este produto não pode ser excluído pois está vinculado a ${count} venda(s). Exclua as vendas primeiro.`);
-        return;
-      }
+      if (unlinkError) throw unlinkError;
 
       const { error } = await supabase.from('products').delete().eq('id', id);
       if (error) throw error;
