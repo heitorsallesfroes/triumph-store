@@ -250,9 +250,8 @@ export default function Motoboys() {
     const list = motoboysList || motoboys;
     try {
       const now = new Date();
-      const day = now.getDay();
-      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-      const weekStart = new Date(now.getFullYear(), now.getMonth(), diff);
+      const day = now.getDay(); // 0 = domingo
+      const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
       const startStr = weekStart.toISOString().split('T')[0];
       const startUTC = startStr + 'T03:00:00.000Z';
       const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);

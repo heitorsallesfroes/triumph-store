@@ -48,7 +48,14 @@ export function getDateRangeInBrazil(daysAgo: number): { start: string; end: str
 }
 
 export function getWeekRangeInBrazil(): { start: string; end: string } {
-  return getDateRangeInBrazil(7);
+  const today = getTodayInBrazil();
+  const now = new Date(today + 'T12:00:00');
+  const dayOfWeek = now.getDay(); // 0 = domingo
+  const sunday = new Date(now);
+  sunday.setDate(now.getDate() - dayOfWeek);
+  const saturday = new Date(sunday);
+  saturday.setDate(sunday.getDate() + 6);
+  return { start: formatDateToBrazil(sunday), end: formatDateToBrazil(saturday) };
 }
 
 export function getMonthRangeInBrazil(): { start: string; end: string } {

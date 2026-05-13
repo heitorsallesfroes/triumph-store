@@ -115,9 +115,9 @@ export default function SmallSales() {
       return { start: new Date(y + 'T00:00:00').toISOString(), end: new Date(y + 'T23:59:59').toISOString() };
     }
     if (filter === 'week') {
-      const day = now.getDay();
-      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-      return { start: new Date(now.getFullYear(), now.getMonth(), diff).toISOString(), end: endOfNow };
+      const dayOfWeek = now.getDay(); // 0 = domingo
+      const sunday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek);
+      return { start: sunday.toISOString(), end: endOfNow };
     }
     if (filter === 'last_month') {
       const { start, end } = getLastMonthRangeInBrazil();

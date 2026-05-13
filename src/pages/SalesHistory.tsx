@@ -5,7 +5,7 @@ import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, T
 import Receipt from '../components/Receipt';
 import EditSale from '../components/EditSale';
 import { generateShippingLabel } from '../lib/superfrete';
-import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
+import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 
 type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
 
@@ -212,8 +212,8 @@ export default function SalesHistory() {
         const yesterday = getYesterdayInBrazil();
         startDate = yesterday; endDate = yesterday;
       } else if (period === 'week') {
-        const d = new Date(now); d.setDate(d.getDate() - 6);
-        startDate = d.toISOString().split('T')[0]; endDate = today;
+        const { start: wStart, end: wEnd } = getWeekRangeInBrazil();
+        startDate = wStart; endDate = wEnd;
       } else if (period === 'month') {
         startDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
         endDate = today;

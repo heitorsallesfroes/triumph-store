@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
+import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 import { calculateCardFee } from '../lib/cardFees';
 import {
   TrendingUp, DollarSign, CreditCard, Package, ShoppingCart,
@@ -31,7 +31,7 @@ interface CardConciliation { credit: CardBucket; debit: CardBucket; link: CardBu
 const PERIOD_LABELS: Record<Period, string> = {
   today: 'Hoje',
   yesterday: 'Ontem',
-  week: 'Últimos 7 dias',
+  week: 'Semana',
   month: 'Mês atual',
   last_month: 'Mês Anterior',
   custom: 'Período personalizado',
@@ -88,11 +88,7 @@ export default function ResumoVendas() {
       const yesterday = getYesterdayInBrazil();
       return { start: yesterday, end: yesterday };
     }
-    if (period === 'week') {
-      const d = new Date(now);
-      d.setDate(d.getDate() - 6);
-      return { start: d.toISOString().split('T')[0], end: today };
-    }
+    if (period === 'week') return getWeekRangeInBrazil();
     if (period === 'month') {
       const first = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
       return { start: first, end: today };
