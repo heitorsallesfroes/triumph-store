@@ -83,7 +83,7 @@ Deno.serve(async (req: Request) => {
             const cor = palavras[palavras.length - 1];
             const modelo = palavras.slice(0, -1).join(" ");
 
-            const produtoBase = {
+            const produtoInfo = {
               model: modelo,
               color: cor,
               supplier: "",
@@ -91,7 +91,6 @@ Deno.serve(async (req: Request) => {
               price: parseFloat(p.preco) || 0,
               tiny_id: parseInt(p.id),
               sku: p.codigo || "",
-              category: categoriaDetectada,
               updated_at: new Date().toISOString(),
             };
 
@@ -101,9 +100,15 @@ Deno.serve(async (req: Request) => {
               .eq("tiny_id", parseInt(p.id))
               .maybeSingle();
 
+            // Em updates, não sobrescreve category para preservar a categorização correta.
+            // No import de smartwatches, inclui category para garantir que o campo é corrigido.
+            const updatePayload = categoria === "smartwatch"
+              ? { ...produtoInfo, category: "smartwatch" }
+              : produtoInfo;
+
             const { error } = existing
-              ? await supabase.from("products").update(produtoBase).eq("tiny_id", parseInt(p.id))
-              : await supabase.from("products").insert({ ...produtoBase, current_stock: 0 });
+              ? await supabase.from("products").update(updatePayload).eq("tiny_id", parseInt(p.id))
+              : await supabase.from("products").insert({ ...produtoInfo, category: categoriaDetectada, current_stock: 0 });
 
             if (error) {
               console.error("Erro:", error.message);
