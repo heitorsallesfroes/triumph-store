@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard, X } from 'lucide-react';
-import { getTodayInBrazil, formatDateDisplay } from '../lib/dateUtils';
+import { getTodayInBrazil, formatDateDisplay, getWeekRangeInBrazil } from '../lib/dateUtils';
 
 interface Sale {
   id: string;
@@ -57,11 +57,15 @@ export default function Logistics() {
       const tomorrowStartUTC = `${tomorrowDate.toISOString().split('T')[0]}T03:00:00.000Z`;
       const fields = '*, sale_items(quantity, product_id, products(model, color, category)), motoboys(name)';
 
+      const { start: weekStart } = getWeekRangeInBrazil();
+      const weekStartUTC = `${weekStart}T03:00:00.000Z`;
+
       const [pendingRes, finalizadoRes] = await Promise.all([
-        // Pendentes: sem filtro de data — mostrar até serem finalizados
+        // Pendentes: apenas da semana atual (dom–sáb) para não acumular entregas antigas
         supabase.from('sales').select(fields)
           .in('status', ['em_separacao', 'embalado', 'em_rota'])
           .eq('delivery_type', 'motoboy')
+          .gte('sale_date', weekStartUTC)
           .order('sale_date', { ascending: false }),
         // Finalizados: só do dia de hoje — filtra por updated_at (quando foi finalizado, não quando foi criado)
         supabase.from('sales').select(fields)
@@ -144,13 +148,18 @@ export default function Logistics() {
   };
 
   const handleFinalize = async (saleId: string) => {
-    if (!confirm('Marcar como finalizado?')) return;
+    const sale = sales.find(s => s.id === saleId);
+    const isConcluindo = sale?.status === 'finalizado';
+    const msg = isConcluindo ? 'Remover da logística?' : 'Marcar como finalizado?';
+    if (!confirm(msg)) return;
+
     setSales(prev => prev.filter(s => s.id !== saleId));
+    const newStatus = isConcluindo ? 'concluido' : 'finalizado';
     try {
-      const { error } = await supabase.from('sales').update({ status: 'finalizado' }).eq('id', saleId);
+      const { error } = await supabase.from('sales').update({ status: newStatus }).eq('id', saleId);
       if (error) throw error;
     } catch {
-      alert('Erro ao finalizar pedido');
+      alert('Erro ao atualizar pedido');
       loadSales();
     }
   };
