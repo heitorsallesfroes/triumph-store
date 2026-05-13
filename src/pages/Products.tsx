@@ -117,7 +117,7 @@ export default function Products() {
     try {
       const { error: unlinkError } = await supabase
         .from('sale_items')
-        .update({ product_id: null })
+        .delete()
         .eq('product_id', id);
 
       if (unlinkError) throw unlinkError;
