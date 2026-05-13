@@ -918,7 +918,7 @@ export default function Motoboys() {
                         className="text-purple-400 hover:text-purple-300 text-xs whitespace-nowrap">
                         📋 Formulário
                       </button>
-                      <button onClick={() => { setLancarModal({ motoboyId: motoboy.id, motoboyName: motoboy.name }); setLancarDate(getTodayInBrazil()); setLancarTexto(''); }}
+                      <button onClick={() => { setLancarModal({ motoboyId: motoboy.id, motoboyName: motoboy.name }); setLancarDate(formularioDate); setLancarTexto(''); }}
                         className="text-yellow-400 hover:text-yellow-300 text-xs whitespace-nowrap">
                         💰 Valores
                       </button>
