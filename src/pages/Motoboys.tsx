@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, Motoboy, MotoboyStats } from '../lib/supabase';
-import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
+import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 import { Plus, Pencil, Trash2, X, Bike, TrendingUp, Trophy, DollarSign, Calendar, PlusCircle } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
@@ -83,19 +83,14 @@ export default function Motoboys() {
     const list = motoboysList || motoboys;
     try {
       const today = getTodayInBrazil();
-      // Brazil is UTC-3: midnight BRT = 03:00 UTC
-      const startUTC = today + 'T03:00:00.000Z';
-      const todayDate = new Date(today + 'T12:00:00');
-      todayDate.setDate(todayDate.getDate() + 1);
-      const tomorrow = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
-      const endUTC = tomorrow + 'T03:00:00.000Z';
+      const { startUTC, endUTC } = getDateUTCRange(today);
 
       const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
-          .eq('status', 'finalizado')
-          .gte('sale_date', startUTC)
-          .lt('sale_date', endUTC),
+          .in('status', ['finalizado', 'concluido'])
+          .gte('finalized_at', startUTC)
+          .lt('finalized_at', endUTC),
         supabase.from('small_sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
           .not('motoboy_id', 'is', null)
@@ -136,9 +131,9 @@ export default function Motoboys() {
       const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
-          .eq('status', 'finalizado')
-          .gte('sale_date', startUTC)
-          .lt('sale_date', endUTC),
+          .in('status', ['finalizado', 'concluido'])
+          .gte('finalized_at', startUTC)
+          .lt('finalized_at', endUTC),
         supabase.from('small_sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
           .not('motoboy_id', 'is', null)
@@ -180,8 +175,8 @@ export default function Motoboys() {
 
       const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
-          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
-          .gte('sale_date', startUTC).lt('sale_date', endUTC),
+          .eq('delivery_type', 'motoboy').in('status', ['finalizado', 'concluido'])
+          .gte('finalized_at', startUTC).lt('finalized_at', endUTC),
         supabase.from('small_sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
           .not('motoboy_id', 'is', null)
@@ -219,8 +214,8 @@ export default function Motoboys() {
 
       const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
-          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
-          .gte('sale_date', startUTC).lt('sale_date', endUTC),
+          .eq('delivery_type', 'motoboy').in('status', ['finalizado', 'concluido'])
+          .gte('finalized_at', startUTC).lt('finalized_at', endUTC),
         supabase.from('small_sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
           .not('motoboy_id', 'is', null)
@@ -249,24 +244,21 @@ export default function Motoboys() {
   const loadWeekStats = async (motoboysList?: Motoboy[]) => {
     const list = motoboysList || motoboys;
     try {
-      const now = new Date();
-      const day = now.getDay(); // 0 = domingo
-      const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
-      const startStr = weekStart.toISOString().split('T')[0];
-      const startUTC = startStr + 'T03:00:00.000Z';
-      const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-      const endUTC = tomorrow.toISOString().split('T')[0] + 'T03:00:00.000Z';
+      const { start: weekStart } = getWeekRangeInBrazil();
+      const today = getTodayInBrazil();
+      const startUTC = weekStart + 'T03:00:00.000Z';
+      const { endUTC } = getDateUTCRange(today);
 
       const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
-          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
-          .gte('sale_date', startUTC).lt('sale_date', endUTC),
+          .eq('delivery_type', 'motoboy').in('status', ['finalizado', 'concluido'])
+          .gte('finalized_at', startUTC).lt('finalized_at', endUTC),
         supabase.from('small_sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
           .not('motoboy_id', 'is', null)
           .gte('created_at', startUTC).lt('created_at', endUTC),
         supabase.from('motoboy_payments').select('*')
-          .gte('date', startStr).lte('date', getTodayInBrazil()),
+          .gte('date', weekStart).lte('date', today),
       ]);
 
       const statsMap = new Map<string, { deliveries: number; earnings: number; extraPayments: number }>();
@@ -291,23 +283,22 @@ export default function Motoboys() {
   const loadMonthStats = async (motoboysList?: Motoboy[]) => {
     const list = motoboysList || motoboys;
     try {
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const startStr = monthStart.toISOString().split('T')[0];
+      const today = getTodayInBrazil();
+      const [year, month] = today.split('-');
+      const startStr = `${year}-${month}-01`;
       const startUTC = startStr + 'T03:00:00.000Z';
-      const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-      const endUTC = tomorrow.toISOString().split('T')[0] + 'T03:00:00.000Z';
+      const { endUTC } = getDateUTCRange(today);
 
       const [salesRes, smallSalesRes, paymentsRes] = await Promise.all([
         supabase.from('sales').select('motoboy_id, delivery_fee')
-          .eq('delivery_type', 'motoboy').eq('status', 'finalizado')
-          .gte('sale_date', startUTC).lt('sale_date', endUTC),
+          .eq('delivery_type', 'motoboy').in('status', ['finalizado', 'concluido'])
+          .gte('finalized_at', startUTC).lt('finalized_at', endUTC),
         supabase.from('small_sales').select('motoboy_id, delivery_fee')
           .eq('delivery_type', 'motoboy')
           .not('motoboy_id', 'is', null)
           .gte('created_at', startUTC).lt('created_at', endUTC),
         supabase.from('motoboy_payments').select('*')
-          .gte('date', startStr).lte('date', getTodayInBrazil()),
+          .gte('date', startStr).lte('date', today),
       ]);
 
       const statsMap = new Map<string, { deliveries: number; earnings: number; extraPayments: number }>();
@@ -384,9 +375,9 @@ export default function Motoboys() {
 
   const getDateUTCRange = (dateStr: string) => {
     const startUTC = dateStr + 'T03:00:00.000Z';
-    const nextDate = new Date(dateStr + 'T12:00:00');
-    nextDate.setDate(nextDate.getDate() + 1);
-    const nextStr = nextDate.toISOString().split('T')[0];
+    const [year, month, day] = dateStr.split('-').map(Number);
+    // Date.UTC é agnóstico de timezone — não depende do fuso do browser
+    const nextStr = new Date(Date.UTC(year, month - 1, day + 1)).toISOString().split('T')[0];
     return { startUTC, endUTC: nextStr + 'T03:00:00.000Z' };
   };
 
@@ -399,10 +390,10 @@ export default function Motoboys() {
         supabase.from('sales').select('neighborhood, city')
           .eq('motoboy_id', motoboyId)
           .eq('delivery_type', 'motoboy')
-          .in('status', ['em_rota', 'finalizado'])
-          .gte('updated_at', startUTC)
-          .lt('updated_at', endUTC)
-          .order('updated_at', { ascending: true }),
+          .in('status', ['finalizado', 'concluido'])
+          .gte('finalized_at', startUTC)
+          .lt('finalized_at', endUTC)
+          .order('finalized_at', { ascending: true }),
         supabase.from('small_sales').select('description, city, neighborhood')
           .eq('motoboy_id', motoboyId)
           .eq('delivery_type', 'motoboy')
@@ -467,12 +458,13 @@ export default function Motoboys() {
 
       const [salesRes, smallSalesRes] = await Promise.all([
         supabase.from('sales')
-          .select('id, neighborhood, city, delivery_fee, total_cost, net_received')
+          .select('id, neighborhood, city, delivery_fee, total_cost, net_received, status')
           .eq('motoboy_id', motoboyId)
           .eq('delivery_type', 'motoboy')
-          .gte('updated_at', startUTC)
-          .lt('updated_at', endUTC)
-          .order('updated_at', { ascending: true }),
+          .in('status', ['finalizado', 'concluido'])
+          .gte('finalized_at', startUTC)
+          .lt('finalized_at', endUTC)
+          .order('finalized_at', { ascending: true }),
         supabase.from('small_sales')
           .select('id, description, delivery_fee, city, neighborhood')
           .eq('motoboy_id', motoboyId)
@@ -484,13 +476,24 @@ export default function Motoboys() {
       const salesList = salesRes.data || [];
       const smallSalesList = smallSalesRes.data || [];
 
-      console.log('=== PARSER DEBUG ===');
-      console.log(`Intervalo UTC: ${startUTC} → ${endUTC}`);
-      console.log(`Vendas (${salesList.length}):`, salesList.map(s => ({
-        id: s.id.slice(0, 8), city: s.city, neighborhood: s.neighborhood,
+      console.log('=== LANÇAR VALORES DEBUG ===');
+      console.log(`motoboy_id: ${motoboyId}`);
+      console.log(`Data solicitada: ${dateStr}`);
+      console.log(`Intervalo sales (finalized_at): ${startUTC} → ${endUTC}`);
+      console.log(`Intervalo small_sales (created_at): ${startUTC} → ${endUTC}`);
+      if (salesRes.error) console.error('Erro na query sales:', salesRes.error);
+      if (smallSalesRes.error) console.error('Erro na query small_sales:', smallSalesRes.error);
+      console.log(`Vendas encontradas (${salesList.length}):`, salesList.map(s => ({
+        id: s.id.slice(0, 8),
+        city: s.city,
+        neighborhood: s.neighborhood,
+        delivery_fee: s.delivery_fee,
       })));
-      console.log(`Pequenas vendas (${smallSalesList.length}):`, smallSalesList.map(s => ({
-        id: s.id.slice(0, 8), description: s.description,
+      console.log(`Pequenas vendas encontradas (${smallSalesList.length}):`, smallSalesList.map(s => ({
+        id: s.id.slice(0, 8),
+        description: s.description,
+        city: s.city,
+        neighborhood: s.neighborhood,
       })));
 
       // Parse grouped format:
@@ -526,14 +529,14 @@ export default function Motoboys() {
 
       console.log('Entries parseadas:', deliveryEntries);
 
-      const salesUpdates: { id: string; delivery_fee: number; total_cost: number; profit: number }[] = [];
+      const salesUpdates: { id: string; delivery_fee: number; total_cost: number; profit: number; status: string }[] = [];
       const smallUpdates: { id: string; delivery_fee: number }[] = [];
       const matchedSales = new Set<string>();
       const matchedSmall = new Set<string>();
 
       for (const { bairro, cidade, valor } of deliveryEntries) {
         if (cidade.toLowerCase() === SMALL_SALES_CITY.toLowerCase()) {
-          // Pequenas vendas: match por description
+          // Pequenas vendas: match por description (uma entrada do form = uma venda por descrição)
           const ss = smallSalesList.find(s =>
             !matchedSmall.has(s.id) &&
             (s.description || '').toLowerCase() === bairro.toLowerCase()
@@ -544,28 +547,30 @@ export default function Motoboys() {
             smallUpdates.push({ id: ss.id, delivery_fee: valor });
           }
         } else {
-          // Vendas regulares: match por bairro/cidade
-          const sale = salesList.find(s =>
+          // Vendas regulares: todas as vendas do mesmo bairro/cidade recebem o mesmo valor
+          const matchingSales = salesList.filter(s =>
             !matchedSales.has(s.id) &&
             (s.neighborhood || '').toLowerCase() === bairro.toLowerCase() &&
             (s.city || '').toLowerCase() === cidade.toLowerCase()
           );
-          if (sale) {
-            console.log(`  [SALE] bairro="${bairro}" cidade="${cidade}" → ENCONTRADO id=${sale.id.slice(0, 8)}`);
-            matchedSales.add(sale.id);
-            const newTotalCost = (sale.total_cost || 0) - (sale.delivery_fee || 0) + valor;
-            const newProfit = (sale.net_received || 0) - newTotalCost;
-            salesUpdates.push({ id: sale.id, delivery_fee: valor, total_cost: newTotalCost, profit: newProfit });
+          if (matchingSales.length > 0) {
+            console.log(`  [SALE] bairro="${bairro}" cidade="${cidade}" → ${matchingSales.length} encontrada(s): ${matchingSales.map(s => s.id.slice(0, 8)).join(', ')}`);
+            for (const sale of matchingSales) {
+              matchedSales.add(sale.id);
+              const newTotalCost = (sale.total_cost || 0) - (sale.delivery_fee || 0) + valor;
+              const newProfit = (sale.net_received || 0) - newTotalCost;
+              salesUpdates.push({ id: sale.id, delivery_fee: valor, total_cost: newTotalCost, profit: newProfit, status: sale.status });
+            }
           } else {
             // Tenta small_sales com cidade/bairro preenchidos
-            const ss = smallSalesList.find(s =>
+            const matchingSmall = smallSalesList.filter(s =>
               !matchedSmall.has(s.id) &&
               s.city && s.neighborhood &&
               (s.neighborhood || '').toLowerCase() === bairro.toLowerCase() &&
               (s.city || '').toLowerCase() === cidade.toLowerCase()
             );
-            console.log(`  [SMALL_ADDR] bairro="${bairro}" cidade="${cidade}" → ${ss ? `ENCONTRADO id=${ss.id.slice(0, 8)}` : 'NÃO ENCONTRADO'}`);
-            if (ss) {
+            console.log(`  [SMALL_ADDR] bairro="${bairro}" cidade="${cidade}" → ${matchingSmall.length > 0 ? `${matchingSmall.length} encontrada(s): ${matchingSmall.map(s => s.id.slice(0, 8)).join(', ')}` : 'NÃO ENCONTRADO'}`);
+            for (const ss of matchingSmall) {
               matchedSmall.add(ss.id);
               smallUpdates.push({ id: ss.id, delivery_fee: valor });
             }
@@ -584,7 +589,7 @@ export default function Motoboys() {
 
       await Promise.all([
         ...salesUpdates.map(u =>
-          supabase.from('sales').update({ delivery_fee: u.delivery_fee, total_cost: u.total_cost, profit: u.profit }).eq('id', u.id)
+          supabase.from('sales').update({ delivery_fee: u.delivery_fee, total_cost: u.total_cost, profit: u.profit, status: u.status }).eq('id', u.id)
         ),
         ...smallUpdates.map(u =>
           supabase.from('small_sales').update({ delivery_fee: u.delivery_fee }).eq('id', u.id)

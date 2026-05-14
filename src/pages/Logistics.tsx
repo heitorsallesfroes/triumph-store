@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard, X } from 'lucide-react';
-import { getTodayInBrazil, formatDateDisplay, getWeekRangeInBrazil } from '../lib/dateUtils';
+import { getTodayInBrazil, formatDateDisplay } from '../lib/dateUtils';
 
 interface Sale {
   id: string;
@@ -13,6 +13,7 @@ interface Sale {
   status: string;
   sale_date: string;
   updated_at?: string;
+  finalized_at?: string;
   motoboy_id: string | null;
   motoboy?: { name: string };
   products: Array<{ model: string; color: string }>;
@@ -52,28 +53,23 @@ export default function Logistics() {
     try {
       const today = getTodayInBrazil();
       const todayStartUTC = `${today}T03:00:00.000Z`;
-      const tomorrowDate = new Date(`${today}T12:00:00`);
-      tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-      const tomorrowStartUTC = `${tomorrowDate.toISOString().split('T')[0]}T03:00:00.000Z`;
+      const [y, m, d] = today.split('-').map(Number);
+      const tomorrowStartUTC = `${new Date(Date.UTC(y, m - 1, d + 1)).toISOString().split('T')[0]}T03:00:00.000Z`;
       const fields = '*, sale_items(quantity, product_id, products(model, color, category)), motoboys(name)';
 
-      const { start: weekStart } = getWeekRangeInBrazil();
-      const weekStartUTC = `${weekStart}T03:00:00.000Z`;
-
       const [pendingRes, finalizadoRes] = await Promise.all([
-        // Pendentes: apenas da semana atual (dom–sáb) para não acumular entregas antigas
+        // Pendentes: todos os não-finalizados, qualquer data
         supabase.from('sales').select(fields)
           .in('status', ['em_separacao', 'embalado', 'em_rota'])
           .eq('delivery_type', 'motoboy')
-          .gte('sale_date', weekStartUTC)
           .order('sale_date', { ascending: false }),
-        // Finalizados: só do dia de hoje — filtra por updated_at (quando foi finalizado, não quando foi criado)
+        // Finalizados: só do dia de hoje — filtra por finalized_at (imutável, não carimbado por updates posteriores)
         supabase.from('sales').select(fields)
           .eq('status', 'finalizado')
           .eq('delivery_type', 'motoboy')
-          .gte('updated_at', todayStartUTC)
-          .lt('updated_at', tomorrowStartUTC)
-          .order('updated_at', { ascending: false }),
+          .gte('finalized_at', todayStartUTC)
+          .lt('finalized_at', tomorrowStartUTC)
+          .order('finalized_at', { ascending: false }),
       ]);
 
       if (pendingRes.error) throw pendingRes.error;
@@ -92,6 +88,7 @@ export default function Logistics() {
         status: sale.status,
         sale_date: sale.sale_date,
         updated_at: sale.updated_at,
+        finalized_at: sale.finalized_at,
         motoboy_id: sale.motoboy_id,
         products: (sale.sale_items || [])
           .filter((item: any) => item.products?.category === 'smartwatch')
@@ -222,7 +219,7 @@ export default function Logistics() {
   const saiuEntrega = visibleSales.filter(s => getLogisticsColumn(s.status) === 'saiu_entrega');
   const concluido   = visibleSales
     .filter(s => getLogisticsColumn(s.status) === 'concluido')
-    .sort((a, b) => new Date(b.updated_at || b.sale_date).getTime() - new Date(a.updated_at || a.sale_date).getTime());
+    .sort((a: any, b: any) => new Date(b.finalized_at || b.sale_date).getTime() - new Date(a.finalized_at || a.sale_date).getTime());
 
   return (
     <div className="p-8">
