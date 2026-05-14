@@ -113,7 +113,7 @@ async function fetchTracking(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ tracking_code: code }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(25000),
     });
 
     const data = await res.json();
@@ -218,8 +218,20 @@ export default function RastreamentoSedex() {
   const salesRef = useRef<Sale[]>([]);
   salesRef.current = sales;
   const isUpdatingRef = useRef(false);
+  const isInitialLoad = useRef(true);
 
   useEffect(() => { loadSales(); }, []);
+
+  // Auto-track assim que os pedidos carregam pela primeira vez
+  useEffect(() => {
+    if (!loading && isInitialLoad.current) {
+      isInitialLoad.current = false;
+      const ids = salesRef.current
+        .filter(s => s.status !== 'entregue' && !!s.tracking_code?.trim())
+        .map(s => s.id);
+      if (ids.length > 0) updateAll(ids);
+    }
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reseta o contador após cada atualização
   useEffect(() => {
@@ -318,42 +330,45 @@ export default function RastreamentoSedex() {
     isUpdatingRef.current = true;
     setUpdating(true);
 
-    const ids = onlyIds ?? salesRef.current.map(s => s.id);
+    try {
+      const ids = onlyIds ?? salesRef.current.map(s => s.id);
 
-    // Captura os tracking codes antes das operações async para evitar closure stale
-    const toTrack = ids
-      .map(id => ({ id, tracking_code: salesRef.current.find(s => s.id === id)?.tracking_code }))
-      .filter((t): t is { id: string; tracking_code: string } => !!t.tracking_code?.trim());
+      // Captura os tracking codes antes das operações async para evitar closure stale
+      const toTrack = ids
+        .map(id => ({ id, tracking_code: salesRef.current.find(s => s.id === id)?.tracking_code }))
+        .filter((t): t is { id: string; tracking_code: string } => !!t.tracking_code?.trim());
 
-    // Marca todos como carregando simultaneamente
-    setSales(prev => prev.map(s =>
-      toTrack.find(t => t.id === s.id) ? { ...s, tracking_loading: true } : s
-    ));
+      // Marca todos como carregando simultaneamente
+      setSales(prev => prev.map(s =>
+        toTrack.find(t => t.id === s.id) ? { ...s, tracking_loading: true } : s
+      ));
 
-    // Dispara todas as requisições em paralelo
-    await Promise.all(toTrack.map(async ({ id, tracking_code }) => {
-      const result = await fetchTracking(tracking_code);
+      // Dispara todas as requisições em paralelo
+      await Promise.all(toTrack.map(async ({ id, tracking_code }) => {
+        const result = await fetchTracking(tracking_code);
 
-      setSales(prev => prev.map(s => s.id === id ? {
-        ...s,
-        tracking_loading: false,
-        status: result.status,
-        lastEvent: result.event ?? undefined,
-        tracking_error: result.error,
-      } : s));
+        setSales(prev => prev.map(s => s.id === id ? {
+          ...s,
+          tracking_loading: false,
+          status: result.status,
+          lastEvent: result.event ?? undefined,
+          tracking_error: result.error,
+        } : s));
 
-      // Persiste entrega no banco para o filtro de 5 dias funcionar entre sessões
-      if (result.status === 'entregue') {
-        await supabase.from('sales').update({
-          shipping_status: 'Entregue',
-          delivered_at: new Date().toISOString(),
-        }).eq('id', id);
-      }
-    }));
+        // Persiste entrega no banco para o filtro de 5 dias funcionar entre sessões
+        if (result.status === 'entregue') {
+          await supabase.from('sales').update({
+            shipping_status: 'Entregue',
+            delivered_at: new Date().toISOString(),
+          }).eq('id', id);
+        }
+      }));
 
-    setLastUpdated(new Date());
-    setUpdating(false);
-    isUpdatingRef.current = false;
+      setLastUpdated(new Date());
+    } finally {
+      setUpdating(false);
+      isUpdatingRef.current = false;
+    }
   };
 
   const emAndamento = sales.filter(s => s.status !== 'entregue');
@@ -467,7 +482,7 @@ export default function RastreamentoSedex() {
         ) : sale.tracking_error ? (
           <div className="flex items-center gap-1.5 text-red-400 text-xs py-1">
             <AlertCircle size={13} />
-            <span>Falha ao buscar — tente atualizar novamente</span>
+            <span>Falha ao buscar{sale.tracking_error !== 'Erro ao rastrear' ? ` (${sale.tracking_error})` : ''} — clique em Atualizar para tentar novamente</span>
           </div>
         ) : sale.lastEvent ? (
           <div className={`rounded-lg p-3 ${isEntregue ? 'bg-green-900/20 border border-green-800/30' : 'bg-black/20 border border-white/5'}`}>
