@@ -74,6 +74,7 @@ export default function ResumoMensal() {
   const [adSpend, setAdSpend] = useState(0);
   const [operationalCosts, setOperationalCosts] = useState(0);
   const [motoboyExtras, setMotoboyExtras] = useState(0);
+  const [motoboyDeliveryFees, setMotoboyDeliveryFees] = useState(0);
   const [smallSales, setSmallSales] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -86,7 +87,11 @@ export default function ResumoMensal() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [salesRes, adRes, costsRes, motoboyExtrasRes] = await Promise.all([
+      const startUTC = startDate + 'T03:00:00.000Z';
+      const [ey, em, ed] = endDate.split('-').map(Number);
+      const endUTC = new Date(Date.UTC(ey, em - 1, ed + 1)).toISOString().split('T')[0] + 'T03:00:00.000Z';
+
+      const [salesRes, adRes, costsRes, motoboyExtrasRes, motoboyFeesRes, motoboySmallFeesRes] = await Promise.all([
         supabase.from('sales')
           .select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status,city,payment_method')
           .neq('status', 'cancelado')
@@ -95,6 +100,16 @@ export default function ResumoMensal() {
         supabase.from('ad_spend').select('amount').gte('date', startDate).lte('date', endDate),
         supabase.from('operational_cost_payments').select('amount_paid').eq('month', monthStr).eq('paid', true),
         supabase.from('motoboy_payments').select('amount').gte('date', startDate).lte('date', endDate),
+        supabase.from('sales').select('delivery_fee')
+          .eq('delivery_type', 'motoboy')
+          .in('status', ['finalizado', 'concluido'])
+          .gte('finalized_at', startUTC)
+          .lt('finalized_at', endUTC),
+        supabase.from('small_sales').select('delivery_fee')
+          .eq('delivery_type', 'motoboy')
+          .not('motoboy_id', 'is', null)
+          .gte('created_at', startUTC)
+          .lt('created_at', endUTC),
       ]);
 
       const salesData = salesRes.data || [];
@@ -113,6 +128,9 @@ export default function ResumoMensal() {
       setAdSpend((adRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
       setOperationalCosts((costsRes.data || []).reduce((sum, r) => sum + Number(r.amount_paid), 0));
       setMotoboyExtras((motoboyExtrasRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
+      const salesFees = (motoboyFeesRes.data || []).reduce((sum, r) => sum + Number(r.delivery_fee || 0), 0);
+      const smallFees = (motoboySmallFeesRes.data || []).reduce((sum, r) => sum + Number(r.delivery_fee || 0), 0);
+      setMotoboyDeliveryFees(salesFees + smallFees);
 
       const { data: ssData } = await supabase
         .from('small_sales')
@@ -134,7 +152,7 @@ export default function ResumoMensal() {
   }, 0);
 
   const salesFinalizadas = sales.filter(v => v.status === 'finalizado');
-  const totalMotoboyDeliveries  = salesFinalizadas.filter(v => v.delivery_type === 'motoboy').reduce((s, v) => s + Number(v.delivery_fee || 0), 0);
+  const totalMotoboyDeliveries  = motoboyDeliveryFees;
   const totalCorreiosDeliveries = salesFinalizadas.filter(v => v.delivery_type === 'correios').reduce((s, v) => s + Number(v.delivery_cost || 0), 0);
   const totalCustoEntregas = totalMotoboyDeliveries + totalCorreiosDeliveries + motoboyExtras;
 
