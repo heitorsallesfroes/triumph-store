@@ -59,7 +59,13 @@ export function getWeekRangeInBrazil(): { start: string; end: string } {
 }
 
 export function getMonthRangeInBrazil(): { start: string; end: string } {
-  return getDateRangeInBrazil(30);
+  const today = getTodayInBrazil();
+  const brazilDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const firstDay = new Date(brazilDate.getFullYear(), brazilDate.getMonth(), 1);
+  return {
+    start: formatDateToBrazil(firstDay),
+    end: today
+  };
 }
 
 export function getLastMonthRangeInBrazil(): { start: string; end: string } {
