@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+2import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard, X } from 'lucide-react';
 import { getTodayInBrazil, formatDateDisplay } from '../lib/dateUtils';

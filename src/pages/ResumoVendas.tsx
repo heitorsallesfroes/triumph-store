@@ -66,7 +66,8 @@ export default function ResumoVendas() {
   const [payments, setPayments] = useState<RowData[]>([]);
   const [channels, setChannels] = useState<RowData[]>([]);
   const [motoboys, setMotoboys] = useState<MotoboyRow[]>([]);
-  const [cities, setCities] = useState<RowData[]>([]);
+  const [citiesDelivery, setCitiesDelivery] = useState<RowData[]>([]);
+  const [citiesLoja, setCitiesLoja] = useState<RowData[]>([]);
   const [smartwatches, setSmartwatches] = useState<SmartWatchRow[]>([]);
   const [cardConciliation, setCardConciliation] = useState<CardConciliation>({
     credit: { count: 0, bruto: 0, fees: 0, liquid: 0 },
@@ -244,15 +245,29 @@ export default function ResumoVendas() {
         .sort((a, b) => b.deliveries - a.deliveries);
       setMotoboys(motoboyRows);
 
-      // ── Top cidades ───────────────────────────────────────────────────
-      const cityMap = new Map<string, { count: number; total: number }>();
-      s.forEach(v => {
+      // ── Top cidades — Entregas ────────────────────────────────────────
+      const cityDeliveryMap = new Map<string, { count: number; total: number }>();
+      s.filter(v => v.delivery_type === 'motoboy' || v.delivery_type === 'correios').forEach(v => {
         const key = v.city || 'Não informado';
-        const cur = cityMap.get(key) || { count: 0, total: 0 };
-        cityMap.set(key, { count: cur.count + 1, total: cur.total + Number(v.total_sale_price) });
+        const cur = cityDeliveryMap.get(key) || { count: 0, total: 0 };
+        cityDeliveryMap.set(key, { count: cur.count + 1, total: cur.total + Number(v.total_sale_price) });
       });
-      setCities(
-        Array.from(cityMap.entries())
+      setCitiesDelivery(
+        Array.from(cityDeliveryMap.entries())
+          .map(([key, val]) => ({ label: key, ...val }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 8)
+      );
+
+      // ── Top cidades — Loja Física ─────────────────────────────────────
+      const cityLojaMap = new Map<string, { count: number; total: number }>();
+      s.filter(v => v.delivery_type === 'loja_fisica').forEach(v => {
+        const key = v.city || 'Não informado';
+        const cur = cityLojaMap.get(key) || { count: 0, total: 0 };
+        cityLojaMap.set(key, { count: cur.count + 1, total: cur.total + Number(v.total_sale_price) });
+      });
+      setCitiesLoja(
+        Array.from(cityLojaMap.entries())
           .map(([key, val]) => ({ label: key, ...val }))
           .sort((a, b) => b.count - a.count)
           .slice(0, 8)
@@ -613,35 +628,67 @@ export default function ResumoVendas() {
             </Section>
 
             {/* Top cidades */}
-            <Section title="Top Cidades" icon={MapPin}>
-              {cities.length === 0 ? <Empty /> : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-xs text-gray-500 uppercase border-b border-gray-700">
-                      <th className="text-left pb-2">Cidade</th>
-                      <th className="text-center pb-2">Vendas</th>
-                      <th className="text-right pb-2">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-700">
-                    {cities.map((row, i) => (
-                      <tr key={row.label}>
-                        <td className="py-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
-                              #{i + 1}
-                            </span>
-                            <span className="text-white font-medium">{row.label}</span>
-                          </div>
-                        </td>
-                        <td className="py-2.5 text-center text-gray-300">{row.count}</td>
-                        <td className="py-2.5 text-right text-orange-400 font-semibold">{fmt(row.total)}</td>
+            <div className="space-y-6">
+              <Section title="Top Cidades — Entregas" icon={MapPin}>
+                {citiesDelivery.length === 0 ? <Empty text="Nenhuma entrega no período" /> : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-gray-500 uppercase border-b border-gray-700">
+                        <th className="text-left pb-2">Cidade</th>
+                        <th className="text-center pb-2">Vendas</th>
+                        <th className="text-right pb-2">Total</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </Section>
+                    </thead>
+                    <tbody className="divide-y divide-gray-700">
+                      {citiesDelivery.map((row, i) => (
+                        <tr key={row.label}>
+                          <td className="py-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                                #{i + 1}
+                              </span>
+                              <span className="text-white font-medium">{row.label}</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 text-center text-gray-300">{row.count}</td>
+                          <td className="py-2.5 text-right text-orange-400 font-semibold">{fmt(row.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </Section>
+
+              <Section title="Top Cidades — Loja Física" icon={MapPin}>
+                {citiesLoja.length === 0 ? <Empty text="Nenhuma venda na loja no período" /> : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-gray-500 uppercase border-b border-gray-700">
+                        <th className="text-left pb-2">Cidade / Bairro</th>
+                        <th className="text-center pb-2">Vendas</th>
+                        <th className="text-right pb-2">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-700">
+                      {citiesLoja.map((row, i) => (
+                        <tr key={row.label}>
+                          <td className="py-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                                #{i + 1}
+                              </span>
+                              <span className="text-white font-medium">{row.label}</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 text-center text-gray-300">{row.count}</td>
+                          <td className="py-2.5 text-right text-orange-400 font-semibold">{fmt(row.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </Section>
+            </div>
           </div>
 
           {/* Top smartwatches — largura total */}

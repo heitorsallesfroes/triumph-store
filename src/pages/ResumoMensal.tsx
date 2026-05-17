@@ -188,7 +188,6 @@ export default function ResumoMensal() {
   // ── BLOCO 3: Consolidado ─────────────────────────────────────────────────
   const consolidadoBruto = totalBruto + smallSalesRevenue;
   const consolidadoLucro = lucroSmartwatch + smallSalesProfit;
-  // custo total = tudo que sai (taxas cartão + custos reais)
   const consolidadoCusto = consolidadoBruto - consolidadoLucro;
   const margemConsolidada = consolidadoBruto > 0 ? (consolidadoLucro / consolidadoBruto) * 100 : 0;
 
@@ -203,16 +202,32 @@ export default function ResumoMensal() {
     value: sales.filter(s => s.delivery_type === c.key).reduce((sum, s) => sum + Number(s.total_sale_price), 0),
   }));
 
-  const cidadesMap = new Map<string, { count: number; value: number }>();
-  sales.forEach(s => {
+  // Cidades — Entregas
+  const cidadesEntregaMap = new Map<string, { count: number; value: number }>();
+  sales.filter(s => s.delivery_type === 'motoboy' || s.delivery_type === 'correios').forEach(s => {
     const city = s.city || 'Não informado';
-    const cur = cidadesMap.get(city) || { count: 0, value: 0 };
-    cidadesMap.set(city, { count: cur.count + 1, value: cur.value + Number(s.total_sale_price) });
+    const cur = cidadesEntregaMap.get(city) || { count: 0, value: 0 };
+    cidadesEntregaMap.set(city, { count: cur.count + 1, value: cur.value + Number(s.total_sale_price) });
   });
-  const cidades = Array.from(cidadesMap.entries())
+  const cidadesEntrega = Array.from(cidadesEntregaMap.entries())
     .map(([city, data]) => ({ city, ...data }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
+
+  // Cidades — Loja Física
+  const cidadesLojaMap = new Map<string, { count: number; value: number }>();
+  sales.filter(s => s.delivery_type === 'loja_fisica').forEach(s => {
+    const city = s.city || 'Não informado';
+    const cur = cidadesLojaMap.get(city) || { count: 0, value: 0 };
+    cidadesLojaMap.set(city, { count: cur.count + 1, value: cur.value + Number(s.total_sale_price) });
+  });
+  const cidadesLoja = Array.from(cidadesLojaMap.entries())
+    .map(([city, data]) => ({ city, ...data }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+
+  const totalEntregas   = cidadesEntrega.reduce((s, x) => s + x.count, 0);
+  const totalLojaFisica = cidadesLoja.reduce((s, x) => s + x.count, 0);
 
   const modelColorMap = new Map<string, number>();
   saleItems.forEach(item => {
@@ -428,7 +443,6 @@ export default function ResumoMensal() {
 
             <div className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                {/* Faturamento Total */}
                 <div className="bg-gray-900 rounded-xl p-5 border border-gray-700">
                   <p className="text-gray-400 text-xs mb-2">Faturamento Total (Bruto)</p>
                   <p className="text-3xl font-bold text-white">{fmt(consolidadoBruto)}</p>
@@ -442,7 +456,6 @@ export default function ResumoMensal() {
                   </div>
                 </div>
 
-                {/* Custo Total */}
                 <div className="bg-gray-900 rounded-xl p-5 border border-gray-700">
                   <p className="text-gray-400 text-xs mb-2">Total Deduzido</p>
                   <p className="text-3xl font-bold text-red-400">{fmt(consolidadoCusto)}</p>
@@ -466,7 +479,6 @@ export default function ResumoMensal() {
                   </div>
                 </div>
 
-                {/* Lucro Total */}
                 <div className={`rounded-xl p-5 border-2 ${consolidadoLucro >= 0 ? 'border-green-500/50 bg-green-500/5' : 'border-red-500/50 bg-red-500/5'}`}>
                   <p className="text-gray-400 text-xs mb-2">Lucro Total da Empresa</p>
                   <p className={`text-3xl font-bold ${consolidadoLucro >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -536,38 +548,76 @@ export default function ResumoMensal() {
               </div>
             </div>
 
-            <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-700">
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  <MapPin size={18} className="text-orange-500" /> Top Cidades
-                </h2>
-                <p className="text-gray-500 text-xs mt-0.5">Apenas smartwatches</p>
+            {/* Cidades */}
+            <div className="space-y-6">
+              <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-700">
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <MapPin size={18} className="text-orange-500" /> Top Cidades — Entregas
+                  </h2>
+                  <p className="text-gray-500 text-xs mt-0.5">Apenas smartwatches</p>
+                </div>
+                <div className="p-6 space-y-3">
+                  {cidadesEntrega.length === 0 ? (
+                    <p className="text-gray-400 text-sm">Nenhuma entrega no período</p>
+                  ) : cidadesEntrega.map((c, i) => {
+                    const pct = totalEntregas > 0 ? (c.count / totalEntregas) * 100 : 0;
+                    return (
+                      <div key={c.city}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                              #{i + 1}
+                            </span>
+                            <span className="text-white text-sm">{c.city}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-white text-sm font-bold">{c.count}x</span>
+                            <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                          </div>
+                        </div>
+                        <div className="w-full bg-gray-700 rounded-full h-1.5">
+                          <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="p-6 space-y-3">
-                {cidades.length === 0 ? (
-                  <p className="text-gray-400 text-sm">Nenhuma cidade registrada</p>
-                ) : cidades.map((c, i) => {
-                  const pct = sales.length > 0 ? (c.count / sales.length) * 100 : 0;
-                  return (
-                    <div key={c.city}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
-                            #{i + 1}
-                          </span>
-                          <span className="text-white text-sm">{c.city}</span>
+
+              <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-700">
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <MapPin size={18} className="text-orange-500" /> Top Cidades — Loja Física
+                  </h2>
+                  <p className="text-gray-500 text-xs mt-0.5">Apenas smartwatches</p>
+                </div>
+                <div className="p-6 space-y-3">
+                  {cidadesLoja.length === 0 ? (
+                    <p className="text-gray-400 text-sm">Nenhuma venda na loja no período</p>
+                  ) : cidadesLoja.map((c, i) => {
+                    const pct = totalLojaFisica > 0 ? (c.count / totalLojaFisica) * 100 : 0;
+                    return (
+                      <div key={c.city}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                              #{i + 1}
+                            </span>
+                            <span className="text-white text-sm">{c.city}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-white text-sm font-bold">{c.count}x</span>
+                            <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <span className="text-white text-sm font-bold">{c.count}x</span>
-                          <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                        <div className="w-full bg-gray-700 rounded-full h-1.5">
+                          <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
-                      <div className="w-full bg-gray-700 rounded-full h-1.5">
-                        <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
