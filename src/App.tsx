@@ -8,6 +8,7 @@ import Motoboys from './pages/Motoboys';
 import Logistics from './pages/Logistics';
 import Reports from './pages/Reports';
 import Marketing from './pages/Marketing';
+import AdManager from './pages/AdManager';
 import Settings from './pages/Settings';
 import OperationalCosts from './pages/OperationalCosts';
 import ResumoMensal from './pages/ResumoMensal';
@@ -55,6 +56,8 @@ function App() {
         return <RastreamentoSedex />;
       case 'marketing':
         return <Marketing />;
+      case 'ad-manager':
+        return <AdManager />;
       case 'reports':
         return <Reports />;
       case 'costs':

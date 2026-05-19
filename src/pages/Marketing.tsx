@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import {
   TrendingUp, DollarSign, Target, ShoppingCart, Plus, Trash2,
   CreditCard as Edit2, X, Calendar, RefreshCw,
-  BarChart2, Activity, AlertCircle, CheckCircle, Layers
+  BarChart2, Activity, AlertCircle, CheckCircle
 } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
@@ -23,7 +23,6 @@ interface Sale { id: string; sale_date: string; total_sale_price: number; profit
 interface DailyMetrics { date: string; adSpend: number; revenue: number; profit: number; sales: number; roas: number; roi: number; cpv: number; }
 interface PeriodSummary { totalAdSpend: number; totalRevenue: number; totalProfit: number; totalSales: number; avgRoas: number; avgRoi: number; avgCpv: number; avgCpvSw: number; }
 interface FBMetrics { spend: string; impressions: string; clicks: string; reach: string; cpm: string; cpc: string; ctr: string; purchases: string; purchase_value: string; profit: string; roas: string; cpv: string; }
-interface FBCampaign { campaign_name: string; spend: string; impressions: string; reach: string; clicks: string; cpm: string; cpc: string; ctr: string; purchases: number; initiate_checkout: number; purchase_value: string; cost_per_purchase: string; }
 
 type TimeFilter = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
 
@@ -42,8 +41,7 @@ export default function Marketing() {
   const [fbError, setFbError] = useState<string | null>(null);
   const [fbSyncedCount, setFbSyncedCount] = useState<number | null>(null);
   const [totalSwCount, setTotalSwCount] = useState(0);
-  const [fbCampaigns, setFbCampaigns] = useState<FBCampaign[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'facebook' | 'campaigns' | 'detail'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'facebook' | 'detail'>('overview');
 
   useEffect(() => {
     loadData();
@@ -139,7 +137,6 @@ export default function Marketing() {
       const data = await res.json();
       if (data.success) {
         setFbMetrics(data.metrics);
-        setFbCampaigns(data.campaigns || []);
         if (data.dailySpend && data.dailySpend.length > 0) {
           const rows = data.dailySpend.map((d: { date: string; spend: number }) => ({
             date: d.date,
@@ -161,9 +158,8 @@ export default function Marketing() {
   }, [timeFilter, customStartDate, customEndDate]);
 
   useEffect(() => {
-    if (activeTab !== 'facebook' && activeTab !== 'campaigns') return;
+    if (activeTab !== 'facebook') return;
     setFbMetrics(null);
-    setFbCampaigns([]);
     setFbSyncedCount(null);
     loadFacebookData();
   }, [activeTab, timeFilter, customStartDate, customEndDate]);
@@ -286,10 +282,9 @@ export default function Marketing() {
       {/* Tabs */}
       <div className="flex gap-1 mb-6 bg-gray-800 rounded-xl p-1 border border-gray-700 w-fit">
         {[
-          { id: 'overview',   label: 'Visão Geral',  icon: BarChart2 },
-          { id: 'facebook',   label: 'Facebook Ads', icon: Activity  },
-          { id: 'campaigns',  label: 'Campanhas',     icon: Layers    },
-          { id: 'detail',     label: 'Detalhamento', icon: Target    },
+          { id: 'overview', label: 'Visão Geral',  icon: BarChart2 },
+          { id: 'facebook', label: 'Facebook Ads', icon: Activity  },
+          { id: 'detail',   label: 'Detalhamento', icon: Target    },
         ].map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id as typeof activeTab)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${activeTab === tab.id ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white'}`}>
@@ -518,126 +513,6 @@ export default function Marketing() {
             </>
           )}
 
-        </div>
-      )}
-
-      {/* TAB: CAMPANHAS */}
-      {activeTab === 'campaigns' && (
-        <div>
-          {timeFilter === 'today' && (
-            <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-xl p-5 flex items-start gap-3">
-              <AlertCircle size={20} className="text-yellow-400 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-yellow-300 font-medium text-sm">Dados do dia atual indisponíveis</p>
-                <p className="text-yellow-400/70 text-xs mt-1">A API do Facebook atualiza os dados com algumas horas de delay. Selecione <strong>Semana</strong>, <strong>Mês</strong> ou <strong>Personalizado</strong> para ver os dados.</p>
-              </div>
-            </div>
-          )}
-
-          {timeFilter === 'custom' && (!customStartDate || !customEndDate) && (
-            <div className="bg-gray-700/50 border border-gray-600 rounded-xl p-5 flex items-start gap-3">
-              <AlertCircle size={20} className="text-gray-400 mt-0.5 shrink-0" />
-              <p className="text-gray-400 text-sm">Selecione a data de início e fim no filtro acima para carregar os dados.</p>
-            </div>
-          )}
-
-          {fbLoading && (
-            <div className="flex items-center justify-center py-16">
-              <div className="flex flex-col items-center gap-3">
-                <RefreshCw size={32} className="animate-spin text-orange-500" />
-                <p className="text-gray-400">Buscando dados de campanhas...</p>
-              </div>
-            </div>
-          )}
-
-          {fbError && !fbLoading && (
-            <div className="bg-red-900/30 border border-red-700 rounded-xl p-6 text-center">
-              <p className="text-red-400 font-medium">{fbError}</p>
-            </div>
-          )}
-
-          {!fbLoading && !fbError && fbCampaigns.length > 0 && timeFilter !== 'today' && (
-            <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-700 flex items-center gap-2">
-                <Layers size={16} className="text-orange-500" />
-                <h3 className="text-base font-semibold text-white">Performance por Campanha</h3>
-                <span className="ml-auto text-xs text-gray-500">{fbCampaigns.length} campanha{fbCampaigns.length !== 1 ? 's' : ''} · ordenado por gasto</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-700/50">
-                    <tr>
-                      {[
-                        'Campanha', 'Gasto', 'Impressões', 'Alcance', 'Cliques',
-                        'CTR', 'CPM', 'CPC', 'Compras', 'Checkouts', 'Receita (Pixel)', 'CPV (Pixel)',
-                      ].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-700">
-                    {fbCampaigns.map((c, i) => {
-                      const fmt = (v: string) => `R$ ${parseFloat(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                      const fmtN = (v: string) => parseInt(v).toLocaleString('pt-BR');
-                      return (
-                        <tr key={i} className="hover:bg-gray-700/30 transition-colors">
-                          <td className="px-4 py-3 text-white font-medium max-w-xs">
-                            <span className="block truncate" title={c.campaign_name}>{c.campaign_name}</span>
-                          </td>
-                          <td className="px-4 py-3 text-red-400 font-semibold whitespace-nowrap">{fmt(c.spend)}</td>
-                          <td className="px-4 py-3 text-gray-300 whitespace-nowrap">{fmtN(c.impressions)}</td>
-                          <td className="px-4 py-3 text-gray-300 whitespace-nowrap">{fmtN(c.reach)}</td>
-                          <td className="px-4 py-3 text-gray-300 whitespace-nowrap">{fmtN(c.clicks)}</td>
-                          <td className="px-4 py-3 text-blue-400 whitespace-nowrap">{parseFloat(c.ctr).toFixed(2)}%</td>
-                          <td className="px-4 py-3 text-gray-300 whitespace-nowrap">{fmt(c.cpm)}</td>
-                          <td className="px-4 py-3 text-gray-300 whitespace-nowrap">{fmt(c.cpc)}</td>
-                          <td className="px-4 py-3 text-green-400 font-semibold whitespace-nowrap">{c.purchases > 0 ? c.purchases : <span className="text-gray-600">—</span>}</td>
-                          <td className="px-4 py-3 text-orange-400 whitespace-nowrap">{c.initiate_checkout > 0 ? c.initiate_checkout : <span className="text-gray-600">—</span>}</td>
-                          <td className="px-4 py-3 text-green-400 whitespace-nowrap">{parseFloat(c.purchase_value) > 0 ? fmt(c.purchase_value) : <span className="text-gray-600">—</span>}</td>
-                          <td className="px-4 py-3 text-white whitespace-nowrap">{parseFloat(c.cost_per_purchase) > 0 ? fmt(c.cost_per_purchase) : <span className="text-gray-600">—</span>}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot className="border-t-2 border-gray-600 bg-gray-700/30">
-                    <tr>
-                      <td className="px-4 py-3 text-gray-400 text-xs font-semibold uppercase">Total</td>
-                      <td className="px-4 py-3 text-red-400 font-bold whitespace-nowrap">
-                        {`R$ ${fbCampaigns.reduce((s, c) => s + parseFloat(c.spend), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                      </td>
-                      <td className="px-4 py-3 text-gray-300 whitespace-nowrap">
-                        {fbCampaigns.reduce((s, c) => s + parseInt(c.impressions), 0).toLocaleString('pt-BR')}
-                      </td>
-                      <td className="px-4 py-3 text-gray-300 whitespace-nowrap">
-                        {fbCampaigns.reduce((s, c) => s + parseInt(c.reach), 0).toLocaleString('pt-BR')}
-                      </td>
-                      <td className="px-4 py-3 text-gray-300 whitespace-nowrap">
-                        {fbCampaigns.reduce((s, c) => s + parseInt(c.clicks), 0).toLocaleString('pt-BR')}
-                      </td>
-                      <td colSpan={3} />
-                      <td className="px-4 py-3 text-green-400 font-bold whitespace-nowrap">
-                        {fbCampaigns.reduce((s, c) => s + c.purchases, 0)}
-                      </td>
-                      <td className="px-4 py-3 text-orange-400 font-bold whitespace-nowrap">
-                        {fbCampaigns.reduce((s, c) => s + c.initiate_checkout, 0)}
-                      </td>
-                      <td className="px-4 py-3 text-green-400 font-bold whitespace-nowrap">
-                        {`R$ ${fbCampaigns.reduce((s, c) => s + parseFloat(c.purchase_value), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                      </td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {!fbLoading && !fbError && fbCampaigns.length === 0 && timeFilter !== 'today' && !(timeFilter === 'custom' && (!customStartDate || !customEndDate)) && (
-            <div className="bg-gray-800 rounded-xl border border-gray-700 p-12 text-center">
-              <Layers size={40} className="text-gray-600 mx-auto mb-3" />
-              <p className="text-gray-400">Nenhuma campanha encontrada para o período</p>
-            </div>
-          )}
         </div>
       )}
 
