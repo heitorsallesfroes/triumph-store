@@ -249,6 +249,7 @@ export default function ResumoMensal() {
 
   const fmt = (v: number) => `R$ ${v.toFixed(2)}`;
   const swCount = saleItems.filter(i => (i.products as any)?.category === 'smartwatch').reduce((s, i) => s + i.quantity, 0);
+  const cpvSw = adSpend > 0 && swCount > 0 ? adSpend / swCount : null;
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -335,8 +336,22 @@ export default function ResumoMensal() {
                       subtitle="Faturamento ÷ ads" config={roas !== null ? getRoasConfig(roas) : null} icon={Target} />
                     <RatingCard label="ROI"  value={roi !== null ? `${roi.toFixed(0)}%` : '—'}
                       subtitle="Lucro ÷ ads"        config={roi !== null ? getRoiConfig(roi) : null}   icon={TrendingUp} />
-                    <RatingCard label="CPV"  value={cpv !== null ? fmt(cpv) : '—'}
-                      subtitle="Ads ÷ vendas"        config={cpv !== null ? getCpvConfig(cpv) : null}   icon={ShoppingCart} />
+                    <div className="bg-gray-900 rounded-xl p-4 border border-gray-700">
+                      <div className="flex items-center gap-2 mb-2">
+                        <ShoppingCart size={15} className="text-orange-400" />
+                        <p className="text-gray-400 text-xs">CPV</p>
+                      </div>
+                      <div className="mb-3">
+                        <p className="text-gray-500 text-xs mb-0.5">CPV / Venda</p>
+                        {(() => { const cfg = cpv !== null ? getCpvConfig(cpv) : null; return (<><p className={`text-lg font-bold ${cfg?.color ?? 'text-gray-500'}`}>{cpv !== null ? fmt(cpv) : '—'}</p>{cfg?.label && <p className={`text-xs mt-0.5 font-medium ${cfg.color}`}>{cfg.label}</p>}</>); })()}
+                        <p className="text-gray-500 text-xs mt-1">Ads ÷ vendas</p>
+                      </div>
+                      <div className="border-t border-gray-700 pt-2">
+                        <p className="text-gray-500 text-xs mb-0.5">CPV / Smartwatch</p>
+                        {(() => { const cfg = cpvSw !== null ? getCpvConfig(cpvSw) : null; return (<><p className={`text-lg font-bold ${cfg?.color ?? 'text-gray-500'}`}>{cpvSw !== null ? fmt(cpvSw) : '—'}</p>{cfg?.label && <p className={`text-xs mt-0.5 font-medium ${cfg.color}`}>{cfg.label}</p>}</>); })()}
+                        <p className="text-gray-500 text-xs mt-1">Ads ÷ smartwatches</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

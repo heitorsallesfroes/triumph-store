@@ -412,6 +412,9 @@ export default function ResumoVendas() {
             const roi = summary.totalAdSpend > 0 ? (summary.lucroFinal / summary.totalAdSpend) * 100 : null;
             const cpvCfg = cpv !== null ? getCpvConfig(cpv) : null;
             const roiCfg = roi !== null ? getRoiConfig(roi) : null;
+            const totalSmartwatches = smartwatches.reduce((s, sw) => s + sw.quantity, 0);
+            const cpvSw = summary.totalAdSpend > 0 && totalSmartwatches > 0 ? summary.totalAdSpend / totalSmartwatches : null;
+            const cpvSwCfg = cpvSw !== null ? getCpvConfig(cpvSw) : null;
             return (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                 <FinCard label="Total de Vendas" value={String(summary.totalSales)}  icon={ShoppingCart} accent="blue"
@@ -424,15 +427,30 @@ export default function ResumoVendas() {
                     <ShoppingCart size={14} className="text-blue-400" />
                     <p className="text-xs text-gray-400 font-medium">CPV</p>
                   </div>
-                  {cpv !== null && summary.totalAdSpend > 0 ? (
-                    <>
-                      <p className={`text-xl font-bold ${cpvCfg!.color}`}>R$ {cpv.toFixed(2)}</p>
-                      {cpvCfg!.label && <p className={`text-xs mt-1 font-medium ${cpvCfg!.color}`}>{cpvCfg!.label}</p>}
-                    </>
-                  ) : (
-                    <p className="text-xl font-bold text-gray-500">—</p>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">Ads ÷ vendas</p>
+                  <div className="mb-2">
+                    <p className="text-xs text-gray-500 mb-0.5">CPV / Venda</p>
+                    {cpv !== null && summary.totalAdSpend > 0 ? (
+                      <>
+                        <p className={`text-lg font-bold ${cpvCfg!.color}`}>R$ {cpv.toFixed(2)}</p>
+                        {cpvCfg!.label && <p className={`text-xs font-medium ${cpvCfg!.color}`}>{cpvCfg!.label}</p>}
+                      </>
+                    ) : (
+                      <p className="text-lg font-bold text-gray-500">—</p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-0.5">Ads ÷ vendas</p>
+                  </div>
+                  <div className="border-t border-gray-700/50 pt-2">
+                    <p className="text-xs text-gray-500 mb-0.5">CPV / Smartwatch</p>
+                    {cpvSw !== null ? (
+                      <>
+                        <p className={`text-lg font-bold ${cpvSwCfg!.color}`}>R$ {cpvSw.toFixed(2)}</p>
+                        {cpvSwCfg!.label && <p className={`text-xs font-medium ${cpvSwCfg!.color}`}>{cpvSwCfg!.label}</p>}
+                      </>
+                    ) : (
+                      <p className="text-lg font-bold text-gray-500">—</p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-0.5">Ads ÷ smartwatches</p>
+                  </div>
                 </div>
                 <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 border-l-4 border-l-purple-500">
                   <div className="flex items-center gap-2 mb-2">
