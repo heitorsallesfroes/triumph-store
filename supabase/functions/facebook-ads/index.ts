@@ -95,6 +95,10 @@ Deno.serve(async (req: Request) => {
       return found ? parseFloat(found.value || '0').toFixed(2) : '0.00';
     };
 
+    // Debug: log da resposta bruta de campanhas para diagnóstico
+    console.log('[facebook-ads] campaign HTTP status:', fbCampaignResponse.status);
+    console.log('[facebook-ads] campaign raw response:', JSON.stringify(fbCampaignData).slice(0, 2000));
+
     const campaigns = (fbCampaignData.error ? [] : (fbCampaignData.data || []) as any[])
       .map((c: any) => ({
         campaign_name:     c.campaign_name || 'Sem nome',
@@ -111,6 +115,17 @@ Deno.serve(async (req: Request) => {
         cost_per_purchase: findValue(c.cost_per_action_type, ['purchase', 'offsite_conversion.fb_pixel_purchase']),
       }))
       .sort((a: any, b: any) => parseFloat(b.spend) - parseFloat(a.spend));
+
+    // Campo debug incluído na resposta para diagnóstico no Network tab do browser
+    const campaignDebug = {
+      httpStatus:   fbCampaignResponse.status,
+      hasError:     !!fbCampaignData.error,
+      errorMessage: fbCampaignData.error?.message ?? null,
+      errorCode:    fbCampaignData.error?.code ?? null,
+      dataLength:   (fbCampaignData.data || []).length,
+      firstItem:    (fbCampaignData.data || [])[0] ?? null,
+      paging:       fbCampaignData.paging ?? null,
+    };
 
     const dailySpend: { date: string; spend: number }[] = (fbDailyData.data || [])
       .map((d: { date_start: string; spend: string }) => ({
@@ -143,6 +158,7 @@ Deno.serve(async (req: Request) => {
         dateEnd,
         dailySpend,
         campaigns,
+        campaignDebug,
         metrics: {
           spend: spend.toFixed(2),
           impressions: insights.impressions || '0',
