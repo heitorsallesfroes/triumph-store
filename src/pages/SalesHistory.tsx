@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
 import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers, Link } from 'lucide-react';
 import Receipt from '../components/Receipt';
-import EditSale from '../components/EditSale';
+import Sales from './Sales';
 import { generateShippingLabel } from '../lib/superfrete';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 
@@ -112,6 +112,7 @@ export default function SalesHistory() {
   const [motoboys, setMotoboys] = useState<{ id: string; name: string }[]>([]);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
+  const [fullEditSaleId, setFullEditSaleId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [productFilter, setProductFilter] = useState('');
   const [debouncedProductFilter, setDebouncedProductFilter] = useState('');
@@ -935,7 +936,7 @@ export default function SalesHistory() {
                   </div>
 
                   <div className="col-span-12 lg:col-span-2 flex flex-wrap gap-2">
-                    <button onClick={() => setEditingSaleId(sale.id)} className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
+                    <button onClick={() => setFullEditSaleId(sale.id)} className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
                       <Edit size={14} />
                       <span className="text-xs font-semibold">Editar</span>
                     </button>
@@ -1122,16 +1123,13 @@ export default function SalesHistory() {
           }}
         />
       )}
-      {editingSaleId && (
-        <EditSale
-          saleId={editingSaleId}
-          onClose={() => setEditingSaleId(null)}
-          onSaved={(id, updates) => {
-            const patch = (s: any) => s.id === id ? { ...s, ...updates } : s;
-            setSales(prev => prev.map(patch));
-            setFilteredSales(prev => prev.map(patch));
-          }}
-        />
+      {fullEditSaleId && (
+        <div className="fixed inset-0 z-50 overflow-auto" style={{ background: '#0a0a0f' }}>
+          <Sales
+            editSaleId={fullEditSaleId}
+            onEditDone={() => { setFullEditSaleId(null); filterSales(); }}
+          />
+        </div>
       )}
       {whatsappSale && <WhatsAppModal sale={whatsappSale} onClose={() => setWhatsappSale(null)} />}
     </div>

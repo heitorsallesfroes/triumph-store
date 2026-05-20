@@ -53,9 +53,11 @@ interface PaymentEntry {
 interface SalesProps {
   triggerFastSale?: number;
   onNavigate?: (page: string) => void;
+  editSaleId?: string;
+  onEditDone?: () => void;
 }
 
-export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
+export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditDone }: SalesProps) {
   console.log('Nova Venda loaded');
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -77,6 +79,7 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
   const [showPasteForm, setShowPasteForm] = useState(false);
 
   const novaSaleRef = useRef<HTMLDivElement>(null);
+  const originalItemsRef = useRef<{ product_id: string; quantity: number }[]>([]);
 
   const [formData, setFormData] = useState({
     customer_name: '',
@@ -177,12 +180,91 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
       setSuppliers(suppliersRes.data || []);
       setCities(citiesRes.data || []);
       setNeighborhoods(neighborhoodsRes.data || []);
+      if (editSaleId) {
+        await loadExistingSale(editSaleId, suppliersRes.data || []);
+      }
     } catch (error) {
       console.error('Error loading data:', error);
       alert('Erro ao carregar dados. Por favor, recarregue a página.');
     } finally {
       setLoading(false);
       console.log('Loading complete');
+    }
+  };
+
+  const loadExistingSale = async (saleId: string, suppliersData: { id: string; name: string }[]) => {
+    try {
+      const [saleRes, itemsRes, accessoriesRes] = await Promise.all([
+        supabase.from('sales').select('*').eq('id', saleId).single(),
+        supabase.from('sale_items').select('*, product:products(*)').eq('sale_id', saleId),
+        supabase.from('sale_accessories').select('*, accessory:accessories(*)').eq('sale_id', saleId),
+      ]);
+      if (saleRes.error) throw saleRes.error;
+      const sale = saleRes.data;
+
+      setFormData({
+        customer_name:      sale.customer_name      || '',
+        customer_phone:     sale.customer_phone     || '',
+        customer_cpf:       sale.customer_cpf       || '',
+        address_street:     sale.address_street     || '',
+        address_number:     sale.address_number     || '',
+        address_complement: sale.address_complement || '',
+        city:               sale.city               || '',
+        neighborhood:       sale.neighborhood       || '',
+        state:              sale.state              || '',
+        zip_code:           sale.zip_code           || '',
+        delivery_type:      sale.delivery_type      || 'motoboy',
+        motoboy_id:         sale.motoboy_id         || '',
+        supplier_id:        sale.supplier_id        || '',
+        delivery_fee:       sale.delivery_fee       || 0,
+        delivery_cost:      sale.delivery_cost      || 0,
+        volumes:            sale.volumes            || 1,
+        delivery_notes:     sale.delivery_notes     || '',
+      });
+      setCitySearch(sale.city || '');
+      setNeighborhoodSearch(sale.neighborhood || '');
+      if (sale.customer_cpf) setCpfDisplay(formatCpf(sale.customer_cpf));
+      setSaleDate((sale.sale_date || '').split('T')[0] || getTodayInBrazil());
+
+      const supplier = suppliersData.find(s => s.id === sale.supplier_id);
+      if (supplier) setSupplierSearch(supplier.name);
+
+      const existingPMs = sale.payment_methods;
+      if (existingPMs && Array.isArray(existingPMs) && existingPMs.length > 0) {
+        setPaymentMethods(existingPMs);
+      } else {
+        setPaymentMethods([{
+          method:       sale.payment_method || 'pix',
+          card_brand:   sale.card_brand     || '',
+          installments: sale.installments   || 0,
+          amount:       0,
+        }]);
+      }
+
+      const editableProducts: SaleProduct[] = (itemsRes.data || []).map((item: any) => ({
+        product_id: item.product_id,
+        product:    item.product,
+        quantity:   item.quantity,
+        unit_price: item.unit_price || 0,
+        unit_cost:  item.product?.cost || 0,
+      }));
+      setSaleProducts(editableProducts);
+      originalItemsRef.current = editableProducts.map(i => ({ product_id: i.product_id, quantity: i.quantity }));
+
+      setSaleAccessories((accessoriesRes.data || []).map((acc: any) => ({
+        accessory_id: acc.accessory_id,
+        accessory:    acc.accessory,
+        quantity:     acc.quantity,
+        cost:         acc.cost,
+        custom_name:  acc.custom_name,
+      })));
+
+      if (sale.manual_items && Array.isArray(sale.manual_items)) {
+        setManualItems(sale.manual_items);
+      }
+    } catch (error) {
+      console.error('Error loading sale for edit:', error);
+      alert('Erro ao carregar dados da venda para edição');
     }
   };
 
@@ -507,6 +589,90 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
 
       const totals = calculateTotals();
 
+      if (editSaleId) {
+        // ── Modo edição: UPDATE da venda existente ──────────────────────────
+        const origMap = new Map(originalItemsRef.current.map(i => [i.product_id, i.quantity]));
+        const currMap = new Map(saleProducts.map(sp => [sp.product_id, sp.quantity]));
+
+        // Ajuste de estoque
+        for (const [pid, origQty] of origMap) {
+          const currQty = currMap.get(pid) ?? 0;
+          const delta = origQty - currQty; // positivo = devolver, negativo = descontar
+          if (delta !== 0) {
+            const { data: prod } = await supabase.from('products').select('current_stock').eq('id', pid).maybeSingle();
+            if (prod) await supabase.from('products').update({ current_stock: prod.current_stock + delta }).eq('id', pid);
+          }
+        }
+        for (const [pid, currQty] of currMap) {
+          if (!origMap.has(pid)) {
+            const { data: prod } = await supabase.from('products').select('current_stock').eq('id', pid).maybeSingle();
+            if (prod) await supabase.from('products').update({ current_stock: prod.current_stock - currQty }).eq('id', pid);
+          }
+        }
+
+        // Reconstruir sale_items
+        await supabase.from('sale_items').delete().eq('sale_id', editSaleId);
+        if (saleProducts.length > 0) {
+          const { error: itemsErr } = await supabase.from('sale_items').insert(
+            saleProducts.map(sp => ({
+              sale_id: editSaleId, product_id: sp.product_id,
+              quantity: sp.quantity, unit_price: sp.unit_price,
+              total_price: sp.unit_price * sp.quantity,
+            }))
+          );
+          if (itemsErr) throw itemsErr;
+        }
+
+        // Reconstruir sale_accessories
+        await supabase.from('sale_accessories').delete().eq('sale_id', editSaleId);
+        if (saleAccessories.length > 0) {
+          await supabase.from('sale_accessories').insert(
+            saleAccessories.map(sa => ({
+              sale_id: editSaleId, accessory_id: sa.accessory_id,
+              custom_name: sa.custom_name || null, quantity: sa.quantity, cost: sa.cost,
+            }))
+          );
+        }
+
+        // Atualizar linha da venda
+        const { error: updateErr } = await supabase.from('sales').update({
+          customer_name:      formData.customer_name,
+          customer_phone:     formData.customer_phone  || null,
+          customer_cpf:       formData.customer_cpf    ? cleanCpf(formData.customer_cpf) : null,
+          address_street:     formData.address_street  || null,
+          address_number:     formData.address_number  || null,
+          address_complement: formData.address_complement || null,
+          city:               cityName,
+          neighborhood:       neighborhoodName,
+          state:              formData.state    || null,
+          zip_code:           formData.zip_code || null,
+          payment_method:     paymentMethods[0]?.method || 'pix',
+          card_brand:         paymentMethods.find(pm => ['credit_card','debit_card','payment_link'].includes(pm.method))?.card_brand || null,
+          installments:       paymentMethods.find(pm => pm.method === 'credit_card' || pm.method === 'payment_link')?.installments || 1,
+          payment_methods:    paymentMethods,
+          delivery_type:      formData.delivery_type,
+          motoboy_id:         formData.delivery_type === 'motoboy' ? (formData.motoboy_id || null) : null,
+          supplier_id:        supplierId || null,
+          delivery_fee:       totals.deliveryFee,
+          delivery_cost:      totals.deliveryCost,
+          card_fee:           totals.cardFee,
+          total_cost:         totals.totalCost,
+          total_sale_price:   totals.totalSalePrice,
+          net_received:       totals.netReceived,
+          profit:             totals.profit,
+          volumes:            formData.volumes,
+          manual_items:       manualItems.length > 0 ? manualItems : null,
+          delivery_notes:     formData.delivery_notes.trim() || null,
+        }).eq('id', editSaleId);
+        if (updateErr) throw updateErr;
+
+        // Atualiza snapshot para futuros saves na mesma sessão
+        originalItemsRef.current = saleProducts.map(sp => ({ product_id: sp.product_id, quantity: sp.quantity }));
+        alert('Venda atualizada com sucesso!');
+        onEditDone?.();
+        return;
+      }
+
       const { data: saleData, error: saleError } = await supabase
         .from('sales')
         .insert([
@@ -806,9 +972,9 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
       <div ref={novaSaleRef} className="mb-8">
         <h1 className="text-3xl font-bold text-white flex items-center gap-3 mb-2">
           <ShoppingCart size={32} />
-          Nova Venda
+          {editSaleId ? 'Editar Venda' : 'Nova Venda'}
         </h1>
-        <p className="text-gray-400">Registre uma nova venda e gerencie todos os detalhes</p>
+        <p className="text-gray-400">{editSaleId ? 'Ajuste os dados e salve para atualizar a venda' : 'Registre uma nova venda e gerencie todos os detalhes'}</p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -1657,14 +1823,14 @@ export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
             className="flex-1 bg-orange-500 text-white px-6 py-4 rounded-lg hover:bg-orange-600 transition-colors font-bold text-xl disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-3"
           >
             <ShoppingCart size={24} />
-            Confirmar Venda
+            {editSaleId ? 'Salvar Alterações' : 'Confirmar Venda'}
           </button>
           <button
             type="button"
-            onClick={resetForm}
+            onClick={editSaleId ? () => onEditDone?.() : resetForm}
             className="px-8 py-4 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium"
           >
-            Limpar
+            {editSaleId ? 'Cancelar' : 'Limpar'}
           </button>
         </div>
       </form>
