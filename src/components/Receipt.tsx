@@ -149,15 +149,18 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
           {totalVolumes > 1 && (
             <p style={{ fontSize: '11px', color: '#555' }}>Volume {volumeNumber} de {totalVolumes}</p>
           )}
-          {volumeModel && (
-            <p style={{ fontSize: '11px', fontWeight: 'bold', color: '#000', marginTop: '3px' }}>{volumeModel}</p>
-          )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <div>
             <p style={{ fontSize: '9px', color: '#666', marginBottom: '1px' }}>CLIENTE</p>
             <p style={{ fontSize: '12px', fontWeight: 'bold', color: '#000' }}>{sale?.customer_name || 'N/A'}</p>
           </div>
+          {volumeModel && (
+            <div>
+              <p style={{ fontSize: '9px', color: '#666', marginBottom: '1px' }}>MODELO</p>
+              <p style={{ fontSize: '12px', fontWeight: 'bold', color: '#000' }}>{volumeModel}</p>
+            </div>
+          )}
           <div>
             <p style={{ fontSize: '9px', color: '#666', marginBottom: '1px' }}>LOCAL</p>
             <p style={{ fontSize: '13px', fontWeight: 'bold', color: '#000' }}>
