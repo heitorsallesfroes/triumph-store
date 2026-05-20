@@ -57,7 +57,7 @@ interface ProductOption {
   color:         string;
   cost:          number;
   current_stock: number;
-  selling_price: number;
+  price:         number;
 }
 
 interface SaleAccessory {
@@ -130,7 +130,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
         supabase.from('sale_accessories').select('*, accessory:accessories(cost)').eq('sale_id', saleId),
         supabase.from('suppliers').select('*').order('name'),
         supabase.from('motoboys').select('*').order('name'),
-        supabase.from('products').select('id, model, color, cost, current_stock, selling_price').order('model'),
+        supabase.from('products').select('*').order('model'),
       ]);
 
       if (saleRes.error)  throw saleRes.error;
@@ -491,7 +491,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
                 onChange={e => {
                   const product = allProducts.find(p => p.id === e.target.value);
                   setAddProductId(e.target.value);
-                  if (product) setAddProductPrice(product.selling_price || 0);
+                  if (product) setAddProductPrice(product.price || 0);
                   setAddProductQty(1);
                 }}
                 className="w-full bg-gray-700 text-white rounded px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
