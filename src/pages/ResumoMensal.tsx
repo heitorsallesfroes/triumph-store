@@ -35,6 +35,7 @@ interface SaleData {
   delivery_type: string;
   status: string;
   city: string;
+  neighborhood?: string;
   payment_method: string;
 }
 
@@ -77,6 +78,7 @@ export default function ResumoMensal() {
   const [motoboyDeliveryFees, setMotoboyDeliveryFees] = useState(0);
   const [smallSales, setSmallSales] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedCity, setExpandedCity] = useState<{ type: string; city: string } | null>(null);
 
   useEffect(() => { loadData(); }, [selected]);
 
@@ -93,7 +95,7 @@ export default function ResumoMensal() {
 
       const [salesRes, adRes, costsRes, motoboyExtrasRes, motoboyFeesRes, motoboySmallFeesRes] = await Promise.all([
         supabase.from('sales')
-          .select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status,city,payment_method')
+          .select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status,city,neighborhood,payment_method')
           .neq('status', 'cancelado')
           .gte('sale_date', startDate)
           .lte('sale_date', endDate + 'T23:59:59'),
@@ -202,14 +204,26 @@ export default function ResumoMensal() {
     value: sales.filter(s => s.delivery_type === c.key).reduce((sum, s) => sum + Number(s.total_sale_price), 0),
   }));
 
-  // Cidades — Entregas
-  const cidadesEntregaMap = new Map<string, { count: number; value: number }>();
-  sales.filter(s => s.delivery_type === 'motoboy' || s.delivery_type === 'correios').forEach(s => {
+  // Cidades — Motoboy
+  const cidadesMotoboyMap = new Map<string, { count: number; value: number }>();
+  sales.filter(s => s.delivery_type === 'motoboy').forEach(s => {
     const city = s.city || 'Não informado';
-    const cur = cidadesEntregaMap.get(city) || { count: 0, value: 0 };
-    cidadesEntregaMap.set(city, { count: cur.count + 1, value: cur.value + Number(s.total_sale_price) });
+    const cur = cidadesMotoboyMap.get(city) || { count: 0, value: 0 };
+    cidadesMotoboyMap.set(city, { count: cur.count + 1, value: cur.value + Number(s.total_sale_price) });
   });
-  const cidadesEntrega = Array.from(cidadesEntregaMap.entries())
+  const cidadesMotoboy = Array.from(cidadesMotoboyMap.entries())
+    .map(([city, data]) => ({ city, ...data }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+
+  // Cidades — Correios
+  const cidadesCorreiosMap = new Map<string, { count: number; value: number }>();
+  sales.filter(s => s.delivery_type === 'correios').forEach(s => {
+    const city = s.city || 'Não informado';
+    const cur = cidadesCorreiosMap.get(city) || { count: 0, value: 0 };
+    cidadesCorreiosMap.set(city, { count: cur.count + 1, value: cur.value + Number(s.total_sale_price) });
+  });
+  const cidadesCorreios = Array.from(cidadesCorreiosMap.entries())
     .map(([city, data]) => ({ city, ...data }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
@@ -226,7 +240,8 @@ export default function ResumoMensal() {
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
 
-  const totalEntregas   = cidadesEntrega.reduce((s, x) => s + x.count, 0);
+  const totalMotoboy    = cidadesMotoboy.reduce((s, x) => s + x.count, 0);
+  const totalCorreios   = cidadesCorreios.reduce((s, x) => s + x.count, 0);
   const totalLojaFisica = cidadesLoja.reduce((s, x) => s + x.count, 0);
 
   const modelColorMap = new Map<string, number>();
@@ -565,41 +580,119 @@ export default function ResumoMensal() {
 
             {/* Cidades */}
             <div className="space-y-6">
+              {/* Motoboy */}
               <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-700">
                   <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                    <MapPin size={18} className="text-orange-500" /> Top Cidades — Entregas
+                    <MapPin size={18} className="text-orange-500" /> Top Cidades — Motoboy
                   </h2>
                   <p className="text-gray-500 text-xs mt-0.5">Apenas smartwatches</p>
                 </div>
                 <div className="p-6 space-y-3">
-                  {cidadesEntrega.length === 0 ? (
+                  {cidadesMotoboy.length === 0 ? (
                     <p className="text-gray-400 text-sm">Nenhuma entrega no período</p>
-                  ) : cidadesEntrega.map((c, i) => {
-                    const pct = totalEntregas > 0 ? (c.count / totalEntregas) * 100 : 0;
+                  ) : cidadesMotoboy.map((c, i) => {
+                    const pct = totalMotoboy > 0 ? (c.count / totalMotoboy) * 100 : 0;
+                    const isExpanded = expandedCity?.type === 'motoboy' && expandedCity?.city === c.city;
+                    const neighborhoods = isExpanded ? (() => {
+                      const nbMap = new Map<string, number>();
+                      sales.filter(s => s.delivery_type === 'motoboy' && (s.city || 'Não informado') === c.city)
+                        .forEach(s => { const nb = s.neighborhood || 'Não informado'; nbMap.set(nb, (nbMap.get(nb) || 0) + 1); });
+                      return Array.from(nbMap.entries()).map(([neighborhood, count]) => ({ neighborhood, count })).sort((a, b) => b.count - a.count);
+                    })() : [];
                     return (
                       <div key={c.city}>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
-                              #{i + 1}
-                            </span>
-                            <span className="text-white text-sm">{c.city}</span>
+                        <button onClick={() => setExpandedCity(isExpanded ? null : { type: 'motoboy', city: c.city })} className="w-full text-left">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                                #{i + 1}
+                              </span>
+                              <span className="text-white text-sm">{c.city}</span>
+                              <span className="text-gray-500 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-white text-sm font-bold">{c.count}x</span>
+                              <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <span className="text-white text-sm font-bold">{c.count}x</span>
-                            <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                          <div className="w-full bg-gray-700 rounded-full h-1.5">
+                            <div className="bg-orange-400 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
                           </div>
-                        </div>
-                        <div className="w-full bg-gray-700 rounded-full h-1.5">
-                          <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
-                        </div>
+                        </button>
+                        {isExpanded && neighborhoods.length > 0 && (
+                          <div className="mt-2 ml-7 space-y-1">
+                            {neighborhoods.map(nb => (
+                              <div key={nb.neighborhood} className="flex justify-between items-center text-xs py-0.5">
+                                <span className="text-gray-400">{nb.neighborhood}</span>
+                                <span className="text-gray-300 font-medium">{nb.count}x</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               </div>
 
+              {/* Correios */}
+              <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-700">
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <MapPin size={18} className="text-orange-500" /> Top Cidades — Correios
+                  </h2>
+                  <p className="text-gray-500 text-xs mt-0.5">Apenas smartwatches</p>
+                </div>
+                <div className="p-6 space-y-3">
+                  {cidadesCorreios.length === 0 ? (
+                    <p className="text-gray-400 text-sm">Nenhuma entrega no período</p>
+                  ) : cidadesCorreios.map((c, i) => {
+                    const pct = totalCorreios > 0 ? (c.count / totalCorreios) * 100 : 0;
+                    const isExpanded = expandedCity?.type === 'correios' && expandedCity?.city === c.city;
+                    const neighborhoods = isExpanded ? (() => {
+                      const nbMap = new Map<string, number>();
+                      sales.filter(s => s.delivery_type === 'correios' && (s.city || 'Não informado') === c.city)
+                        .forEach(s => { const nb = s.neighborhood || 'Não informado'; nbMap.set(nb, (nbMap.get(nb) || 0) + 1); });
+                      return Array.from(nbMap.entries()).map(([neighborhood, count]) => ({ neighborhood, count })).sort((a, b) => b.count - a.count);
+                    })() : [];
+                    return (
+                      <div key={c.city}>
+                        <button onClick={() => setExpandedCity(isExpanded ? null : { type: 'correios', city: c.city })} className="w-full text-left">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                                #{i + 1}
+                              </span>
+                              <span className="text-white text-sm">{c.city}</span>
+                              <span className="text-gray-500 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-white text-sm font-bold">{c.count}x</span>
+                              <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                            </div>
+                          </div>
+                          <div className="w-full bg-gray-700 rounded-full h-1.5">
+                            <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                          </div>
+                        </button>
+                        {isExpanded && neighborhoods.length > 0 && (
+                          <div className="mt-2 ml-7 space-y-1">
+                            {neighborhoods.map(nb => (
+                              <div key={nb.neighborhood} className="flex justify-between items-center text-xs py-0.5">
+                                <span className="text-gray-400">{nb.neighborhood}</span>
+                                <span className="text-gray-300 font-medium">{nb.count}x</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Loja Física */}
               <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-700">
                   <h2 className="text-lg font-bold text-white flex items-center gap-2">
@@ -612,23 +705,43 @@ export default function ResumoMensal() {
                     <p className="text-gray-400 text-sm">Nenhuma venda na loja no período</p>
                   ) : cidadesLoja.map((c, i) => {
                     const pct = totalLojaFisica > 0 ? (c.count / totalLojaFisica) * 100 : 0;
+                    const isExpanded = expandedCity?.type === 'loja_fisica' && expandedCity?.city === c.city;
+                    const neighborhoods = isExpanded ? (() => {
+                      const nbMap = new Map<string, number>();
+                      sales.filter(s => s.delivery_type === 'loja_fisica' && (s.city || 'Não informado') === c.city)
+                        .forEach(s => { const nb = s.neighborhood || 'Não informado'; nbMap.set(nb, (nbMap.get(nb) || 0) + 1); });
+                      return Array.from(nbMap.entries()).map(([neighborhood, count]) => ({ neighborhood, count })).sort((a, b) => b.count - a.count);
+                    })() : [];
                     return (
                       <div key={c.city}>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
-                              #{i + 1}
-                            </span>
-                            <span className="text-white text-sm">{c.city}</span>
+                        <button onClick={() => setExpandedCity(isExpanded ? null : { type: 'loja_fisica', city: c.city })} className="w-full text-left">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                                #{i + 1}
+                              </span>
+                              <span className="text-white text-sm">{c.city}</span>
+                              <span className="text-gray-500 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-white text-sm font-bold">{c.count}x</span>
+                              <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <span className="text-white text-sm font-bold">{c.count}x</span>
-                            <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                          <div className="w-full bg-gray-700 rounded-full h-1.5">
+                            <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
                           </div>
-                        </div>
-                        <div className="w-full bg-gray-700 rounded-full h-1.5">
-                          <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
-                        </div>
+                        </button>
+                        {isExpanded && neighborhoods.length > 0 && (
+                          <div className="mt-2 ml-7 space-y-1">
+                            {neighborhoods.map(nb => (
+                              <div key={nb.neighborhood} className="flex justify-between items-center text-xs py-0.5">
+                                <span className="text-gray-400">{nb.neighborhood}</span>
+                                <span className="text-gray-300 font-medium">{nb.count}x</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
