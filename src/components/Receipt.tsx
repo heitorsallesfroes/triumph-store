@@ -142,12 +142,15 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
 
     return (
       <div key={volumeNumber} className="delivery-label">
-        <div style={{ textAlign: 'center', marginBottom: '8px', borderBottom: '1px solid #aaa', paddingBottom: '6px' }}>
+        <div style={{ marginBottom: '8px', borderBottom: '1px solid #aaa', paddingBottom: '6px' }}>
           <h2 style={{ fontSize: '13px', fontWeight: 'bold', color: '#000', letterSpacing: '1px' }}>
             {giftMode ? 'CONTROLE DE ENTREGA' : 'ENTREGA'}
           </h2>
           {totalVolumes > 1 && (
             <p style={{ fontSize: '11px', color: '#555' }}>Volume {volumeNumber} de {totalVolumes}</p>
+          )}
+          {volumeModel && (
+            <p style={{ fontSize: '11px', fontWeight: 'bold', color: '#000', marginTop: '2px' }}>{volumeModel}</p>
           )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -155,12 +158,6 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
             <p style={{ fontSize: '9px', color: '#666', marginBottom: '1px' }}>CLIENTE</p>
             <p style={{ fontSize: '12px', fontWeight: 'bold', color: '#000' }}>{sale?.customer_name || 'N/A'}</p>
           </div>
-          {volumeModel && (
-            <div>
-              <p style={{ fontSize: '9px', color: '#666', marginBottom: '1px' }}>MODELO</p>
-              <p style={{ fontSize: '12px', fontWeight: 'bold', color: '#000' }}>{volumeModel}</p>
-            </div>
-          )}
           <div>
             <p style={{ fontSize: '9px', color: '#666', marginBottom: '1px' }}>LOCAL</p>
             <p style={{ fontSize: '13px', fontWeight: 'bold', color: '#000' }}>
