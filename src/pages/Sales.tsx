@@ -1736,78 +1736,74 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         </div>
 
         {/* Profit Summary - Prominent */}
-        <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black rounded-xl p-6 border-2 border-orange-500 shadow-xl">
+        <div className="rounded-xl p-6 border-2 border-orange-500 shadow-xl" style={{ background: 'var(--bg-card)' }}>
           <div className="flex items-center gap-3 mb-5">
             <TrendingUp className="text-orange-500" size={28} />
-            <h2 className="text-2xl font-bold">Resumo Financeiro</h2>
+            <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Resumo Financeiro</h2>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-            <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
-              <div className="text-gray-400 text-sm mb-1">Valor Total</div>
-              <div className="text-2xl font-bold">
+            <div className="rounded-lg p-4" style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
+              <div className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Valor Total</div>
+              <div className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
                 R$ {totals.totalSalePrice.toFixed(2)}
               </div>
             </div>
 
-            <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
-              <div className="text-gray-400 text-sm mb-1">Taxa do Cartão</div>
+            <div className="rounded-lg p-4" style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
+              <div className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Taxa do Cartão</div>
               <div className="text-red-400 text-2xl font-bold">
                 - R$ {totals.cardFee.toFixed(2)}
               </div>
             </div>
 
-            <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
-              <div className="text-gray-400 text-sm mb-1">Valor Recebido</div>
+            <div className="rounded-lg p-4" style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
+              <div className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Valor Recebido</div>
               <div className="text-blue-400 text-2xl font-bold">
                 R$ {totals.netReceived.toFixed(2)}
               </div>
             </div>
 
-            <div className="bg-gray-800/50 rounded-lg p-4 border border-orange-600">
-              <div className="text-gray-400 text-sm mb-1">Lucro Final</div>
-              <div
-                className={`text-3xl font-bold ${
-                  totals.profit >= 0 ? 'text-green-400' : 'text-red-400'
-                }`}
-              >
+            <div className="rounded-lg p-4" style={{ background: 'var(--bg-inner)', border: '1px solid #f97316' }}>
+              <div className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Lucro Final</div>
+              <div className={`text-3xl font-bold ${totals.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 R$ {totals.profit.toFixed(2)}
               </div>
             </div>
           </div>
 
-          <div className="border-t border-gray-700 pt-4">
-            <div className="text-sm text-gray-400 mb-2">Detalhamento de Custos:</div>
+          <div className="pt-4" style={{ borderTop: '1px solid var(--border-main)' }}>
+            <div className="text-sm mb-2" style={{ color: 'var(--text-muted)' }}>Detalhamento de Custos:</div>
             <div className="grid grid-cols-4 gap-4 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-400">Custo Produtos:</span>
-                <span className="text-gray-300 font-medium">
+                <span style={{ color: 'var(--text-muted)' }}>Custo Produtos:</span>
+                <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
                   R$ {totals.totalProductCost.toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-400">Custo Acessórios:</span>
-                <span className="text-gray-300 font-medium">
+                <span style={{ color: 'var(--text-muted)' }}>Custo Acessórios:</span>
+                <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
                   R$ {totals.totalAccessoryCost.toFixed(2)}
                 </span>
               </div>
               {totals.totalManualCost > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Custo Itens Manuais:</span>
-                  <span className="text-gray-300 font-medium">
+                  <span style={{ color: 'var(--text-muted)' }}>Custo Itens Manuais:</span>
+                  <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
                     R$ {totals.totalManualCost.toFixed(2)}
                   </span>
                 </div>
               )}
               <div className="flex justify-between">
-                <span className="text-gray-400">Taxa Motoboy:</span>
-                <span className="text-gray-300 font-medium">
+                <span style={{ color: 'var(--text-muted)' }}>Taxa Motoboy:</span>
+                <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
                   R$ {totals.deliveryFee.toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-400">Custo Correios:</span>
-                <span className="text-gray-300 font-medium">
+                <span style={{ color: 'var(--text-muted)' }}>Custo Correios:</span>
+                <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
                   R$ {totals.deliveryCost.toFixed(2)}
                 </span>
               </div>

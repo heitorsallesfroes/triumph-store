@@ -11,6 +11,7 @@
   --bg-base:           #0a0a0f;
   --bg-sidebar:        #0a0a0a;
   --bg-topbar:         #0d0d14;
+  --bg-card:           #1a1a2a;
   --bg-inner:          #111118;
   --bg-hover:          #161616;
   --border-main:       #1c1c1c;
@@ -29,6 +30,7 @@ html.light {
   --bg-base:           #f5f5f5;
   --bg-sidebar:        #ffffff;
   --bg-topbar:         #ffffff;
+  --bg-card:           #ffffff;
   --bg-inner:          #f3f4f6;
   --bg-hover:          #ebebeb;
   --border-main:       #e2e8f0;
