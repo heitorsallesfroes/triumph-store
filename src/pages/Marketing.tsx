@@ -122,34 +122,59 @@ export default function Marketing() {
   };
 
   const loadFacebookData = useCallback(async () => {
-    if (timeFilter === 'today') return;
     if (timeFilter === 'custom' && (!customStartDate || !customEndDate)) return;
     setFbLoading(true);
     setFbError(null);
     setFbSyncedCount(null);
     try {
-      const payload = getFBPeriodPayload();
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/facebook-ads`, {
+      const dateRange = getDateRange();
+      if (!dateRange) return;
+
+      // Usa o mesmo endpoint e formato que o Gerenciador de Anúncios (ad-manager)
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/ad-manager`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'list',
+          level: 'campaign',
+          dateRange: { since: dateRange.start, until: dateRange.end },
+          parentId: null,
+          statusFilter: 'active_only',
+        }),
       });
       const data = await res.json();
+
       if (data.success) {
-        setFbMetrics(data.metrics);
-        if (data.dailySpend && data.dailySpend.length > 0) {
-          const rows = data.dailySpend.map((d: { date: string; spend: number }) => ({
-            date: d.date,
-            amount: d.spend,
-          }));
+        const campaigns: any[] = data.data || [];
+        const totSpend  = campaigns.reduce((s, c) => s + parseFloat(c.spend  || '0'), 0);
+        const totImpr   = campaigns.reduce((s, c) => s + parseInt(c.impressions || '0'), 0);
+        const totClicks = campaigns.reduce((s, c) => s + parseInt(c.clicks   || '0'), 0);
+        const totReach  = campaigns.reduce((s, c) => s + parseInt(c.reach    || '0'), 0);
+        const totBuys   = campaigns.reduce((s, c) => s + (c.purchases || 0), 0);
+        const totRev    = campaigns.reduce((s, c) => s + parseFloat(c.purchase_value || '0'), 0);
+
+        setFbMetrics({
+          spend:          totSpend.toFixed(2),
+          impressions:    String(totImpr),
+          clicks:         String(totClicks),
+          reach:          String(totReach),
+          cpm:            totImpr   > 0 ? ((totSpend / totImpr) * 1000).toFixed(2)   : '0.00',
+          cpc:            totClicks > 0 ? (totSpend / totClicks).toFixed(2)           : '0.00',
+          ctr:            totImpr   > 0 ? ((totClicks / totImpr) * 100).toFixed(2)   : '0.00',
+          purchases:      String(totBuys),
+          purchase_value: totRev.toFixed(2),
+          profit:         '0',
+          roas:           totSpend > 0 ? (totRev  / totSpend).toFixed(2) : '0.00',
+          cpv:            totBuys  > 0 ? (totSpend / totBuys).toFixed(2) : '0.00',
+        });
+
+        // Sincroniza gasto no ad_spend apenas para períodos de um único dia
+        if (dateRange.start === dateRange.end && totSpend > 0) {
           const { error: upsertError } = await supabase
             .from('ad_spend')
-            .upsert(rows, { onConflict: 'date' });
-          if (upsertError) console.error('Erro ao salvar ad_spend:', upsertError.message);
-          else {
-            setFbSyncedCount(rows.length);
-            loadData();
-          }
+            .upsert([{ date: dateRange.start, amount: totSpend }], { onConflict: 'date' });
+          if (!upsertError) { setFbSyncedCount(1); loadData(); }
+          else console.error('Erro ao salvar ad_spend:', upsertError.message);
         }
       } else {
         setFbError(data.error || 'Erro ao carregar dados do Facebook');
