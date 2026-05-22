@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Layers, RefreshCw, AlertCircle, Calendar, ChevronRight,
-  Pause, Play, Image,
+  Pause, Play, Image, Pencil, Check, X,
 } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
@@ -16,7 +16,7 @@ import {
 const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 type Level      = 'campaign' | 'adset' | 'ad';
 type TimeFilter = 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
@@ -38,7 +38,6 @@ interface AdItem {
   initiate_checkout: number;
   purchase_value:    string;
   cost_per_purchase: string;
-  // ad-only
   thumbnail_url?:  string | null;
   image_url?:      string | null;
   creative_body?:  string | null;
@@ -47,7 +46,7 @@ interface AdItem {
 
 interface Crumb { id: string; name: string; level: Level; }
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── Config ───────────────────────────────────────────────────────────────────
 
 const FILTER_LABELS: Record<TimeFilter, string> = {
   yesterday:  'Ontem',
@@ -63,129 +62,210 @@ const LEVEL_LABELS: Record<Level, string> = {
   ad:       'Anúncios',
 };
 
-type StatusCfg = { label: string; color: string; bg: string; border: string; dot: string };
-const STATUS: Record<string, StatusCfg> = {
-  ACTIVE:          { label: 'Ativo',          color: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/30',  dot: 'bg-green-400'  },
-  PAUSED:          { label: 'Pausado',         color: 'text-yellow-400', bg: 'bg-yellow-500/10', border: 'border-yellow-500/30', dot: 'bg-yellow-400' },
-  CAMPAIGN_PAUSED: { label: 'Camp. Pausada',   color: 'text-yellow-500', bg: 'bg-yellow-500/5',  border: 'border-yellow-600/20', dot: 'bg-yellow-500' },
-  ADSET_PAUSED:    { label: 'Conj. Pausado',   color: 'text-yellow-500', bg: 'bg-yellow-500/5',  border: 'border-yellow-600/20', dot: 'bg-yellow-500' },
-  ARCHIVED:        { label: 'Arquivado',        color: 'text-gray-400',  bg: 'bg-gray-500/10',   border: 'border-gray-500/30',   dot: 'bg-gray-400'   },
-  DELETED:         { label: 'Excluído',         color: 'text-red-400',   bg: 'bg-red-500/10',    border: 'border-red-500/30',    dot: 'bg-red-400'    },
-  IN_PROCESS:      { label: 'Processando',      color: 'text-blue-400',  bg: 'bg-blue-500/10',   border: 'border-blue-500/30',   dot: 'bg-blue-400'   },
-  WITH_ISSUES:     { label: 'Com problemas',    color: 'text-red-400',   bg: 'bg-red-500/10',    border: 'border-red-500/30',    dot: 'bg-red-400'    },
-  PENDING_REVIEW:  { label: 'Em revisão',       color: 'text-blue-400',  bg: 'bg-blue-500/10',   border: 'border-blue-500/30',   dot: 'bg-blue-400'   },
-  DISAPPROVED:     { label: 'Reprovado',        color: 'text-red-400',   bg: 'bg-red-500/10',    border: 'border-red-500/30',    dot: 'bg-red-400'    },
+type StatusCfg = { label: string; dot: string; text: string; bg: string; border: string };
+const STATUS_MAP: Record<string, StatusCfg> = {
+  ACTIVE:          { label: 'Ativo',          dot: '#22c55e', text: '#22c55e', bg: 'rgba(34,197,94,0.08)',   border: 'rgba(34,197,94,0.25)'   },
+  PAUSED:          { label: 'Pausado',         dot: '#6b7280', text: '#9ca3af', bg: 'rgba(107,114,128,0.08)', border: 'rgba(107,114,128,0.25)' },
+  CAMPAIGN_PAUSED: { label: 'Camp. Pausada',   dot: '#6b7280', text: '#9ca3af', bg: 'rgba(107,114,128,0.06)', border: 'rgba(107,114,128,0.18)' },
+  ADSET_PAUSED:    { label: 'Conj. Pausado',   dot: '#6b7280', text: '#9ca3af', bg: 'rgba(107,114,128,0.06)', border: 'rgba(107,114,128,0.18)' },
+  PENDING_REVIEW:  { label: 'Em revisão',      dot: '#eab308', text: '#eab308', bg: 'rgba(234,179,8,0.08)',   border: 'rgba(234,179,8,0.25)'   },
+  IN_PROCESS:      { label: 'Processando',     dot: '#eab308', text: '#eab308', bg: 'rgba(234,179,8,0.08)',   border: 'rgba(234,179,8,0.25)'   },
+  WITH_ISSUES:     { label: 'Com problemas',   dot: '#ef4444', text: '#ef4444', bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.25)'   },
+  DISAPPROVED:     { label: 'Reprovado',       dot: '#ef4444', text: '#ef4444', bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.25)'   },
+  ARCHIVED:        { label: 'Arquivado',       dot: '#374151', text: '#6b7280', bg: 'rgba(55,65,81,0.08)',    border: 'rgba(55,65,81,0.25)'    },
+  DELETED:         { label: 'Excluído',        dot: '#ef4444', text: '#ef4444', bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.25)'   },
 };
-const getStatus = (s: string): StatusCfg =>
-  STATUS[s] ?? { label: s, color: 'text-gray-400', bg: 'bg-gray-500/10', border: 'border-gray-500/30', dot: 'bg-gray-400' };
+const getStatusCfg = (s: string): StatusCfg =>
+  STATUS_MAP[s] ?? { label: s, dot: '#6b7280', text: '#9ca3af', bg: 'rgba(107,114,128,0.08)', border: 'rgba(107,114,128,0.25)' };
 
-// ── Formatters ───────────────────────────────────────────────────────────────
+// ── Formatters ────────────────────────────────────────────────────────────────
 
 const fmtR = (v: string | number) =>
   `R$ ${parseFloat(String(v)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const fmtN = (v: string | number) =>
-  parseInt(String(v)).toLocaleString('pt-BR');
+const fmtN = (v: string | number) => {
+  const n = parseInt(String(v));
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
+  return n.toLocaleString('pt-BR');
+};
 
-// ── Sub-components ───────────────────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: string }) {
-  const cfg = getStatus(status);
+  const cfg = getStatusCfg(status);
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '3px 10px', borderRadius: 99,
+      background: cfg.bg, border: `1px solid ${cfg.border}`,
+      color: cfg.text, fontSize: 12, fontWeight: 600,
+    }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: cfg.dot, flexShrink: 0 }} />
       {cfg.label}
     </span>
   );
 }
 
-function Metric({ label, value, color = 'text-white', sub }: { label: string; value: string | number; color?: string; sub?: string }) {
+function BigMetric({ label, value, color = '#fff' }: { label: string; value: string; color?: string }) {
   return (
-    <div className="min-w-0">
-      <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">{label}</p>
-      <p className={`text-sm font-semibold ${color} truncate`}>{value}</p>
-      {sub && <p className="text-xs text-gray-600">{sub}</p>}
+    <div>
+      <p style={{ fontSize: 10, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>{label}</p>
+      <p style={{ fontSize: 18, fontWeight: 700, color, fontVariantNumeric: 'tabular-nums' }}>{value}</p>
+    </div>
+  );
+}
+
+function SmallMetric({ label, value, color = '#aaa' }: { label: string; value: string; color?: string }) {
+  return (
+    <div>
+      <p style={{ fontSize: 10, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>{label}</p>
+      <p style={{ fontSize: 13, fontWeight: 600, color, fontVariantNumeric: 'tabular-nums' }}>{value}</p>
     </div>
   );
 }
 
 function ItemCard({
-  item,
-  level,
-  onDrillDown,
-  onToggle,
-  toggling,
+  item, level, onDrillDown, onToggle, toggling,
+  editingBudget, onEditBudget, onSaveBudget, onCancelBudget, savingBudget,
 }: {
-  item:        AdItem;
-  level:       Level;
+  item: AdItem; level: Level;
   onDrillDown: (item: AdItem) => void;
   onToggle:    (item: AdItem) => void;
   toggling:    string | null;
+  editingBudget: { id: string; value: string } | null;
+  onEditBudget:  (item: AdItem) => void;
+  onSaveBudget:  (itemId: string, value: string) => void;
+  onCancelBudget: () => void;
+  savingBudget:  string | null;
 }) {
-  const cfg          = getStatus(item.status);
-  const canToggle    = item.status === 'ACTIVE' || item.status === 'PAUSED';
-  const isPaused     = item.status === 'PAUSED';
-  const isToggling   = toggling === item.id;
-  const hasDrillDown = level !== 'ad';
-  const budget       = item.daily_budget
-    ? `${fmtR(item.daily_budget)}/dia`
-    : item.lifetime_budget
-    ? `${fmtR(item.lifetime_budget)} vitalício`
-    : null;
+  const cfg        = getStatusCfg(item.status);
+  const canToggle  = item.status === 'ACTIVE' || item.status === 'PAUSED';
+  const isPaused   = item.status === 'PAUSED';
+  const isToggling = toggling === item.id;
+  const isDrillable = level !== 'ad';
+  const isActive   = item.status === 'ACTIVE';
+
+  const hasBudget  = item.daily_budget !== null || item.lifetime_budget !== null;
+  const budgetVal  = item.daily_budget ?? item.lifetime_budget;
+  const budgetType = item.daily_budget !== null ? '/dia' : ' vitalício';
+  const canEditBudget = item.daily_budget !== null && level !== 'ad';
+
+  const isEditingThis = editingBudget?.id === item.id;
+  const isSavingThis  = savingBudget === item.id;
 
   const thumbnail = item.thumbnail_url || item.image_url;
+  const spend    = parseFloat(item.spend);
+  const pValue   = parseFloat(item.purchase_value);
+  const ctr      = parseFloat(item.ctr);
+  const cpc      = parseFloat(item.cpc);
+  const cpm      = parseFloat(item.cpm);
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (isEditingThis) inputRef.current?.select(); }, [isEditingThis]);
+
+  const cardStyle: React.CSSProperties = {
+    background: '#0f0f0f',
+    border: `1px solid ${isActive ? 'rgba(249,115,22,0.2)' : '#1e1e1e'}`,
+    borderRadius: 16,
+    overflow: 'hidden',
+    transition: 'border-color 0.15s',
+  };
 
   return (
-    <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden hover:border-gray-600 transition-colors">
-      <div className="flex">
-        {/* Creative thumbnail (ads only) */}
-        {thumbnail && (
-          <div className="w-28 flex-shrink-0 bg-gray-900 flex items-center justify-center overflow-hidden" style={{ minHeight: 112 }}>
-            <img src={thumbnail} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-          </div>
-        )}
-        {!thumbnail && level === 'ad' && (
-          <div className="w-28 flex-shrink-0 bg-gray-900/60 flex flex-col items-center justify-center gap-1" style={{ minHeight: 112 }}>
-            <Image size={20} className="text-gray-600" />
-            <span className="text-xs text-gray-600">Sem preview</span>
+    <div style={cardStyle}>
+      <div style={{ display: 'flex' }}>
+        {/* Thumbnail (ads) */}
+        {level === 'ad' && (
+          <div style={{ width: 120, flexShrink: 0, background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 140 }}>
+            {thumbnail ? (
+              <img src={thumbnail} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                <Image size={22} color="#333" />
+                <span style={{ fontSize: 10, color: '#333' }}>Sem preview</span>
+              </div>
+            )}
           </div>
         )}
 
-        <div className="flex-1 min-w-0 p-4">
-          {/* Header */}
-          <div className="flex items-start justify-between gap-3 mb-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap mb-1">
-                <StatusBadge status={item.status} />
-                {budget && (
-                  <span className="text-xs text-gray-500 font-medium">{budget}</span>
-                )}
-              </div>
-              {hasDrillDown ? (
-                <button
-                  onClick={() => onDrillDown(item)}
-                  className="text-white font-semibold text-sm hover:text-orange-400 transition-colors text-left leading-snug flex items-center gap-1 group"
-                >
-                  <span className="truncate max-w-xs">{item.name}</span>
-                  <ChevronRight size={14} className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-orange-400" />
-                </button>
-              ) : (
-                <p className="text-white font-semibold text-sm leading-snug truncate max-w-xs">{item.name}</p>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Card header bar */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px 10px', borderBottom: '1px solid #161616' }}>
+            {/* Left: status + budget */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <StatusBadge status={item.status} />
+
+              {hasBudget && !isEditingThis && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, color: '#555', fontWeight: 500 }}>
+                    {budgetVal ? fmtR(budgetVal) : '—'}{budgetType}
+                  </span>
+                  {canEditBudget && (
+                    <button
+                      onClick={() => onEditBudget(item)}
+                      title="Editar orçamento"
+                      style={{ padding: '2px 4px', borderRadius: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: '#444', lineHeight: 1 }}
+                      onMouseEnter={e => (e.currentTarget.style.color = '#f97316')}
+                      onMouseLeave={e => (e.currentTarget.style.color = '#444')}
+                    >
+                      <Pencil size={11} />
+                    </button>
+                  )}
+                </div>
               )}
-              {item.creative_title && (
-                <p className="text-gray-500 text-xs mt-0.5 truncate">{item.creative_title}</p>
+
+              {isEditingThis && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, color: '#555' }}>R$</span>
+                  <input
+                    ref={inputRef}
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    defaultValue={editingBudget?.value ?? ''}
+                    onChange={e => { if (editingBudget) editingBudget.value = e.target.value; }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') onSaveBudget(item.id, (e.target as HTMLInputElement).value);
+                      if (e.key === 'Escape') onCancelBudget();
+                    }}
+                    style={{
+                      width: 80, padding: '3px 8px', borderRadius: 8, fontSize: 12,
+                      background: '#1a1a1a', border: '1px solid #f97316', color: '#fff', outline: 'none',
+                    }}
+                  />
+                  <span style={{ fontSize: 11, color: '#555' }}>/dia</span>
+                  <button
+                    onClick={() => onSaveBudget(item.id, inputRef.current?.value ?? '')}
+                    disabled={isSavingThis}
+                    style={{ padding: '3px 6px', borderRadius: 6, background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', cursor: 'pointer', lineHeight: 1 }}
+                  >
+                    {isSavingThis ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
+                  </button>
+                  <button
+                    onClick={onCancelBudget}
+                    style={{ padding: '3px 6px', borderRadius: 6, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444', cursor: 'pointer', lineHeight: 1 }}
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
               )}
             </div>
 
+            {/* Right: toggle */}
             {canToggle && (
               <button
                 onClick={() => onToggle(item)}
                 disabled={isToggling}
-                title={isPaused ? 'Ativar' : 'Pausar'}
-                className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-50 ${
-                  isPaused
-                    ? 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20'
-                    : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/20'
-                }`}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '5px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                  cursor: isToggling ? 'not-allowed' : 'pointer', opacity: isToggling ? 0.5 : 1,
+                  background: isPaused ? 'rgba(34,197,94,0.1)' : 'rgba(107,114,128,0.1)',
+                  border: isPaused ? '1px solid rgba(34,197,94,0.25)' : '1px solid rgba(107,114,128,0.25)',
+                  color: isPaused ? '#22c55e' : '#9ca3af',
+                  transition: 'all 0.15s', flexShrink: 0,
+                }}
               >
                 {isToggling
                   ? <RefreshCw size={11} className="animate-spin" />
@@ -195,17 +275,41 @@ function ItemCard({
             )}
           </div>
 
-          {/* Metrics grid */}
-          <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-x-4 gap-y-2 pt-3 border-t border-gray-700/60">
-            <Metric label="Gasto"       value={fmtR(item.spend)}       color="text-red-400" />
-            <Metric label="Impressões"  value={fmtN(item.impressions)} />
-            <Metric label="Alcance"     value={fmtN(item.reach)}       />
-            <Metric label="Cliques"     value={fmtN(item.clicks)}      />
-            <Metric label="CTR"         value={`${parseFloat(item.ctr).toFixed(2)}%`} color="text-blue-400" />
-            <Metric label="CPM"         value={fmtR(item.cpm)}         />
-            <Metric label="CPC"         value={fmtR(item.cpc)}         />
-            <Metric label="Compras"     value={item.purchases > 0 ? item.purchases : '—'} color={item.purchases > 0 ? 'text-green-400' : 'text-gray-600'} />
-            <Metric label="Rec. Pixel"  value={parseFloat(item.purchase_value) > 0 ? fmtR(item.purchase_value) : '—'} color={parseFloat(item.purchase_value) > 0 ? 'text-green-400' : 'text-gray-600'} />
+          {/* Name */}
+          <div style={{ padding: '12px 18px 14px' }}>
+            {isDrillable ? (
+              <button
+                onClick={() => onDrillDown(item)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <span style={{ fontSize: 15, fontWeight: 600, color: '#e5e5e5', lineHeight: 1.3 }}>{item.name}</span>
+                <ChevronRight size={15} color="#f97316" style={{ flexShrink: 0, opacity: 0.6 }} />
+              </button>
+            ) : (
+              <p style={{ fontSize: 15, fontWeight: 600, color: '#e5e5e5', lineHeight: 1.3 }}>{item.name}</p>
+            )}
+            {item.creative_title && (
+              <p style={{ fontSize: 12, color: '#444', marginTop: 4 }}>{item.creative_title}</p>
+            )}
+          </div>
+
+          {/* Metrics */}
+          <div style={{ borderTop: '1px solid #141414', padding: '14px 18px' }}>
+            {/* Big 3 */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 16 }}>
+              <BigMetric label="Gasto" value={spend > 0 ? fmtR(item.spend) : '—'} color="#f97316" />
+              <BigMetric label="Compras" value={item.purchases > 0 ? String(item.purchases) : '—'} color={item.purchases > 0 ? '#22c55e' : '#333'} />
+              <BigMetric label="Receita Pixel" value={pValue > 0 ? fmtR(item.purchase_value) : '—'} color={pValue > 0 ? '#22c55e' : '#333'} />
+            </div>
+            {/* Small 6 */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14, paddingTop: 14, borderTop: '1px solid #161616' }}>
+              <SmallMetric label="Impressões" value={fmtN(item.impressions)} />
+              <SmallMetric label="Alcance"    value={fmtN(item.reach)} />
+              <SmallMetric label="Cliques"    value={fmtN(item.clicks)} />
+              <SmallMetric label="CTR"        value={`${ctr.toFixed(2)}%`} color={ctr >= 2 ? '#60a5fa' : '#aaa'} />
+              <SmallMetric label="CPM"        value={cpm > 0 ? fmtR(item.cpm) : '—'} />
+              <SmallMetric label="CPC"        value={cpc > 0 ? fmtR(item.cpc) : '—'} />
+            </div>
           </div>
         </div>
       </div>
@@ -220,33 +324,39 @@ export default function AdManager() {
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState<string | null>(null);
   const [toggling,   setToggling]   = useState<string | null>(null);
+  const [editingBudget, setEditingBudget] = useState<{ id: string; value: string } | null>(null);
+  const [savingBudget,  setSavingBudget]  = useState<string | null>(null);
 
-  // navigation
   const [level,       setLevel]       = useState<Level>('campaign');
   const [breadcrumbs, setBreadcrumbs] = useState<Crumb[]>([]);
 
-  // date filter
-  const [timeFilter,   setTimeFilter]   = useState<TimeFilter>('week');
-  const [customStart,  setCustomStart]  = useState('');
-  const [customEnd,    setCustomEnd]    = useState('');
+  const [timeFilter,  setTimeFilter]  = useState<TimeFilter>('week');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd,   setCustomEnd]   = useState('');
 
-  // Load on mount and when date filter changes (at root level only)
   useEffect(() => {
     if (timeFilter === 'custom' && (!customStart || !customEnd)) return;
-    // When date filter changes, reset to campaigns root
     setLevel('campaign');
     setBreadcrumbs([]);
+    setEditingBudget(null);
     load('campaign', null);
   }, [timeFilter, customStart, customEnd]);
 
-  const getDateRange = (): { since: string; until: string } | null => {
-    if (timeFilter === 'yesterday') { const y = getYesterdayInBrazil(); return { since: y, until: y }; }
-    if (timeFilter === 'week')      { const { start, end } = getWeekRangeInBrazil();      return { since: start, until: end }; }
-    if (timeFilter === 'month')     { const { start, end } = getMonthRangeInBrazil();     return { since: start, until: end }; }
-    if (timeFilter === 'last_month'){ const { start, end } = getLastMonthRangeInBrazil(); return { since: start, until: end }; }
+  const getDateRange = () => {
+    if (timeFilter === 'yesterday')  { const y = getYesterdayInBrazil(); return { since: y, until: y }; }
+    if (timeFilter === 'week')       { const { start, end } = getWeekRangeInBrazil();      return { since: start, until: end }; }
+    if (timeFilter === 'month')      { const { start, end } = getMonthRangeInBrazil();     return { since: start, until: end }; }
+    if (timeFilter === 'last_month') { const { start, end } = getLastMonthRangeInBrazil(); return { since: start, until: end }; }
     if (timeFilter === 'custom' && customStart && customEnd) return { since: customStart, until: customEnd };
     return null;
   };
+
+  const call = (body: object) =>
+    fetch(`${SUPABASE_URL}/functions/v1/ad-manager`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
 
   const load = async (lvl: Level, parentId: string | null) => {
     const dateRange = getDateRange();
@@ -254,12 +364,9 @@ export default function AdManager() {
     setLoading(true);
     setError(null);
     setItems([]);
+    setEditingBudget(null);
     try {
-      const res  = await fetch(`${SUPABASE_URL}/functions/v1/ad-manager`, {
-        method:  'POST',
-        headers: { 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ action: 'list', level: lvl, dateRange, parentId }),
-      });
+      const res  = await call({ action: 'list', level: lvl, dateRange, parentId });
       const data = await res.json();
       if (data.success) setItems(data.data || []);
       else setError(data.error || 'Erro ao carregar dados');
@@ -278,8 +385,6 @@ export default function AdManager() {
   };
 
   const navigateTo = (crumbIndex: number) => {
-    // crumbIndex = -1 → root (campaigns)
-    // crumbIndex = 0  → adsets of breadcrumbs[0]
     if (crumbIndex === -1) {
       setBreadcrumbs([]);
       setLevel('campaign');
@@ -299,11 +404,7 @@ export default function AdManager() {
     setToggling(item.id);
     setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: targetStatus } : i));
     try {
-      const res  = await fetch(`${SUPABASE_URL}/functions/v1/ad-manager`, {
-        method:  'POST',
-        headers: { 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ action: 'toggle', objectId: item.id, targetStatus }),
-      });
+      const res  = await call({ action: 'toggle', objectId: item.id, targetStatus });
       const data = await res.json();
       if (!data.success) {
         setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: item.status } : i));
@@ -317,56 +418,93 @@ export default function AdManager() {
     }
   };
 
+  const handleEditBudget = (item: AdItem) => {
+    setEditingBudget({ id: item.id, value: item.daily_budget ?? '' });
+  };
+
+  const handleSaveBudget = async (itemId: string, rawValue: string) => {
+    const parsed = parseFloat(rawValue.replace(',', '.'));
+    if (isNaN(parsed) || parsed <= 0) { alert('Valor de orçamento inválido.'); return; }
+    const original = items.find(i => i.id === itemId)?.daily_budget;
+    setEditingBudget(null);
+    setSavingBudget(itemId);
+    setItems(prev => prev.map(i => i.id === itemId ? { ...i, daily_budget: parsed.toFixed(2) } : i));
+    try {
+      const res  = await call({ action: 'update_budget', objectId: itemId, dailyBudget: parsed });
+      const data = await res.json();
+      if (!data.success) {
+        setItems(prev => prev.map(i => i.id === itemId ? { ...i, daily_budget: original ?? null } : i));
+        alert('Erro ao atualizar orçamento: ' + (data.error || 'Erro desconhecido'));
+      }
+    } catch {
+      setItems(prev => prev.map(i => i.id === itemId ? { ...i, daily_budget: original ?? null } : i));
+      alert('Erro de conexão');
+    } finally {
+      setSavingBudget(null);
+    }
+  };
+
   const canRefresh = timeFilter !== 'custom' || (!!customStart && !!customEnd);
   const parentId   = breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1].id : null;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div style={{ padding: '28px 32px', maxWidth: 1100, margin: '0 auto' }}>
+
       {/* ── Header ── */}
-      <div className="flex justify-between items-start mb-6">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
         <div>
-          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-            <Layers size={32} className="text-orange-500" />
+          <h1 style={{ fontSize: 26, fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: 12, margin: 0 }}>
+            <Layers size={28} color="#f97316" />
             Gerenciador de Anúncios
           </h1>
-          <p className="text-gray-400 text-sm mt-1">Meta Ads · Navegação em cascata</p>
+          <p style={{ color: '#555', fontSize: 13, marginTop: 6 }}>Meta Ads · Navegação em cascata</p>
         </div>
         <button
           onClick={() => load(level, parentId)}
           disabled={loading || !canRefresh}
-          className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '9px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+            background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#bbb',
+            cursor: loading || !canRefresh ? 'not-allowed' : 'pointer',
+            opacity: loading || !canRefresh ? 0.5 : 1, transition: 'all 0.15s',
+          }}
         >
-          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+          <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
           Sincronizar
         </button>
       </div>
 
       {/* ── Date filter ── */}
-      <div className="bg-gray-800 rounded-xl p-4 border border-gray-700 mb-5">
-        <div className="flex flex-wrap gap-2 items-center">
-          <Calendar size={16} className="text-gray-500" />
+      <div style={{ background: '#0f0f0f', border: '1px solid #1e1e1e', borderRadius: 14, padding: '14px 18px', marginBottom: 20 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <Calendar size={15} color="#444" />
           {(Object.keys(FILTER_LABELS) as TimeFilter[]).map(f => (
             <button
               key={f}
               onClick={() => setTimeFilter(f)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                timeFilter === f ? 'bg-orange-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              }`}
+              style={{
+                padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 500,
+                background: timeFilter === f ? '#f97316' : '#161616',
+                border: timeFilter === f ? '1px solid #f97316' : '1px solid #222',
+                color: timeFilter === f ? '#fff' : '#888',
+                cursor: 'pointer', transition: 'all 0.15s',
+              }}
             >
               {FILTER_LABELS[f]}
             </button>
           ))}
           {timeFilter === 'custom' && (
-            <div className="flex items-center gap-2">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <DatePicker
                 selected={customStart ? new Date(customStart + 'T12:00:00') : null}
                 onChange={(d: Date | null) => setCustomStart(d ? d.toISOString().split('T')[0] : '')}
                 selectsStart startDate={customStart ? new Date(customStart + 'T12:00:00') : null}
                 endDate={customEnd ? new Date(customEnd + 'T12:00:00') : null}
                 maxDate={new Date()} dateFormat="dd/MM/yyyy" locale={ptBR} placeholderText="Início"
-                className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer"
+                className="bg-gray-800 text-white rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer"
               />
-              <span className="text-gray-500 text-sm">até</span>
+              <span style={{ color: '#444', fontSize: 12 }}>até</span>
               <DatePicker
                 selected={customEnd ? new Date(customEnd + 'T12:00:00') : null}
                 onChange={(d: Date | null) => setCustomEnd(d ? d.toISOString().split('T')[0] : '')}
@@ -374,7 +512,7 @@ export default function AdManager() {
                 endDate={customEnd ? new Date(customEnd + 'T12:00:00') : null}
                 minDate={customStart ? new Date(customStart + 'T12:00:00') : undefined}
                 maxDate={new Date()} dateFormat="dd/MM/yyyy" locale={ptBR} placeholderText="Fim"
-                className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer"
+                className="bg-gray-800 text-white rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer"
               />
             </div>
           )}
@@ -382,65 +520,81 @@ export default function AdManager() {
       </div>
 
       {/* ── Breadcrumb ── */}
-      <div className="flex items-center gap-1.5 mb-5 flex-wrap">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
         <button
           onClick={() => navigateTo(-1)}
-          className={`text-sm font-medium transition-colors ${level === 'campaign' ? 'text-white cursor-default' : 'text-gray-400 hover:text-orange-400'}`}
           disabled={level === 'campaign'}
+          style={{
+            background: 'none', border: 'none', padding: 0, cursor: level === 'campaign' ? 'default' : 'pointer',
+            fontSize: 13, fontWeight: 600, color: level === 'campaign' ? '#fff' : '#666',
+            transition: 'color 0.15s',
+          }}
+          onMouseEnter={e => { if (level !== 'campaign') (e.currentTarget as HTMLElement).style.color = '#f97316'; }}
+          onMouseLeave={e => { if (level !== 'campaign') (e.currentTarget as HTMLElement).style.color = '#666'; }}
         >
           Campanhas
         </button>
+
         {breadcrumbs.map((crumb, i) => {
           const isLast = i === breadcrumbs.length - 1 && level !== 'ad';
           return (
-            <span key={crumb.id} className="flex items-center gap-1.5">
-              <ChevronRight size={14} className="text-gray-600" />
+            <span key={crumb.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <ChevronRight size={13} color="#333" />
               <button
                 onClick={() => !isLast && navigateTo(i)}
-                className={`text-sm font-medium transition-colors max-w-[200px] truncate ${
-                  isLast || level === 'ad'
-                    ? 'text-white cursor-default'
-                    : 'text-gray-400 hover:text-orange-400'
-                }`}
-                title={crumb.name}
                 disabled={isLast || level === 'ad'}
+                title={crumb.name}
+                style={{
+                  background: 'none', border: 'none', padding: 0,
+                  cursor: isLast || level === 'ad' ? 'default' : 'pointer',
+                  fontSize: 13, fontWeight: 600,
+                  color: isLast || level === 'ad' ? '#fff' : '#666',
+                  maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  transition: 'color 0.15s',
+                }}
+                onMouseEnter={e => { if (!isLast && level !== 'ad') (e.currentTarget as HTMLElement).style.color = '#f97316'; }}
+                onMouseLeave={e => { if (!isLast && level !== 'ad') (e.currentTarget as HTMLElement).style.color = '#666'; }}
               >
                 {crumb.name}
               </button>
             </span>
           );
         })}
+
         {level !== 'campaign' && (
-          <span className="flex items-center gap-1.5">
-            <ChevronRight size={14} className="text-gray-600" />
-            <span className="text-sm font-medium text-white">{LEVEL_LABELS[level]}</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <ChevronRight size={13} color="#333" />
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{LEVEL_LABELS[level]}</span>
           </span>
         )}
-        <span className="ml-auto text-xs text-gray-600">
-          {!loading && items.length > 0 && `${items.length} ${LEVEL_LABELS[level].toLowerCase()}`}
-        </span>
+
+        {!loading && items.length > 0 && (
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: '#444' }}>
+            {items.length} {LEVEL_LABELS[level].toLowerCase()}
+          </span>
+        )}
       </div>
 
       {/* ── States ── */}
       {timeFilter === 'custom' && (!customStart || !customEnd) && (
-        <div className="bg-gray-700/50 border border-gray-600 rounded-xl p-5 flex items-start gap-3">
-          <AlertCircle size={18} className="text-gray-400 mt-0.5 shrink-0" />
-          <p className="text-gray-400 text-sm">Selecione as datas de início e fim para carregar os dados.</p>
+        <div style={{ background: '#111', border: '1px solid #222', borderRadius: 12, padding: '18px 22px', display: 'flex', gap: 12 }}>
+          <AlertCircle size={17} color="#555" style={{ flexShrink: 0, marginTop: 1 }} />
+          <p style={{ color: '#666', fontSize: 13, margin: 0 }}>Selecione as datas de início e fim para carregar os dados.</p>
         </div>
       )}
 
       {loading && (
-        <div className="flex flex-col items-center justify-center py-24 gap-3">
-          <RefreshCw size={28} className="animate-spin text-orange-500" />
-          <p className="text-gray-400 text-sm">Carregando {LEVEL_LABELS[level].toLowerCase()}...</p>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 0', gap: 14 }}>
+          <RefreshCw size={28} color="#f97316" style={{ animation: 'spin 1s linear infinite' }} />
+          <p style={{ color: '#555', fontSize: 13, margin: 0 }}>Carregando {LEVEL_LABELS[level].toLowerCase()}...</p>
         </div>
       )}
 
       {error && !loading && (
-        <div className="bg-red-900/20 border border-red-700/50 rounded-xl p-6 text-center">
-          <AlertCircle size={24} className="text-red-400 mx-auto mb-2" />
-          <p className="text-red-400 font-medium text-sm">{error}</p>
-          <button onClick={() => load(level, parentId)} className="mt-3 text-xs text-blue-400 hover:text-blue-300">
+        <div style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 14, padding: '28px', textAlign: 'center' }}>
+          <AlertCircle size={24} color="#ef4444" style={{ margin: '0 auto 10px' }} />
+          <p style={{ color: '#ef4444', fontSize: 14, margin: '0 0 10px' }}>{error}</p>
+          <button onClick={() => load(level, parentId)} style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: 12, cursor: 'pointer' }}>
             Tentar novamente
           </button>
         </div>
@@ -448,7 +602,7 @@ export default function AdManager() {
 
       {/* ── Items ── */}
       {!loading && !error && items.length > 0 && (
-        <div className="space-y-3">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {items.map(item => (
             <ItemCard
               key={item.id}
@@ -457,17 +611,24 @@ export default function AdManager() {
               onDrillDown={drillDown}
               onToggle={handleToggle}
               toggling={toggling}
+              editingBudget={editingBudget}
+              onEditBudget={handleEditBudget}
+              onSaveBudget={handleSaveBudget}
+              onCancelBudget={() => setEditingBudget(null)}
+              savingBudget={savingBudget}
             />
           ))}
         </div>
       )}
 
       {!loading && !error && items.length === 0 && canRefresh && (
-        <div className="bg-gray-800 rounded-xl border border-gray-700 p-14 text-center">
-          <Layers size={36} className="text-gray-600 mx-auto mb-3" />
-          <p className="text-gray-400 text-sm">Nenhum resultado encontrado para o período selecionado.</p>
+        <div style={{ background: '#0f0f0f', border: '1px solid #1e1e1e', borderRadius: 16, padding: '60px 20px', textAlign: 'center' }}>
+          <Layers size={36} color="#2a2a2a" style={{ margin: '0 auto 14px' }} />
+          <p style={{ color: '#444', fontSize: 13, margin: 0 }}>Nenhum resultado encontrado para o período selecionado.</p>
         </div>
       )}
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
