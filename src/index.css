@@ -1,42 +1,143 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-/* Inputs globais estilo Gestão TFX */
+
+/* ════════════════════════════════════════════════════════════════
+   THEME VARIABLES
+════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Dark (default) */
+  --bg-base:         #0a0a0f;
+  --bg-sidebar:      #0a0a0a;
+  --bg-topbar:       #0d0d14;
+  --bg-inner:        #111118;
+  --bg-hover:        #161616;
+  --border-main:     #1c1c1c;
+  --text-primary:    #ffffff;
+  --text-secondary:  #cccccc;
+  --text-muted:      #777777;
+  --text-nav:        #6a6a6a;
+  --text-nav-hover:  #b0b0b0;
+  --input-bg:        #0d0d14;
+  --input-border:    #1a1a2a;
+  --input-placeholder: #4a4a6a;
+  --accent:          #f97316;
+}
+
+html.light {
+  --bg-base:         #f5f5f5;
+  --bg-sidebar:      #ffffff;
+  --bg-topbar:       #ffffff;
+  --bg-inner:        #f9fafb;
+  --bg-hover:        #f0f0f0;
+  --border-main:     #e5e7eb;
+  --text-primary:    #111111;
+  --text-secondary:  #333333;
+  --text-muted:      #888888;
+  --text-nav:        #6b7280;
+  --text-nav-hover:  #374151;
+  --input-bg:        #ffffff;
+  --input-border:    #d1d5db;
+  --input-placeholder: #9ca3af;
+  --accent:          #f97316;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  transition: background-color 0.2s, color 0.2s;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GLOBAL INPUTS
+════════════════════════════════════════════════════════════════ */
+
 input, select, textarea {
-  background: #0d0d14 !important;
-  border: 1px solid #1a1a2a !important;
-  color: #ffffff !important;
+  background: var(--input-bg) !important;
+  border: 1px solid var(--input-border) !important;
+  color: var(--text-primary) !important;
   border-radius: 8px !important;
+  transition: border-color 0.15s, background 0.15s !important;
 }
 
 input:focus, select:focus, textarea:focus {
-  border-color: #f5c518 !important;
+  border-color: var(--accent) !important;
   outline: none !important;
-  box-shadow: 0 0 0 1px #f5c51820 !important;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.15) !important;
 }
 
 input::placeholder, textarea::placeholder {
-  color: #3a3a5a !important;
+  color: var(--input-placeholder) !important;
 }
 
-/* Seções de formulário */
+/* ════════════════════════════════════════════════════════════════
+   FORM HELPERS
+════════════════════════════════════════════════════════════════ */
+
 .form-section {
-  background: #111118;
-  border: 1px solid #1a1a2a;
-  border-left: 3px solid #f5c518;
+  background: var(--bg-inner);
+  border: 1px solid var(--border-main);
+  border-left: 3px solid var(--accent);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 12px;
 }
 
-/* Botão confirmar */
 .btn-confirm {
-  background: #f5c518 !important;
-  color: #0a0a0f !important;
+  background: var(--accent) !important;
+  color: #ffffff !important;
   font-weight: 700 !important;
   border-radius: 10px !important;
 }
 
 .btn-confirm:hover {
-  background: #e0b315 !important;
+  opacity: 0.88 !important;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   DARK MODE — CONTRAST IMPROVEMENTS
+════════════════════════════════════════════════════════════════ */
+
+html:not(.light) .text-gray-300 { color: #e0e0e0 !important; }
+html:not(.light) .text-gray-400 { color: #cccccc !important; }
+html:not(.light) .text-gray-500 { color: #aaaaaa !important; }
+
+/* ════════════════════════════════════════════════════════════════
+   LIGHT MODE — TAILWIND CLASS OVERRIDES
+   (only neutral grays — semantic colors unchanged)
+════════════════════════════════════════════════════════════════ */
+
+/* Backgrounds */
+html.light .bg-gray-800 {
+  background-color: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04) !important;
+}
+html.light .bg-gray-900 { background-color: #f3f4f6 !important; }
+html.light .bg-gray-700 { background-color: #f3f4f6 !important; }
+html.light .bg-gray-600 { background-color: #e5e7eb !important; }
+
+/* Text (neutral only) */
+html.light .text-white   { color: #111111 !important; }
+html.light .text-gray-100 { color: #1a1a1a !important; }
+html.light .text-gray-200 { color: #2d2d2d !important; }
+html.light .text-gray-300 { color: #374151 !important; }
+html.light .text-gray-400 { color: #555555 !important; }
+html.light .text-gray-500 { color: #777777 !important; }
+html.light .text-gray-600 { color: #888888 !important; }
+
+/* Borders */
+html.light .border-gray-700 { border-color: #e5e7eb !important; }
+html.light .border-gray-600 { border-color: #d1d5db !important; }
+html.light .border-gray-500 { border-color: #cbd5e1 !important; }
+
+/* Main layout areas */
+html.light .main-bg  { background-color: #f5f5f5 !important; }
+
+/* ════════════════════════════════════════════════════════════════
+   SMOOTH TRANSITIONS
+════════════════════════════════════════════════════════════════ */
+
+aside, main, .bg-gray-800, .bg-gray-900, .bg-gray-700 {
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
 }
