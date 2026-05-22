@@ -7,6 +7,7 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { ptBR } from 'date-fns/locale';
 import {
+  getTodayInBrazil,
   getYesterdayInBrazil,
   getWeekRangeInBrazil,
   getMonthRangeInBrazil,
@@ -19,7 +20,7 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Level      = 'campaign' | 'adset' | 'ad';
-type TimeFilter = 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
+type TimeFilter = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
 
 interface AdItem {
   id: string;
@@ -49,6 +50,7 @@ interface Crumb { id: string; name: string; level: Level; }
 // ── Config ───────────────────────────────────────────────────────────────────
 
 const FILTER_LABELS: Record<TimeFilter, string> = {
+  today:      'Hoje',
   yesterday:  'Ontem',
   week:       'Semana',
   month:      'Mês',
@@ -343,6 +345,7 @@ export default function AdManager() {
   }, [timeFilter, customStart, customEnd]);
 
   const getDateRange = () => {
+    if (timeFilter === 'today')      { const t = getTodayInBrazil();     return { since: t, until: t }; }
     if (timeFilter === 'yesterday')  { const y = getYesterdayInBrazil(); return { since: y, until: y }; }
     if (timeFilter === 'week')       { const { start, end } = getWeekRangeInBrazil();      return { since: start, until: end }; }
     if (timeFilter === 'month')      { const { start, end } = getMonthRangeInBrazil();     return { since: start, until: end }; }
