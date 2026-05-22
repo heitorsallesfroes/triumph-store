@@ -316,13 +316,15 @@ function ItemCard({
               <BigMetric label="Compras"      value={item.purchases > 0 ? String(item.purchases) : '—'} color={item.purchases > 0 ? '#22c55e' : 'var(--text-muted)'} />
               <BigMetric label="Receita Pixel" value={pValue > 0 ? fmtR(item.purchase_value) : '—'} color={pValue > 0 ? '#22c55e' : 'var(--text-muted)'} />
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14, paddingTop: 14, borderTop: '1px solid var(--border-main)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 14, paddingTop: 14, borderTop: '1px solid var(--border-main)' }}>
               <SmallMetric label="Impressões" value={fmtN(item.impressions)} />
               <SmallMetric label="Alcance"    value={fmtN(item.reach)} />
               <SmallMetric label="Cliques"    value={fmtN(item.clicks)} />
               <SmallMetric label="CTR"        value={`${ctr.toFixed(2)}%`} color={ctr >= 2 ? '#60a5fa' : 'var(--text-secondary)'} />
               <SmallMetric label="CPM"        value={cpm > 0 ? fmtR(item.cpm) : '—'} />
               <SmallMetric label="CPC"        value={cpc > 0 ? fmtR(item.cpc) : '—'} />
+              <SmallMetric label="ROAS"       value={spend > 0 && pValue > 0 ? `${(pValue / spend).toFixed(2)}x` : '—'} color={spend > 0 && pValue > 0 ? (pValue / spend >= 4 ? '#22c55e' : pValue / spend >= 2 ? '#eab308' : '#ef4444') : 'var(--text-secondary)'} />
+              <SmallMetric label="CPV"        value={spend > 0 && item.purchases > 0 ? fmtR(spend / item.purchases) : '—'} color={spend > 0 && item.purchases > 0 ? 'var(--text-secondary)' : 'var(--text-secondary)'} />
             </div>
           </div>
         </div>
