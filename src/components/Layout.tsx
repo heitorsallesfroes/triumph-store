@@ -61,6 +61,11 @@ const menuGroups = [
   },
 ];
 
+const ORANGE = '#f97316';
+const ORANGE_DIM = 'rgba(249, 115, 22, 0.12)';
+const SIDEBAR_BG = '#0a0a0a';
+const BORDER = '#1c1c1c';
+
 export default function Layout({ children, currentPage, onNavigate }: LayoutProps) {
   const now = new Date();
   const dateStr = now.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
@@ -69,31 +74,31 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
     <div className="flex h-screen" style={{ background: '#0a0a0f' }}>
 
       {/* Sidebar */}
-      <aside className="w-56 flex flex-col flex-shrink-0" style={{ background: '#0d0d14', borderRight: '1px solid #1a1a2a' }}>
+      <aside className="w-56 flex flex-col flex-shrink-0" style={{ background: SIDEBAR_BG, borderRight: `1px solid ${BORDER}` }}>
 
         {/* Logo */}
-        <div className="px-5 py-5" style={{ borderBottom: '1px solid #1a1a2a' }}>
+        <div className="px-5 py-5" style={{ borderBottom: `1px solid ${BORDER}` }}>
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm" style={{ background: '#f5c518', color: '#0a0a0f' }}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm" style={{ background: ORANGE, color: '#0a0a0a' }}>
               T
             </div>
             <div>
-              <p className="font-bold text-sm text-white leading-none">Triumph Store</p>
-              <p className="text-xs mt-0.5" style={{ color: '#5a5a7a' }}>Sistema ERP</p>
+              <p className="font-bold text-sm leading-none" style={{ color: ORANGE }}>Triumph Store</p>
+              <p className="text-xs mt-0.5" style={{ color: '#4a4a4a' }}>Sistema ERP</p>
             </div>
           </div>
         </div>
 
         {/* Data */}
-        <div className="px-5 py-3" style={{ borderBottom: '1px solid #1a1a2a' }}>
-          <p className="text-xs capitalize" style={{ color: '#5a5a7a' }}>{dateStr}</p>
+        <div className="px-5 py-3" style={{ borderBottom: `1px solid ${BORDER}` }}>
+          <p className="text-xs capitalize" style={{ color: '#4a4a4a' }}>{dateStr}</p>
         </div>
 
         {/* Menu */}
         <nav className="flex-1 px-3 py-4 overflow-y-auto">
           {menuGroups.map((group) => (
             <div key={group.label} className="mb-5">
-              <p className="px-3 mb-2 text-xs font-semibold tracking-widest" style={{ color: '#3a3a5a' }}>
+              <p className="px-3 mb-2 text-xs font-bold tracking-widest" style={{ color: '#b45309' }}>
                 {group.label}
               </p>
               <div className="space-y-0.5">
@@ -106,25 +111,25 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
                       onClick={() => onNavigate(item.id)}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-left"
                       style={{
-                        background: isActive ? '#1a1a2e' : 'transparent',
-                        color: isActive ? '#f5c518' : '#6a6a8a',
-                        borderLeft: isActive ? '2px solid #f5c518' : '2px solid transparent',
+                        background: isActive ? ORANGE_DIM : 'transparent',
+                        color: isActive ? ORANGE : '#6a6a6a',
+                        borderLeft: isActive ? `2px solid ${ORANGE}` : '2px solid transparent',
                       }}
                       onMouseEnter={e => {
                         if (!isActive) {
-                          (e.currentTarget as HTMLElement).style.background = '#13131f';
-                          (e.currentTarget as HTMLElement).style.color = '#a0a0c0';
+                          (e.currentTarget as HTMLElement).style.background = '#161616';
+                          (e.currentTarget as HTMLElement).style.color = '#a0a0a0';
                         }
                       }}
                       onMouseLeave={e => {
                         if (!isActive) {
                           (e.currentTarget as HTMLElement).style.background = 'transparent';
-                          (e.currentTarget as HTMLElement).style.color = '#6a6a8a';
+                          (e.currentTarget as HTMLElement).style.color = '#6a6a6a';
                         }
                       }}
                     >
                       <Icon size={16} />
-                      <span className="text-sm font-medium">{item.label}</span>
+                      <span className="font-medium" style={{ fontSize: '14.5px' }}>{item.label}</span>
                     </button>
                   );
                 })}
@@ -134,19 +139,19 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
         </nav>
 
         {/* Rodapé */}
-        <div className="px-4 py-4" style={{ borderTop: '1px solid #1a1a2a' }}>
-          <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg" style={{ background: '#111118' }}>
-            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: '#f5c518', color: '#0a0a0f' }}>
+        <div className="px-4 py-4" style={{ borderTop: `1px solid ${BORDER}` }}>
+          <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg" style={{ background: '#111111' }}>
+            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: ORANGE, color: '#0a0a0a' }}>
               TS
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-white truncate">Triumph Store</p>
               <div className="flex items-center gap-1 mt-0.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-                <p className="text-xs" style={{ color: '#5a5a7a' }}>Conectado</p>
+                <p className="text-xs" style={{ color: '#4a4a4a' }}>Conectado</p>
               </div>
             </div>
-            <Zap size={13} style={{ color: '#f5c518' }} />
+            <Zap size={13} style={{ color: ORANGE }} />
           </div>
         </div>
       </aside>
