@@ -22,13 +22,37 @@ Deno.serve(async (req: Request) => {
     const body   = await req.json();
     const { action } = body;
 
+    // ── DIAGNOSTICS ───────────────────────────────────────────────────────────
+    if (action === "diagnose") {
+      const { objectId } = body as { objectId: string };
+      const [permRes, objRes] = await Promise.all([
+        fetch(`${BASE}/me/permissions?access_token=${FB_TOKEN}`),
+        fetch(`${BASE}/${objectId}?fields=id,name,status,effective_status,object_type&access_token=${FB_TOKEN}`),
+      ]);
+      const [permData, objData] = await Promise.all([permRes.json(), objRes.json()]);
+      return ok({ success: true, permissions: permData, object: objData });
+    }
+
     // ── TOGGLE STATUS ──────────────────────────────────────────────────────────
     if (action === "toggle") {
       const { objectId, targetStatus } = body as { objectId: string; targetStatus: "ACTIVE" | "PAUSED" };
+      const url  = `${BASE}/${objectId}`;
       const form = new URLSearchParams({ status: targetStatus, access_token: FB_TOKEN });
-      const res  = await fetch(`${BASE}/${objectId}`, { method: "POST", body: form });
+      const res  = await fetch(url, { method: "POST", body: form });
       const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
+      if (data.error) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: data.error.message,
+          debug: {
+            url,
+            objectId,
+            targetStatus,
+            httpStatus: res.status,
+            metaError: data.error,
+          },
+        }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       return ok({ success: true });
     }
 
