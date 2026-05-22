@@ -532,6 +532,120 @@ export default function ResumoMensal() {
             </div>
           </div>
 
+          {/* ══════════════════════════════════════════════════════════════
+              BLOCO 4 — DRE
+          ══════════════════════════════════════════════════════════════ */}
+          {(() => {
+            const totalCardFees    = totalTaxaCartao + smallSalesCardFees;
+            const receitaLiquida   = consolidadoBruto - totalCardFees;
+            const custoProdutos    = totalCustoProdutos + smallSalesCost;
+            const lucroBruto       = receitaLiquida - custoProdutos;
+            const custoEntregas    = totalCustoEntregas + smallSalesDeliveryCost;
+            const lucroOperacional = consolidadoLucro;
+            const margemEbit       = consolidadoBruto > 0 ? (lucroOperacional / consolidadoBruto) * 100 : 0;
+            const R = (n: number) =>
+              `R$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+            const rowBase = 'flex items-baseline justify-between py-2 px-3';
+            const rowEven = `${rowBase} bg-gray-900/25 rounded`;
+
+            return (
+              <div className="bg-gray-800 rounded-xl border border-blue-500/40 overflow-hidden mb-6">
+                {/* Header */}
+                <div className="px-6 py-4 border-b border-gray-700 bg-blue-500/5">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp size={20} className="text-blue-400" />
+                    <h2 className="text-lg font-bold text-white">DRE — Demonstrativo de Resultado</h2>
+                  </div>
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    Cascata financeira consolidada · {MONTHS[selected.month - 1]} {selected.year}
+                  </p>
+                </div>
+
+                <div className="p-6">
+                  <div style={{ maxWidth: 680 }}>
+
+                    {/* ── Receita Bruta ──────────────────────────────── */}
+                    <div className={rowBase}>
+                      <span className="text-gray-100 font-semibold text-sm">Receita Bruta</span>
+                      <span className="text-gray-100 font-semibold text-sm font-mono">{R(consolidadoBruto)}</span>
+                    </div>
+                    <div className={`${rowEven} pl-9`}>
+                      <span className="text-gray-400 text-xs">└ Smartwatches ({sales.length} venda{sales.length !== 1 ? 's' : ''})</span>
+                      <span className="text-gray-400 text-xs font-mono">{R(totalBruto)}</span>
+                    </div>
+                    {smallSalesRevenue > 0 && (
+                      <div className={`${rowBase} pl-9`}>
+                        <span className="text-gray-400 text-xs">└ Pequenas Vendas ({smallSales.length} venda{smallSales.length !== 1 ? 's' : ''})</span>
+                        <span className="text-gray-400 text-xs font-mono">{R(smallSalesRevenue)}</span>
+                      </div>
+                    )}
+
+                    {/* (-) Taxas de Cartão */}
+                    <div className={`${rowEven} mt-1`}>
+                      <span className="text-red-400 text-sm">(−) Taxas de Cartão</span>
+                      <span className="text-red-400 text-sm font-mono">({R(totalCardFees)})</span>
+                    </div>
+
+                    {/* = Receita Líquida */}
+                    <div className="border-t border-gray-600 my-2" />
+                    <div className={`${rowBase} bg-gray-900/50 rounded`}>
+                      <span className="text-green-400 font-semibold text-sm">= Receita Líquida</span>
+                      <span className="text-green-400 font-semibold text-sm font-mono">{R(receitaLiquida)}</span>
+                    </div>
+
+                    {/* (-) Custo dos Produtos */}
+                    <div className={`${rowEven} mt-1`}>
+                      <span className="text-red-400 text-sm">(−) Custo dos Produtos</span>
+                      <span className="text-red-400 text-sm font-mono">({R(custoProdutos)})</span>
+                    </div>
+
+                    {/* = Lucro Bruto */}
+                    <div className="border-t border-gray-600 my-2" />
+                    <div className={rowBase}>
+                      <span className={`text-sm font-semibold ${lucroBruto >= 0 ? 'text-green-400' : 'text-red-400'}`}>= Lucro Bruto</span>
+                      <span className={`text-sm font-semibold font-mono ${lucroBruto >= 0 ? 'text-green-400' : 'text-red-400'}`}>{R(lucroBruto)}</span>
+                    </div>
+
+                    {/* Deduções operacionais */}
+                    <div className={`${rowEven} mt-1`}>
+                      <span className="text-red-400 text-sm">(−) Custo de Entregas</span>
+                      <span className="text-red-400 text-sm font-mono">({R(custoEntregas)})</span>
+                    </div>
+                    <div className={rowBase}>
+                      <span className="text-red-400 text-sm">(−) Investimento em Ads</span>
+                      <span className="text-red-400 text-sm font-mono">({R(adSpend)})</span>
+                    </div>
+                    <div className={rowEven}>
+                      <span className="text-red-400 text-sm">(−) Custos Operacionais</span>
+                      <span className="text-red-400 text-sm font-mono">({R(operationalCosts)})</span>
+                    </div>
+
+                    {/* Linha dupla antes do resultado final */}
+                    <div style={{ borderTop: '3px double #4b5563', margin: '14px 0 10px' }} />
+
+                    {/* = Lucro Operacional (EBIT) */}
+                    <div className={`rounded-xl p-5 border-2 ${lucroOperacional >= 0 ? 'border-green-500/40 bg-green-500/10' : 'border-red-500/40 bg-red-500/10'}`}>
+                      <div className="flex items-center justify-between gap-4 flex-wrap">
+                        <span className="text-white font-bold text-sm">= Lucro Operacional (EBIT)</span>
+                        <span className={`font-bold text-3xl font-mono ${lucroOperacional >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {R(lucroOperacional)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-700/60">
+                        <span className="text-gray-400 text-xs">Margem sobre Receita Bruta</span>
+                        <span className={`text-base font-bold ${margemEbit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {margemEbit.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── Canais e Cidades ─────────────────────────────────────────── */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
