@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import Layout from './components/Layout';
+import Home from './pages/Home';
 import Products from './pages/Products';
 import StockControl from './pages/StockControl';
 import Sales from './pages/Sales';
 import SalesHistory from './pages/SalesHistory';
 import Motoboys from './pages/Motoboys';
 import Logistics from './pages/Logistics';
-import Reports from './pages/Reports';
 import Marketing from './pages/Marketing';
 import AdManager from './pages/AdManager';
 import Settings from './pages/Settings';
@@ -17,7 +17,7 @@ import SmallSales from './pages/SmallSales';
 import RastreamentoSedex from './pages/RastreamentoSedex';
 
 function App() {
-  const [currentPage, setCurrentPage] = useState('sales');
+  const [currentPage, setCurrentPage] = useState('home');
   const [triggerFastSale, setTriggerFastSale] = useState(0);
 
   useEffect(() => {
@@ -38,6 +38,8 @@ function App() {
 
   const renderPage = () => {
     switch (currentPage) {
+      case 'home':
+        return <Home onNavigate={setCurrentPage} />;
       case 'products':
         return <Products />;
       case 'stock':
@@ -58,8 +60,6 @@ function App() {
         return <Marketing />;
       case 'ad-manager':
         return <AdManager />;
-      case 'reports':
-        return <Reports />;
       case 'costs':
         return <OperationalCosts />;
       case 'resumo-vendas':
@@ -69,7 +69,7 @@ function App() {
       case 'settings':
         return <Settings />;
       default:
-        return <Sales triggerFastSale={triggerFastSale} onNavigate={setCurrentPage} />;
+        return <Home onNavigate={setCurrentPage} />;
     }
   };
 

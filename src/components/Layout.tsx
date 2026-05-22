@@ -1,5 +1,6 @@
 import { ReactNode, useState, useEffect } from 'react';
 import {
+  Home,
   Package,
   Warehouse,
   ShoppingCart,
@@ -7,7 +8,6 @@ import {
   History,
   Bike,
   Truck,
-  BarChart3,
   TrendingUp,
   Settings,
   Zap,
@@ -15,6 +15,7 @@ import {
   DollarSign,
   PackageSearch,
   Layers,
+  BarChart3,
   Sun,
   Moon,
 } from 'lucide-react';
@@ -29,6 +30,7 @@ const menuGroups = [
   {
     label: 'PRINCIPAL',
     items: [
+      { id: 'home',               label: 'Início',                icon: Home          },
       { id: 'sales',              label: 'Nova Venda',            icon: ShoppingCart  },
       { id: 'small-sales',        label: 'Pequenas Vendas',       icon: ShoppingBag   },
       { id: 'history',            label: 'Histórico de Vendas',   icon: History       },
@@ -39,18 +41,17 @@ const menuGroups = [
   {
     label: 'ESTOQUE',
     items: [
-      { id: 'products', label: 'Produtos',           icon: Package   },
+      { id: 'products', label: 'Produtos',            icon: Package   },
       { id: 'stock',    label: 'Controle de Estoque', icon: Warehouse },
     ],
   },
   {
     label: 'OPERAÇÕES',
     items: [
-      { id: 'motoboys',    label: 'Motoboys',                icon: Bike      },
-      { id: 'marketing',   label: 'Marketing / Ads',         icon: TrendingUp },
-      { id: 'ad-manager',  label: 'Gerenciador de Anúncios', icon: Layers    },
-      { id: 'costs',       label: 'Custos Operacionais',     icon: Receipt   },
-      { id: 'reports',     label: 'Relatórios',              icon: BarChart3 },
+      { id: 'motoboys',   label: 'Motoboys',                icon: Bike       },
+      { id: 'marketing',  label: 'Marketing / Ads',         icon: TrendingUp },
+      { id: 'ad-manager', label: 'Gerenciador de Anúncios', icon: Layers     },
+      { id: 'costs',      label: 'Custos Operacionais',     icon: Receipt    },
     ],
   },
   {
