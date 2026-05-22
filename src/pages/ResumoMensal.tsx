@@ -158,7 +158,9 @@ export default function ResumoMensal() {
   const totalCorreiosDeliveries = salesFinalizadas.filter(v => v.delivery_type === 'correios').reduce((s, v) => s + Number(v.delivery_cost || 0), 0);
   const totalCustoEntregas = totalMotoboyDeliveries + totalCorreiosDeliveries + motoboyExtras;
 
-  const lucroSmartwatch  = totalLiquido - totalCustoProdutos - totalCustoEntregas - adSpend - operationalCosts;
+  const swCount         = saleItems.filter(i => (i.products as any)?.category === 'smartwatch').reduce((s, i) => s + i.quantity, 0);
+  const custoEmbalagens = swCount * 2;
+  const lucroSmartwatch = totalLiquido - totalCustoProdutos - totalCustoEntregas - adSpend - operationalCosts - custoEmbalagens;
   const margemSmartwatch = totalBruto > 0 ? (lucroSmartwatch / totalBruto) * 100 : 0;
 
   const roas = adSpend > 0 ? totalBruto / adSpend : null;
@@ -263,7 +265,6 @@ export default function ResumoMensal() {
   if (loading) return <div className="p-8 text-white flex items-center gap-2"><BarChart3 className="animate-pulse" /> Carregando...</div>;
 
   const fmt = (v: number) => `R$ ${v.toFixed(2)}`;
-  const swCount = saleItems.filter(i => (i.products as any)?.category === 'smartwatch').reduce((s, i) => s + i.quantity, 0);
   const cpvSw = adSpend > 0 && swCount > 0 ? adSpend / swCount : null;
 
   return (
@@ -333,8 +334,10 @@ export default function ResumoMensal() {
               {/* Custos */}
               <div>
                 <p className="text-gray-400 text-xs uppercase tracking-wider mb-3">Custos</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                   <MetricCard label="Custo dos Produtos"   value={totalCustoProdutos}  color="red" icon={Package}   negative />
+                  <MetricCard label="Embalagens"           value={custoEmbalagens}     color="red" icon={Package}   negative
+                    subtitle={`${swCount} un. × R$2,00`} />
                   <MetricCard label="Custo de Entregas"    value={totalCustoEntregas}  color="red" icon={Truck}     negative
                     subtitle={`Motoboy: ${fmt(totalMotoboyDeliveries)} | Correios: ${fmt(totalCorreiosDeliveries)} | Avulsos: ${fmt(motoboyExtras)}`} />
                   <MetricCard label="Investimento em Ads"  value={adSpend}             color="red" icon={BarChart3} negative />
@@ -386,6 +389,7 @@ export default function ResumoMensal() {
                   <div className="text-right space-y-1 text-sm min-w-56">
                     <PLRow label="Líquido recebido"  value={`+ ${fmt(totalLiquido)}`}        color="text-green-400" />
                     <PLRow label="Custo produtos"    value={`− ${fmt(totalCustoProdutos)}`}   color="text-red-400" />
+                    <PLRow label="Embalagens"        value={`− ${fmt(custoEmbalagens)}`}      color="text-red-400" />
                     <PLRow label="Custo entregas"    value={`− ${fmt(totalCustoEntregas)}`}   color="text-red-400" />
                     <PLRow label="Ads"               value={`− ${fmt(adSpend)}`}              color="text-red-400" />
                     <PLRow label="Operacional"       value={`− ${fmt(operationalCosts)}`}     color="text-red-400" />
@@ -539,7 +543,7 @@ export default function ResumoMensal() {
             const totalCardFees    = totalTaxaCartao + smallSalesCardFees;
             const receitaLiquida   = consolidadoBruto - totalCardFees;
             const custoProdutos    = totalCustoProdutos + smallSalesCost;
-            const lucroBruto       = receitaLiquida - custoProdutos;
+            const lucroBruto       = receitaLiquida - custoProdutos - custoEmbalagens;
             const custoEntregas    = totalCustoEntregas + smallSalesDeliveryCost;
             const lucroOperacional = consolidadoLucro;
             const margemEbit       = consolidadoBruto > 0 ? (lucroOperacional / consolidadoBruto) * 100 : 0;
@@ -598,6 +602,11 @@ export default function ResumoMensal() {
                     <div className={`${rowEven} mt-1`}>
                       <span className="text-red-400 text-sm">(−) Custo dos Produtos</span>
                       <span className="text-red-400 text-sm font-mono">({R(custoProdutos)})</span>
+                    </div>
+                    {/* (-) Embalagens */}
+                    <div className={rowBase}>
+                      <span className="text-red-400 text-sm">(−) Embalagens <span className="text-xs text-gray-500 ml-1">{swCount} un. × R$2,00</span></span>
+                      <span className="text-red-400 text-sm font-mono">({R(custoEmbalagens)})</span>
                     </div>
 
                     {/* = Lucro Bruto */}
