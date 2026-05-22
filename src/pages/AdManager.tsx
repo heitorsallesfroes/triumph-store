@@ -106,7 +106,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function BigMetric({ label, value, color = '#fff' }: { label: string; value: string; color?: string }) {
+function BigMetric({ label, value, color = 'var(--text-primary)' }: { label: string; value: string; color?: string }) {
   return (
     <div>
       <p style={{ fontSize: 10, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>{label}</p>
@@ -231,7 +231,7 @@ function ItemCard({
                     }}
                     style={{
                       width: 80, padding: '3px 8px', borderRadius: 8, fontSize: 12,
-                      background: '#1a1a1a', border: '1px solid #f97316', color: '#fff', outline: 'none',
+                      background: '#1a1a1a', border: '1px solid #f97316', color: 'var(--text-primary)', outline: 'none',
                     }}
                   />
                   <span style={{ fontSize: 11, color: '#555' }}>/dia</span>
@@ -282,11 +282,11 @@ function ItemCard({
                 onClick={() => onDrillDown(item)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6 }}
               >
-                <span style={{ fontSize: 15, fontWeight: 600, color: '#e5e5e5', lineHeight: 1.3 }}>{item.name}</span>
+                <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{item.name}</span>
                 <ChevronRight size={15} color="#f97316" style={{ flexShrink: 0, opacity: 0.6 }} />
               </button>
             ) : (
-              <p style={{ fontSize: 15, fontWeight: 600, color: '#e5e5e5', lineHeight: 1.3 }}>{item.name}</p>
+              <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{item.name}</p>
             )}
             {item.creative_title && (
               <p style={{ fontSize: 12, color: '#444', marginTop: 4 }}>{item.creative_title}</p>
@@ -453,7 +453,7 @@ export default function AdManager() {
       {/* ── Header ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
         <div>
-          <h1 style={{ fontSize: 26, fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: 12, margin: 0 }}>
+          <h1 style={{ fontSize: 26, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 12, margin: 0 }}>
             <Layers size={28} color="#f97316" />
             Gerenciador de Anúncios
           </h1>
@@ -502,7 +502,7 @@ export default function AdManager() {
                 selectsStart startDate={customStart ? new Date(customStart + 'T12:00:00') : null}
                 endDate={customEnd ? new Date(customEnd + 'T12:00:00') : null}
                 maxDate={new Date()} dateFormat="dd/MM/yyyy" locale={ptBR} placeholderText="Início"
-                className="bg-gray-800 text-white rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer"
+                className="bg-gray-800 rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer"
               />
               <span style={{ color: '#444', fontSize: 12 }}>até</span>
               <DatePicker
@@ -512,7 +512,7 @@ export default function AdManager() {
                 endDate={customEnd ? new Date(customEnd + 'T12:00:00') : null}
                 minDate={customStart ? new Date(customStart + 'T12:00:00') : undefined}
                 maxDate={new Date()} dateFormat="dd/MM/yyyy" locale={ptBR} placeholderText="Fim"
-                className="bg-gray-800 text-white rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer"
+                className="bg-gray-800 rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer"
               />
             </div>
           )}
@@ -526,7 +526,7 @@ export default function AdManager() {
           disabled={level === 'campaign'}
           style={{
             background: 'none', border: 'none', padding: 0, cursor: level === 'campaign' ? 'default' : 'pointer',
-            fontSize: 13, fontWeight: 600, color: level === 'campaign' ? '#fff' : '#666',
+            fontSize: 13, fontWeight: 600, color: level === 'campaign' ? 'var(--text-primary)' : '#666',
             transition: 'color 0.15s',
           }}
           onMouseEnter={e => { if (level !== 'campaign') (e.currentTarget as HTMLElement).style.color = '#f97316'; }}
@@ -548,7 +548,7 @@ export default function AdManager() {
                   background: 'none', border: 'none', padding: 0,
                   cursor: isLast || level === 'ad' ? 'default' : 'pointer',
                   fontSize: 13, fontWeight: 600,
-                  color: isLast || level === 'ad' ? '#fff' : '#666',
+                  color: isLast || level === 'ad' ? 'var(--text-primary)' : '#666',
                   maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   transition: 'color 0.15s',
                 }}
@@ -564,7 +564,7 @@ export default function AdManager() {
         {level !== 'campaign' && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <ChevronRight size={13} color="#333" />
-            <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{LEVEL_LABELS[level]}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{LEVEL_LABELS[level]}</span>
           </span>
         )}
 
