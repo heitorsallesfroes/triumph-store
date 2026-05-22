@@ -585,38 +585,56 @@ export default function AdManager() {
     setShowSelectionBudgetModal(false);
     setMassRunning(true);
 
-    // Fetch adsets for each selected campaign in parallel
-    const adsetArrays = await Promise.all(
-      selectedIds.map(id =>
-        call({ action: 'list', level: 'adset', dateRange, parentId: id })
-          .then(r => r.json())
-          .then((d: any) => d.success ? (d.data || []) : [])
-          .catch(() => [])
-      )
-    );
-    const allAdsets: AdItem[] = adsetArrays.flat();
-    const targets = allAdsets.filter(a => a.status === 'ACTIVE' && a.daily_budget !== null);
+    // CBO: campanha tem daily_budget próprio → aplica direto na campanha
+    // ABO: daily_budget null → busca adsets e aplica neles
+    const selectedCampaigns = items.filter(i => selectedIds.includes(i.id));
+    const cboCampaigns = selectedCampaigns.filter(c => c.daily_budget !== null && c.status === 'ACTIVE');
+    const aboCampaignIds = selectedCampaigns.filter(c => c.daily_budget === null).map(c => c.id);
 
-    if (!targets.length) {
+    const adsetArrays = aboCampaignIds.length > 0
+      ? await Promise.all(
+          aboCampaignIds.map(id =>
+            call({ action: 'list', level: 'adset', dateRange, parentId: id })
+              .then(r => r.json())
+              .then((d: any) => d.success ? (d.data || []) : [])
+              .catch(() => [])
+          )
+        )
+      : [];
+    const allAdsets: AdItem[] = (adsetArrays as AdItem[][]).flat();
+    const aboTargets = allAdsets.filter(a => a.status === 'ACTIVE' && a.daily_budget !== null);
+
+    type Target = { id: string; name: string; budget: string; kind: 'CBO' | 'ABO' };
+    const allTargets: Target[] = [
+      ...cboCampaigns.map(c => ({ id: c.id, name: c.name, budget: c.daily_budget!, kind: 'CBO' as const })),
+      ...aboTargets.map(a => ({ id: a.id, name: a.name, budget: a.daily_budget!, kind: 'ABO' as const })),
+    ];
+
+    if (!allTargets.length) {
       setMassRunning(false);
-      alert('Nenhum conjunto ativo com orçamento diário encontrado para as campanhas selecionadas.');
+      alert('Nenhum orçamento encontrado para ajustar nas campanhas selecionadas.');
       return;
     }
 
-    const preview = targets.slice(0, 5).map(a => {
-      const newVal = (parseFloat(a.daily_budget!) * multiplier).toFixed(2);
-      return `• ${a.name.substring(0, 35)}\n  ${fmtR(a.daily_budget!)} → ${fmtR(newVal)}`;
+    const preview = allTargets.slice(0, 6).map(t => {
+      const newVal = (parseFloat(t.budget) * multiplier).toFixed(2);
+      return `• [${t.kind}] ${t.name.substring(0, 32)}\n  ${fmtR(t.budget)} → ${fmtR(newVal)}`;
     });
 
+    const summaryLine = [
+      cboCampaigns.length > 0 ? `${cboCampaigns.length} campanha(s) CBO` : '',
+      aboTargets.length > 0   ? `${aboTargets.length} conjunto(s) ABO`  : '',
+    ].filter(Boolean).join(' + ');
+
     setConfirmModal({
-      title: `Ajustar orçamento ${delta > 0 ? '+' : ''}${delta}% em ${targets.length} conjunto(s)`,
-      body: `${preview.join('\n')}${targets.length > 5 ? `\n... e mais ${targets.length - 5}` : ''}`,
+      title: `Ajustar orçamento ${delta > 0 ? '+' : ''}${delta}% — ${allTargets.length} item(ns)`,
+      body: `${summaryLine}\n\n${preview.join('\n')}${allTargets.length > 6 ? `\n... e mais ${allTargets.length - 6}` : ''}`,
       onConfirm: async () => {
         setConfirmModal(null);
         try {
-          await Promise.all(targets.map(a => {
-            const newBudget = parseFloat(a.daily_budget!) * multiplier;
-            return call({ action: 'update_budget', objectId: a.id, dailyBudget: newBudget }).then(r => r.json());
+          await Promise.all(allTargets.map(t => {
+            const newBudget = parseFloat(t.budget) * multiplier;
+            return call({ action: 'update_budget', objectId: t.id, dailyBudget: newBudget }).then(r => r.json());
           }));
         } catch { alert('Erro ao ajustar orçamentos.'); }
         finally { setMassRunning(false); }
