@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+﻿import { useEffect, useState, useRef } from 'react';
 import { supabase, Product, Accessory, Motoboy, Supplier } from '../lib/supabase';
 import { Trash2, ShoppingCart, TrendingUp, Loader2 } from 'lucide-react';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
@@ -939,7 +939,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
       <div className="p-8 flex items-center justify-center min-h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-orange-500 mx-auto mb-4"></div>
-          <div className="text-white text-xl">Carregando dados...</div>
+          <div className="text-xl">Carregando dados...</div>
         </div>
       </div>
     );
@@ -970,7 +970,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
   return (
     <div className="p-8 max-w-7xl mx-auto">
       <div ref={novaSaleRef} className="mb-8">
-        <h1 className="text-3xl font-bold text-white flex items-center gap-3 mb-2">
+        <h1 className="text-3xl font-bold flex items-center gap-3 mb-2">
           <ShoppingCart size={32} />
           {editSaleId ? 'Editar Venda' : 'Nova Venda'}
         </h1>
@@ -984,7 +984,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
             type="date"
             value={saleDate}
             onChange={(e) => setSaleDate(e.target.value)}
-            className="bg-gray-800 text-white rounded-lg px-3 py-1.5 border border-gray-700 focus:border-orange-500 focus:outline-none text-sm"
+            className="bg-gray-800 rounded-lg px-3 py-1.5 border border-gray-700 focus:border-orange-500 focus:outline-none text-sm"
           />
         </div>
       <QuickAdd
@@ -1006,7 +1006,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         {/* Selected Products */}
         {saleProducts.length > 0 && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-xl font-bold text-white mb-4">Produtos Selecionados</h2>
+            <h2 className="text-xl font-bold mb-4">Produtos Selecionados</h2>
             <div className="space-y-3">
               {saleProducts.map((sp, index) => (
                 <div
@@ -1015,7 +1015,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 >
                   <div className="grid grid-cols-12 gap-4 items-center">
                     <div className="col-span-3">
-                      <div className="text-white font-medium">
+                      <div className="font-medium">
                         {sp.product?.model} - {sp.product?.color}
                       </div>
                       <div className="text-gray-400 text-sm">
@@ -1031,7 +1031,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         max={Math.max(sp.product?.current_stock || 0, sp.quantity)}
                         value={sp.quantity}
                         onChange={(e) => updateProduct(index, 'quantity', parseInt(e.target.value))}
-                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                         required
                       />
                     </div>
@@ -1045,7 +1045,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         value={sp.unit_cost}
                         onChange={(e) => updateProduct(index, 'unit_cost', parseFloat(e.target.value) || 0)}
                         onBlur={(e) => saveProductCost(sp.product_id, parseFloat(e.target.value) || 0)}
-                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
 
@@ -1057,7 +1057,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="0"
                         value={sp.unit_price}
                         onChange={(e) => updateProduct(index, 'unit_price', parseFloat(e.target.value))}
-                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                         required
                       />
                     </div>
@@ -1087,12 +1087,12 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
         {saleAccessories.length > 0 && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-xl font-bold text-white mb-4">Acessórios Selecionados</h2>
+            <h2 className="text-xl font-bold mb-4">Acessórios Selecionados</h2>
             <div className="space-y-3">
               {saleAccessories.map((sa, index) => (
                 <div key={index} className="bg-gray-700 rounded-lg p-4 border border-gray-600">
                   <div className="grid grid-cols-12 gap-3 items-center">
-                    <div className="col-span-5 text-white font-medium">
+                    <div className="col-span-5 font-medium">
                       {sa.accessory?.name || sa.custom_name}
                       {sa.custom_name && <span className="text-xs text-gray-400 ml-2">(personalizado)</span>}
                     </div>
@@ -1104,7 +1104,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       min="1"
                       value={sa.quantity}
                       onChange={(e) => updateAccessory(index, 'quantity', parseInt(e.target.value))}
-                      className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                     />
                     </div>
 
@@ -1116,7 +1116,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="0"
                         value={sa.cost}
                         onChange={(e) => updateAccessory(index, 'cost', parseFloat(e.target.value) || 0)}
-                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
 
@@ -1145,13 +1145,13 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
         {manualItems.length > 0 && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-xl font-bold text-white mb-4">Itens Manuais</h2>
+            <h2 className="text-xl font-bold mb-4">Itens Manuais</h2>
             <div className="space-y-3">
               {manualItems.map((mi, index) => (
                 <div key={index} className="bg-gray-700 rounded-lg p-4 border border-gray-600">
                   <div className="grid grid-cols-12 gap-4 items-center">
                     <div className="col-span-4">
-                      <div className="text-white font-medium">{mi.name}</div>
+                      <div className="font-medium">{mi.name}</div>
                       <div className="text-gray-400 text-xs">Item personalizado</div>
                     </div>
 
@@ -1162,7 +1162,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="1"
                         value={mi.quantity}
                         onChange={(e) => updateManualItem(index, 'quantity', parseInt(e.target.value))}
-                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                         required
                       />
                     </div>
@@ -1175,7 +1175,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="0"
                         value={mi.cost}
                         onChange={(e) => updateManualItem(index, 'cost', parseFloat(e.target.value) || 0)}
-                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
 
@@ -1187,7 +1187,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="0"
                         value={mi.price}
                         onChange={(e) => updateManualItem(index, 'price', parseFloat(e.target.value))}
-                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                         required
                       />
                     </div>
@@ -1218,14 +1218,14 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         {/* Customer & Payment Info - Compact */}
         <div className="grid md:grid-cols-2 gap-6">
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-lg font-bold text-white mb-4">Cliente</h2>
+            <h2 className="text-lg font-bold mb-4">Cliente</h2>
             <div className="space-y-3">
               <input
                 type="text"
                 placeholder="Nome do Cliente"
                 value={formData.customer_name}
                 onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
-                className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 required
               />
               <input
@@ -1233,7 +1233,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 placeholder="Telefone (opcional)"
                 value={formData.customer_phone}
                 onChange={(e) => setFormData({ ...formData, customer_phone: e.target.value })}
-                className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
               />
 
               <div>
@@ -1243,7 +1243,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   maxLength={14}
                   value={cpfDisplay}
                   onChange={(e) => handleCpfChange(e.target.value)}
-                  className={`w-full bg-gray-700 text-white rounded-lg px-4 py-2 border ${
+                  className={`w-full bg-gray-700 rounded-lg px-4 py-2 border ${
                     cpfError ? 'border-red-500' : 'border-gray-600'
                   } focus:border-orange-500 focus:outline-none`}
                 />
@@ -1269,7 +1269,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                           e.preventDefault();
                           parsearFormulario(e.clipboardData.getData('text'));
                         }}
-                        className="mt-2 w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-orange-500 focus:outline-none text-sm resize-none placeholder-gray-500"
+                        className="mt-2 w-full bg-gray-700 rounded-lg px-3 py-2 border border-orange-500 focus:outline-none text-sm resize-none placeholder-gray-500"
                       />
                     )}
                   </div>
@@ -1281,7 +1281,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         maxLength={8}
                         value={formData.zip_code}
                         onChange={(e) => handleCepChange(e.target.value)}
-                        className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                       />
                       {loadingCep && (
                         <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -1295,7 +1295,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       maxLength={2}
                       value={formData.state}
                       onChange={(e) => setFormData({ ...formData, state: e.target.value.toUpperCase() })}
-                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   {cepError && (
@@ -1307,14 +1307,14 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       placeholder="Rua"
                       value={formData.address_street}
                       onChange={(e) => setFormData({ ...formData, address_street: e.target.value })}
-                      className="col-span-2 w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="col-span-2 w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                     <input
                       type="text"
                       placeholder="Número"
                       value={formData.address_number}
                       onChange={(e) => setFormData({ ...formData, address_number: e.target.value })}
-                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   <input
@@ -1323,7 +1323,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                     maxLength={18}
                     value={formData.address_complement}
                     onChange={(e) => setFormData({ ...formData, address_complement: e.target.value })}
-                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                    className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                   />
                 </>
               )}
@@ -1336,14 +1336,14 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       placeholder="Rua (opcional)"
                       value={formData.address_street}
                       onChange={(e) => setFormData({ ...formData, address_street: e.target.value })}
-                      className="col-span-2 w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="col-span-2 w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                     <input
                       type="text"
                       placeholder="Número"
                       value={formData.address_number}
                       onChange={(e) => setFormData({ ...formData, address_number: e.target.value })}
-                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   <input
@@ -1351,7 +1351,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                     placeholder="Complemento (opcional)"
                     value={formData.address_complement}
                     onChange={(e) => setFormData({ ...formData, address_complement: e.target.value })}
-                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                    className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                   />
                 </>
               )}
@@ -1375,7 +1375,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                           e.preventDefault();
                           parsearFormulario(e.clipboardData.getData('text'));
                         }}
-                        className="mt-2 w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-orange-500 focus:outline-none text-sm resize-none placeholder-gray-500"
+                        className="mt-2 w-full bg-gray-700 rounded-lg px-3 py-2 border border-orange-500 focus:outline-none text-sm resize-none placeholder-gray-500"
                       />
                     )}
                   </div>
@@ -1387,7 +1387,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         maxLength={8}
                         value={formData.zip_code}
                         onChange={(e) => handleCepChange(e.target.value)}
-                        className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                       />
                       {loadingCep && (
                         <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -1401,7 +1401,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       maxLength={2}
                       value={formData.state}
                       onChange={(e) => setFormData({ ...formData, state: e.target.value.toUpperCase() })}
-                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   {cepError && <p className="text-red-500 text-sm">{cepError}</p>}
@@ -1411,14 +1411,14 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       placeholder="Rua (opcional)"
                       value={formData.address_street}
                       onChange={(e) => setFormData({ ...formData, address_street: e.target.value })}
-                      className="col-span-2 w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="col-span-2 w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                     <input
                       type="text"
                       placeholder="Número"
                       value={formData.address_number}
                       onChange={(e) => setFormData({ ...formData, address_number: e.target.value })}
-                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   <input
@@ -1427,7 +1427,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                     maxLength={18}
                     value={formData.address_complement}
                     onChange={(e) => setFormData({ ...formData, address_complement: e.target.value })}
-                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                    className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                   />
                 </>
               )}
@@ -1439,7 +1439,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   items={cities}
                   placeholder={formData.delivery_type === 'correios' ? 'Cidade*' : 'Cidade'}
                   required={formData.delivery_type === 'motoboy' || formData.delivery_type === 'correios'}
-                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 />
                 <AutocompleteInput
                   value={neighborhoodSearch}
@@ -1447,7 +1447,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   items={neighborhoods}
                   placeholder={formData.delivery_type === 'correios' ? 'Bairro*' : 'Bairro'}
                   required={formData.delivery_type === 'motoboy' || formData.delivery_type === 'correios'}
-                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 />
               </div>
 
@@ -1457,13 +1457,13 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   <label className="block text-xs text-gray-400">Fornecedor por Smartwatch</label>
                   {smartwatchItemsForUI.map(sp => (
                     <div key={sp.product_id} className="flex items-center gap-2">
-                      <span className="text-white text-sm flex-1 truncate">
+                      <span className="text-sm flex-1 truncate">
                         {sp.product?.model} {(sp.product as any)?.color}
                       </span>
                       <select
                         value={perProductSupplierIds[sp.product_id] || ''}
                         onChange={(e) => setPerProductSupplierIds(prev => ({ ...prev, [sp.product_id]: e.target.value }))}
-                        className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                        className="bg-gray-700 rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
                       >
                         <option value="">Selecionar fornecedor</option>
                         {suppliers.map(s => (
@@ -1485,7 +1485,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   }}
                   items={suppliers}
                   placeholder="Selecionar fornecedor"
-                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 />
               )}
             </div>
@@ -1493,7 +1493,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-white">Pagamento</h2>
+              <h2 className="text-lg font-bold">Pagamento</h2>
               <button
                 type="button"
                 onClick={addPaymentEntry}
@@ -1510,7 +1510,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                     <select
                       value={pm.method}
                       onChange={(e) => updatePaymentMethod(index, 'method', e.target.value)}
-                      className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                      className="flex-1 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
                     >
                       <option value="pix">PIX (Sem taxa)</option>
                       <option value="cash">Dinheiro (Sem taxa)</option>
@@ -1526,7 +1526,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       placeholder="Valor (R$)"
                       value={pm.amount || ''}
                       onChange={(e) => updatePaymentMethod(index, 'amount', parseFloat(e.target.value) || 0)}
-                      className="w-36 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                      className="w-36 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
                     />
 
                     {paymentMethods.length > 1 && (
@@ -1545,7 +1545,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       <select
                         value={pm.card_brand}
                         onChange={(e) => updatePaymentMethod(index, 'card_brand', e.target.value)}
-                        className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                        className="flex-1 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
                       >
                         <option value="">Bandeira (definir depois)</option>
                         <option value="visa_mastercard">Visa / Mastercard</option>
@@ -1556,7 +1556,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         <select
                           value={pm.installments}
                           onChange={(e) => updatePaymentMethod(index, 'installments', parseInt(e.target.value))}
-                          className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                          className="flex-1 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
                         >
                           <option value="0">Parcelas (definir depois)</option>
                           {pm.card_brand && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
@@ -1586,7 +1586,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   onClick={() => setPaymentStatus('pago')}
                   className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${
                     paymentStatus === 'pago'
-                      ? 'bg-green-500 text-white'
+                      ? 'bg-green-500'
                       : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
                   }`}
                 >
@@ -1597,7 +1597,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   onClick={() => setPaymentStatus('a_cobrar')}
                   className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${
                     paymentStatus === 'a_cobrar'
-                      ? 'bg-yellow-500 text-white'
+                      ? 'bg-yellow-500'
                       : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
                   }`}
                 >
@@ -1615,7 +1615,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 <div className="mt-4 pt-3 border-t border-gray-600 grid grid-cols-3 gap-3 text-sm">
                   <div>
                     <div className="text-gray-400 text-xs mb-0.5">Total da Venda</div>
-                    <div className="text-white font-bold">R$ {totals.totalSalePrice.toFixed(2)}</div>
+                    <div className="font-bold">R$ {totals.totalSalePrice.toFixed(2)}</div>
                   </div>
                   <div>
                     <div className="text-gray-400 text-xs mb-0.5">Alocado</div>
@@ -1637,12 +1637,12 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
         {/* Delivery Info */}
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-          <h2 className="text-lg font-bold text-white mb-4">Entrega</h2>
+          <h2 className="text-lg font-bold mb-4">Entrega</h2>
           <div className="grid md:grid-cols-3 gap-4">
             <select
               value={formData.delivery_type}
               onChange={(e) => setFormData({ ...formData, delivery_type: e.target.value, motoboy_id: '', delivery_fee: 0, delivery_cost: e.target.value === 'correios' ? 13.11 : 0 })}
-              className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+              className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
               required
             >
               <option value="loja_fisica">Loja Física</option>
@@ -1655,7 +1655,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 <select
                   value={formData.motoboy_id}
                   onChange={(e) => setFormData({ ...formData, motoboy_id: e.target.value })}
-                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 >
                   <option value="">Selecionar Motoboy</option>
                   {motoboys.map((motoboy) => (
@@ -1674,7 +1674,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   onChange={(e) =>
                     setFormData({ ...formData, delivery_fee: parseFloat(e.target.value) || 0 })
                   }
-                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                   required
                 />
               </>
@@ -1690,7 +1690,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 onChange={(e) =>
                   setFormData({ ...formData, delivery_cost: parseFloat(e.target.value) || 0 })
                 }
-                className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
               />
             )}
           </div>
@@ -1700,7 +1700,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
               placeholder="📝 Observações (ex: Deixar na portaria, Entregar para Bernardo)"
               value={formData.delivery_notes}
               onChange={(e) => setFormData({ ...formData, delivery_notes: e.target.value })}
-              className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+              className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
               maxLength={200}
             />
           </div>
@@ -1708,7 +1708,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
         {/* Volumes and Shipping Info */}
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-          <h2 className="text-lg font-bold text-white mb-4">Envio</h2>
+          <h2 className="text-lg font-bold mb-4">Envio</h2>
           <div className="space-y-4">
             <div className="flex items-center gap-4">
               <label className="text-gray-300 text-sm font-medium w-32">Volumes:</label>
@@ -1717,7 +1717,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 min="1"
                 value={formData.volumes}
                 onChange={(e) => setFormData({ ...formData, volumes: parseInt(e.target.value) || 1 })}
-                className="w-24 bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-center font-semibold"
+                className="w-24 bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-center font-semibold"
                 required
               />
               <div className="text-gray-400 text-xs">
@@ -1739,13 +1739,13 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black rounded-xl p-6 border-2 border-orange-500 shadow-xl">
           <div className="flex items-center gap-3 mb-5">
             <TrendingUp className="text-orange-500" size={28} />
-            <h2 className="text-2xl font-bold text-white">Resumo Financeiro</h2>
+            <h2 className="text-2xl font-bold">Resumo Financeiro</h2>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
             <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
               <div className="text-gray-400 text-sm mb-1">Valor Total</div>
-              <div className="text-white text-2xl font-bold">
+              <div className="text-2xl font-bold">
                 R$ {totals.totalSalePrice.toFixed(2)}
               </div>
             </div>
@@ -1820,7 +1820,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
           <button
             type="submit"
             disabled={saleProducts.length === 0 && manualItems.length === 0}
-            className="flex-1 bg-orange-500 text-white px-6 py-4 rounded-lg hover:bg-orange-600 transition-colors font-bold text-xl disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+            className="flex-1 bg-orange-500 px-6 py-4 rounded-lg hover:bg-orange-600 transition-colors font-bold text-xl disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-3"
           >
             <ShoppingCart size={24} />
             {editSaleId ? 'Salvar Alterações' : 'Confirmar Venda'}
@@ -1828,7 +1828,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
           <button
             type="button"
             onClick={editSaleId ? () => onEditDone?.() : resetForm}
-            className="px-8 py-4 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium"
+            className="px-8 py-4 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors font-medium"
           >
             {editSaleId ? 'Cancelar' : 'Limpar'}
           </button>

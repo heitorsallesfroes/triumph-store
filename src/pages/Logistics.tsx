@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard, X } from 'lucide-react';
 import { getTodayInBrazil, formatDateDisplay } from '../lib/dateUtils';
@@ -189,7 +189,7 @@ export default function Logistics() {
   if (loading) {
     return (
       <div className="p-8">
-        <div className="text-white">Carregando...</div>
+        <div className="">Carregando...</div>
       </div>
     );
   }
@@ -224,7 +224,7 @@ export default function Logistics() {
   return (
     <div className="p-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white mb-2">Logística</h1>
+        <h1 className="text-3xl font-bold mb-2">Logística</h1>
         <div className="flex items-center gap-2 text-gray-400">
           <Calendar size={18} />
           <span>Pedidos pendentes — {formatDateDisplay(currentDate)}</span>
@@ -235,7 +235,7 @@ export default function Logistics() {
       <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-xl p-1 mb-6 flex-wrap">
         <button
           onClick={() => setActiveMotoboy('all')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${activeMotoboy === 'all' ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'}`}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${activeMotoboy === 'all' ? 'bg-orange-500' : 'text-gray-400'}`}
         >
           Geral
           <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full leading-none ${activeMotoboy === 'all' ? 'bg-orange-600' : 'bg-gray-700 text-gray-300'}`}>
@@ -246,7 +246,7 @@ export default function Logistics() {
           <button
             key={mb.id}
             onClick={() => setActiveMotoboy(mb.id)}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${activeMotoboy === mb.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${activeMotoboy === mb.id ? 'bg-blue-600' : 'text-gray-400'}`}
           >
             <Bike size={13} />
             {mb.name}
@@ -362,7 +362,7 @@ function KanbanColumn({
             <Icon size={20} />
             <h2 className="font-bold">{title}</h2>
           </div>
-          <div className={`px-2 py-1 rounded-full text-sm font-bold ${bgClasses[color as keyof typeof bgClasses]} text-white`}>
+          <div className={`px-2 py-1 rounded-full text-sm font-bold ${bgClasses[color as keyof typeof bgClasses]}`}>
             {sales.length}
           </div>
         </div>
@@ -390,7 +390,7 @@ function KanbanColumn({
               </button>
               {/* Cliente + localização */}
               <div className="pr-4">
-                <h3 className="text-white text-sm font-bold leading-tight">{sale.customer_name}</h3>
+                <h3 className="text-sm font-bold leading-tight">{sale.customer_name}</h3>
                 <p className="text-gray-400 text-xs mt-0.5">
                   {sale.neighborhood}{sale.city ? ` · ${sale.city}` : ''}
                 </p>
