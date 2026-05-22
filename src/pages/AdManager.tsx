@@ -117,16 +117,16 @@ function StatusBadge({ status }: { status: string }) {
 function BigMetric({ label, value, color = 'var(--text-primary)' }: { label: string; value: string; color?: string }) {
   return (
     <div>
-      <p style={{ fontSize: 10, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>{label}</p>
+      <p style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>{label}</p>
       <p style={{ fontSize: 18, fontWeight: 700, color, fontVariantNumeric: 'tabular-nums' }}>{value}</p>
     </div>
   );
 }
 
-function SmallMetric({ label, value, color = '#aaa' }: { label: string; value: string; color?: string }) {
+function SmallMetric({ label, value, color = 'var(--text-secondary)' }: { label: string; value: string; color?: string }) {
   return (
     <div>
-      <p style={{ fontSize: 10, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>{label}</p>
+      <p style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>{label}</p>
       <p style={{ fontSize: 13, fontWeight: 600, color, fontVariantNumeric: 'tabular-nums' }}>{value}</p>
     </div>
   );
@@ -134,10 +134,10 @@ function SmallMetric({ label, value, color = '#aaa' }: { label: string; value: s
 
 function SummaryCard({ label, value, color = 'var(--text-primary)', sub }: { label: string; value: string; color?: string; sub?: string }) {
   return (
-    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid #1e1e1e', borderRadius: 12, padding: '14px 16px' }}>
-      <p style={{ fontSize: 10, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>{label}</p>
+    <div style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)', borderRadius: 12, padding: '14px 16px' }}>
+      <p style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>{label}</p>
       <p style={{ fontSize: 18, fontWeight: 700, color, margin: 0, fontVariantNumeric: 'tabular-nums' }}>{value}</p>
-      {sub && <p style={{ fontSize: 11, color: '#555', margin: '4px 0 0' }}>{sub}</p>}
+      {sub && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0' }}>{sub}</p>}
     </div>
   );
 }
@@ -182,8 +182,8 @@ function ItemCard({
   useEffect(() => { if (isEditingThis) inputRef.current?.select(); }, [isEditingThis]);
 
   const cardStyle: React.CSSProperties = {
-    background: '#0f0f0f',
-    border: `1px solid ${isActive ? 'rgba(249,115,22,0.2)' : '#1e1e1e'}`,
+    background: 'var(--bg-card)',
+    border: `1px solid ${isActive ? 'rgba(249,115,22,0.35)' : 'var(--border-main)'}`,
     borderRadius: 16,
     overflow: 'hidden',
     transition: 'border-color 0.15s',
@@ -193,7 +193,7 @@ function ItemCard({
     <div style={cardStyle}>
       <div style={{ display: 'flex' }}>
         {level === 'ad' && (
-          <div style={{ width: 120, flexShrink: 0, background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 140 }}>
+          <div style={{ width: 120, flexShrink: 0, background: 'var(--bg-inner)', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 140 }}>
             {thumbnail ? (
               <img src={thumbnail} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -207,12 +207,12 @@ function ItemCard({
         )}
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px 10px', borderBottom: '1px solid #161616' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px 10px', borderBottom: '1px solid var(--border-main)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <StatusBadge status={item.status} />
               {hasBudget && !isEditingThis && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 12, color: '#555', fontWeight: 500 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
                     {budgetVal ? fmtR(budgetVal) : '—'}{budgetType}
                   </span>
                   {canEditBudget && (
@@ -227,7 +227,7 @@ function ItemCard({
               )}
               {isEditingThis && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 12, color: '#555' }}>R$</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>R$</span>
                   <input ref={inputRef} type="number" step="0.01" min="1"
                     defaultValue={editingBudget?.value ?? ''}
                     onChange={e => { if (editingBudget) editingBudget.value = e.target.value; }}
@@ -237,7 +237,7 @@ function ItemCard({
                     }}
                     style={{ width: 80, padding: '3px 8px', borderRadius: 8, fontSize: 12, background: '#1a1a1a', border: '1px solid #f97316', color: 'var(--text-primary)', outline: 'none' }}
                   />
-                  <span style={{ fontSize: 11, color: '#555' }}>/dia</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>/dia</span>
                   <button onClick={() => onSaveBudget(item.id, inputRef.current?.value ?? '')} disabled={isSavingThis}
                     style={{ padding: '3px 6px', borderRadius: 6, background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', cursor: 'pointer', lineHeight: 1 }}>
                     {isSavingThis ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
@@ -278,13 +278,13 @@ function ItemCard({
             {item.creative_title && <p style={{ fontSize: 12, color: '#444', marginTop: 4 }}>{item.creative_title}</p>}
           </div>
 
-          <div style={{ borderTop: '1px solid #141414', padding: '14px 18px' }}>
+          <div style={{ borderTop: '1px solid var(--border-main)', padding: '14px 18px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 16 }}>
               <BigMetric label="Gasto"        value={spend > 0 ? fmtR(item.spend) : '—'} color="#f97316" />
-              <BigMetric label="Compras"      value={item.purchases > 0 ? String(item.purchases) : '—'} color={item.purchases > 0 ? '#22c55e' : '#333'} />
-              <BigMetric label="Receita Pixel" value={pValue > 0 ? fmtR(item.purchase_value) : '—'} color={pValue > 0 ? '#22c55e' : '#333'} />
+              <BigMetric label="Compras"      value={item.purchases > 0 ? String(item.purchases) : '—'} color={item.purchases > 0 ? '#22c55e' : 'var(--text-muted)'} />
+              <BigMetric label="Receita Pixel" value={pValue > 0 ? fmtR(item.purchase_value) : '—'} color={pValue > 0 ? '#22c55e' : 'var(--text-muted)'} />
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14, paddingTop: 14, borderTop: '1px solid #161616' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14, paddingTop: 14, borderTop: '1px solid var(--border-main)' }}>
               <SmallMetric label="Impressões" value={fmtN(item.impressions)} />
               <SmallMetric label="Alcance"    value={fmtN(item.reach)} />
               <SmallMetric label="Cliques"    value={fmtN(item.clicks)} />
@@ -542,7 +542,7 @@ export default function AdManager() {
             <Layers size={28} color="#f97316" />
             Gerenciador de Anúncios
           </h1>
-          <p style={{ color: '#555', fontSize: 13, marginTop: 6 }}>Meta Ads · Navegação em cascata</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>Meta Ads · Navegação em cascata</p>
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -597,7 +597,7 @@ export default function AdManager() {
             style={{
               display: 'flex', alignItems: 'center', gap: 8, padding: '9px 18px',
               borderRadius: 10, fontSize: 13, fontWeight: 600,
-              background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#bbb',
+              background: 'var(--bg-inner)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)',
               cursor: loading || !canRefresh ? 'not-allowed' : 'pointer',
               opacity: loading || !canRefresh ? 0.5 : 1, transition: 'all 0.15s',
             }}>
@@ -608,16 +608,16 @@ export default function AdManager() {
       </div>
 
       {/* ── Date filter ── */}
-      <div style={{ background: '#0f0f0f', border: '1px solid #1e1e1e', borderRadius: 14, padding: '14px 18px', marginBottom: 16 }}>
+      <div style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)', borderRadius: 14, padding: '14px 18px', marginBottom: 16 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <Calendar size={15} color="#444" />
           {(Object.keys(FILTER_LABELS) as TimeFilter[]).map(f => (
             <button key={f} onClick={() => setTimeFilter(f)}
               style={{
                 padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 500,
-                background: timeFilter === f ? '#f97316' : '#161616',
-                border: timeFilter === f ? '1px solid #f97316' : '1px solid #222',
-                color: timeFilter === f ? '#fff' : '#888',
+                background: timeFilter === f ? '#f97316' : 'var(--bg-hover)',
+                border: timeFilter === f ? '1px solid #f97316' : '1px solid var(--border-main)',
+                color: timeFilter === f ? '#fff' : 'var(--text-muted)',
                 cursor: 'pointer', transition: 'all 0.15s',
               }}>
               {FILTER_LABELS[f]}
@@ -631,7 +631,7 @@ export default function AdManager() {
                 endDate={customEnd ? new Date(customEnd + 'T12:00:00') : null}
                 maxDate={new Date()} dateFormat="dd/MM/yyyy" locale={ptBR} placeholderText="Início"
                 className="bg-gray-800 rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer" />
-              <span style={{ color: '#444', fontSize: 12 }}>até</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>até</span>
               <DatePicker selected={customEnd ? new Date(customEnd + 'T12:00:00') : null}
                 onChange={(d: Date | null) => setCustomEnd(d ? d.toISOString().split('T')[0] : '')}
                 selectsEnd startDate={customStart ? new Date(customStart + 'T12:00:00') : null}
@@ -695,7 +695,7 @@ export default function AdManager() {
           </span>
         )}
         {!loading && items.length > 0 && (
-          <span style={{ marginLeft: 'auto', fontSize: 12, color: '#444' }}>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>
             {items.length} {LEVEL_LABELS[level].toLowerCase()}
           </span>
         )}
@@ -711,7 +711,7 @@ export default function AdManager() {
       {loading && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 0', gap: 14 }}>
           <RefreshCw size={28} color="#f97316" style={{ animation: 'spin 1s linear infinite' }} />
-          <p style={{ color: '#555', fontSize: 13, margin: 0 }}>Carregando {LEVEL_LABELS[level].toLowerCase()}...</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Carregando {LEVEL_LABELS[level].toLowerCase()}...</p>
         </div>
       )}
       {error && !loading && (
@@ -737,9 +737,9 @@ export default function AdManager() {
         </div>
       )}
       {!loading && !error && items.length === 0 && canRefresh && (
-        <div style={{ background: '#0f0f0f', border: '1px solid #1e1e1e', borderRadius: 16, padding: '60px 20px', textAlign: 'center' }}>
-          <Layers size={36} color="#2a2a2a" style={{ margin: '0 auto 14px' }} />
-          <p style={{ color: '#444', fontSize: 13, margin: 0 }}>Nenhum resultado encontrado para o período selecionado.</p>
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-main)', borderRadius: 16, padding: '60px 20px', textAlign: 'center' }}>
+          <Layers size={36} color="var(--border-main)" style={{ margin: '0 auto 14px' }} />
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Nenhum resultado encontrado para o período selecionado.</p>
         </div>
       )}
 
