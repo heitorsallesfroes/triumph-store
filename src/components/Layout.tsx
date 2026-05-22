@@ -210,7 +210,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
         <div className="px-8 py-3 flex items-center justify-end"
           style={{ borderBottom: '1px solid var(--border-main)', background: 'var(--bg-topbar)' }}>
           <div className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full"
-            style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)', color: 'var(--text-muted)' }}>
+            style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)' }}>
             <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
             Ao vivo
           </div>
