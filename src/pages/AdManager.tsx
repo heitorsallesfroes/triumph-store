@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Layers, RefreshCw, AlertCircle, Calendar, ChevronRight,
-  Pause, Play, Image, Pencil, Check, X,
+  Pause, Play, Image, Pencil, Check, X, TrendingDown,
 } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
@@ -46,6 +46,12 @@ interface AdItem {
 }
 
 interface Crumb { id: string; name: string; level: Level; }
+
+interface ConfirmModal {
+  title: string;
+  body:  string;
+  onConfirm: () => void;
+}
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -126,6 +132,16 @@ function SmallMetric({ label, value, color = '#aaa' }: { label: string; value: s
   );
 }
 
+function SummaryCard({ label, value, color = 'var(--text-primary)', sub }: { label: string; value: string; color?: string; sub?: string }) {
+  return (
+    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid #1e1e1e', borderRadius: 12, padding: '14px 16px' }}>
+      <p style={{ fontSize: 10, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>{label}</p>
+      <p style={{ fontSize: 18, fontWeight: 700, color, margin: 0, fontVariantNumeric: 'tabular-nums' }}>{value}</p>
+      {sub && <p style={{ fontSize: 11, color: '#555', margin: '4px 0 0' }}>{sub}</p>}
+    </div>
+  );
+}
+
 function ItemCard({
   item, level, onDrillDown, onToggle, toggling,
   editingBudget, onEditBudget, onSaveBudget, onCancelBudget, savingBudget,
@@ -176,7 +192,6 @@ function ItemCard({
   return (
     <div style={cardStyle}>
       <div style={{ display: 'flex' }}>
-        {/* Thumbnail (ads) */}
         {level === 'ad' && (
           <div style={{ width: 120, flexShrink: 0, background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 140 }}>
             {thumbnail ? (
@@ -192,118 +207,83 @@ function ItemCard({
         )}
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Card header bar */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px 10px', borderBottom: '1px solid #161616' }}>
-            {/* Left: status + budget */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <StatusBadge status={item.status} />
-
               {hasBudget && !isEditingThis && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: 12, color: '#555', fontWeight: 500 }}>
                     {budgetVal ? fmtR(budgetVal) : '—'}{budgetType}
                   </span>
                   {canEditBudget && (
-                    <button
-                      onClick={() => onEditBudget(item)}
-                      title="Editar orçamento"
+                    <button onClick={() => onEditBudget(item)} title="Editar orçamento"
                       style={{ padding: '2px 4px', borderRadius: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: '#444', lineHeight: 1 }}
                       onMouseEnter={e => (e.currentTarget.style.color = '#f97316')}
-                      onMouseLeave={e => (e.currentTarget.style.color = '#444')}
-                    >
+                      onMouseLeave={e => (e.currentTarget.style.color = '#444')}>
                       <Pencil size={11} />
                     </button>
                   )}
                 </div>
               )}
-
               {isEditingThis && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: 12, color: '#555' }}>R$</span>
-                  <input
-                    ref={inputRef}
-                    type="number"
-                    step="0.01"
-                    min="1"
+                  <input ref={inputRef} type="number" step="0.01" min="1"
                     defaultValue={editingBudget?.value ?? ''}
                     onChange={e => { if (editingBudget) editingBudget.value = e.target.value; }}
                     onKeyDown={e => {
                       if (e.key === 'Enter') onSaveBudget(item.id, (e.target as HTMLInputElement).value);
                       if (e.key === 'Escape') onCancelBudget();
                     }}
-                    style={{
-                      width: 80, padding: '3px 8px', borderRadius: 8, fontSize: 12,
-                      background: '#1a1a1a', border: '1px solid #f97316', color: 'var(--text-primary)', outline: 'none',
-                    }}
+                    style={{ width: 80, padding: '3px 8px', borderRadius: 8, fontSize: 12, background: '#1a1a1a', border: '1px solid #f97316', color: 'var(--text-primary)', outline: 'none' }}
                   />
                   <span style={{ fontSize: 11, color: '#555' }}>/dia</span>
-                  <button
-                    onClick={() => onSaveBudget(item.id, inputRef.current?.value ?? '')}
-                    disabled={isSavingThis}
-                    style={{ padding: '3px 6px', borderRadius: 6, background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', cursor: 'pointer', lineHeight: 1 }}
-                  >
+                  <button onClick={() => onSaveBudget(item.id, inputRef.current?.value ?? '')} disabled={isSavingThis}
+                    style={{ padding: '3px 6px', borderRadius: 6, background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', cursor: 'pointer', lineHeight: 1 }}>
                     {isSavingThis ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
                   </button>
-                  <button
-                    onClick={onCancelBudget}
-                    style={{ padding: '3px 6px', borderRadius: 6, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444', cursor: 'pointer', lineHeight: 1 }}
-                  >
+                  <button onClick={onCancelBudget}
+                    style={{ padding: '3px 6px', borderRadius: 6, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444', cursor: 'pointer', lineHeight: 1 }}>
                     <X size={11} />
                   </button>
                 </div>
               )}
             </div>
-
-            {/* Right: toggle */}
             {canToggle && (
-              <button
-                onClick={() => onToggle(item)}
-                disabled={isToggling}
+              <button onClick={() => onToggle(item)} disabled={isToggling}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
                   padding: '5px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
                   cursor: isToggling ? 'not-allowed' : 'pointer', opacity: isToggling ? 0.5 : 1,
                   background: isPaused ? 'rgba(34,197,94,0.1)' : 'rgba(107,114,128,0.1)',
                   border: isPaused ? '1px solid rgba(34,197,94,0.25)' : '1px solid rgba(107,114,128,0.25)',
-                  color: isPaused ? '#22c55e' : '#9ca3af',
-                  transition: 'all 0.15s', flexShrink: 0,
-                }}
-              >
-                {isToggling
-                  ? <RefreshCw size={11} className="animate-spin" />
-                  : isPaused ? <Play size={11} /> : <Pause size={11} />}
+                  color: isPaused ? '#22c55e' : '#9ca3af', transition: 'all 0.15s', flexShrink: 0,
+                }}>
+                {isToggling ? <RefreshCw size={11} className="animate-spin" /> : isPaused ? <Play size={11} /> : <Pause size={11} />}
                 {isPaused ? 'Ativar' : 'Pausar'}
               </button>
             )}
           </div>
 
-          {/* Name */}
           <div style={{ padding: '12px 18px 14px' }}>
             {isDrillable ? (
-              <button
-                onClick={() => onDrillDown(item)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6 }}
-              >
+              <button onClick={() => onDrillDown(item)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{item.name}</span>
                 <ChevronRight size={15} color="#f97316" style={{ flexShrink: 0, opacity: 0.6 }} />
               </button>
             ) : (
               <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{item.name}</p>
             )}
-            {item.creative_title && (
-              <p style={{ fontSize: 12, color: '#444', marginTop: 4 }}>{item.creative_title}</p>
-            )}
+            {item.creative_title && <p style={{ fontSize: 12, color: '#444', marginTop: 4 }}>{item.creative_title}</p>}
           </div>
 
-          {/* Metrics */}
           <div style={{ borderTop: '1px solid #141414', padding: '14px 18px' }}>
-            {/* Big 3 */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 16 }}>
-              <BigMetric label="Gasto" value={spend > 0 ? fmtR(item.spend) : '—'} color="#f97316" />
-              <BigMetric label="Compras" value={item.purchases > 0 ? String(item.purchases) : '—'} color={item.purchases > 0 ? '#22c55e' : '#333'} />
+              <BigMetric label="Gasto"        value={spend > 0 ? fmtR(item.spend) : '—'} color="#f97316" />
+              <BigMetric label="Compras"      value={item.purchases > 0 ? String(item.purchases) : '—'} color={item.purchases > 0 ? '#22c55e' : '#333'} />
               <BigMetric label="Receita Pixel" value={pValue > 0 ? fmtR(item.purchase_value) : '—'} color={pValue > 0 ? '#22c55e' : '#333'} />
             </div>
-            {/* Small 6 */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14, paddingTop: 14, borderTop: '1px solid #161616' }}>
               <SmallMetric label="Impressões" value={fmtN(item.impressions)} />
               <SmallMetric label="Alcance"    value={fmtN(item.reach)} />
@@ -328,10 +308,13 @@ export default function AdManager() {
   const [toggling,   setToggling]   = useState<string | null>(null);
   const [editingBudget, setEditingBudget] = useState<{ id: string; value: string } | null>(null);
   const [savingBudget,  setSavingBudget]  = useState<string | null>(null);
+  const [massRunning,   setMassRunning]   = useState(false);
+  const [confirmModal,  setConfirmModal]  = useState<ConfirmModal | null>(null);
+  const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [budgetPct, setBudgetPct] = useState('80');
 
   const [level,       setLevel]       = useState<Level>('campaign');
   const [breadcrumbs, setBreadcrumbs] = useState<Crumb[]>([]);
-
   const [timeFilter,  setTimeFilter]  = useState<TimeFilter>('week');
   const [customStart, setCustomStart] = useState('');
   const [customEnd,   setCustomEnd]   = useState('');
@@ -447,14 +430,113 @@ export default function AdManager() {
     }
   };
 
-  const canRefresh = timeFilter !== 'custom' || (!!customStart && !!customEnd);
-  const parentId   = breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1].id : null;
+  // ── Mass actions ─────────────────────────────────────────────────────────────
+
+  const handlePauseAll = () => {
+    const targets = items.filter(i => i.status === 'ACTIVE');
+    if (!targets.length) return;
+    setConfirmModal({
+      title: `Pausar ${targets.length} campanha(s) ativa(s)`,
+      body: `As seguintes campanhas serão pausadas:\n\n${targets.slice(0, 6).map(i => `• ${i.name}`).join('\n')}${targets.length > 6 ? `\n... e mais ${targets.length - 6}` : ''}`,
+      onConfirm: async () => {
+        setConfirmModal(null);
+        setMassRunning(true);
+        const snapshot = items.map(i => ({ ...i }));
+        setItems(prev => prev.map(i => i.status === 'ACTIVE' ? { ...i, status: 'PAUSED' } : i));
+        try {
+          await Promise.all(targets.map(t => call({ action: 'toggle', objectId: t.id, targetStatus: 'PAUSED' }).then(r => r.json())));
+        } catch {
+          setItems(snapshot);
+          alert('Erro ao pausar campanhas.');
+        } finally {
+          setMassRunning(false);
+        }
+      },
+    });
+  };
+
+  const handleActivateAll = () => {
+    const targets = items.filter(i => i.status === 'PAUSED');
+    if (!targets.length) return;
+    setConfirmModal({
+      title: `Ativar ${targets.length} campanha(s) pausada(s)`,
+      body: `As seguintes campanhas serão ativadas:\n\n${targets.slice(0, 6).map(i => `• ${i.name}`).join('\n')}${targets.length > 6 ? `\n... e mais ${targets.length - 6}` : ''}`,
+      onConfirm: async () => {
+        setConfirmModal(null);
+        setMassRunning(true);
+        const snapshot = items.map(i => ({ ...i }));
+        setItems(prev => prev.map(i => i.status === 'PAUSED' ? { ...i, status: 'ACTIVE' } : i));
+        try {
+          await Promise.all(targets.map(t => call({ action: 'toggle', objectId: t.id, targetStatus: 'ACTIVE' }).then(r => r.json())));
+        } catch {
+          setItems(snapshot);
+          alert('Erro ao ativar campanhas.');
+        } finally {
+          setMassRunning(false);
+        }
+      },
+    });
+  };
+
+  const handleReduceBudget = () => {
+    const pct = parseFloat(budgetPct);
+    if (isNaN(pct) || pct <= 0 || pct >= 100) { alert('Informe uma porcentagem entre 1 e 99.'); return; }
+    const targets = items.filter(i => i.status === 'ACTIVE' && i.daily_budget !== null);
+    if (!targets.length) { alert('Nenhum conjunto ativo com orçamento diário encontrado.'); return; }
+
+    const preview = targets.slice(0, 5).map(i => {
+      const novo = (parseFloat(i.daily_budget!) * pct / 100).toFixed(2);
+      return `• ${i.name.substring(0, 35)}\n  ${fmtR(i.daily_budget!)} → ${fmtR(novo)}`;
+    });
+
+    setShowBudgetModal(false);
+    setConfirmModal({
+      title: `Reduzir orçamento para ${pct}% do valor atual`,
+      body: `${targets.length} conjunto(s) serão atualizados:\n\n${preview.join('\n')}${targets.length > 5 ? `\n... e mais ${targets.length - 5}` : ''}`,
+      onConfirm: async () => {
+        setConfirmModal(null);
+        setMassRunning(true);
+        const snapshot = items.map(i => ({ ...i }));
+        setItems(prev => prev.map(i => {
+          if (i.status === 'ACTIVE' && i.daily_budget !== null) {
+            return { ...i, daily_budget: (parseFloat(i.daily_budget) * pct / 100).toFixed(2) };
+          }
+          return i;
+        }));
+        try {
+          await Promise.all(targets.map(t => {
+            const newBudget = parseFloat(t.daily_budget!) * pct / 100;
+            return call({ action: 'update_budget', objectId: t.id, dailyBudget: newBudget }).then(r => r.json());
+          }));
+        } catch {
+          setItems(snapshot);
+          alert('Erro ao atualizar orçamentos.');
+        } finally {
+          setMassRunning(false);
+        }
+      },
+    });
+  };
+
+  // ── Derived ──────────────────────────────────────────────────────────────────
+
+  const canRefresh   = timeFilter !== 'custom' || (!!customStart && !!customEnd);
+  const parentId     = breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1].id : null;
+  const activeCount  = items.filter(i => i.status === 'ACTIVE').length;
+  const pausedCount  = items.filter(i => i.status === 'PAUSED').length;
+  const totalSpend   = items.reduce((s, i) => s + parseFloat(i.spend), 0);
+  const totalBuys    = items.reduce((s, i) => s + i.purchases, 0);
+  const totalRevenue = items.reduce((s, i) => s + parseFloat(i.purchase_value), 0);
+  const hasMassTargets = level === 'campaign' && items.length > 0;
+  const hasBudgetTargets = level === 'adset' && items.some(i => i.status === 'ACTIVE' && i.daily_budget !== null);
+
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <div style={{ padding: '28px 32px', maxWidth: 1100, margin: '0 auto' }}>
 
       {/* ── Header ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28, gap: 16, flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 12, margin: 0 }}>
             <Layers size={28} color="#f97316" />
@@ -462,115 +544,156 @@ export default function AdManager() {
           </h1>
           <p style={{ color: '#555', fontSize: 13, marginTop: 6 }}>Meta Ads · Navegação em cascata</p>
         </div>
-        <button
-          onClick={() => load(level, parentId)}
-          disabled={loading || !canRefresh}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '9px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600,
-            background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#bbb',
-            cursor: loading || !canRefresh ? 'not-allowed' : 'pointer',
-            opacity: loading || !canRefresh ? 0.5 : 1, transition: 'all 0.15s',
-          }}
-        >
-          <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-          Sincronizar
-        </button>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Campaign-level mass actions */}
+          {hasMassTargets && (
+            <>
+              <button
+                onClick={handlePauseAll}
+                disabled={massRunning || activeCount === 0}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px',
+                  borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: activeCount === 0 || massRunning ? 'not-allowed' : 'pointer',
+                  opacity: activeCount === 0 || massRunning ? 0.4 : 1,
+                  background: 'rgba(107,114,128,0.12)', border: '1px solid rgba(107,114,128,0.3)', color: '#9ca3af',
+                  transition: 'all 0.15s',
+                }}>
+                <Pause size={12} /> Pausar Todas
+              </button>
+              <button
+                onClick={handleActivateAll}
+                disabled={massRunning || pausedCount === 0}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px',
+                  borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: pausedCount === 0 || massRunning ? 'not-allowed' : 'pointer',
+                  opacity: pausedCount === 0 || massRunning ? 0.4 : 1,
+                  background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e',
+                  transition: 'all 0.15s',
+                }}>
+                <Play size={12} /> Ativar Todas
+              </button>
+            </>
+          )}
+          {/* Adset-level budget reduction */}
+          {hasBudgetTargets && (
+            <button
+              onClick={() => setShowBudgetModal(true)}
+              disabled={massRunning}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px',
+                borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: massRunning ? 'not-allowed' : 'pointer',
+                opacity: massRunning ? 0.4 : 1,
+                background: 'rgba(249,115,22,0.12)', border: '1px solid rgba(249,115,22,0.3)', color: '#f97316',
+                transition: 'all 0.15s',
+              }}>
+              <TrendingDown size={12} /> Reduzir Orçamento
+            </button>
+          )}
+          {/* Sincronizar */}
+          <button
+            onClick={() => load(level, parentId)}
+            disabled={loading || !canRefresh}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '9px 18px',
+              borderRadius: 10, fontSize: 13, fontWeight: 600,
+              background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#bbb',
+              cursor: loading || !canRefresh ? 'not-allowed' : 'pointer',
+              opacity: loading || !canRefresh ? 0.5 : 1, transition: 'all 0.15s',
+            }}>
+            <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+            Sincronizar
+          </button>
+        </div>
       </div>
 
       {/* ── Date filter ── */}
-      <div style={{ background: '#0f0f0f', border: '1px solid #1e1e1e', borderRadius: 14, padding: '14px 18px', marginBottom: 20 }}>
+      <div style={{ background: '#0f0f0f', border: '1px solid #1e1e1e', borderRadius: 14, padding: '14px 18px', marginBottom: 16 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <Calendar size={15} color="#444" />
           {(Object.keys(FILTER_LABELS) as TimeFilter[]).map(f => (
-            <button
-              key={f}
-              onClick={() => setTimeFilter(f)}
+            <button key={f} onClick={() => setTimeFilter(f)}
               style={{
                 padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 500,
                 background: timeFilter === f ? '#f97316' : '#161616',
                 border: timeFilter === f ? '1px solid #f97316' : '1px solid #222',
                 color: timeFilter === f ? '#fff' : '#888',
                 cursor: 'pointer', transition: 'all 0.15s',
-              }}
-            >
+              }}>
               {FILTER_LABELS[f]}
             </button>
           ))}
           {timeFilter === 'custom' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <DatePicker
-                selected={customStart ? new Date(customStart + 'T12:00:00') : null}
+              <DatePicker selected={customStart ? new Date(customStart + 'T12:00:00') : null}
                 onChange={(d: Date | null) => setCustomStart(d ? d.toISOString().split('T')[0] : '')}
                 selectsStart startDate={customStart ? new Date(customStart + 'T12:00:00') : null}
                 endDate={customEnd ? new Date(customEnd + 'T12:00:00') : null}
                 maxDate={new Date()} dateFormat="dd/MM/yyyy" locale={ptBR} placeholderText="Início"
-                className="bg-gray-800 rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer"
-              />
+                className="bg-gray-800 rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer" />
               <span style={{ color: '#444', fontSize: 12 }}>até</span>
-              <DatePicker
-                selected={customEnd ? new Date(customEnd + 'T12:00:00') : null}
+              <DatePicker selected={customEnd ? new Date(customEnd + 'T12:00:00') : null}
                 onChange={(d: Date | null) => setCustomEnd(d ? d.toISOString().split('T')[0] : '')}
                 selectsEnd startDate={customStart ? new Date(customStart + 'T12:00:00') : null}
                 endDate={customEnd ? new Date(customEnd + 'T12:00:00') : null}
                 minDate={customStart ? new Date(customStart + 'T12:00:00') : undefined}
                 maxDate={new Date()} dateFormat="dd/MM/yyyy" locale={ptBR} placeholderText="Fim"
-                className="bg-gray-800 rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer"
-              />
+                className="bg-gray-800 rounded-lg px-3 py-1.5 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-32 cursor-pointer" />
             </div>
           )}
         </div>
       </div>
 
+      {/* ── Summary bar (campaign level only) ── */}
+      {!loading && !error && items.length > 0 && level === 'campaign' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+          <SummaryCard label="Total Gasto"     value={totalSpend > 0 ? fmtR(totalSpend) : '—'}   color="#f97316" />
+          <SummaryCard label="Total Compras"   value={totalBuys > 0 ? String(totalBuys) : '—'}   color="#22c55e" />
+          <SummaryCard label="Receita Pixel"   value={totalRevenue > 0 ? fmtR(totalRevenue) : '—'} color="#22c55e" />
+          <SummaryCard label="Campanhas"
+            value={`${activeCount} ativas`}
+            color="#22c55e"
+            sub={pausedCount > 0 ? `${pausedCount} pausada(s)` : undefined} />
+        </div>
+      )}
+
       {/* ── Breadcrumb ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
-        <button
-          onClick={() => navigateTo(-1)}
-          disabled={level === 'campaign'}
+        <button onClick={() => navigateTo(-1)} disabled={level === 'campaign'}
           style={{
             background: 'none', border: 'none', padding: 0, cursor: level === 'campaign' ? 'default' : 'pointer',
-            fontSize: 13, fontWeight: 600, color: level === 'campaign' ? 'var(--text-primary)' : '#666',
-            transition: 'color 0.15s',
+            fontSize: 13, fontWeight: 600, color: level === 'campaign' ? 'var(--text-primary)' : '#666', transition: 'color 0.15s',
           }}
           onMouseEnter={e => { if (level !== 'campaign') (e.currentTarget as HTMLElement).style.color = '#f97316'; }}
-          onMouseLeave={e => { if (level !== 'campaign') (e.currentTarget as HTMLElement).style.color = '#666'; }}
-        >
+          onMouseLeave={e => { if (level !== 'campaign') (e.currentTarget as HTMLElement).style.color = '#666'; }}>
           Campanhas
         </button>
-
         {breadcrumbs.map((crumb, i) => {
           const isLast = i === breadcrumbs.length - 1 && level !== 'ad';
           return (
             <span key={crumb.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <ChevronRight size={13} color="#333" />
-              <button
-                onClick={() => !isLast && navigateTo(i)}
-                disabled={isLast || level === 'ad'}
-                title={crumb.name}
+              <button onClick={() => !isLast && navigateTo(i)} disabled={isLast || level === 'ad'} title={crumb.name}
                 style={{
                   background: 'none', border: 'none', padding: 0,
                   cursor: isLast || level === 'ad' ? 'default' : 'pointer',
                   fontSize: 13, fontWeight: 600,
                   color: isLast || level === 'ad' ? 'var(--text-primary)' : '#666',
-                  maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  transition: 'color 0.15s',
+                  maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.15s',
                 }}
                 onMouseEnter={e => { if (!isLast && level !== 'ad') (e.currentTarget as HTMLElement).style.color = '#f97316'; }}
-                onMouseLeave={e => { if (!isLast && level !== 'ad') (e.currentTarget as HTMLElement).style.color = '#666'; }}
-              >
+                onMouseLeave={e => { if (!isLast && level !== 'ad') (e.currentTarget as HTMLElement).style.color = '#666'; }}>
                 {crumb.name}
               </button>
             </span>
           );
         })}
-
         {level !== 'campaign' && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <ChevronRight size={13} color="#333" />
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{LEVEL_LABELS[level]}</span>
           </span>
         )}
-
         {!loading && items.length > 0 && (
           <span style={{ marginLeft: 'auto', fontSize: 12, color: '#444' }}>
             {items.length} {LEVEL_LABELS[level].toLowerCase()}
@@ -585,14 +708,12 @@ export default function AdManager() {
           <p style={{ color: '#666', fontSize: 13, margin: 0 }}>Selecione as datas de início e fim para carregar os dados.</p>
         </div>
       )}
-
       {loading && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 0', gap: 14 }}>
           <RefreshCw size={28} color="#f97316" style={{ animation: 'spin 1s linear infinite' }} />
           <p style={{ color: '#555', fontSize: 13, margin: 0 }}>Carregando {LEVEL_LABELS[level].toLowerCase()}...</p>
         </div>
       )}
-
       {error && !loading && (
         <div style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 14, padding: '28px', textAlign: 'center' }}>
           <AlertCircle size={24} color="#ef4444" style={{ margin: '0 auto 10px' }} />
@@ -607,27 +728,76 @@ export default function AdManager() {
       {!loading && !error && items.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {items.map(item => (
-            <ItemCard
-              key={item.id}
-              item={item}
-              level={level}
-              onDrillDown={drillDown}
-              onToggle={handleToggle}
-              toggling={toggling}
-              editingBudget={editingBudget}
-              onEditBudget={handleEditBudget}
-              onSaveBudget={handleSaveBudget}
-              onCancelBudget={() => setEditingBudget(null)}
-              savingBudget={savingBudget}
-            />
+            <ItemCard key={item.id} item={item} level={level}
+              onDrillDown={drillDown} onToggle={handleToggle} toggling={toggling}
+              editingBudget={editingBudget} onEditBudget={handleEditBudget}
+              onSaveBudget={handleSaveBudget} onCancelBudget={() => setEditingBudget(null)}
+              savingBudget={savingBudget} />
           ))}
         </div>
       )}
-
       {!loading && !error && items.length === 0 && canRefresh && (
         <div style={{ background: '#0f0f0f', border: '1px solid #1e1e1e', borderRadius: 16, padding: '60px 20px', textAlign: 'center' }}>
           <Layers size={36} color="#2a2a2a" style={{ margin: '0 auto 14px' }} />
           <p style={{ color: '#444', fontSize: 13, margin: 0 }}>Nenhum resultado encontrado para o período selecionado.</p>
+        </div>
+      )}
+
+      {/* ── Budget reduction modal ── */}
+      {showBudgetModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+          <div style={{ background: '#111', border: '1px solid #222', borderRadius: 18, padding: 28, maxWidth: 420, width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ color: 'var(--text-primary)', fontSize: 16, fontWeight: 700, margin: 0 }}>Reduzir Orçamento em Massa</h3>
+              <button onClick={() => setShowBudgetModal(false)} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer' }}><X size={18} /></button>
+            </div>
+            <p style={{ color: '#666', fontSize: 13, margin: '0 0 18px' }}>
+              Aplica a redução em <strong style={{ color: '#f97316' }}>{items.filter(i => i.status === 'ACTIVE' && i.daily_budget !== null).length}</strong> conjunto(s) ativo(s) com orçamento diário.
+            </p>
+            <label style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 8 }}>Manter esta % do orçamento atual</label>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
+              <input type="number" min="1" max="99" step="1" value={budgetPct}
+                onChange={e => setBudgetPct(e.target.value)}
+                style={{ width: 80, padding: '8px 12px', background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, color: 'var(--text-primary)', fontSize: 18, fontWeight: 700, textAlign: 'center' }}
+              />
+              <span style={{ color: '#888', fontSize: 16 }}>%</span>
+            </div>
+            <p style={{ color: '#555', fontSize: 12, margin: '0 0 22px' }}>
+              Ex: 80% mantém 80% do orçamento (reduz em 20%)
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={handleReduceBudget}
+                style={{ flex: 1, padding: '11px', background: '#f97316', border: 'none', borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+                Calcular e Confirmar
+              </button>
+              <button onClick={() => setShowBudgetModal(false)}
+                style={{ flex: 1, padding: '11px', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, color: '#888', cursor: 'pointer' }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm modal ── */}
+      {confirmModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 101, padding: 20 }}>
+          <div style={{ background: '#111', border: '1px solid #2a2a2a', borderRadius: 18, padding: 28, maxWidth: 480, width: '100%' }}>
+            <h3 style={{ color: 'var(--text-primary)', fontSize: 16, fontWeight: 700, margin: '0 0 14px' }}>{confirmModal.title}</h3>
+            <pre style={{ color: '#777', fontSize: 12, margin: '0 0 22px', whiteSpace: 'pre-wrap', fontFamily: 'inherit', lineHeight: 1.6 }}>
+              {confirmModal.body}
+            </pre>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={confirmModal.onConfirm}
+                style={{ flex: 1, padding: '11px', background: '#f97316', border: 'none', borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+                Confirmar
+              </button>
+              <button onClick={() => setConfirmModal(null)}
+                style={{ flex: 1, padding: '11px', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, color: '#888', cursor: 'pointer' }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
