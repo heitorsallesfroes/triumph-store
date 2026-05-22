@@ -175,7 +175,7 @@ function ItemCard({
   const hasBudget     = item.daily_budget !== null || item.lifetime_budget !== null;
   const budgetVal     = item.daily_budget ?? item.lifetime_budget;
   const budgetType    = item.daily_budget !== null ? '/dia' : ' vitalício';
-  const canEditBudget = level === 'adset'; // always show edit at adset level
+  const canEditBudget = level === 'adset' || (level === 'campaign' && hasBudget);
 
   const isEditingThis = editingBudget?.id === item.id;
   const isSavingThis  = savingBudget === item.id;
