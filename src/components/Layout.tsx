@@ -74,7 +74,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
     <div className="flex h-screen" style={{ background: '#0a0a0f' }}>
 
       {/* Sidebar */}
-      <aside className="w-56 flex flex-col flex-shrink-0" style={{ background: SIDEBAR_BG, borderRight: `1px solid ${BORDER}` }}>
+      <aside className="w-72 flex flex-col flex-shrink-0" style={{ background: SIDEBAR_BG, borderRight: `1px solid ${BORDER}` }}>
 
         {/* Logo */}
         <div className="px-5 py-5" style={{ borderBottom: `1px solid ${BORDER}` }}>
@@ -109,7 +109,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
                     <button
                       key={item.id}
                       onClick={() => onNavigate(item.id)}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-left"
+                      className="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-left"
                       style={{
                         background: isActive ? ORANGE_DIM : 'transparent',
                         color: isActive ? ORANGE : '#6a6a6a',
@@ -129,7 +129,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
                       }}
                     >
                       <Icon size={16} />
-                      <span className="font-medium" style={{ fontSize: '14.5px' }}>{item.label}</span>
+                      <span className="font-medium" style={{ fontSize: '15px' }}>{item.label}</span>
                     </button>
                   );
                 })}
