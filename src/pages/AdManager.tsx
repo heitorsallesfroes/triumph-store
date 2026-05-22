@@ -346,6 +346,7 @@ export default function AdManager() {
   const [confirmModal,  setConfirmModal]  = useState<ConfirmModal | null>(null);
   const [showBudgetModal, setShowBudgetModal] = useState(false);
   const [budgetPct, setBudgetPct] = useState('80');
+  const [statusFilter, setStatusFilter] = useState<'active_only' | 'active_paused' | 'all'>('active_only');
 
   // Selection state
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -366,6 +367,10 @@ export default function AdManager() {
     setSelectedIds([]);
     load('campaign', null);
   }, [timeFilter, customStart, customEnd]);
+
+  useEffect(() => {
+    if (level === 'campaign') load('campaign', null);
+  }, [statusFilter]);
 
   const getDateRange = () => {
     if (timeFilter === 'today')      { const t = getTodayInBrazil();     return { since: t, until: t }; }
@@ -392,7 +397,7 @@ export default function AdManager() {
     setItems([]);
     setEditingBudget(null);
     try {
-      const res  = await call({ action: 'list', level: lvl, dateRange, parentId });
+      const res  = await call({ action: 'list', level: lvl, dateRange, parentId, statusFilter: lvl === 'campaign' ? statusFilter : undefined });
       const data = await res.json();
       if (data.success) setItems(data.data || []);
       else setError(data.error || 'Erro ao carregar dados');
@@ -745,6 +750,29 @@ export default function AdManager() {
           )}
         </div>
       </div>
+
+      {/* ── Status filter (campaign level only) ── */}
+      {level === 'campaign' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>Mostrar:</span>
+          {([
+            { value: 'active_only',   label: 'Apenas ativas'      },
+            { value: 'active_paused', label: 'Ativas + Pausadas'  },
+            { value: 'all',           label: 'Todas'               },
+          ] as const).map(opt => (
+            <button key={opt.value} onClick={() => setStatusFilter(opt.value)}
+              style={{
+                padding: '5px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500,
+                background: statusFilter === opt.value ? '#f97316' : 'var(--bg-hover)',
+                border: statusFilter === opt.value ? '1px solid #f97316' : '1px solid var(--border-main)',
+                color: statusFilter === opt.value ? '#fff' : 'var(--text-muted)',
+                cursor: 'pointer', transition: 'all 0.15s',
+              }}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── Summary bar (campaign level) ── */}
       {!loading && !error && items.length > 0 && level === 'campaign' && (

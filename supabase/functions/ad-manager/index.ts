@@ -68,10 +68,11 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── LIST ───────────────────────────────────────────────────────────────────
-    const { level, dateRange, parentId } = body as {
-      level:     "campaign" | "adset" | "ad";
-      dateRange: { since: string; until: string };
-      parentId:  string | null;
+    const { level, dateRange, parentId, statusFilter = "active_only" } = body as {
+      level:        "campaign" | "adset" | "ad";
+      dateRange:    { since: string; until: string };
+      parentId:     string | null;
+      statusFilter: "active_only" | "active_paused" | "all";
     };
 
     const timeRange    = encodeURIComponent(JSON.stringify(dateRange));
@@ -107,25 +108,58 @@ Deno.serve(async (req: Request) => {
     // ── CAMPAIGNS ─────────────────────────────────────────────────────────────
     if (level === "campaign") {
       const insUrl = `${BASE}/${FB_ACCOUNT}/insights?level=campaign&fields=campaign_id,campaign_name,${metricFields}&time_range=${timeRange}&limit=50&access_token=${FB_TOKEN}`;
-      const entUrl = `${BASE}/${FB_ACCOUNT}/campaigns?fields=id,name,status,effective_status,daily_budget,lifetime_budget&limit=100&access_token=${FB_TOKEN}`;
+
+      // Entity URL: optionally filter by status
+      let entUrl = `${BASE}/${FB_ACCOUNT}/campaigns?fields=id,name,status,effective_status,daily_budget,lifetime_budget&limit=100&access_token=${FB_TOKEN}`;
+      if (statusFilter === "active_paused") {
+        const f = encodeURIComponent(JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE", "PAUSED"] }]));
+        entUrl = `${BASE}/${FB_ACCOUNT}/campaigns?fields=id,name,status,effective_status,daily_budget,lifetime_budget&filtering=${f}&limit=100&access_token=${FB_TOKEN}`;
+      }
 
       const [inR, enR] = await Promise.all([fetch(insUrl), fetch(entUrl)]);
       const [inD, enD] = await Promise.all([inR.json(), enR.json()]);
       if (inD.error) throw new Error(inD.error.message);
 
-      const eMap = new Map((enD.data || []).map((e: any) => [e.id, e]));
-      const data = (inD.data || []).map((ins: any) => {
-        const e = eMap.get(ins.campaign_id) || {};
-        return {
-          id:              ins.campaign_id,
-          name:            ins.campaign_name || e.name || "Sem nome",
-          status:          e.effective_status || e.status || "UNKNOWN",
-          daily_budget:    budget(e.daily_budget),
-          lifetime_budget: budget(e.lifetime_budget),
-          ...metrics(ins),
-        };
-      }).sort((a: any, b: any) => parseFloat(b.spend) - parseFloat(a.spend));
+      const insMap = new Map((inD.data || []).map((ins: any) => [ins.campaign_id, ins]));
+      const eMap   = new Map((enD.data || []).map((e: any)   => [e.id, e]));
 
+      const zeroMetrics = () => ({
+        spend: "0.00", impressions: "0", reach: "0", clicks: "0",
+        cpm: "0.00", cpc: "0.00", ctr: "0.00",
+        purchases: 0, initiate_checkout: 0, purchase_value: "0.00", cost_per_purchase: "0.00",
+      });
+
+      let data: any[];
+
+      if (statusFilter === "active_only") {
+        // Only campaigns that had spend in the period (insights-first)
+        data = (inD.data || []).map((ins: any) => {
+          const e = eMap.get(ins.campaign_id) || {};
+          return {
+            id:              ins.campaign_id,
+            name:            ins.campaign_name || e.name || "Sem nome",
+            status:          e.effective_status || e.status || "UNKNOWN",
+            daily_budget:    budget(e.daily_budget),
+            lifetime_budget: budget(e.lifetime_budget),
+            ...metrics(ins),
+          };
+        });
+      } else {
+        // Entity-first: include all campaigns (with or without spend)
+        data = (enD.data || []).map((e: any) => {
+          const ins = insMap.get(e.id);
+          return {
+            id:              e.id,
+            name:            e.name || "Sem nome",
+            status:          e.effective_status || e.status || "UNKNOWN",
+            daily_budget:    budget(e.daily_budget),
+            lifetime_budget: budget(e.lifetime_budget),
+            ...(ins ? metrics(ins) : zeroMetrics()),
+          };
+        });
+      }
+
+      data.sort((a: any, b: any) => parseFloat(b.spend) - parseFloat(a.spend));
       return ok({ success: true, data });
     }
 
