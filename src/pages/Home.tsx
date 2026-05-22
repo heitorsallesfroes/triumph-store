@@ -13,10 +13,10 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-interface DayPoint { day: string; date: string; revenue: number; profit: number }
+interface DayPoint { day: string; date: string; revenue: number; adSpend: number }
 
 interface DashState {
-  day: { revenue: number; profit: number; salesCount: number; smartwatches: number; avgTicket: number };
+  day: { revenue: number; profit: number; salesCount: number; smallSalesCount: number; smartwatches: number; avgTicket: number };
   yesterday: { revenue: number; profit: number; salesCount: number };
   week: DayPoint[];
   month: { revenue: number; profit: number; salesCount: number; smartwatches: number; adSpend: number };
@@ -29,7 +29,7 @@ interface DashState {
 }
 
 const EMPTY: DashState = {
-  day: { revenue: 0, profit: 0, salesCount: 0, smartwatches: 0, avgTicket: 0 },
+  day: { revenue: 0, profit: 0, salesCount: 0, smallSalesCount: 0, smartwatches: 0, avgTicket: 0 },
   yesterday: { revenue: 0, profit: 0, salesCount: 0 },
   week: [],
   month: { revenue: 0, profit: 0, salesCount: 0, smartwatches: 0, adSpend: 0 },
@@ -233,7 +233,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     const [
       todaySalesRes, ySalesRes, weekSalesRes, mSalesRes,
       lmSalesRes, logRes, todayAdRes, mAdRes,
-      prodsRes, motoboyRes, smallTodayRes, pendingPixRes,
+      prodsRes, motoboyRes, smallTodayRes, pendingPixRes, weekAdRes,
     ] = await Promise.all([
       supabase.from('sales').select('id, total_sale_price, profit').neq('status', 'cancelado').gte('sale_date', `${today}T00:00:00`).lte('sale_date', `${today}T23:59:59`),
       supabase.from('sales').select('total_sale_price, profit').neq('status', 'cancelado').gte('sale_date', `${yesterday}T00:00:00`).lte('sale_date', `${yesterday}T23:59:59`),
@@ -247,6 +247,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       supabase.from('motoboy_stats').select('name, deliveries_today, earnings_today').gt('deliveries_today', 0).order('deliveries_today', { ascending: false }),
       supabase.from('small_sales').select('sale_price, quantity').gte('created_at', `${today}T00:00:00-03:00`).lte('created_at', `${today}T23:59:59-03:00`),
       supabase.from('sales').select('id', { count: 'exact', head: true }).eq('payment_method', 'pix').in('status', ['em_separacao', 'embalar_amanha']),
+      supabase.from('ad_spend').select('date, amount').gte('date', sixAgo).lte('date', today),
     ]);
 
     // Round 2: sale_items (needs IDs from round 1)
@@ -276,33 +277,36 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     const smallToday = smallTodayRes.data || [];
 
     // Build 7-day chart points
+    const weekAdRows = weekAdRes.data || [];
     const week: DayPoint[] = [];
     for (let i = 6; i >= 0; i--) {
       const d  = new Date(brazilNow);
       d.setDate(d.getDate() - i);
       const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const dayRows = weekSales.filter(s => (s.sale_date || '').startsWith(ds));
+      const dayRows  = weekSales.filter(s => (s.sale_date || '').startsWith(ds));
+      const adForDay = weekAdRows.filter(a => a.date === ds).reduce((s, a) => s + Number(a.amount), 0);
       week.push({
         date:    ds,
         day:     d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').replace('-feira', ''),
         revenue: dayRows.reduce((s, v) => s + Number(v.total_sale_price), 0),
-        profit:  dayRows.reduce((s, v) => s + Number(v.profit), 0),
+        adSpend: adForDay,
       });
     }
 
-    const todayRev     = todaySales.reduce((s, v) => s + Number(v.total_sale_price), 0);
-    const todayProfit  = todaySales.reduce((s, v) => s + Number(v.profit), 0);
-    const smallRev     = smallToday.reduce((s, v) => s + Number(v.sale_price) * Number(v.quantity), 0);
-    const totalDayRev  = todayRev + smallRev;
-    const totalDayCnt  = todaySales.length + smallToday.length;
+    const todayRev    = todaySales.reduce((s, v) => s + Number(v.total_sale_price), 0);
+    const todayProfit = todaySales.reduce((s, v) => s + Number(v.profit), 0);
+    const smallRev    = smallToday.reduce((s, v) => s + Number(v.sale_price) * Number(v.quantity), 0);
+    const totalDayRev = todayRev + smallRev;
+    const totalDayCnt = todaySales.length + smallToday.length;
 
     setData({
       day: {
-        revenue:    totalDayRev,
-        profit:     todayProfit,
-        salesCount: totalDayCnt,
-        smartwatches: swToday,
-        avgTicket:  totalDayCnt > 0 ? totalDayRev / totalDayCnt : 0,
+        revenue:        totalDayRev,
+        profit:         todayProfit,
+        salesCount:     todaySales.length,
+        smallSalesCount: smallToday.length,
+        smartwatches:   swToday,
+        avgTicket:      totalDayCnt > 0 ? totalDayRev / totalDayCnt : 0,
       },
       yesterday: {
         revenue:    ySales.reduce((s, v) => s + Number(v.total_sale_price), 0),
@@ -532,8 +536,8 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
                 <span style={{ fontSize: 12, color: axisColor }}>{v}</span>
               )}
             />
-            <Bar dataKey="revenue" name="Faturamento" fill="#f97316" radius={[5, 5, 0, 0]} maxBarSize={40} />
-            <Bar dataKey="profit"  name="Lucro"       fill="#22c55e" radius={[5, 5, 0, 0]} maxBarSize={40} />
+            <Bar dataKey="revenue" name="Faturamento"  fill="#f97316" radius={[5, 5, 0, 0]} maxBarSize={40} />
+            <Bar dataKey="adSpend" name="Gasto em Ads" fill="#3b82f6" radius={[5, 5, 0, 0]} maxBarSize={40} />
           </BarChart>
         </ResponsiveContainer>
       </div>
