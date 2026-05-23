@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase, Motoboy, MotoboyStats } from '../lib/supabase';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 import { Plus, Pencil, Trash2, X, Bike, TrendingUp, Trophy, DollarSign, Calendar, PlusCircle } from 'lucide-react';
@@ -666,7 +666,7 @@ export default function Motoboys() {
     return selectedPeriod === 'today' ? 'Hoje' : selectedPeriod === 'yesterday' ? 'Ontem' : selectedPeriod === 'week' ? 'Esta Semana' : selectedPeriod === 'month' ? 'Este Mês' : selectedPeriod === 'last_month' ? 'Mês Anterior' : 'Total Geral';
   };
 
-  if (loading) return <div className="p-8"><div className="">Carregando...</div></div>;
+  if (loading) return <div className="p-8"><div className="text-white">Carregando...</div></div>;
 
   const sortedStats = getSortedStats();
 
@@ -677,12 +677,12 @@ export default function Motoboys() {
         <div className="flex items-center gap-3">
           <Bike size={32} className="text-orange-500" />
           <div>
-            <h1 className="text-3xl font-bold">Motoboys</h1>
+            <h1 className="text-3xl font-bold text-white">Motoboys</h1>
             <p className="text-gray-400 text-sm mt-1">Gerenciar pessoal de entrega</p>
           </div>
         </div>
         <button onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 bg-orange-500 px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">
+          className="flex items-center gap-2 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">
           <Plus size={20} /> Adicionar Motoboy
         </button>
       </div>
@@ -691,12 +691,12 @@ export default function Motoboys() {
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-5 mb-6">
         <div className="flex items-center gap-3 mb-4">
           <Calendar size={18} className="text-orange-500" />
-          <h3 className="text-base font-semibold">Filtro de Período</h3>
+          <h3 className="text-base font-semibold text-white">Filtro de Período</h3>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
           {(['today', 'yesterday', 'week', 'month', 'last_month', 'total', 'custom'] as TimePeriod[]).map(p => (
             <button key={p} onClick={() => handlePeriodChange(p)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedPeriod === p ? 'bg-orange-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedPeriod === p ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
               {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === 'week' ? 'Semana' : p === 'month' ? 'Mês' : p === 'last_month' ? 'Mês Anterior' : p === 'total' ? 'Total' : 'Personalizado'}
             </button>
           ))}
@@ -712,7 +712,7 @@ export default function Motoboys() {
                 dateFormat="dd/MM/yyyy"
                 locale={ptBR}
                 placeholderText="Data início"
-                className="bg-gray-700 rounded-lg px-3 py-2 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-36 cursor-pointer"
+                className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-36 cursor-pointer"
               />
               <span className="text-gray-400 text-sm">até</span>
               <DatePicker
@@ -726,11 +726,11 @@ export default function Motoboys() {
                 dateFormat="dd/MM/yyyy"
                 locale={ptBR}
                 placeholderText="Data fim"
-                className="bg-gray-700 rounded-lg px-3 py-2 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-36 cursor-pointer"
+                className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:outline-none focus:border-orange-500 text-sm w-36 cursor-pointer"
               />
               {(startDate || endDate) && (
                 <button onClick={() => { setStartDate(null); setEndDate(null); }}
-                  className="text-gray-400 text-sm underline">
+                  className="text-gray-400 hover:text-white text-sm underline">
                   Limpar
                 </button>
               )}
@@ -749,20 +749,20 @@ export default function Motoboys() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold">{editingMotoboy ? 'Editar Motoboy' : 'Adicionar Motoboy'}</h2>
-              <button onClick={resetForm} className="text-gray-400"><X size={24} /></button>
+              <h2 className="text-xl font-bold text-white">{editingMotoboy ? 'Editar Motoboy' : 'Adicionar Motoboy'}</h2>
+              <button onClick={resetForm} className="text-gray-400 hover:text-white"><X size={24} /></button>
             </div>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Nome</label>
                 <input type="text" value={formData.name} onChange={e => setFormData({ name: e.target.value })}
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" required />
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" required />
               </div>
               <div className="flex gap-3 pt-2">
-                <button type="submit" className="flex-1 bg-orange-500 px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">
+                <button type="submit" className="flex-1 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">
                   {editingMotoboy ? 'Atualizar' : 'Adicionar'}
                 </button>
-                <button type="button" onClick={resetForm} className="flex-1 bg-gray-700 px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">
+                <button type="button" onClick={resetForm} className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">
                   Cancelar
                 </button>
               </div>
@@ -776,8 +776,8 @@ export default function Motoboys() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold">Adicionar Pagamento Avulso</h2>
-              <button onClick={() => setShowPaymentForm(null)} className="text-gray-400"><X size={24} /></button>
+              <h2 className="text-xl font-bold text-white">Adicionar Pagamento Avulso</h2>
+              <button onClick={() => setShowPaymentForm(null)} className="text-gray-400 hover:text-white"><X size={24} /></button>
             </div>
             <form onSubmit={handleAddPayment} className="space-y-4">
               <div>
@@ -788,7 +788,7 @@ export default function Motoboys() {
                   maxDate={new Date()}
                   dateFormat="dd/MM/yyyy"
                   locale={ptBR}
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:outline-none focus:border-orange-500"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:outline-none focus:border-orange-500"
                 />
               </div>
               <div>
@@ -796,20 +796,20 @@ export default function Motoboys() {
                 <input type="text" value={paymentData.description}
                   onChange={e => setPaymentData({ ...paymentData, description: e.target.value })}
                   placeholder="Ex: Troca de relógio na casa do cliente"
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" required />
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" required />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Valor (R$)</label>
                 <input type="number" step="0.01" min="0" value={paymentData.amount}
                   onChange={e => setPaymentData({ ...paymentData, amount: e.target.value })}
                   placeholder="0.00"
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" required />
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" required />
               </div>
               <div className="flex gap-3 pt-2">
-                <button type="submit" className="flex-1 bg-orange-500 px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">
+                <button type="submit" className="flex-1 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">
                   Adicionar
                 </button>
-                <button type="button" onClick={() => setShowPaymentForm(null)} className="flex-1 bg-gray-700 px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">
+                <button type="button" onClick={() => setShowPaymentForm(null)} className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">
                   Cancelar
                 </button>
               </div>
@@ -823,8 +823,8 @@ export default function Motoboys() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-5">
-              <h2 className="text-xl font-bold">📋 Gerar Formulário — {formularioModal.motoboyName}</h2>
-              <button onClick={() => setFormularioModal(null)} className="text-gray-400"><X size={24} /></button>
+              <h2 className="text-xl font-bold text-white">📋 Gerar Formulário — {formularioModal.motoboyName}</h2>
+              <button onClick={() => setFormularioModal(null)} className="text-gray-400 hover:text-white"><X size={24} /></button>
             </div>
             <div className="space-y-4">
               <div>
@@ -832,21 +832,21 @@ export default function Motoboys() {
                 <input type="date" value={formularioDate}
                   onChange={e => { setFormularioDate(e.target.value); setFormularioTexto(''); }}
                   max={getTodayInBrazil()}
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" />
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" />
               </div>
               <button
                 onClick={() => gerarFormulario(formularioModal.motoboyId, formularioModal.motoboyName, formularioDate)}
                 disabled={formularioLoading}
-                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-gray-600 px-4 py-2 rounded-lg transition-colors font-semibold">
+                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors font-semibold">
                 {formularioLoading ? 'Gerando...' : 'Gerar'}
               </button>
               {formularioTexto && (
                 <>
                   <textarea readOnly value={formularioTexto} rows={8}
-                    className="w-full bg-gray-900 rounded-lg px-3 py-2 border border-gray-600 text-sm font-mono resize-none focus:outline-none" />
+                    className="w-full bg-gray-900 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm font-mono resize-none focus:outline-none" />
                   <button
                     onClick={async () => { await navigator.clipboard.writeText(formularioTexto); setFormularioCopiado(true); setTimeout(() => setFormularioCopiado(false), 2000); }}
-                    className="w-full bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg transition-colors text-sm font-semibold">
+                    className="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-semibold">
                     {formularioCopiado ? '✅ Copiado!' : '📋 Copiar'}
                   </button>
                 </>
@@ -861,8 +861,8 @@ export default function Motoboys() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-5">
-              <h2 className="text-xl font-bold">💰 Lançar Valores — {lancarModal.motoboyName}</h2>
-              <button onClick={() => { setLancarModal(null); setLancarTexto(''); }} className="text-gray-400"><X size={24} /></button>
+              <h2 className="text-xl font-bold text-white">💰 Lançar Valores — {lancarModal.motoboyName}</h2>
+              <button onClick={() => { setLancarModal(null); setLancarTexto(''); }} className="text-gray-400 hover:text-white"><X size={24} /></button>
             </div>
             <div className="space-y-4">
               <div>
@@ -870,7 +870,7 @@ export default function Motoboys() {
                 <input type="date" value={lancarDate}
                   onChange={e => setLancarDate(e.target.value)}
                   max={getTodayInBrazil()}
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" />
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Cole o formulário preenchido</label>
@@ -879,13 +879,13 @@ export default function Motoboys() {
                   onChange={e => setLancarTexto(e.target.value)}
                   rows={10}
                   placeholder={'Entregas João - 24/04/2026\n\nCentro - Niterói: 20\nIcaraí - Niterói: 15'}
-                  className="w-full bg-gray-900 rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm font-mono resize-none"
+                  className="w-full bg-gray-900 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm font-mono resize-none"
                 />
               </div>
               <button
                 onClick={() => lancarValores(lancarModal.motoboyId, lancarDate, lancarTexto)}
                 disabled={lancarLoading || !lancarTexto.trim()}
-                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors font-semibold">
+                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition-colors font-semibold">
                 {lancarLoading ? 'Atualizando...' : 'Atualizar Valores'}
               </button>
             </div>
@@ -897,7 +897,7 @@ export default function Motoboys() {
         {/* Lista de Motoboys */}
         <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-700">
-            <h2 className="text-lg font-bold">Lista de Motoboys</h2>
+            <h2 className="text-lg font-bold text-white">Lista de Motoboys</h2>
           </div>
           <table className="w-full">
             <thead className="bg-gray-700/50">
@@ -911,7 +911,7 @@ export default function Motoboys() {
                 <tr><td colSpan={2} className="px-6 py-8 text-center text-gray-400">Nenhum motoboy ainda.</td></tr>
               ) : motoboys.map(motoboy => (
                 <tr key={motoboy.id} className="hover:bg-gray-700/30">
-                  <td className="px-6 py-4">{motoboy.name}</td>
+                  <td className="px-6 py-4 text-white">{motoboy.name}</td>
                   <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-2">
                       <button onClick={() => { setShowPaymentForm(motoboy.id); setPaymentData({ date: new Date(), amount: '', description: '' }); }}
@@ -945,7 +945,7 @@ export default function Motoboys() {
                   return (
                     <div key={p.id} className="flex items-center justify-between bg-gray-700/50 rounded-lg px-3 py-2">
                       <div>
-                        <span className="text-xs font-medium">{motoboy?.name}</span>
+                        <span className="text-white text-xs font-medium">{motoboy?.name}</span>
                         <span className="text-gray-400 text-xs mx-2">•</span>
                         <span className="text-gray-400 text-xs">{p.description}</span>
                         <span className="text-gray-500 text-xs ml-2">({formatDate(p.date)})</span>
@@ -965,14 +965,14 @@ export default function Motoboys() {
         {/* Ranking */}
         <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-700">
-            <h2 className="text-lg font-bold flex items-center gap-2">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
               <Trophy size={20} className="text-orange-500" /> Ranking de Desempenho
             </h2>
             {selectedPeriod !== 'custom' && (
               <div className="flex gap-2 mt-3">
                 {(['today', 'yesterday', 'week', 'month', 'last_month', 'total'] as TimePeriod[]).map(p => (
                   <button key={p} onClick={() => handlePeriodChange(p)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedPeriod === p ? 'bg-orange-500' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedPeriod === p ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
                     {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === 'week' ? 'Semana' : p === 'month' ? 'Mês' : p === 'last_month' ? 'Mês Ant.' : 'Total'}
                   </button>
                 ))}
@@ -996,10 +996,10 @@ export default function Motoboys() {
                 <div key={stat.id} className="bg-gray-900 rounded-xl p-4 border border-gray-700 hover:border-orange-500/40 transition-colors">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold ${index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : index === 2 ? 'bg-orange-600' : 'bg-gray-600'}`}>
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white font-bold ${index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : index === 2 ? 'bg-orange-600' : 'bg-gray-600'}`}>
                         {index + 1}
                       </div>
-                      <span className="font-semibold">{stat.name}</span>
+                      <span className="text-white font-semibold">{stat.name}</span>
                     </div>
                     <div className="text-right">
                       <div className="text-gray-400 text-xs">{getPeriodLabel()}</div>
@@ -1010,7 +1010,7 @@ export default function Motoboys() {
                   <div className="grid grid-cols-3 gap-2">
                     <div className="bg-gray-800 rounded-lg p-2 border border-gray-700">
                       <div className="text-gray-400 text-xs mb-1">Entregas</div>
-                      <div className="text-sm font-semibold">{deliveries}</div>
+                      <div className="text-white text-sm font-semibold">{deliveries}</div>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-2 border border-gray-700">
                       <div className="text-gray-400 text-xs mb-1">Taxa entregas</div>
@@ -1036,7 +1036,7 @@ export default function Motoboys() {
                   {selectedPeriod === 'total' && (
                     <div className="mt-2 flex items-center justify-between text-xs">
                       <span className="text-gray-400 flex items-center gap-1"><TrendingUp size={11} /> Total histórico</span>
-                      <span className="font-semibold">{motoboyStats.total_deliveries} entregas • <span className="text-green-400">R$ {motoboyStats.total_earnings.toFixed(2)}</span></span>
+                      <span className="text-white font-semibold">{motoboyStats.total_deliveries} entregas • <span className="text-green-400">R$ {motoboyStats.total_earnings.toFixed(2)}</span></span>
                     </div>
                   )}
                 </div>

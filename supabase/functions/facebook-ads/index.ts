@@ -31,21 +31,17 @@ Deno.serve(async (req: Request) => {
     let dateEnd: string = brazilToday;
 
     const fields = 'spend,impressions,clicks,reach,cpm,cpc,ctr';
-    const campaignFields = 'campaign_name,spend,impressions,reach,clicks,cpm,cpc,ctr,actions,action_values,cost_per_action_type';
     const accountBase = `https://graph.facebook.com/v25.0/${FB_ACCOUNT}/insights`;
     const authParams = `access_token=${FB_TOKEN}&level=account`;
-    const campaignAuth = `access_token=${FB_TOKEN}&level=campaign&limit=50`;
 
     let fbUrl: string;
     let fbDailyUrl: string;
-    let fbCampaignUrl: string;
 
     if (period === 'today') {
       // date_preset=today retorna dados parciais do dia com atualização frequente
       dateStart = brazilToday;
-      fbUrl         = `${accountBase}?fields=${fields}&date_preset=today&${authParams}`;
-      fbDailyUrl    = `${accountBase}?fields=spend&date_preset=today&time_increment=1&${authParams}`;
-      fbCampaignUrl = `${accountBase}?fields=${campaignFields}&date_preset=today&${campaignAuth}`;
+      fbUrl      = `${accountBase}?fields=${fields}&date_preset=today&${authParams}`;
+      fbDailyUrl = `${accountBase}?fields=spend&date_preset=today&time_increment=1&${authParams}`;
     } else {
       if (period === 'custom' && customStart && customEnd) {
         dateStart = customStart;
@@ -63,20 +59,17 @@ Deno.serve(async (req: Request) => {
 
       // Inclui hoje explicitamente no until para capturar dados parciais do dia
       const timeRange = encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }));
-      fbUrl         = `${accountBase}?fields=${fields}&time_range=${timeRange}&${authParams}`;
-      fbDailyUrl    = `${accountBase}?fields=spend&time_range=${timeRange}&time_increment=1&${authParams}`;
-      fbCampaignUrl = `${accountBase}?fields=${campaignFields}&time_range=${timeRange}&${campaignAuth}`;
+      fbUrl      = `${accountBase}?fields=${fields}&time_range=${timeRange}&${authParams}`;
+      fbDailyUrl = `${accountBase}?fields=spend&time_range=${timeRange}&time_increment=1&${authParams}`;
     }
 
-    const [fbResponse, fbDailyResponse, fbCampaignResponse] = await Promise.all([
+    const [fbResponse, fbDailyResponse] = await Promise.all([
       fetch(fbUrl),
       fetch(fbDailyUrl),
-      fetch(fbCampaignUrl),
     ]);
-    const [fbData, fbDailyData, fbCampaignData] = await Promise.all([
+    const [fbData, fbDailyData] = await Promise.all([
       fbResponse.json(),
       fbDailyResponse.json(),
-      fbCampaignResponse.json(),
     ]);
 
     if (!fbResponse.ok || fbData.error) {
@@ -85,47 +78,6 @@ Deno.serve(async (req: Request) => {
 
     const insights = fbData.data?.[0] || {};
     const spend = parseFloat(insights.spend || '0');
-
-    const findAction = (arr: any[] | undefined, types: string[]): number => {
-      const found = (arr || []).find((a: any) => types.includes(a.action_type));
-      return found ? parseInt(found.value || '0', 10) : 0;
-    };
-    const findValue = (arr: any[] | undefined, types: string[]): string => {
-      const found = (arr || []).find((a: any) => types.includes(a.action_type));
-      return found ? parseFloat(found.value || '0').toFixed(2) : '0.00';
-    };
-
-    // Debug: log da resposta bruta de campanhas para diagnóstico
-    console.log('[facebook-ads] campaign HTTP status:', fbCampaignResponse.status);
-    console.log('[facebook-ads] campaign raw response:', JSON.stringify(fbCampaignData).slice(0, 2000));
-
-    const campaigns = (fbCampaignData.error ? [] : (fbCampaignData.data || []) as any[])
-      .map((c: any) => ({
-        campaign_name:     c.campaign_name || 'Sem nome',
-        spend:             parseFloat(c.spend || '0').toFixed(2),
-        impressions:       c.impressions || '0',
-        reach:             c.reach || '0',
-        clicks:            c.clicks || '0',
-        cpm:               parseFloat(c.cpm || '0').toFixed(2),
-        cpc:               parseFloat(c.cpc || '0').toFixed(2),
-        ctr:               parseFloat(c.ctr || '0').toFixed(2),
-        purchases:         findAction(c.actions, ['purchase', 'offsite_conversion.fb_pixel_purchase']),
-        initiate_checkout: findAction(c.actions, ['initiate_checkout', 'offsite_conversion.fb_pixel_initiate_checkout']),
-        purchase_value:    findValue(c.action_values, ['purchase', 'offsite_conversion.fb_pixel_purchase']),
-        cost_per_purchase: findValue(c.cost_per_action_type, ['purchase', 'offsite_conversion.fb_pixel_purchase']),
-      }))
-      .sort((a: any, b: any) => parseFloat(b.spend) - parseFloat(a.spend));
-
-    // Campo debug incluído na resposta para diagnóstico no Network tab do browser
-    const campaignDebug = {
-      httpStatus:   fbCampaignResponse.status,
-      hasError:     !!fbCampaignData.error,
-      errorMessage: fbCampaignData.error?.message ?? null,
-      errorCode:    fbCampaignData.error?.code ?? null,
-      dataLength:   (fbCampaignData.data || []).length,
-      firstItem:    (fbCampaignData.data || [])[0] ?? null,
-      paging:       fbCampaignData.paging ?? null,
-    };
 
     const dailySpend: { date: string; spend: number }[] = (fbDailyData.data || [])
       .map((d: { date_start: string; spend: string }) => ({
@@ -157,8 +109,6 @@ Deno.serve(async (req: Request) => {
         dateStart,
         dateEnd,
         dailySpend,
-        campaigns,
-        campaignDebug,
         metrics: {
           spend: spend.toFixed(2),
           impressions: insights.impressions || '0',

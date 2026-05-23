@@ -21,7 +21,7 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 interface AdSpend { id: string; date: string; amount: number; }
 interface Sale { id: string; sale_date: string; total_sale_price: number; profit: number; status: string; }
 interface DailyMetrics { date: string; adSpend: number; revenue: number; profit: number; sales: number; roas: number; roi: number; cpv: number; }
-interface PeriodSummary { totalAdSpend: number; totalRevenue: number; totalProfit: number; totalSales: number; avgRoas: number; avgRoi: number; avgCpv: number; avgCpvSw: number; }
+interface PeriodSummary { totalAdSpend: number; totalRevenue: number; totalProfit: number; totalSales: number; avgRoas: number; avgRoi: number; avgCpv: number; }
 interface FBMetrics { spend: string; impressions: string; clicks: string; reach: string; cpm: string; cpc: string; ctr: string; purchases: string; purchase_value: string; profit: string; roas: string; cpv: string; }
 
 type TimeFilter = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
@@ -40,7 +40,6 @@ export default function Marketing() {
   const [fbLoading, setFbLoading] = useState(false);
   const [fbError, setFbError] = useState<string | null>(null);
   const [fbSyncedCount, setFbSyncedCount] = useState<number | null>(null);
-  const [totalSwCount, setTotalSwCount] = useState(0);
   const [activeTab, setActiveTab] = useState<'overview' | 'facebook' | 'detail'>('overview');
 
   useEffect(() => {
@@ -90,20 +89,6 @@ export default function Marketing() {
       });
       metrics.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setDailyMetrics(metrics);
-
-      if (salesData.length > 0) {
-        const saleIds = salesData.map(s => s.id);
-        const { data: itemsData } = await supabase
-          .from('sale_items')
-          .select('quantity, products(category)')
-          .in('sale_id', saleIds);
-        const swCount = (itemsData || [])
-          .filter((i: any) => i.products?.category === 'smartwatch')
-          .reduce((s: number, i: any) => s + Number(i.quantity), 0);
-        setTotalSwCount(swCount);
-      } else {
-        setTotalSwCount(0);
-      }
     } catch (error) { console.error(error); } finally { setLoading(false); }
   };
 
@@ -122,59 +107,34 @@ export default function Marketing() {
   };
 
   const loadFacebookData = useCallback(async () => {
+    if (timeFilter === 'today') return;
     if (timeFilter === 'custom' && (!customStartDate || !customEndDate)) return;
     setFbLoading(true);
     setFbError(null);
     setFbSyncedCount(null);
     try {
-      const dateRange = getDateRange();
-      if (!dateRange) return;
-
-      // Usa o mesmo endpoint e formato que o Gerenciador de Anúncios (ad-manager)
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/ad-manager`, {
+      const payload = getFBPeriodPayload();
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/facebook-ads`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'list',
-          level: 'campaign',
-          dateRange: { since: dateRange.start, until: dateRange.end },
-          parentId: null,
-          statusFilter: 'active_only',
-        }),
+        headers: { 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
-
       if (data.success) {
-        const campaigns: any[] = data.data || [];
-        const totSpend  = campaigns.reduce((s, c) => s + parseFloat(c.spend  || '0'), 0);
-        const totImpr   = campaigns.reduce((s, c) => s + parseInt(c.impressions || '0'), 0);
-        const totClicks = campaigns.reduce((s, c) => s + parseInt(c.clicks   || '0'), 0);
-        const totReach  = campaigns.reduce((s, c) => s + parseInt(c.reach    || '0'), 0);
-        const totBuys   = campaigns.reduce((s, c) => s + (c.purchases || 0), 0);
-        const totRev    = campaigns.reduce((s, c) => s + parseFloat(c.purchase_value || '0'), 0);
-
-        setFbMetrics({
-          spend:          totSpend.toFixed(2),
-          impressions:    String(totImpr),
-          clicks:         String(totClicks),
-          reach:          String(totReach),
-          cpm:            totImpr   > 0 ? ((totSpend / totImpr) * 1000).toFixed(2)   : '0.00',
-          cpc:            totClicks > 0 ? (totSpend / totClicks).toFixed(2)           : '0.00',
-          ctr:            totImpr   > 0 ? ((totClicks / totImpr) * 100).toFixed(2)   : '0.00',
-          purchases:      String(totBuys),
-          purchase_value: totRev.toFixed(2),
-          profit:         '0',
-          roas:           totSpend > 0 ? (totRev  / totSpend).toFixed(2) : '0.00',
-          cpv:            totBuys  > 0 ? (totSpend / totBuys).toFixed(2) : '0.00',
-        });
-
-        // Sincroniza gasto no ad_spend apenas para períodos de um único dia
-        if (dateRange.start === dateRange.end && totSpend > 0) {
+        setFbMetrics(data.metrics);
+        if (data.dailySpend && data.dailySpend.length > 0) {
+          const rows = data.dailySpend.map((d: { date: string; spend: number }) => ({
+            date: d.date,
+            amount: d.spend,
+          }));
           const { error: upsertError } = await supabase
             .from('ad_spend')
-            .upsert([{ date: dateRange.start, amount: totSpend }], { onConflict: 'date' });
-          if (!upsertError) { setFbSyncedCount(1); loadData(); }
-          else console.error('Erro ao salvar ad_spend:', upsertError.message);
+            .upsert(rows, { onConflict: 'date' });
+          if (upsertError) console.error('Erro ao salvar ad_spend:', upsertError.message);
+          else {
+            setFbSyncedCount(rows.length);
+            loadData();
+          }
         }
       } else {
         setFbError(data.error || 'Erro ao carregar dados do Facebook');
@@ -211,12 +171,12 @@ export default function Marketing() {
   };
 
   const summary: PeriodSummary = (() => {
-    if (!dailyMetrics.length) return { totalAdSpend: 0, totalRevenue: 0, totalProfit: 0, totalSales: 0, avgRoas: 0, avgRoi: 0, avgCpv: 0, avgCpvSw: 0 };
+    if (!dailyMetrics.length) return { totalAdSpend: 0, totalRevenue: 0, totalProfit: 0, totalSales: 0, avgRoas: 0, avgRoi: 0, avgCpv: 0 };
     const totalAdSpend = dailyMetrics.reduce((s, d) => s + d.adSpend, 0);
     const totalRevenue = dailyMetrics.reduce((s, d) => s + d.revenue, 0);
     const totalProfit = dailyMetrics.reduce((s, d) => s + d.profit, 0);
     const totalSales = dailyMetrics.reduce((s, d) => s + d.sales, 0);
-    return { totalAdSpend, totalRevenue, totalProfit, totalSales, avgRoas: totalAdSpend > 0 ? totalRevenue / totalAdSpend : 0, avgRoi: totalAdSpend > 0 ? ((totalProfit - totalAdSpend) / totalAdSpend) * 100 : 0, avgCpv: totalSales > 0 ? totalAdSpend / totalSales : 0, avgCpvSw: totalAdSpend > 0 && totalSwCount > 0 ? totalAdSpend / totalSwCount : 0 };
+    return { totalAdSpend, totalRevenue, totalProfit, totalSales, avgRoas: totalAdSpend > 0 ? totalRevenue / totalAdSpend : 0, avgRoi: totalAdSpend > 0 ? ((totalProfit - totalAdSpend) / totalAdSpend) * 100 : 0, avgCpv: totalSales > 0 ? totalAdSpend / totalSales : 0 };
   })();
 
   if (loading) return <div className="p-8 flex items-center justify-center h-64"><div className="text-white flex items-center gap-3"><RefreshCw size={20} className="animate-spin" /> Carregando...</div></div>;
@@ -307,9 +267,9 @@ export default function Marketing() {
       {/* Tabs */}
       <div className="flex gap-1 mb-6 bg-gray-800 rounded-xl p-1 border border-gray-700 w-fit">
         {[
-          { id: 'overview', label: 'Visão Geral',  icon: BarChart2 },
-          { id: 'facebook', label: 'Facebook Ads', icon: Activity  },
-          { id: 'detail',   label: 'Detalhamento', icon: Target    },
+          { id: 'overview', label: 'Visão Geral', icon: BarChart2 },
+          { id: 'facebook', label: 'Facebook Ads', icon: Activity },
+          { id: 'detail', label: 'Detalhamento', icon: Target },
         ].map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id as typeof activeTab)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${activeTab === tab.id ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white'}`}>
@@ -337,30 +297,11 @@ export default function Marketing() {
               const hasData = summary.totalAdSpend > 0;
               return (<>
                 <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
-                  <p className="text-gray-400 text-xs uppercase tracking-wider mb-2">CPV</p>
-                  <div className="mb-3">
-                    <p className="text-gray-500 text-xs mb-0.5">CPV / Venda</p>
-                    <p className={`text-xl font-bold ${hasData ? cpvCfg.color : 'text-white'}`}>R$ {summary.avgCpv.toFixed(2)}</p>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <p className="text-gray-500 text-xs">Ads ÷ vendas</p>
-                      {hasData && cpvCfg.label && <span className={`text-xs font-semibold ${cpvCfg.color}`}>{cpvCfg.label}</span>}
-                    </div>
-                  </div>
-                  <div className="border-t border-gray-700 pt-2">
-                    <p className="text-gray-500 text-xs mb-0.5">CPV / Smartwatch</p>
-                    {(() => {
-                      const swCfg = getCpvConfig(summary.avgCpvSw);
-                      const hasSwData = hasData && summary.avgCpvSw > 0;
-                      return (
-                        <>
-                          <p className={`text-xl font-bold ${hasSwData ? swCfg.color : 'text-white'}`}>R$ {summary.avgCpvSw.toFixed(2)}</p>
-                          <div className="flex items-center justify-between mt-0.5">
-                            <p className="text-gray-500 text-xs">Ads ÷ smartwatches</p>
-                            {hasSwData && swCfg.label && <span className={`text-xs font-semibold ${swCfg.color}`}>{swCfg.label}</span>}
-                          </div>
-                        </>
-                      );
-                    })()}
+                  <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">CPV Médio</p>
+                  <p className={`text-2xl font-bold ${hasData ? cpvCfg.color : 'text-white'}`}>R$ {summary.avgCpv.toFixed(2)}</p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-gray-500 text-xs">Custo por venda</p>
+                    {hasData && cpvCfg.label && <span className={`text-xs font-semibold ${cpvCfg.color}`}>{cpvCfg.label}</span>}
                   </div>
                 </div>
                 <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
@@ -505,31 +446,20 @@ export default function Marketing() {
                 })()}
                 {(() => {
                   const cpvCfg = getCpvConfig(parseFloat(fbMetrics.cpv));
-                  const cpvSwVal = totalSwCount > 0 ? parseFloat(fbMetrics.spend) / totalSwCount : 0;
-                  const cpvSwCfg = getCpvConfig(cpvSwVal);
                   return (
                     <div className="bg-gradient-to-br from-blue-900/40 to-blue-800/20 rounded-xl p-6 border border-blue-700/50">
-                      <div className="flex items-center gap-3 mb-4">
-                        <ShoppingCart size={24} className="text-blue-400" />
-                        <h3 className="text-white font-semibold">CPV</h3>
-                      </div>
-                      <div className="mb-4">
-                        <p className="text-gray-400 text-xs mb-1">CPV / Venda</p>
-                        <div className="flex items-baseline gap-3">
-                          <p className={`text-3xl font-bold ${cpvCfg.color}`}>R$ {parseFloat(fbMetrics.cpv).toFixed(2)}</p>
-                          {cpvCfg.label && <span className={`text-sm font-bold ${cpvCfg.color}`}>{cpvCfg.label}</span>}
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <ShoppingCart size={24} className="text-blue-400" />
+                          <h3 className="text-white font-semibold">Custo por Venda (CPV)</h3>
                         </div>
-                        <p className="text-gray-400 text-xs mt-1">Ads ÷ {fbMetrics.purchases} vendas</p>
+                        {cpvCfg.label && <span className={`text-sm font-bold ${cpvCfg.color}`}>{cpvCfg.label}</span>}
                       </div>
-                      <div className="border-t border-blue-700/30 pt-4">
-                        <p className="text-gray-400 text-xs mb-1">CPV / Smartwatch</p>
-                        <div className="flex items-baseline gap-3">
-                          <p className={`text-3xl font-bold ${totalSwCount > 0 ? cpvSwCfg.color : 'text-gray-500'}`}>
-                            {totalSwCount > 0 ? `R$ ${cpvSwVal.toFixed(2)}` : '—'}
-                          </p>
-                          {totalSwCount > 0 && cpvSwCfg.label && <span className={`text-sm font-bold ${cpvSwCfg.color}`}>{cpvSwCfg.label}</span>}
-                        </div>
-                        <p className="text-gray-400 text-xs mt-1">Ads ÷ {totalSwCount} smartwatches</p>
+                      <p className={`text-5xl font-bold ${cpvCfg.color}`}>R$ {parseFloat(fbMetrics.cpv).toFixed(2)}</p>
+                      <p className="text-gray-400 text-sm mt-2">Custo médio para gerar cada venda</p>
+                      <div className="mt-4 bg-gray-800/50 rounded-lg p-3">
+                        <p className="text-xs text-gray-400">Total de vendas no período</p>
+                        <p className="text-lg font-bold text-white">{fbMetrics.purchases} vendas</p>
                       </div>
                     </div>
                   );

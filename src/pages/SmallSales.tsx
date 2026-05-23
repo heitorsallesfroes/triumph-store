@@ -229,9 +229,9 @@ export default function SmallSales() {
         payment_methods: paymentMethods.length > 1 ? paymentMethods : null,
         delivery_type: form.delivery_type,
         motoboy_id: form.delivery_type === 'motoboy' ? form.motoboy_id : null,
-        delivery_fee: (form.delivery_type === 'motoboy' || form.delivery_type === 'correios') ? (parseFloat(form.delivery_fee) || 0) : 0,
-        city: (form.delivery_type === 'motoboy' || form.delivery_type === 'correios') ? (form.city.trim() || null) : null,
-        neighborhood: (form.delivery_type === 'motoboy' || form.delivery_type === 'correios') ? (form.neighborhood.trim() || null) : null,
+        delivery_fee: form.delivery_type === 'motoboy' ? (parseFloat(form.delivery_fee) || 0) : 0,
+        city: form.delivery_type === 'motoboy' ? (form.city.trim() || null) : null,
+        neighborhood: form.delivery_type === 'motoboy' ? (form.neighborhood.trim() || null) : null,
       };
 
       const { error } = await supabase.from('small_sales').insert(payload);
@@ -275,9 +275,9 @@ export default function SmallSales() {
     const { error } = await supabase.from('small_sales').update({
       delivery_type: editDeliveryForm.delivery_type,
       motoboy_id: editDeliveryForm.delivery_type === 'motoboy' ? editDeliveryForm.motoboy_id : null,
-      delivery_fee: (editDeliveryForm.delivery_type === 'motoboy' || editDeliveryForm.delivery_type === 'correios') ? (parseFloat(editDeliveryForm.delivery_fee) || 0) : 0,
-      city: (editDeliveryForm.delivery_type === 'motoboy' || editDeliveryForm.delivery_type === 'correios') ? (editDeliveryForm.city.trim() || null) : null,
-      neighborhood: (editDeliveryForm.delivery_type === 'motoboy' || editDeliveryForm.delivery_type === 'correios') ? (editDeliveryForm.neighborhood.trim() || null) : null,
+      delivery_fee: editDeliveryForm.delivery_type === 'motoboy' ? (parseFloat(editDeliveryForm.delivery_fee) || 0) : 0,
+      city: editDeliveryForm.delivery_type === 'motoboy' ? (editDeliveryForm.city.trim() || null) : null,
+      neighborhood: editDeliveryForm.delivery_type === 'motoboy' ? (editDeliveryForm.neighborhood.trim() || null) : null,
     }).eq('id', editingDelivery.id);
     if (error) { alert('Erro ao salvar.'); return; }
     setEditingDelivery(null);
@@ -493,23 +493,21 @@ export default function SmallSales() {
                 );
               })}
             </div>
-            {(form.delivery_type === 'motoboy' || form.delivery_type === 'correios') && (
+            {form.delivery_type === 'motoboy' && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {form.delivery_type === 'motoboy' && (
-                  <div>
-                    <label className="block text-xs text-gray-400 mb-1">Motoboy*</label>
-                    <select
-                      value={form.motoboy_id}
-                      onChange={e => setForm(f => ({ ...f, motoboy_id: e.target.value }))}
-                      className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
-                    >
-                      <option value="">Selecionar...</option>
-                      {motoboys.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Motoboy*</label>
+                  <select
+                    value={form.motoboy_id}
+                    onChange={e => setForm(f => ({ ...f, motoboy_id: e.target.value }))}
+                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  >
+                    <option value="">Selecionar...</option>
+                    {motoboys.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Valor da entrega (R$)</label>
                   <input
@@ -629,23 +627,21 @@ export default function SmallSales() {
               </div>
             </div>
 
-            {(editDeliveryForm.delivery_type === 'motoboy' || editDeliveryForm.delivery_type === 'correios') && (
+            {editDeliveryForm.delivery_type === 'motoboy' && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                {editDeliveryForm.delivery_type === 'motoboy' && (
-                  <div>
-                    <label className="block text-xs text-gray-400 mb-1">Motoboy*</label>
-                    <select
-                      value={editDeliveryForm.motoboy_id}
-                      onChange={e => setEditDeliveryForm(f => ({ ...f, motoboy_id: e.target.value }))}
-                      className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
-                    >
-                      <option value="">Selecionar...</option>
-                      {motoboys.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Motoboy*</label>
+                  <select
+                    value={editDeliveryForm.motoboy_id}
+                    onChange={e => setEditDeliveryForm(f => ({ ...f, motoboy_id: e.target.value }))}
+                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  >
+                    <option value="">Selecionar...</option>
+                    {motoboys.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Valor da entrega (R$)</label>
                   <input

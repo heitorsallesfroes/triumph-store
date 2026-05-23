@@ -41,7 +41,7 @@ interface SaleItem {
   quantity: number;
   unit_price: number;
   total_price: number;
-  product: { model: string; color: string; sku?: string; category?: string };
+  product: { model: string; color: string; sku?: string };
 }
 
 interface SaleAccessory {
@@ -73,7 +73,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
       if (se) throw new Error(`Erro ao carregar venda: ${se.message}`);
       if (!sd) throw new Error('Venda não encontrada');
       const { data: itemsData, error: ie } = await supabase
-        .from('sale_items').select('product_id, quantity, unit_price, total_price, products (model, color, category)').eq('sale_id', saleId);
+        .from('sale_items').select('product_id, quantity, unit_price, total_price, products (model, color)').eq('sale_id', saleId);
       if (ie) throw new Error(`Erro ao carregar itens: ${ie.message}`);
       const { data: accsData } = await supabase
         .from('sale_accessories').select('accessory_id, quantity, cost, custom_name, accessories (name)').eq('sale_id', saleId);
@@ -91,7 +91,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
       setLoading(true);
       setSale(saleData);
       const { data: itemsData, error: ie } = await supabase
-        .from('sale_items').select('product_id, quantity, unit_price, total_price, products (model, color, category)').eq('sale_id', saleData.id);
+        .from('sale_items').select('product_id, quantity, unit_price, total_price, products (model, color)').eq('sale_id', saleData.id);
       if (ie) throw new Error(`Erro ao carregar itens: ${ie.message}`);
       const { data: accsData, error: ae } = await supabase
         .from('sale_accessories').select('accessory_id, quantity, cost, custom_name, accessories (name)').eq('sale_id', saleData.id);
@@ -129,28 +129,14 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
 
   const renderDeliveryLabel = (volumeNumber: number, totalVolumes: number) => {
     const isPago = sale?.payment_status === 'pago';
-
-    // Expande smartwatches por unidade para mapear modelo → volume
-    const smartwatchList: string[] = items
-      .filter(i => i.product?.category === 'smartwatch')
-      .flatMap(i => Array.from({ length: i.quantity }, () =>
-        `${i.product.model} ${i.product.color}`.trim()
-      ));
-    const volumeModel = totalVolumes > 1 && smartwatchList.length >= volumeNumber
-      ? smartwatchList[volumeNumber - 1]
-      : null;
-
     return (
       <div key={volumeNumber} className="delivery-label">
-        <div style={{ marginBottom: '8px', borderBottom: '1px solid #aaa', paddingBottom: '6px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '8px', borderBottom: '1px solid #ccc', paddingBottom: '6px' }}>
           <h2 style={{ fontSize: '13px', fontWeight: 'bold', color: '#000', letterSpacing: '1px' }}>
             {giftMode ? 'CONTROLE DE ENTREGA' : 'ENTREGA'}
           </h2>
           {totalVolumes > 1 && (
             <p style={{ fontSize: '11px', color: '#555' }}>Volume {volumeNumber} de {totalVolumes}</p>
-          )}
-          {volumeModel && (
-            <p style={{ fontSize: '11px', fontWeight: 'bold', color: '#000', marginTop: '2px' }}>{volumeModel}</p>
           )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -487,8 +473,8 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
             flex-wrap: wrap;
             gap: 10px;
             padding: 12px 16px;
-            border-top: 3px dashed #555;
-            margin-top: 8px;
+            border-top: 1px solid #ccc;
+            margin-top: 4px;
             background: white;
           }
 
@@ -497,7 +483,6 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
             min-width: 280px;
             padding: 10px;
             background: white;
-            border: 1px solid #bbb;
           }
 
           @media print {
@@ -529,7 +514,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
               padding: 3mm 8mm;
               margin-top: 0;
               background: white !important;
-              border-top: 3px dashed #000 !important;
+              border-top: 1px solid #000 !important;
             }
 
             .delivery-label {
@@ -537,7 +522,6 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
               min-width: 0;
               padding: 6px;
               background: white !important;
-              border: 1px solid #777 !important;
               page-break-inside: avoid;
             }
 

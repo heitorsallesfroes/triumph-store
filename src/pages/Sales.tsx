@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase, Product, Accessory, Motoboy, Supplier } from '../lib/supabase';
 import { Trash2, ShoppingCart, TrendingUp, Loader2 } from 'lucide-react';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
@@ -53,11 +53,9 @@ interface PaymentEntry {
 interface SalesProps {
   triggerFastSale?: number;
   onNavigate?: (page: string) => void;
-  editSaleId?: string;
-  onEditDone?: () => void;
 }
 
-export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditDone }: SalesProps) {
+export default function Sales({ triggerFastSale, onNavigate }: SalesProps) {
   console.log('Nova Venda loaded');
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -79,7 +77,6 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
   const [showPasteForm, setShowPasteForm] = useState(false);
 
   const novaSaleRef = useRef<HTMLDivElement>(null);
-  const originalItemsRef = useRef<{ product_id: string; quantity: number }[]>([]);
 
   const [formData, setFormData] = useState({
     customer_name: '',
@@ -180,91 +177,12 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
       setSuppliers(suppliersRes.data || []);
       setCities(citiesRes.data || []);
       setNeighborhoods(neighborhoodsRes.data || []);
-      if (editSaleId) {
-        await loadExistingSale(editSaleId, suppliersRes.data || []);
-      }
     } catch (error) {
       console.error('Error loading data:', error);
       alert('Erro ao carregar dados. Por favor, recarregue a página.');
     } finally {
       setLoading(false);
       console.log('Loading complete');
-    }
-  };
-
-  const loadExistingSale = async (saleId: string, suppliersData: { id: string; name: string }[]) => {
-    try {
-      const [saleRes, itemsRes, accessoriesRes] = await Promise.all([
-        supabase.from('sales').select('*').eq('id', saleId).single(),
-        supabase.from('sale_items').select('*, product:products(*)').eq('sale_id', saleId),
-        supabase.from('sale_accessories').select('*, accessory:accessories(*)').eq('sale_id', saleId),
-      ]);
-      if (saleRes.error) throw saleRes.error;
-      const sale = saleRes.data;
-
-      setFormData({
-        customer_name:      sale.customer_name      || '',
-        customer_phone:     sale.customer_phone     || '',
-        customer_cpf:       sale.customer_cpf       || '',
-        address_street:     sale.address_street     || '',
-        address_number:     sale.address_number     || '',
-        address_complement: sale.address_complement || '',
-        city:               sale.city               || '',
-        neighborhood:       sale.neighborhood       || '',
-        state:              sale.state              || '',
-        zip_code:           sale.zip_code           || '',
-        delivery_type:      sale.delivery_type      || 'motoboy',
-        motoboy_id:         sale.motoboy_id         || '',
-        supplier_id:        sale.supplier_id        || '',
-        delivery_fee:       sale.delivery_fee       || 0,
-        delivery_cost:      sale.delivery_cost      || 0,
-        volumes:            sale.volumes            || 1,
-        delivery_notes:     sale.delivery_notes     || '',
-      });
-      setCitySearch(sale.city || '');
-      setNeighborhoodSearch(sale.neighborhood || '');
-      if (sale.customer_cpf) setCpfDisplay(formatCpf(sale.customer_cpf));
-      setSaleDate((sale.sale_date || '').split('T')[0] || getTodayInBrazil());
-
-      const supplier = suppliersData.find(s => s.id === sale.supplier_id);
-      if (supplier) setSupplierSearch(supplier.name);
-
-      const existingPMs = sale.payment_methods;
-      if (existingPMs && Array.isArray(existingPMs) && existingPMs.length > 0) {
-        setPaymentMethods(existingPMs);
-      } else {
-        setPaymentMethods([{
-          method:       sale.payment_method || 'pix',
-          card_brand:   sale.card_brand     || '',
-          installments: sale.installments   || 0,
-          amount:       0,
-        }]);
-      }
-
-      const editableProducts: SaleProduct[] = (itemsRes.data || []).map((item: any) => ({
-        product_id: item.product_id,
-        product:    item.product,
-        quantity:   item.quantity,
-        unit_price: item.unit_price || 0,
-        unit_cost:  item.product?.cost || 0,
-      }));
-      setSaleProducts(editableProducts);
-      originalItemsRef.current = editableProducts.map(i => ({ product_id: i.product_id, quantity: i.quantity }));
-
-      setSaleAccessories((accessoriesRes.data || []).map((acc: any) => ({
-        accessory_id: acc.accessory_id,
-        accessory:    acc.accessory,
-        quantity:     acc.quantity,
-        cost:         acc.cost,
-        custom_name:  acc.custom_name,
-      })));
-
-      if (sale.manual_items && Array.isArray(sale.manual_items)) {
-        setManualItems(sale.manual_items);
-      }
-    } catch (error) {
-      console.error('Error loading sale for edit:', error);
-      alert('Erro ao carregar dados da venda para edição');
     }
   };
 
@@ -589,90 +507,6 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
       const totals = calculateTotals();
 
-      if (editSaleId) {
-        // ── Modo edição: UPDATE da venda existente ──────────────────────────
-        const origMap = new Map(originalItemsRef.current.map(i => [i.product_id, i.quantity]));
-        const currMap = new Map(saleProducts.map(sp => [sp.product_id, sp.quantity]));
-
-        // Ajuste de estoque
-        for (const [pid, origQty] of origMap) {
-          const currQty = currMap.get(pid) ?? 0;
-          const delta = origQty - currQty; // positivo = devolver, negativo = descontar
-          if (delta !== 0) {
-            const { data: prod } = await supabase.from('products').select('current_stock').eq('id', pid).maybeSingle();
-            if (prod) await supabase.from('products').update({ current_stock: prod.current_stock + delta }).eq('id', pid);
-          }
-        }
-        for (const [pid, currQty] of currMap) {
-          if (!origMap.has(pid)) {
-            const { data: prod } = await supabase.from('products').select('current_stock').eq('id', pid).maybeSingle();
-            if (prod) await supabase.from('products').update({ current_stock: prod.current_stock - currQty }).eq('id', pid);
-          }
-        }
-
-        // Reconstruir sale_items
-        await supabase.from('sale_items').delete().eq('sale_id', editSaleId);
-        if (saleProducts.length > 0) {
-          const { error: itemsErr } = await supabase.from('sale_items').insert(
-            saleProducts.map(sp => ({
-              sale_id: editSaleId, product_id: sp.product_id,
-              quantity: sp.quantity, unit_price: sp.unit_price,
-              total_price: sp.unit_price * sp.quantity,
-            }))
-          );
-          if (itemsErr) throw itemsErr;
-        }
-
-        // Reconstruir sale_accessories
-        await supabase.from('sale_accessories').delete().eq('sale_id', editSaleId);
-        if (saleAccessories.length > 0) {
-          await supabase.from('sale_accessories').insert(
-            saleAccessories.map(sa => ({
-              sale_id: editSaleId, accessory_id: sa.accessory_id,
-              custom_name: sa.custom_name || null, quantity: sa.quantity, cost: sa.cost,
-            }))
-          );
-        }
-
-        // Atualizar linha da venda
-        const { error: updateErr } = await supabase.from('sales').update({
-          customer_name:      formData.customer_name,
-          customer_phone:     formData.customer_phone  || null,
-          customer_cpf:       formData.customer_cpf    ? cleanCpf(formData.customer_cpf) : null,
-          address_street:     formData.address_street  || null,
-          address_number:     formData.address_number  || null,
-          address_complement: formData.address_complement || null,
-          city:               cityName,
-          neighborhood:       neighborhoodName,
-          state:              formData.state    || null,
-          zip_code:           formData.zip_code || null,
-          payment_method:     paymentMethods[0]?.method || 'pix',
-          card_brand:         paymentMethods.find(pm => ['credit_card','debit_card','payment_link'].includes(pm.method))?.card_brand || null,
-          installments:       paymentMethods.find(pm => pm.method === 'credit_card' || pm.method === 'payment_link')?.installments || 1,
-          payment_methods:    paymentMethods,
-          delivery_type:      formData.delivery_type,
-          motoboy_id:         formData.delivery_type === 'motoboy' ? (formData.motoboy_id || null) : null,
-          supplier_id:        supplierId || null,
-          delivery_fee:       totals.deliveryFee,
-          delivery_cost:      totals.deliveryCost,
-          card_fee:           totals.cardFee,
-          total_cost:         totals.totalCost,
-          total_sale_price:   totals.totalSalePrice,
-          net_received:       totals.netReceived,
-          profit:             totals.profit,
-          volumes:            formData.volumes,
-          manual_items:       manualItems.length > 0 ? manualItems : null,
-          delivery_notes:     formData.delivery_notes.trim() || null,
-        }).eq('id', editSaleId);
-        if (updateErr) throw updateErr;
-
-        // Atualiza snapshot para futuros saves na mesma sessão
-        originalItemsRef.current = saleProducts.map(sp => ({ product_id: sp.product_id, quantity: sp.quantity }));
-        alert('Venda atualizada com sucesso!');
-        onEditDone?.();
-        return;
-      }
-
       const { data: saleData, error: saleError } = await supabase
         .from('sales')
         .insert([
@@ -939,7 +773,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
       <div className="p-8 flex items-center justify-center min-h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-orange-500 mx-auto mb-4"></div>
-          <div className="text-xl">Carregando dados...</div>
+          <div className="text-white text-xl">Carregando dados...</div>
         </div>
       </div>
     );
@@ -970,11 +804,11 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
   return (
     <div className="p-8 max-w-7xl mx-auto">
       <div ref={novaSaleRef} className="mb-8">
-        <h1 className="text-3xl font-bold flex items-center gap-3 mb-2">
+        <h1 className="text-3xl font-bold text-white flex items-center gap-3 mb-2">
           <ShoppingCart size={32} />
-          {editSaleId ? 'Editar Venda' : 'Nova Venda'}
+          Nova Venda
         </h1>
-        <p className="text-gray-400">{editSaleId ? 'Ajuste os dados e salve para atualizar a venda' : 'Registre uma nova venda e gerencie todos os detalhes'}</p>
+        <p className="text-gray-400">Registre uma nova venda e gerencie todos os detalhes</p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -984,7 +818,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
             type="date"
             value={saleDate}
             onChange={(e) => setSaleDate(e.target.value)}
-            className="bg-gray-800 rounded-lg px-3 py-1.5 border border-gray-700 focus:border-orange-500 focus:outline-none text-sm"
+            className="bg-gray-800 text-white rounded-lg px-3 py-1.5 border border-gray-700 focus:border-orange-500 focus:outline-none text-sm"
           />
         </div>
       <QuickAdd
@@ -1006,7 +840,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         {/* Selected Products */}
         {saleProducts.length > 0 && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-xl font-bold mb-4">Produtos Selecionados</h2>
+            <h2 className="text-xl font-bold text-white mb-4">Produtos Selecionados</h2>
             <div className="space-y-3">
               {saleProducts.map((sp, index) => (
                 <div
@@ -1015,7 +849,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 >
                   <div className="grid grid-cols-12 gap-4 items-center">
                     <div className="col-span-3">
-                      <div className="font-medium">
+                      <div className="text-white font-medium">
                         {sp.product?.model} - {sp.product?.color}
                       </div>
                       <div className="text-gray-400 text-sm">
@@ -1031,7 +865,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         max={Math.max(sp.product?.current_stock || 0, sp.quantity)}
                         value={sp.quantity}
                         onChange={(e) => updateProduct(index, 'quantity', parseInt(e.target.value))}
-                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                         required
                       />
                     </div>
@@ -1045,7 +879,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         value={sp.unit_cost}
                         onChange={(e) => updateProduct(index, 'unit_cost', parseFloat(e.target.value) || 0)}
                         onBlur={(e) => saveProductCost(sp.product_id, parseFloat(e.target.value) || 0)}
-                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
 
@@ -1057,7 +891,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="0"
                         value={sp.unit_price}
                         onChange={(e) => updateProduct(index, 'unit_price', parseFloat(e.target.value))}
-                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                         required
                       />
                     </div>
@@ -1087,12 +921,12 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
         {saleAccessories.length > 0 && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-xl font-bold mb-4">Acessórios Selecionados</h2>
+            <h2 className="text-xl font-bold text-white mb-4">Acessórios Selecionados</h2>
             <div className="space-y-3">
               {saleAccessories.map((sa, index) => (
                 <div key={index} className="bg-gray-700 rounded-lg p-4 border border-gray-600">
                   <div className="grid grid-cols-12 gap-3 items-center">
-                    <div className="col-span-5 font-medium">
+                    <div className="col-span-5 text-white font-medium">
                       {sa.accessory?.name || sa.custom_name}
                       {sa.custom_name && <span className="text-xs text-gray-400 ml-2">(personalizado)</span>}
                     </div>
@@ -1104,7 +938,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       min="1"
                       value={sa.quantity}
                       onChange={(e) => updateAccessory(index, 'quantity', parseInt(e.target.value))}
-                      className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                     />
                     </div>
 
@@ -1116,7 +950,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="0"
                         value={sa.cost}
                         onChange={(e) => updateAccessory(index, 'cost', parseFloat(e.target.value) || 0)}
-                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
 
@@ -1145,13 +979,13 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
         {manualItems.length > 0 && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-xl font-bold mb-4">Itens Manuais</h2>
+            <h2 className="text-xl font-bold text-white mb-4">Itens Manuais</h2>
             <div className="space-y-3">
               {manualItems.map((mi, index) => (
                 <div key={index} className="bg-gray-700 rounded-lg p-4 border border-gray-600">
                   <div className="grid grid-cols-12 gap-4 items-center">
                     <div className="col-span-4">
-                      <div className="font-medium">{mi.name}</div>
+                      <div className="text-white font-medium">{mi.name}</div>
                       <div className="text-gray-400 text-xs">Item personalizado</div>
                     </div>
 
@@ -1162,7 +996,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="1"
                         value={mi.quantity}
                         onChange={(e) => updateManualItem(index, 'quantity', parseInt(e.target.value))}
-                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                         required
                       />
                     </div>
@@ -1175,7 +1009,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="0"
                         value={mi.cost}
                         onChange={(e) => updateManualItem(index, 'cost', parseFloat(e.target.value) || 0)}
-                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
 
@@ -1187,7 +1021,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="0"
                         value={mi.price}
                         onChange={(e) => updateManualItem(index, 'price', parseFloat(e.target.value))}
-                        className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                         required
                       />
                     </div>
@@ -1218,14 +1052,14 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         {/* Customer & Payment Info - Compact */}
         <div className="grid md:grid-cols-2 gap-6">
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-lg font-bold mb-4">Cliente</h2>
+            <h2 className="text-lg font-bold text-white mb-4">Cliente</h2>
             <div className="space-y-3">
               <input
                 type="text"
                 placeholder="Nome do Cliente"
                 value={formData.customer_name}
                 onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
-                className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 required
               />
               <input
@@ -1233,7 +1067,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 placeholder="Telefone (opcional)"
                 value={formData.customer_phone}
                 onChange={(e) => setFormData({ ...formData, customer_phone: e.target.value })}
-                className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
               />
 
               <div>
@@ -1243,7 +1077,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   maxLength={14}
                   value={cpfDisplay}
                   onChange={(e) => handleCpfChange(e.target.value)}
-                  className={`w-full bg-gray-700 rounded-lg px-4 py-2 border ${
+                  className={`w-full bg-gray-700 text-white rounded-lg px-4 py-2 border ${
                     cpfError ? 'border-red-500' : 'border-gray-600'
                   } focus:border-orange-500 focus:outline-none`}
                 />
@@ -1269,7 +1103,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                           e.preventDefault();
                           parsearFormulario(e.clipboardData.getData('text'));
                         }}
-                        className="mt-2 w-full bg-gray-700 rounded-lg px-3 py-2 border border-orange-500 focus:outline-none text-sm resize-none placeholder-gray-500"
+                        className="mt-2 w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-orange-500 focus:outline-none text-sm resize-none placeholder-gray-500"
                       />
                     )}
                   </div>
@@ -1281,7 +1115,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         maxLength={8}
                         value={formData.zip_code}
                         onChange={(e) => handleCepChange(e.target.value)}
-                        className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                       />
                       {loadingCep && (
                         <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -1295,7 +1129,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       maxLength={2}
                       value={formData.state}
                       onChange={(e) => setFormData({ ...formData, state: e.target.value.toUpperCase() })}
-                      className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   {cepError && (
@@ -1307,14 +1141,14 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       placeholder="Rua"
                       value={formData.address_street}
                       onChange={(e) => setFormData({ ...formData, address_street: e.target.value })}
-                      className="col-span-2 w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="col-span-2 w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                     <input
                       type="text"
                       placeholder="Número"
                       value={formData.address_number}
                       onChange={(e) => setFormData({ ...formData, address_number: e.target.value })}
-                      className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   <input
@@ -1323,7 +1157,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                     maxLength={18}
                     value={formData.address_complement}
                     onChange={(e) => setFormData({ ...formData, address_complement: e.target.value })}
-                    className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                   />
                 </>
               )}
@@ -1336,14 +1170,14 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       placeholder="Rua (opcional)"
                       value={formData.address_street}
                       onChange={(e) => setFormData({ ...formData, address_street: e.target.value })}
-                      className="col-span-2 w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="col-span-2 w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                     <input
                       type="text"
                       placeholder="Número"
                       value={formData.address_number}
                       onChange={(e) => setFormData({ ...formData, address_number: e.target.value })}
-                      className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   <input
@@ -1351,7 +1185,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                     placeholder="Complemento (opcional)"
                     value={formData.address_complement}
                     onChange={(e) => setFormData({ ...formData, address_complement: e.target.value })}
-                    className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                   />
                 </>
               )}
@@ -1375,7 +1209,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                           e.preventDefault();
                           parsearFormulario(e.clipboardData.getData('text'));
                         }}
-                        className="mt-2 w-full bg-gray-700 rounded-lg px-3 py-2 border border-orange-500 focus:outline-none text-sm resize-none placeholder-gray-500"
+                        className="mt-2 w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-orange-500 focus:outline-none text-sm resize-none placeholder-gray-500"
                       />
                     )}
                   </div>
@@ -1387,7 +1221,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         maxLength={8}
                         value={formData.zip_code}
                         onChange={(e) => handleCepChange(e.target.value)}
-                        className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                        className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                       />
                       {loadingCep && (
                         <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -1401,7 +1235,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       maxLength={2}
                       value={formData.state}
                       onChange={(e) => setFormData({ ...formData, state: e.target.value.toUpperCase() })}
-                      className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   {cepError && <p className="text-red-500 text-sm">{cepError}</p>}
@@ -1411,14 +1245,14 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       placeholder="Rua (opcional)"
                       value={formData.address_street}
                       onChange={(e) => setFormData({ ...formData, address_street: e.target.value })}
-                      className="col-span-2 w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="col-span-2 w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                     <input
                       type="text"
                       placeholder="Número"
                       value={formData.address_number}
                       onChange={(e) => setFormData({ ...formData, address_number: e.target.value })}
-                      className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                      className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   <input
@@ -1427,7 +1261,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                     maxLength={18}
                     value={formData.address_complement}
                     onChange={(e) => setFormData({ ...formData, address_complement: e.target.value })}
-                    className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                    className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                   />
                 </>
               )}
@@ -1439,7 +1273,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   items={cities}
                   placeholder={formData.delivery_type === 'correios' ? 'Cidade*' : 'Cidade'}
                   required={formData.delivery_type === 'motoboy' || formData.delivery_type === 'correios'}
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 />
                 <AutocompleteInput
                   value={neighborhoodSearch}
@@ -1447,7 +1281,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   items={neighborhoods}
                   placeholder={formData.delivery_type === 'correios' ? 'Bairro*' : 'Bairro'}
                   required={formData.delivery_type === 'motoboy' || formData.delivery_type === 'correios'}
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 />
               </div>
 
@@ -1457,13 +1291,13 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   <label className="block text-xs text-gray-400">Fornecedor por Smartwatch</label>
                   {smartwatchItemsForUI.map(sp => (
                     <div key={sp.product_id} className="flex items-center gap-2">
-                      <span className="text-sm flex-1 truncate">
+                      <span className="text-white text-sm flex-1 truncate">
                         {sp.product?.model} {(sp.product as any)?.color}
                       </span>
                       <select
                         value={perProductSupplierIds[sp.product_id] || ''}
                         onChange={(e) => setPerProductSupplierIds(prev => ({ ...prev, [sp.product_id]: e.target.value }))}
-                        className="bg-gray-700 rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                        className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
                       >
                         <option value="">Selecionar fornecedor</option>
                         {suppliers.map(s => (
@@ -1485,7 +1319,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   }}
                   items={suppliers}
                   placeholder="Selecionar fornecedor"
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 />
               )}
             </div>
@@ -1493,7 +1327,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold">Pagamento</h2>
+              <h2 className="text-lg font-bold text-white">Pagamento</h2>
               <button
                 type="button"
                 onClick={addPaymentEntry}
@@ -1510,7 +1344,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                     <select
                       value={pm.method}
                       onChange={(e) => updatePaymentMethod(index, 'method', e.target.value)}
-                      className="flex-1 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                      className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
                     >
                       <option value="pix">PIX (Sem taxa)</option>
                       <option value="cash">Dinheiro (Sem taxa)</option>
@@ -1526,7 +1360,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       placeholder="Valor (R$)"
                       value={pm.amount || ''}
                       onChange={(e) => updatePaymentMethod(index, 'amount', parseFloat(e.target.value) || 0)}
-                      className="w-36 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                      className="w-36 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
                     />
 
                     {paymentMethods.length > 1 && (
@@ -1545,7 +1379,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       <select
                         value={pm.card_brand}
                         onChange={(e) => updatePaymentMethod(index, 'card_brand', e.target.value)}
-                        className="flex-1 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                        className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
                       >
                         <option value="">Bandeira (definir depois)</option>
                         <option value="visa_mastercard">Visa / Mastercard</option>
@@ -1556,7 +1390,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         <select
                           value={pm.installments}
                           onChange={(e) => updatePaymentMethod(index, 'installments', parseInt(e.target.value))}
-                          className="flex-1 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                          className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
                         >
                           <option value="0">Parcelas (definir depois)</option>
                           {pm.card_brand && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
@@ -1586,7 +1420,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   onClick={() => setPaymentStatus('pago')}
                   className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${
                     paymentStatus === 'pago'
-                      ? 'bg-green-500'
+                      ? 'bg-green-500 text-white'
                       : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
                   }`}
                 >
@@ -1597,7 +1431,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   onClick={() => setPaymentStatus('a_cobrar')}
                   className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${
                     paymentStatus === 'a_cobrar'
-                      ? 'bg-yellow-500'
+                      ? 'bg-yellow-500 text-white'
                       : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
                   }`}
                 >
@@ -1615,7 +1449,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 <div className="mt-4 pt-3 border-t border-gray-600 grid grid-cols-3 gap-3 text-sm">
                   <div>
                     <div className="text-gray-400 text-xs mb-0.5">Total da Venda</div>
-                    <div className="font-bold">R$ {totals.totalSalePrice.toFixed(2)}</div>
+                    <div className="text-white font-bold">R$ {totals.totalSalePrice.toFixed(2)}</div>
                   </div>
                   <div>
                     <div className="text-gray-400 text-xs mb-0.5">Alocado</div>
@@ -1637,12 +1471,12 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
         {/* Delivery Info */}
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-          <h2 className="text-lg font-bold mb-4">Entrega</h2>
+          <h2 className="text-lg font-bold text-white mb-4">Entrega</h2>
           <div className="grid md:grid-cols-3 gap-4">
             <select
               value={formData.delivery_type}
               onChange={(e) => setFormData({ ...formData, delivery_type: e.target.value, motoboy_id: '', delivery_fee: 0, delivery_cost: e.target.value === 'correios' ? 13.11 : 0 })}
-              className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+              className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
               required
             >
               <option value="loja_fisica">Loja Física</option>
@@ -1655,7 +1489,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 <select
                   value={formData.motoboy_id}
                   onChange={(e) => setFormData({ ...formData, motoboy_id: e.target.value })}
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                 >
                   <option value="">Selecionar Motoboy</option>
                   {motoboys.map((motoboy) => (
@@ -1674,7 +1508,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   onChange={(e) =>
                     setFormData({ ...formData, delivery_fee: parseFloat(e.target.value) || 0 })
                   }
-                  className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                   required
                 />
               </>
@@ -1690,7 +1524,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 onChange={(e) =>
                   setFormData({ ...formData, delivery_cost: parseFloat(e.target.value) || 0 })
                 }
-                className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
               />
             )}
           </div>
@@ -1700,7 +1534,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
               placeholder="📝 Observações (ex: Deixar na portaria, Entregar para Bernardo)"
               value={formData.delivery_notes}
               onChange={(e) => setFormData({ ...formData, delivery_notes: e.target.value })}
-              className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+              className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
               maxLength={200}
             />
           </div>
@@ -1708,7 +1542,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
         {/* Volumes and Shipping Info */}
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-          <h2 className="text-lg font-bold mb-4">Envio</h2>
+          <h2 className="text-lg font-bold text-white mb-4">Envio</h2>
           <div className="space-y-4">
             <div className="flex items-center gap-4">
               <label className="text-gray-300 text-sm font-medium w-32">Volumes:</label>
@@ -1717,7 +1551,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 min="1"
                 value={formData.volumes}
                 onChange={(e) => setFormData({ ...formData, volumes: parseInt(e.target.value) || 1 })}
-                className="w-24 bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-center font-semibold"
+                className="w-24 bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-center font-semibold"
                 required
               />
               <div className="text-gray-400 text-xs">
@@ -1736,74 +1570,78 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         </div>
 
         {/* Profit Summary - Prominent */}
-        <div className="rounded-xl p-6 border-2 border-orange-500 shadow-xl" style={{ background: 'var(--bg-card)' }}>
+        <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black rounded-xl p-6 border-2 border-orange-500 shadow-xl">
           <div className="flex items-center gap-3 mb-5">
             <TrendingUp className="text-orange-500" size={28} />
-            <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Resumo Financeiro</h2>
+            <h2 className="text-2xl font-bold text-white">Resumo Financeiro</h2>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-            <div className="rounded-lg p-4" style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
-              <div className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Valor Total</div>
-              <div className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+              <div className="text-gray-400 text-sm mb-1">Valor Total</div>
+              <div className="text-white text-2xl font-bold">
                 R$ {totals.totalSalePrice.toFixed(2)}
               </div>
             </div>
 
-            <div className="rounded-lg p-4" style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
-              <div className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Taxa do Cartão</div>
+            <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+              <div className="text-gray-400 text-sm mb-1">Taxa do Cartão</div>
               <div className="text-red-400 text-2xl font-bold">
                 - R$ {totals.cardFee.toFixed(2)}
               </div>
             </div>
 
-            <div className="rounded-lg p-4" style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
-              <div className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Valor Recebido</div>
+            <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+              <div className="text-gray-400 text-sm mb-1">Valor Recebido</div>
               <div className="text-blue-400 text-2xl font-bold">
                 R$ {totals.netReceived.toFixed(2)}
               </div>
             </div>
 
-            <div className="rounded-lg p-4" style={{ background: 'var(--bg-inner)', border: '1px solid #f97316' }}>
-              <div className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Lucro Final</div>
-              <div className={`text-3xl font-bold ${totals.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            <div className="bg-gray-800/50 rounded-lg p-4 border border-orange-600">
+              <div className="text-gray-400 text-sm mb-1">Lucro Final</div>
+              <div
+                className={`text-3xl font-bold ${
+                  totals.profit >= 0 ? 'text-green-400' : 'text-red-400'
+                }`}
+              >
                 R$ {totals.profit.toFixed(2)}
               </div>
             </div>
           </div>
 
-          <div className="pt-4" style={{ borderTop: '1px solid var(--border-main)' }}>
-            <div className="text-sm mb-2" style={{ color: 'var(--text-muted)' }}>Detalhamento de Custos:</div>
+          <div className="border-t border-gray-700 pt-4">
+            <div className="text-sm text-gray-400 mb-2">Detalhamento de Custos:</div>
             <div className="grid grid-cols-4 gap-4 text-sm">
               <div className="flex justify-between">
-                <span style={{ color: 'var(--text-muted)' }}>Custo Produtos:</span>
-                <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
+                <span className="text-gray-400">Custo Produtos:</span>
+                <span className="text-gray-300 font-medium">
                   R$ {totals.totalProductCost.toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span style={{ color: 'var(--text-muted)' }}>Custo Acessórios:</span>
-                <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
+                <span className="text-gray-400">Custo Acessórios:</span>
+                <span className="text-gray-300 font-medium">
                   R$ {totals.totalAccessoryCost.toFixed(2)}
                 </span>
               </div>
               {totals.totalManualCost > 0 && (
                 <div className="flex justify-between">
-                  <span style={{ color: 'var(--text-muted)' }}>Custo Itens Manuais:</span>
-                  <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  <span className="text-gray-400">Custo Itens Manuais:</span>
+                  <span className="text-gray-300 font-medium">
                     R$ {totals.totalManualCost.toFixed(2)}
                   </span>
                 </div>
               )}
               <div className="flex justify-between">
-                <span style={{ color: 'var(--text-muted)' }}>Taxa Motoboy:</span>
-                <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
+                <span className="text-gray-400">Taxa Motoboy:</span>
+                <span className="text-gray-300 font-medium">
                   R$ {totals.deliveryFee.toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span style={{ color: 'var(--text-muted)' }}>Custo Correios:</span>
-                <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
+                <span className="text-gray-400">Custo Correios:</span>
+                <span className="text-gray-300 font-medium">
                   R$ {totals.deliveryCost.toFixed(2)}
                 </span>
               </div>
@@ -1816,17 +1654,17 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
           <button
             type="submit"
             disabled={saleProducts.length === 0 && manualItems.length === 0}
-            className="flex-1 bg-orange-500 px-6 py-4 rounded-lg hover:bg-orange-600 transition-colors font-bold text-xl disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+            className="flex-1 bg-orange-500 text-white px-6 py-4 rounded-lg hover:bg-orange-600 transition-colors font-bold text-xl disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-3"
           >
             <ShoppingCart size={24} />
-            {editSaleId ? 'Salvar Alterações' : 'Confirmar Venda'}
+            Confirmar Venda
           </button>
           <button
             type="button"
-            onClick={editSaleId ? () => onEditDone?.() : resetForm}
-            className="px-8 py-4 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors font-medium"
+            onClick={resetForm}
+            className="px-8 py-4 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors font-medium"
           >
-            {editSaleId ? 'Cancelar' : 'Limpar'}
+            Limpar
           </button>
         </div>
       </form>

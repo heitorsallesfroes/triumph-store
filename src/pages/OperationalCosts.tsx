@@ -25,7 +25,7 @@ interface CostPayment {
   notes: string | null;
 }
 
-const PAYMENT_METHODS = ['Nubank PJ', 'Itaú PJ', 'Nubank PF', 'Cartão de Crédito'];
+const PAYMENT_METHODS = ['Nubank PJ', 'Itaú PJ', 'Nubank PF'];
 const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
 const getCurrentMonth = () => {

@@ -26,6 +26,7 @@ interface DashState {
   motoboys: { name: string; deliveries_today: number; earnings_today: number }[];
   outOfStock: { id: string; model: string; color: string }[];
   pendingPix: number;
+  forecast: { historicalAvg: number; dayCount: number; dayName: string };
 }
 
 const EMPTY: DashState = {
@@ -39,6 +40,7 @@ const EMPTY: DashState = {
   motoboys: [],
   outOfStock: [],
   pendingPix: 0,
+  forecast: { historicalAvg: 0, dayCount: 0, dayName: '' },
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -198,6 +200,71 @@ function MonthCard({ icon: Icon, iconColor, label, value, sub, children }: {
   );
 }
 
+function ForecastCard({ todayRevenue, historicalAvg, dayName, dayCount }: {
+  todayRevenue: number; historicalAvg: number; dayName: string; dayCount: number;
+}) {
+  const pct = historicalAvg > 0 ? Math.min((todayRevenue / historicalAvg) * 100, 100) : 0;
+  const barColor = pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#ef4444';
+
+  return (
+    <div style={{
+      background: 'var(--bg-card)',
+      border: '1px solid var(--border-main)',
+      borderRadius: 16,
+      padding: '20px 22px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 14 }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: 11,
+          background: 'rgba(249,115,22,0.12)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Target size={20} style={{ color: '#f97316' }} />
+        </div>
+      </div>
+
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', fontWeight: 700, marginBottom: 2 }}>
+        Previsão do Dia
+      </p>
+      <p style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.2, marginBottom: 12 }}>
+        {dayName || '—'}
+      </p>
+
+      {historicalAvg > 0 ? (
+        <>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+            Média: <span style={{ fontWeight: 700, color: 'var(--text-secondary)' }}>{fmtR(historicalAvg)}</span>
+          </p>
+
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Atingido hoje</span>
+              <span style={{ fontSize: 10, fontWeight: 800, color: barColor }}>{pct.toFixed(0)}%</span>
+            </div>
+            <div style={{ height: 6, borderRadius: 4, background: 'var(--bg-inner)', overflow: 'hidden' }}>
+              <div style={{
+                width: `${pct}%`, height: '100%',
+                background: barColor, borderRadius: 4,
+                transition: 'width 0.8s ease',
+              }} />
+            </div>
+          </div>
+
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500, marginBottom: 6 }}>
+            {fmtR(todayRevenue)} faturado de {fmtR(historicalAvg)} esperado
+          </p>
+
+          <p style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+            Baseado nos últimos {dayCount} {dayName.toLowerCase()}
+          </p>
+        </>
+      ) : (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sem dados históricos suficientes</p>
+      )}
+    </div>
+  );
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 export default function Home({ onNavigate }: { onNavigate: (page: string) => void }) {
@@ -230,10 +297,13 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     const lmStart    = `${lmFirstDay.getFullYear()}-${String(lmFirstDay.getMonth() + 1).padStart(2, '0')}-01`;
     const lmEnd      = `${lmLastDay.getFullYear()}-${String(lmLastDay.getMonth() + 1).padStart(2, '0')}-${String(lmLastDay.getDate()).padStart(2, '0')}`;
 
+    const ninetyDaysAgo = brazilDateMinus(89);
+
     const [
       todaySalesRes, ySalesRes, weekSalesRes, mSalesRes,
       lmSalesRes, logRes, todayAdRes, mAdRes,
       prodsRes, motoboyRes, smallTodayRes, pendingPixRes, weekAdRes,
+      forecastSalesRes,
     ] = await Promise.all([
       supabase.from('sales').select('id, total_sale_price, profit').neq('status', 'cancelado').gte('sale_date', `${today}T00:00:00`).lte('sale_date', `${today}T23:59:59`),
       supabase.from('sales').select('total_sale_price, profit').neq('status', 'cancelado').gte('sale_date', `${yesterday}T00:00:00`).lte('sale_date', `${yesterday}T23:59:59`),
@@ -248,6 +318,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       supabase.from('small_sales').select('sale_price, quantity').gte('created_at', `${today}T00:00:00-03:00`).lte('created_at', `${today}T23:59:59-03:00`),
       supabase.from('sales').select('id', { count: 'exact', head: true }).eq('payment_method', 'pix').in('status', ['em_separacao', 'embalar_amanha']),
       supabase.from('ad_spend').select('date, amount').gte('date', sixAgo).lte('date', today),
+      supabase.from('sales').select('sale_date, total_sale_price').neq('status', 'cancelado').gte('sale_date', `${ninetyDaysAgo}T00:00:00`).lte('sale_date', `${yesterday}T23:59:59`),
     ]);
 
     // Round 2: sale_items (needs IDs from round 1)
@@ -293,6 +364,27 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       });
     }
 
+    // Forecast: group historical sales by date, then avg for same DOW
+    const forecastSales = forecastSalesRes.data || [];
+    const revenueByDate: Record<string, number> = {};
+    for (const sale of forecastSales) {
+      const ds = (sale.sale_date || '').substring(0, 10);
+      revenueByDate[ds] = (revenueByDate[ds] || 0) + Number(sale.total_sale_price);
+    }
+    const todayDow = brazilNow.getDay();
+    const matchingRevs: number[] = [];
+    for (const [ds, rev] of Object.entries(revenueByDate)) {
+      const [y, m, d] = ds.split('-').map(Number);
+      if (new Date(y, m - 1, d).getDay() === todayDow) matchingRevs.push(rev);
+    }
+    const DOW_NAMES: Record<number, string> = {
+      0: 'Domingos', 1: 'Segundas', 2: 'Terças', 3: 'Quartas',
+      4: 'Quintas', 5: 'Sextas', 6: 'Sábados',
+    };
+    const historicalAvg = matchingRevs.length > 0
+      ? matchingRevs.reduce((s, v) => s + v, 0) / matchingRevs.length
+      : 0;
+
     const todayRev    = todaySales.reduce((s, v) => s + Number(v.total_sale_price), 0);
     const todayProfit = todaySales.reduce((s, v) => s + Number(v.profit), 0);
     const smallRev    = smallToday.reduce((s, v) => s + Number(v.sale_price) * Number(v.quantity), 0);
@@ -332,6 +424,11 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       motoboys:  (motoboyRes.data || []) as any,
       outOfStock: products.filter(p => Number(p.current_stock) <= 0),
       pendingPix: (pendingPixRes as any).count ?? 0,
+      forecast: {
+        historicalAvg,
+        dayCount: matchingRevs.length,
+        dayName: DOW_NAMES[todayDow],
+      },
     });
 
     setLastUpdated(new Date());
@@ -354,7 +451,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     );
   }
 
-  const { day, yesterday, week, month, lastMonth, logistics, adsToday, motoboys, outOfStock, pendingPix } = data;
+  const { day, yesterday, week, month, lastMonth, logistics, adsToday, motoboys, outOfStock, pendingPix, forecast } = data;
   const logTotal    = logistics.em_separacao + logistics.embalado + logistics.em_rota + logistics.embalar_amanha;
   const monthMargin = month.revenue > 0 ? (month.profit / month.revenue) * 100 : 0;
   const dayMargin   = day.revenue > 0 ? (day.profit / day.revenue) * 100 : 0;
@@ -503,6 +600,14 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
           <CardRow label="Faturamento total" value={fmtR(day.revenue)} color="#f97316" />
           <CardRow label="Lucro total" value={fmtR(day.profit)} color="#22c55e" />
         </DayCard>
+
+        {/* Previsão do Dia */}
+        <ForecastCard
+          todayRevenue={day.revenue}
+          historicalAvg={forecast.historicalAvg}
+          dayName={forecast.dayName}
+          dayCount={forecast.dayCount}
+        />
       </div>
 
       {/* ── Seção 2 — Gráfico 7 dias ────────────────────────────────────── */}
