@@ -35,6 +35,7 @@ interface SaleData {
   delivery_type: string;
   status: string;
   city: string;
+  neighborhood?: string;
   payment_method: string;
 }
 
@@ -77,6 +78,7 @@ export default function ResumoMensal() {
   const [motoboyDeliveryFees, setMotoboyDeliveryFees] = useState(0);
   const [smallSales, setSmallSales] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedCity, setExpandedCity] = useState<{ type: string; city: string } | null>(null);
 
   useEffect(() => { loadData(); }, [selected]);
 
@@ -91,14 +93,15 @@ export default function ResumoMensal() {
       const [ey, em, ed] = endDate.split('-').map(Number);
       const endUTC = new Date(Date.UTC(ey, em - 1, ed + 1)).toISOString().split('T')[0] + 'T03:00:00.000Z';
 
-      const [salesRes, adRes, costsRes, motoboyExtrasRes, motoboyFeesRes, motoboySmallFeesRes] = await Promise.all([
+      const [salesRes, adRes, costsPayRes, allCostsRes, motoboyExtrasRes, motoboyFeesRes, motoboySmallFeesRes] = await Promise.all([
         supabase.from('sales')
-          .select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status,city,payment_method')
+          .select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status,city,neighborhood,payment_method')
           .neq('status', 'cancelado')
           .gte('sale_date', startDate)
           .lte('sale_date', endDate + 'T23:59:59'),
         supabase.from('ad_spend').select('amount').gte('date', startDate).lte('date', endDate),
-        supabase.from('operational_cost_payments').select('amount_paid').eq('month', monthStr).eq('paid', true),
+        supabase.from('operational_cost_payments').select('cost_id, amount_paid').eq('month', monthStr),
+        supabase.from('operational_costs').select('id, amount'),
         supabase.from('motoboy_payments').select('amount').gte('date', startDate).lte('date', endDate),
         supabase.from('sales').select('delivery_fee')
           .eq('delivery_type', 'motoboy')
@@ -126,7 +129,9 @@ export default function ResumoMensal() {
       }
 
       setAdSpend((adRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
-      setOperationalCosts((costsRes.data || []).reduce((sum, r) => sum + Number(r.amount_paid), 0));
+      const paymentsMap = new Map((costsPayRes.data || []).map(r => [r.cost_id, Number(r.amount_paid ?? 0)]));
+      const totalOpCosts = (allCostsRes.data || []).reduce((sum, c) => sum + (paymentsMap.has(c.id) ? paymentsMap.get(c.id)! : Number(c.amount)), 0);
+      setOperationalCosts(totalOpCosts);
       setMotoboyExtras((motoboyExtrasRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
       const salesFees = (motoboyFeesRes.data || []).reduce((sum, r) => sum + Number(r.delivery_fee || 0), 0);
       const smallFees = (motoboySmallFeesRes.data || []).reduce((sum, r) => sum + Number(r.delivery_fee || 0), 0);
@@ -156,7 +161,9 @@ export default function ResumoMensal() {
   const totalCorreiosDeliveries = salesFinalizadas.filter(v => v.delivery_type === 'correios').reduce((s, v) => s + Number(v.delivery_cost || 0), 0);
   const totalCustoEntregas = totalMotoboyDeliveries + totalCorreiosDeliveries + motoboyExtras;
 
-  const lucroSmartwatch  = totalLiquido - totalCustoProdutos - totalCustoEntregas - adSpend - operationalCosts;
+  const swCount         = saleItems.filter(i => (i.products as any)?.category === 'smartwatch').reduce((s, i) => s + i.quantity, 0);
+  const custoEmbalagens = swCount * 2;
+  const lucroSmartwatch = totalLiquido - totalCustoProdutos - totalCustoEntregas - adSpend - operationalCosts - custoEmbalagens;
   const margemSmartwatch = totalBruto > 0 ? (lucroSmartwatch / totalBruto) * 100 : 0;
 
   const roas = adSpend > 0 ? totalBruto / adSpend : null;
@@ -202,14 +209,26 @@ export default function ResumoMensal() {
     value: sales.filter(s => s.delivery_type === c.key).reduce((sum, s) => sum + Number(s.total_sale_price), 0),
   }));
 
-  // Cidades — Entregas
-  const cidadesEntregaMap = new Map<string, { count: number; value: number }>();
-  sales.filter(s => s.delivery_type === 'motoboy' || s.delivery_type === 'correios').forEach(s => {
+  // Cidades — Motoboy
+  const cidadesMotoboyMap = new Map<string, { count: number; value: number }>();
+  sales.filter(s => s.delivery_type === 'motoboy').forEach(s => {
     const city = s.city || 'Não informado';
-    const cur = cidadesEntregaMap.get(city) || { count: 0, value: 0 };
-    cidadesEntregaMap.set(city, { count: cur.count + 1, value: cur.value + Number(s.total_sale_price) });
+    const cur = cidadesMotoboyMap.get(city) || { count: 0, value: 0 };
+    cidadesMotoboyMap.set(city, { count: cur.count + 1, value: cur.value + Number(s.total_sale_price) });
   });
-  const cidadesEntrega = Array.from(cidadesEntregaMap.entries())
+  const cidadesMotoboy = Array.from(cidadesMotoboyMap.entries())
+    .map(([city, data]) => ({ city, ...data }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+
+  // Cidades — Correios
+  const cidadesCorreiosMap = new Map<string, { count: number; value: number }>();
+  sales.filter(s => s.delivery_type === 'correios').forEach(s => {
+    const city = s.city || 'Não informado';
+    const cur = cidadesCorreiosMap.get(city) || { count: 0, value: 0 };
+    cidadesCorreiosMap.set(city, { count: cur.count + 1, value: cur.value + Number(s.total_sale_price) });
+  });
+  const cidadesCorreios = Array.from(cidadesCorreiosMap.entries())
     .map(([city, data]) => ({ city, ...data }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
@@ -226,7 +245,8 @@ export default function ResumoMensal() {
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
 
-  const totalEntregas   = cidadesEntrega.reduce((s, x) => s + x.count, 0);
+  const totalMotoboy    = cidadesMotoboy.reduce((s, x) => s + x.count, 0);
+  const totalCorreios   = cidadesCorreios.reduce((s, x) => s + x.count, 0);
   const totalLojaFisica = cidadesLoja.reduce((s, x) => s + x.count, 0);
 
   const modelColorMap = new Map<string, number>();
@@ -248,7 +268,7 @@ export default function ResumoMensal() {
   if (loading) return <div className="p-8 text-white flex items-center gap-2"><BarChart3 className="animate-pulse" /> Carregando...</div>;
 
   const fmt = (v: number) => `R$ ${v.toFixed(2)}`;
-  const swCount = saleItems.filter(i => (i.products as any)?.category === 'smartwatch').reduce((s, i) => s + i.quantity, 0);
+  const cpvSw = adSpend > 0 && swCount > 0 ? adSpend / swCount : null;
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -317,8 +337,10 @@ export default function ResumoMensal() {
               {/* Custos */}
               <div>
                 <p className="text-gray-400 text-xs uppercase tracking-wider mb-3">Custos</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                   <MetricCard label="Custo dos Produtos"   value={totalCustoProdutos}  color="red" icon={Package}   negative />
+                  <MetricCard label="Embalagens"           value={custoEmbalagens}     color="red" icon={Package}   negative
+                    subtitle={`${swCount} un. × R$2,00`} />
                   <MetricCard label="Custo de Entregas"    value={totalCustoEntregas}  color="red" icon={Truck}     negative
                     subtitle={`Motoboy: ${fmt(totalMotoboyDeliveries)} | Correios: ${fmt(totalCorreiosDeliveries)} | Avulsos: ${fmt(motoboyExtras)}`} />
                   <MetricCard label="Investimento em Ads"  value={adSpend}             color="red" icon={BarChart3} negative />
@@ -335,8 +357,22 @@ export default function ResumoMensal() {
                       subtitle="Faturamento ÷ ads" config={roas !== null ? getRoasConfig(roas) : null} icon={Target} />
                     <RatingCard label="ROI"  value={roi !== null ? `${roi.toFixed(0)}%` : '—'}
                       subtitle="Lucro ÷ ads"        config={roi !== null ? getRoiConfig(roi) : null}   icon={TrendingUp} />
-                    <RatingCard label="CPV"  value={cpv !== null ? fmt(cpv) : '—'}
-                      subtitle="Ads ÷ vendas"        config={cpv !== null ? getCpvConfig(cpv) : null}   icon={ShoppingCart} />
+                    <div className="bg-gray-900 rounded-xl p-4 border border-gray-700">
+                      <div className="flex items-center gap-2 mb-2">
+                        <ShoppingCart size={15} className="text-orange-400" />
+                        <p className="text-gray-400 text-xs">CPV</p>
+                      </div>
+                      <div className="mb-3">
+                        <p className="text-gray-500 text-xs mb-0.5">CPV / Venda</p>
+                        {(() => { const cfg = cpv !== null ? getCpvConfig(cpv) : null; return (<><p className={`text-lg font-bold ${cfg?.color ?? 'text-gray-500'}`}>{cpv !== null ? fmt(cpv) : '—'}</p>{cfg?.label && <p className={`text-xs mt-0.5 font-medium ${cfg.color}`}>{cfg.label}</p>}</>); })()}
+                        <p className="text-gray-500 text-xs mt-1">Ads ÷ vendas</p>
+                      </div>
+                      <div className="border-t border-gray-700 pt-2">
+                        <p className="text-gray-500 text-xs mb-0.5">CPV / Smartwatch</p>
+                        {(() => { const cfg = cpvSw !== null ? getCpvConfig(cpvSw) : null; return (<><p className={`text-lg font-bold ${cfg?.color ?? 'text-gray-500'}`}>{cpvSw !== null ? fmt(cpvSw) : '—'}</p>{cfg?.label && <p className={`text-xs mt-0.5 font-medium ${cfg.color}`}>{cfg.label}</p>}</>); })()}
+                        <p className="text-gray-500 text-xs mt-1">Ads ÷ smartwatches</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -356,6 +392,7 @@ export default function ResumoMensal() {
                   <div className="text-right space-y-1 text-sm min-w-56">
                     <PLRow label="Líquido recebido"  value={`+ ${fmt(totalLiquido)}`}        color="text-green-400" />
                     <PLRow label="Custo produtos"    value={`− ${fmt(totalCustoProdutos)}`}   color="text-red-400" />
+                    <PLRow label="Embalagens"        value={`− ${fmt(custoEmbalagens)}`}      color="text-red-400" />
                     <PLRow label="Custo entregas"    value={`− ${fmt(totalCustoEntregas)}`}   color="text-red-400" />
                     <PLRow label="Ads"               value={`− ${fmt(adSpend)}`}              color="text-red-400" />
                     <PLRow label="Operacional"       value={`− ${fmt(operationalCosts)}`}     color="text-red-400" />
@@ -502,6 +539,125 @@ export default function ResumoMensal() {
             </div>
           </div>
 
+          {/* ══════════════════════════════════════════════════════════════
+              BLOCO 4 — DRE
+          ══════════════════════════════════════════════════════════════ */}
+          {(() => {
+            const totalCardFees    = totalTaxaCartao + smallSalesCardFees;
+            const receitaLiquida   = consolidadoBruto - totalCardFees;
+            const custoProdutos    = totalCustoProdutos + smallSalesCost;
+            const lucroBruto       = receitaLiquida - custoProdutos - custoEmbalagens;
+            const custoEntregas    = totalCustoEntregas + smallSalesDeliveryCost;
+            const lucroOperacional = consolidadoLucro;
+            const margemEbit       = consolidadoBruto > 0 ? (lucroOperacional / consolidadoBruto) * 100 : 0;
+            const R = (n: number) =>
+              `R$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+            const rowBase = 'flex items-baseline justify-between py-2 px-3';
+            const rowEven = `${rowBase} bg-gray-900/25 rounded`;
+
+            return (
+              <div className="bg-gray-800 rounded-xl border border-blue-500/40 overflow-hidden mb-6">
+                {/* Header */}
+                <div className="px-6 py-4 border-b border-gray-700 bg-blue-500/5">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp size={20} className="text-blue-400" />
+                    <h2 className="text-lg font-bold text-white">DRE — Demonstrativo de Resultado</h2>
+                  </div>
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    Cascata financeira consolidada · {MONTHS[selected.month - 1]} {selected.year}
+                  </p>
+                </div>
+
+                <div className="p-6">
+                  <div style={{ maxWidth: 680 }}>
+
+                    {/* ── Receita Bruta ──────────────────────────────── */}
+                    <div className={rowBase}>
+                      <span className="text-gray-100 font-semibold text-sm">Receita Bruta</span>
+                      <span className="text-gray-100 font-semibold text-sm font-mono">{R(consolidadoBruto)}</span>
+                    </div>
+                    <div className={`${rowEven} pl-9`}>
+                      <span className="text-gray-400 text-xs">└ Smartwatches ({sales.length} venda{sales.length !== 1 ? 's' : ''})</span>
+                      <span className="text-gray-400 text-xs font-mono">{R(totalBruto)}</span>
+                    </div>
+                    {smallSalesRevenue > 0 && (
+                      <div className={`${rowBase} pl-9`}>
+                        <span className="text-gray-400 text-xs">└ Pequenas Vendas ({smallSales.length} venda{smallSales.length !== 1 ? 's' : ''})</span>
+                        <span className="text-gray-400 text-xs font-mono">{R(smallSalesRevenue)}</span>
+                      </div>
+                    )}
+
+                    {/* (-) Taxas de Cartão */}
+                    <div className={`${rowEven} mt-1`}>
+                      <span className="text-red-400 text-sm">(−) Taxas de Cartão</span>
+                      <span className="text-red-400 text-sm font-mono">({R(totalCardFees)})</span>
+                    </div>
+
+                    {/* = Receita Líquida */}
+                    <div className="border-t border-gray-600 my-2" />
+                    <div className={`${rowBase} bg-gray-900/50 rounded`}>
+                      <span className="text-green-400 font-semibold text-sm">= Receita Líquida</span>
+                      <span className="text-green-400 font-semibold text-sm font-mono">{R(receitaLiquida)}</span>
+                    </div>
+
+                    {/* (-) Custo dos Produtos */}
+                    <div className={`${rowEven} mt-1`}>
+                      <span className="text-red-400 text-sm">(−) Custo dos Produtos</span>
+                      <span className="text-red-400 text-sm font-mono">({R(custoProdutos)})</span>
+                    </div>
+                    {/* (-) Embalagens */}
+                    <div className={rowBase}>
+                      <span className="text-red-400 text-sm">(−) Embalagens <span className="text-xs text-gray-500 ml-1">{swCount} un. × R$2,00</span></span>
+                      <span className="text-red-400 text-sm font-mono">({R(custoEmbalagens)})</span>
+                    </div>
+
+                    {/* = Lucro Bruto */}
+                    <div className="border-t border-gray-600 my-2" />
+                    <div className={rowBase}>
+                      <span className={`text-sm font-semibold ${lucroBruto >= 0 ? 'text-green-400' : 'text-red-400'}`}>= Lucro Bruto</span>
+                      <span className={`text-sm font-semibold font-mono ${lucroBruto >= 0 ? 'text-green-400' : 'text-red-400'}`}>{R(lucroBruto)}</span>
+                    </div>
+
+                    {/* Deduções operacionais */}
+                    <div className={`${rowEven} mt-1`}>
+                      <span className="text-red-400 text-sm">(−) Custo de Entregas</span>
+                      <span className="text-red-400 text-sm font-mono">({R(custoEntregas)})</span>
+                    </div>
+                    <div className={rowBase}>
+                      <span className="text-red-400 text-sm">(−) Investimento em Ads</span>
+                      <span className="text-red-400 text-sm font-mono">({R(adSpend)})</span>
+                    </div>
+                    <div className={rowEven}>
+                      <span className="text-red-400 text-sm">(−) Custos Operacionais</span>
+                      <span className="text-red-400 text-sm font-mono">({R(operationalCosts)})</span>
+                    </div>
+
+                    {/* Linha dupla antes do resultado final */}
+                    <div style={{ borderTop: '3px double #4b5563', margin: '14px 0 10px' }} />
+
+                    {/* = Lucro Operacional (EBIT) */}
+                    <div className={`rounded-xl p-5 border-2 ${lucroOperacional >= 0 ? 'border-green-500/40 bg-green-500/10' : 'border-red-500/40 bg-red-500/10'}`}>
+                      <div className="flex items-center justify-between gap-4 flex-wrap">
+                        <span className="text-white font-bold text-sm">= Lucro Operacional (EBIT)</span>
+                        <span className={`font-bold text-3xl font-mono ${lucroOperacional >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {R(lucroOperacional)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-700/60">
+                        <span className="text-gray-400 text-xs">Margem sobre Receita Bruta</span>
+                        <span className={`text-base font-bold ${margemEbit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {margemEbit.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── Canais e Cidades ─────────────────────────────────────────── */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
@@ -550,41 +706,119 @@ export default function ResumoMensal() {
 
             {/* Cidades */}
             <div className="space-y-6">
+              {/* Motoboy */}
               <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-700">
                   <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                    <MapPin size={18} className="text-orange-500" /> Top Cidades — Entregas
+                    <MapPin size={18} className="text-orange-500" /> Top Cidades — Motoboy
                   </h2>
                   <p className="text-gray-500 text-xs mt-0.5">Apenas smartwatches</p>
                 </div>
                 <div className="p-6 space-y-3">
-                  {cidadesEntrega.length === 0 ? (
+                  {cidadesMotoboy.length === 0 ? (
                     <p className="text-gray-400 text-sm">Nenhuma entrega no período</p>
-                  ) : cidadesEntrega.map((c, i) => {
-                    const pct = totalEntregas > 0 ? (c.count / totalEntregas) * 100 : 0;
+                  ) : cidadesMotoboy.map((c, i) => {
+                    const pct = totalMotoboy > 0 ? (c.count / totalMotoboy) * 100 : 0;
+                    const isExpanded = expandedCity?.type === 'motoboy' && expandedCity?.city === c.city;
+                    const neighborhoods = isExpanded ? (() => {
+                      const nbMap = new Map<string, number>();
+                      sales.filter(s => s.delivery_type === 'motoboy' && (s.city || 'Não informado') === c.city)
+                        .forEach(s => { const nb = s.neighborhood || 'Não informado'; nbMap.set(nb, (nbMap.get(nb) || 0) + 1); });
+                      return Array.from(nbMap.entries()).map(([neighborhood, count]) => ({ neighborhood, count })).sort((a, b) => b.count - a.count);
+                    })() : [];
                     return (
                       <div key={c.city}>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
-                              #{i + 1}
-                            </span>
-                            <span className="text-white text-sm">{c.city}</span>
+                        <button onClick={() => setExpandedCity(isExpanded ? null : { type: 'motoboy', city: c.city })} className="w-full text-left">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                                #{i + 1}
+                              </span>
+                              <span className="text-white text-sm">{c.city}</span>
+                              <span className="text-gray-500 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-white text-sm font-bold">{c.count}x</span>
+                              <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <span className="text-white text-sm font-bold">{c.count}x</span>
-                            <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                          <div className="w-full bg-gray-700 rounded-full h-1.5">
+                            <div className="bg-orange-400 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
                           </div>
-                        </div>
-                        <div className="w-full bg-gray-700 rounded-full h-1.5">
-                          <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
-                        </div>
+                        </button>
+                        {isExpanded && neighborhoods.length > 0 && (
+                          <div className="mt-2 ml-7 space-y-1">
+                            {neighborhoods.map(nb => (
+                              <div key={nb.neighborhood} className="flex justify-between items-center text-xs py-0.5">
+                                <span className="text-gray-400">{nb.neighborhood}</span>
+                                <span className="text-gray-300 font-medium">{nb.count}x</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               </div>
 
+              {/* Correios */}
+              <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-700">
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <MapPin size={18} className="text-orange-500" /> Top Cidades — Correios
+                  </h2>
+                  <p className="text-gray-500 text-xs mt-0.5">Apenas smartwatches</p>
+                </div>
+                <div className="p-6 space-y-3">
+                  {cidadesCorreios.length === 0 ? (
+                    <p className="text-gray-400 text-sm">Nenhuma entrega no período</p>
+                  ) : cidadesCorreios.map((c, i) => {
+                    const pct = totalCorreios > 0 ? (c.count / totalCorreios) * 100 : 0;
+                    const isExpanded = expandedCity?.type === 'correios' && expandedCity?.city === c.city;
+                    const neighborhoods = isExpanded ? (() => {
+                      const nbMap = new Map<string, number>();
+                      sales.filter(s => s.delivery_type === 'correios' && (s.city || 'Não informado') === c.city)
+                        .forEach(s => { const nb = s.neighborhood || 'Não informado'; nbMap.set(nb, (nbMap.get(nb) || 0) + 1); });
+                      return Array.from(nbMap.entries()).map(([neighborhood, count]) => ({ neighborhood, count })).sort((a, b) => b.count - a.count);
+                    })() : [];
+                    return (
+                      <div key={c.city}>
+                        <button onClick={() => setExpandedCity(isExpanded ? null : { type: 'correios', city: c.city })} className="w-full text-left">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                                #{i + 1}
+                              </span>
+                              <span className="text-white text-sm">{c.city}</span>
+                              <span className="text-gray-500 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-white text-sm font-bold">{c.count}x</span>
+                              <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                            </div>
+                          </div>
+                          <div className="w-full bg-gray-700 rounded-full h-1.5">
+                            <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                          </div>
+                        </button>
+                        {isExpanded && neighborhoods.length > 0 && (
+                          <div className="mt-2 ml-7 space-y-1">
+                            {neighborhoods.map(nb => (
+                              <div key={nb.neighborhood} className="flex justify-between items-center text-xs py-0.5">
+                                <span className="text-gray-400">{nb.neighborhood}</span>
+                                <span className="text-gray-300 font-medium">{nb.count}x</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Loja Física */}
               <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-700">
                   <h2 className="text-lg font-bold text-white flex items-center gap-2">
@@ -597,23 +831,43 @@ export default function ResumoMensal() {
                     <p className="text-gray-400 text-sm">Nenhuma venda na loja no período</p>
                   ) : cidadesLoja.map((c, i) => {
                     const pct = totalLojaFisica > 0 ? (c.count / totalLojaFisica) * 100 : 0;
+                    const isExpanded = expandedCity?.type === 'loja_fisica' && expandedCity?.city === c.city;
+                    const neighborhoods = isExpanded ? (() => {
+                      const nbMap = new Map<string, number>();
+                      sales.filter(s => s.delivery_type === 'loja_fisica' && (s.city || 'Não informado') === c.city)
+                        .forEach(s => { const nb = s.neighborhood || 'Não informado'; nbMap.set(nb, (nbMap.get(nb) || 0) + 1); });
+                      return Array.from(nbMap.entries()).map(([neighborhood, count]) => ({ neighborhood, count })).sort((a, b) => b.count - a.count);
+                    })() : [];
                     return (
                       <div key={c.city}>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
-                              #{i + 1}
-                            </span>
-                            <span className="text-white text-sm">{c.city}</span>
+                        <button onClick={() => setExpandedCity(isExpanded ? null : { type: 'loja_fisica', city: c.city })} className="w-full text-left">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                                #{i + 1}
+                              </span>
+                              <span className="text-white text-sm">{c.city}</span>
+                              <span className="text-gray-500 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-white text-sm font-bold">{c.count}x</span>
+                              <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <span className="text-white text-sm font-bold">{c.count}x</span>
-                            <span className="text-gray-400 text-xs ml-2">{fmt(c.value)}</span>
+                          <div className="w-full bg-gray-700 rounded-full h-1.5">
+                            <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
                           </div>
-                        </div>
-                        <div className="w-full bg-gray-700 rounded-full h-1.5">
-                          <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
-                        </div>
+                        </button>
+                        {isExpanded && neighborhoods.length > 0 && (
+                          <div className="mt-2 ml-7 space-y-1">
+                            {neighborhoods.map(nb => (
+                              <div key={nb.neighborhood} className="flex justify-between items-center text-xs py-0.5">
+                                <span className="text-gray-400">{nb.neighborhood}</span>
+                                <span className="text-gray-300 font-medium">{nb.count}x</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

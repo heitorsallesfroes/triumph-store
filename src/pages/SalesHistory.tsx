@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
 import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers, Link } from 'lucide-react';
 import Receipt from '../components/Receipt';
-import EditSale from '../components/EditSale';
+import Sales from './Sales';
 import { generateShippingLabel } from '../lib/superfrete';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 
@@ -112,6 +112,7 @@ export default function SalesHistory() {
   const [motoboys, setMotoboys] = useState<{ id: string; name: string }[]>([]);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
+  const [fullEditSaleId, setFullEditSaleId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [productFilter, setProductFilter] = useState('');
   const [debouncedProductFilter, setDebouncedProductFilter] = useState('');
@@ -600,13 +601,13 @@ export default function SalesHistory() {
   };
 
   if (loading) {
-    return <div className="p-8"><div className="text-white text-center">Carregando histórico de vendas...</div></div>;
+    return <div className="p-8"><div className="text-center">Carregando histórico de vendas...</div></div>;
   }
 
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-white mb-2">Histórico de Vendas</h1>
+        <h1 className="text-3xl font-bold mb-2">Histórico de Vendas</h1>
         <p className="text-gray-400">Visualize e gerencie todas as vendas realizadas</p>
       </div>
 
@@ -617,7 +618,7 @@ export default function SalesHistory() {
         <div className="flex flex-wrap gap-2">
           {(['today', 'yesterday', 'week', 'month', 'last_month', 'custom'] as Period[]).map(p => (
             <button key={p} onClick={() => setPeriod(p)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${period === p ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${period === p ? 'bg-orange-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
               {PERIOD_LABELS[p]}
             </button>
           ))}
@@ -629,11 +630,11 @@ export default function SalesHistory() {
             <Calendar size={15} className="text-gray-400" />
             <input type="date" value={dateFilter.start}
               onChange={(e) => setDateFilter({ ...dateFilter, start: e.target.value })}
-              className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm" />
+              className="bg-gray-700 rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm" />
             <span className="text-gray-500 text-sm">até</span>
             <input type="date" value={dateFilter.end}
               onChange={(e) => setDateFilter({ ...dateFilter, end: e.target.value })}
-              className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm" />
+              className="bg-gray-700 rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm" />
           </div>
         )}
 
@@ -643,7 +644,7 @@ export default function SalesHistory() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
             <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Cliente, bairro ou cidade" className="w-full bg-gray-700 text-white rounded-lg pl-9 pr-3 py-2.5 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm" />
+              placeholder="Cliente, bairro ou cidade" className="w-full bg-gray-700 rounded-lg pl-9 pr-3 py-2.5 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm" />
           </div>
 
           {/* Produto */}
@@ -653,12 +654,12 @@ export default function SalesHistory() {
               : <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
             }
             <input type="text" value={productFilter} onChange={(e) => setProductFilter(e.target.value)}
-              placeholder="Buscar produto" className="w-full bg-gray-700 text-white rounded-lg pl-9 pr-3 py-2.5 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm" />
+              placeholder="Buscar produto" className="w-full bg-gray-700 rounded-lg pl-9 pr-3 py-2.5 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm" />
           </div>
 
           {/* Status */}
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as SaleStatus | 'all')}
-            className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm">
+            className="w-full bg-gray-700 rounded-lg px-3 py-2.5 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm">
             <option value="all">Todos os Status</option>
             {SALE_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
@@ -668,7 +669,7 @@ export default function SalesHistory() {
             {Object.entries(DELIVERY_LABELS).map(([val, label]) => (
               <button key={val}
                 onClick={() => { setDeliveryTypeFilter(val); if (val !== 'motoboy') setMotoboyFilter('all'); }}
-                className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors flex-1 min-w-fit ${deliveryTypeFilter === val ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+                className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors flex-1 min-w-fit ${deliveryTypeFilter === val ? 'bg-orange-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
                 {label}
               </button>
             ))}
@@ -679,13 +680,13 @@ export default function SalesHistory() {
             <div className="flex gap-1.5 flex-wrap pl-2 border-l-2 border-orange-500/40">
               <button
                 onClick={() => setMotoboyFilter('all')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${motoboyFilter === 'all' ? 'bg-orange-500/80 text-white' : 'bg-gray-700/70 text-gray-400 hover:bg-gray-600'}`}>
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${motoboyFilter === 'all' ? 'bg-orange-500/80' : 'bg-gray-700/70 text-gray-400 hover:bg-gray-600'}`}>
                 Todos os Motoboys
               </button>
               {motoboys.map(m => (
                 <button key={m.id}
                   onClick={() => setMotoboyFilter(m.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${motoboyFilter === m.id ? 'bg-orange-500/80 text-white' : 'bg-gray-700/70 text-gray-400 hover:bg-gray-600'}`}>
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${motoboyFilter === m.id ? 'bg-orange-500/80' : 'bg-gray-700/70 text-gray-400 hover:bg-gray-600'}`}>
                   {m.name}
                 </button>
               ))}
@@ -696,7 +697,7 @@ export default function SalesHistory() {
           <div className="flex gap-1.5 flex-wrap">
             {Object.entries(PAYMENT_FILTER_LABELS).map(([val, label]) => (
               <button key={val} onClick={() => setPaymentFilter(val)}
-                className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors flex-1 min-w-fit ${paymentFilter === val ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+                className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors flex-1 min-w-fit ${paymentFilter === val ? 'bg-orange-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
                 {label}
               </button>
             ))}
@@ -740,7 +741,7 @@ export default function SalesHistory() {
               <Package size={16} className="text-orange-500 flex-shrink-0" />
               <div>
                 <p className="text-xs text-gray-400">Total de Vendas</p>
-                <p className="text-lg font-bold text-white">{filteredSales.length}</p>
+                <p className="text-lg font-bold">{filteredSales.length}</p>
                 {filteredSmartwatch > 0 && (
                   <p className="text-xs text-blue-400 mt-0.5">{filteredSmartwatch} smartwatches</p>
                 )}
@@ -781,7 +782,7 @@ export default function SalesHistory() {
             <select
               value={bulkStatus}
               onChange={e => setBulkStatus(e.target.value as SaleStatus)}
-              className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:outline-none text-sm"
+              className="bg-gray-700 rounded-lg px-3 py-2 border border-gray-600 focus:outline-none text-sm"
             >
               {SALE_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
@@ -796,7 +797,7 @@ export default function SalesHistory() {
           </div>
           <button
             onClick={() => setSelectedIds(new Set())}
-            className="text-xs text-gray-400 hover:text-white transition-colors"
+            className="text-xs text-gray-400 transition-colors"
           >
             Limpar seleção
           </button>
@@ -812,7 +813,7 @@ export default function SalesHistory() {
         ) : filteredSales.length === 0 ? (
           <div className="bg-gray-800 rounded-lg p-12 border border-gray-700 text-center">
             <Package size={48} className="mx-auto text-gray-600 mb-4" />
-            <h3 className="text-xl font-semibold text-white mb-2">
+            <h3 className="text-xl font-semibold mb-2">
               Nenhuma venda encontrada {EMPTY_PERIOD_LABELS[period]}
             </h3>
             <p className="text-gray-400">
@@ -864,7 +865,7 @@ export default function SalesHistory() {
                       <Package size={24} className="text-orange-500 mt-1 flex-shrink-0" />
                       <div>
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <h3 className="text-lg font-semibold text-white">{sale.customer_name}</h3>
+                          <h3 className="text-lg font-semibold">{sale.customer_name}</h3>
                           {sale.delivery_type && DELIVERY_CONFIG[sale.delivery_type] && (() => {
                             const cfg = DELIVERY_CONFIG[sale.delivery_type!];
                             const Icon = cfg.icon;
@@ -915,7 +916,7 @@ export default function SalesHistory() {
                     <div className="space-y-2">
                       <div>
                         <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Data da Venda</p>
-                        <p className="text-white font-medium">{formatDate(sale.sale_date)}</p>
+                        <p className="font-medium">{formatDate(sale.sale_date)}</p>
                       </div>
                       <div>
                         <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Valor Total</p>
@@ -935,18 +936,18 @@ export default function SalesHistory() {
                   </div>
 
                   <div className="col-span-12 lg:col-span-2 flex flex-wrap gap-2">
-                    <button onClick={() => setEditingSaleId(sale.id)} className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
+                    <button onClick={() => setFullEditSaleId(sale.id)} className="bg-orange-600 hover:bg-orange-700 px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
                       <Edit size={14} />
                       <span className="text-xs font-semibold">Editar</span>
                     </button>
-                    <button onClick={() => setReceiptChoiceSale(sale)} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
+                    <button onClick={() => setReceiptChoiceSale(sale)} className="bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
                       <FileText size={14} />
                       <span className="text-xs font-semibold">Recibo</span>
                     </button>
-                    <button onClick={() => setGiftSale(sale)} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
+                    <button onClick={() => setGiftSale(sale)} className="bg-purple-600 hover:bg-purple-700 px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 flex-1 min-w-0">
                       <span className="text-xs font-semibold">🎁 Presente</span>
                     </button>
-                    <button onClick={() => setWhatsappSale(sale)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 w-full">
+                    <button onClick={() => setWhatsappSale(sale)} className="bg-green-600 hover:bg-green-700 px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 w-full">
                       <MessageCircle size={14} />
                       <span className="text-xs font-semibold">Resumo WhatsApp</span>
                     </button>
@@ -981,7 +982,7 @@ export default function SalesHistory() {
                     <div className="flex items-center gap-3">
                       <FileText size={20} className="text-yellow-500" />
                       <div>
-                        <p className="text-sm font-semibold text-white">Nota Fiscal</p>
+                        <p className="text-sm font-semibold">Nota Fiscal</p>
                         {sale.nfe_status === 'emitida' && (
                           <p className="text-xs text-green-500">✅ NF-e emitida</p>
                         )}
@@ -992,7 +993,7 @@ export default function SalesHistory() {
                         <button
                           onClick={() => handleGenerateNFe(sale)}
                           disabled={generatingNFe === sale.id}
-                          className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
+                          className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
                         >
                           {generatingNFe === sale.id ? (
                             <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>Gerando...</>
@@ -1003,7 +1004,7 @@ export default function SalesHistory() {
                       ) : (
                         <button
                           onClick={() => handleViewNFe(sale)}
-                          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
+                          className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
                         >
                           <FileText size={16} />
                           Ver NF-e
@@ -1020,7 +1021,7 @@ export default function SalesHistory() {
                       <div className="flex items-center gap-3">
                         <Truck size={20} className="text-blue-500" />
                         <div>
-                          <p className="text-sm font-semibold text-white">Envio por Correios</p>
+                          <p className="text-sm font-semibold">Envio por Correios</p>
                           {sale.tracking_code && (
                             <p className="text-xs text-gray-400 font-mono mt-0.5">🔍 {sale.tracking_code}</p>
                           )}
@@ -1045,7 +1046,7 @@ export default function SalesHistory() {
                       </div>
                       <div className="flex gap-2">
                         {!sale.shipping_label_url ? (
-                          <button onClick={() => handleGenerateShippingLabel(sale)} disabled={generatingLabel === sale.id} className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold">
+                          <button onClick={() => handleGenerateShippingLabel(sale)} disabled={generatingLabel === sale.id} className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold">
                             {generatingLabel === sale.id ? (
                               <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>Gerando...</>
                             ) : (
@@ -1053,7 +1054,7 @@ export default function SalesHistory() {
                             )}
                           </button>
                         ) : (
-                          <button onClick={() => window.open(sale.shipping_label_url, '_blank')} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold">
+                          <button onClick={() => window.open(sale.shipping_label_url, '_blank')} className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold">
                             <FileText size={16} />Ver Etiqueta
                           </button>
                         )}
@@ -1069,7 +1070,7 @@ export default function SalesHistory() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <Edit size={20} className={sale.payment_confirmed ? 'text-green-500' : 'text-yellow-500'} />
-                        <p className="text-sm font-semibold text-white">Confirmação de Pagamento</p>
+                        <p className="text-sm font-semibold">Confirmação de Pagamento</p>
                       </div>
                       {sale.payment_confirmed ? (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-green-500/20 text-green-400 border border-green-500/30">
@@ -1079,7 +1080,7 @@ export default function SalesHistory() {
                         <button
                           onClick={() => handleConfirmPayment(sale.id)}
                           disabled={confirmingPaymentId === sale.id}
-                          className="bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
+                          className="bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
                         >
                           {confirmingPaymentId === sale.id ? (
                             <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />Confirmando...</>
@@ -1102,7 +1103,7 @@ export default function SalesHistory() {
         <div className="flex flex-col items-center gap-1 pt-2">
           <button
             onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
-            className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-orange-500 text-gray-300 hover:text-white rounded-lg text-sm font-medium transition-all"
+            className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-orange-500 text-gray-300 rounded-lg text-sm font-medium transition-all"
           >
             Carregar mais ({filteredSales.length - visibleCount} restantes)
           </button>
@@ -1122,16 +1123,13 @@ export default function SalesHistory() {
           }}
         />
       )}
-      {editingSaleId && (
-        <EditSale
-          saleId={editingSaleId}
-          onClose={() => setEditingSaleId(null)}
-          onSaved={(id, updates) => {
-            const patch = (s: any) => s.id === id ? { ...s, ...updates } : s;
-            setSales(prev => prev.map(patch));
-            setFilteredSales(prev => prev.map(patch));
-          }}
-        />
+      {fullEditSaleId && (
+        <div className="fixed inset-0 z-50 overflow-auto" style={{ background: '#0a0a0f' }}>
+          <Sales
+            editSaleId={fullEditSaleId}
+            onEditDone={() => { setFullEditSaleId(null); filterSales(); }}
+          />
+        </div>
       )}
       {whatsappSale && <WhatsAppModal sale={whatsappSale} onClose={() => setWhatsappSale(null)} />}
     </div>
@@ -1143,7 +1141,7 @@ function ReceiptChoiceModal({ onClose, onSelect }: { onClose: () => void; onSele
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
       <div className="w-full max-w-xs rounded-2xl p-5 max-h-[90vh] overflow-y-auto" style={{ background: '#111118', border: '1px solid #1a1a2a' }}>
         <div className="flex items-center justify-between mb-4">
-          <span className="text-sm font-semibold text-white">Abrir Recibo</span>
+          <span className="text-sm font-semibold">Abrir Recibo</span>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-700 transition-colors">
             <X size={16} className="text-gray-400" />
           </button>
@@ -1151,14 +1149,14 @@ function ReceiptChoiceModal({ onClose, onSelect }: { onClose: () => void; onSele
         <div className="flex flex-col gap-2">
           <button
             onClick={() => onSelect(false)}
-            className="w-full py-3 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2 transition-colors"
+            className="w-full py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
             style={{ background: '#1e3a5f', border: '1px solid #2563eb' }}
           >
             🖨️ Imprimir completo
           </button>
           <button
             onClick={() => onSelect(true)}
-            className="w-full py-3 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2 transition-colors"
+            className="w-full py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
             style={{ background: '#14532d', border: '1px solid #16a34a' }}
           >
             📱 Versão WhatsApp
@@ -1278,7 +1276,7 @@ function WhatsAppModal({ sale, onClose }: { sale: any; onClose: () => void }) {
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2">
             <MessageCircle size={18} style={{ color: '#22c55e' }} />
-            <span className="text-base font-semibold text-white">Resumo WhatsApp</span>
+            <span className="text-base font-semibold">Resumo WhatsApp</span>
           </div>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-700 transition-colors">
             <X size={18} className="text-gray-400" />

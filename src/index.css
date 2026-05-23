@@ -1,42 +1,191 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-/* Inputs globais estilo Gestão TFX */
+
+/* ════════════════════════════════════════════════════════════════
+   THEME VARIABLES
+════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Dark (default) */
+  --bg-base:           #0a0a0f;
+  --bg-sidebar:        #0a0a0a;
+  --bg-topbar:         #0d0d14;
+  --bg-card:           #1a1a2a;
+  --bg-inner:          #111118;
+  --bg-hover:          #161616;
+  --border-main:       #1c1c1c;
+  --text-primary:      #ffffff;
+  --text-secondary:    #cccccc;
+  --text-muted:        #777777;
+  --text-nav:          #6a6a6a;
+  --text-nav-hover:    #b0b0b0;
+  --input-bg:          #0d0d14;
+  --input-border:      #1a1a2a;
+  --input-placeholder: #4a4a6a;
+  --accent:            #f97316;
+}
+
+html.light {
+  --bg-base:           #f5f5f5;
+  --bg-sidebar:        #ffffff;
+  --bg-topbar:         #ffffff;
+  --bg-card:           #ffffff;
+  --bg-inner:          #f3f4f6;
+  --bg-hover:          #ebebeb;
+  --border-main:       #e2e8f0;
+  --text-primary:      #111111;
+  --text-secondary:    #333333;
+  --text-muted:        #555555;
+  --text-nav:          #4b5563;
+  --text-nav-hover:    #111827;
+  --input-bg:          #ffffff;
+  --input-border:      #d1d5db;
+  --input-placeholder: #9ca3af;
+  --accent:            #f97316;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  transition: background-color 0.2s, color 0.2s;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GLOBAL INPUTS
+════════════════════════════════════════════════════════════════ */
+
 input, select, textarea {
-  background: #0d0d14 !important;
-  border: 1px solid #1a1a2a !important;
-  color: #ffffff !important;
+  background: var(--input-bg) !important;
+  border: 1px solid var(--input-border) !important;
+  color: var(--text-primary) !important;
   border-radius: 8px !important;
+  transition: border-color 0.15s, background 0.15s !important;
 }
 
 input:focus, select:focus, textarea:focus {
-  border-color: #f5c518 !important;
+  border-color: var(--accent) !important;
   outline: none !important;
-  box-shadow: 0 0 0 1px #f5c51820 !important;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.15) !important;
 }
 
 input::placeholder, textarea::placeholder {
-  color: #3a3a5a !important;
+  color: var(--input-placeholder) !important;
 }
 
-/* Seções de formulário */
+/* ════════════════════════════════════════════════════════════════
+   FORM HELPERS
+════════════════════════════════════════════════════════════════ */
+
 .form-section {
-  background: #111118;
-  border: 1px solid #1a1a2a;
-  border-left: 3px solid #f5c518;
+  background: var(--bg-inner);
+  border: 1px solid var(--border-main);
+  border-left: 3px solid var(--accent);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 12px;
 }
 
-/* Botão confirmar */
 .btn-confirm {
-  background: #f5c518 !important;
-  color: #0a0a0f !important;
+  background: var(--accent) !important;
+  color: #ffffff !important;
   font-weight: 700 !important;
   border-radius: 10px !important;
 }
 
 .btn-confirm:hover {
-  background: #e0b315 !important;
+  opacity: 0.88 !important;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   DARK MODE — CONTRAST IMPROVEMENTS
+════════════════════════════════════════════════════════════════ */
+
+html:not(.light) .text-gray-300 { color: #e0e0e0 !important; }
+html:not(.light) .text-gray-400 { color: #cccccc !important; }
+html:not(.light) .text-gray-500 { color: #aaaaaa !important; }
+
+/* ════════════════════════════════════════════════════════════════
+   LIGHT MODE — NEUTRAL GRAY OVERRIDES
+════════════════════════════════════════════════════════════════ */
+
+/* Backgrounds — neutral grays only */
+html.light .bg-gray-800 {
+  background-color: #ffffff !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04) !important;
+}
+html.light .bg-gray-900 { background-color: #f3f4f6 !important; }
+html.light .bg-gray-700 { background-color: #f3f4f6 !important; }
+html.light .bg-gray-600 { background-color: #e5e7eb !important; }
+
+/* Text — neutral grays */
+html.light .text-white   { color: #111111 !important; }
+html.light .text-gray-100 { color: #1a1a1a !important; }
+html.light .text-gray-200 { color: #2d2d2d !important; }
+html.light .text-gray-300 { color: #374151 !important; }
+html.light .text-gray-400 { color: #4b5563 !important; }
+html.light .text-gray-500 { color: #6b7280 !important; }
+html.light .text-gray-600 { color: #555555 !important; }
+
+/* Borders */
+html.light .border-gray-700 { border-color: #e2e8f0 !important; }
+html.light .border-gray-600 { border-color: #d1d5db !important; }
+html.light .border-gray-500 { border-color: #cbd5e1 !important; }
+
+/* Table dividers */
+html.light .divide-gray-700 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important;
+}
+
+/* Hover states with opacity modifier */
+html.light .hover\:bg-gray-700\/50:hover { background-color: rgba(0,0,0,0.05) !important; }
+html.light .hover\:bg-gray-600:hover     { background-color: #e5e7eb !important; }
+
+/* ════════════════════════════════════════════════════════════════
+   LIGHT MODE — SEMANTIC COLOR TEXT (darker variants for contrast)
+   Green-400 (#4ade80) on white = 2.0:1 — too low. Use -600/-700.
+════════════════════════════════════════════════════════════════ */
+
+html.light .text-green-400,
+html.light .text-green-300  { color: #16a34a !important; }   /* green-600   4.5:1 */
+
+html.light .text-emerald-400,
+html.light .text-emerald-300 { color: #059669 !important; }  /* emerald-600 4.6:1 */
+
+html.light .text-red-400,
+html.light .text-red-300    { color: #dc2626 !important; }   /* red-600     5.9:1 */
+
+html.light .text-blue-400,
+html.light .text-blue-300   { color: #2563eb !important; }   /* blue-600    4.9:1 */
+
+html.light .text-yellow-400,
+html.light .text-yellow-300 { color: #92400e !important; }   /* amber-800   7.3:1 */
+
+html.light .text-orange-400 { color: #c2410c !important; }  /* orange-700  4.5:1 */
+
+html.light .text-purple-400,
+html.light .text-purple-300 { color: #7c3aed !important; }  /* violet-700  5.9:1 */
+
+html.light .text-teal-400   { color: #0f766e !important; }  /* teal-700    5.4:1 */
+
+html.light .text-pink-400   { color: #be185d !important; }  /* pink-700    5.9:1 */
+
+/* ════════════════════════════════════════════════════════════════
+   LIGHT MODE — INPUTS (higher specificity to override bg-gray-700)
+════════════════════════════════════════════════════════════════ */
+
+html.light input,
+html.light select,
+html.light textarea {
+  background-color: #ffffff !important;
+  border-color: #d1d5db !important;
+  color: #111111 !important;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   SMOOTH TRANSITIONS
+════════════════════════════════════════════════════════════════ */
+
+aside, main, .bg-gray-800, .bg-gray-900, .bg-gray-700 {
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
 }

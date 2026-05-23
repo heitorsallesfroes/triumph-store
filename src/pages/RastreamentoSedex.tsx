@@ -42,15 +42,16 @@ interface StatusCfg {
   emoji: string;
   color: string;
   borderLeft: string;
+  leftColor: string;
   icon: ComponentType<{ size?: number; className?: string }>;
 }
 
 const STATUS_CONFIG: Record<TrackingStatus, StatusCfg> = {
-  sem_info:     { label: 'Sem informação',  emoji: '❓', color: 'text-gray-400',   borderLeft: 'border-l-gray-600',   icon: Clock       },
-  postado:      { label: 'Postado',         emoji: '📦', color: 'text-blue-400',   borderLeft: 'border-l-blue-500',   icon: Package     },
-  em_transito:  { label: 'Em trânsito',     emoji: '🚚', color: 'text-amber-400',  borderLeft: 'border-l-amber-500',  icon: Truck       },
-  saiu_entrega: { label: 'Saiu p/ entrega', emoji: '🛵', color: 'text-orange-400', borderLeft: 'border-l-orange-500', icon: MapPin      },
-  entregue:     { label: 'Entregue',        emoji: '✅', color: 'text-green-400',  borderLeft: 'border-l-green-600',  icon: CheckCircle },
+  sem_info:     { label: 'Sem informação',  emoji: '❓', color: 'text-gray-400',   borderLeft: 'border-l-gray-600',   leftColor: '#4b5563', icon: Clock       },
+  postado:      { label: 'Postado',         emoji: '📦', color: 'text-blue-400',   borderLeft: 'border-l-blue-500',   leftColor: '#3b82f6', icon: Package     },
+  em_transito:  { label: 'Em trânsito',     emoji: '🚚', color: 'text-amber-400',  borderLeft: 'border-l-amber-500',  leftColor: '#f59e0b', icon: Truck       },
+  saiu_entrega: { label: 'Saiu p/ entrega', emoji: '🛵', color: 'text-orange-400', borderLeft: 'border-l-orange-500', leftColor: '#f97316', icon: MapPin      },
+  entregue:     { label: 'Entregue',        emoji: '✅', color: 'text-green-400',  borderLeft: 'border-l-green-600',  leftColor: '#16a34a', icon: CheckCircle },
 };
 
 const REFRESH_SEC = 600; // 10 minutos
@@ -398,16 +399,17 @@ export default function RastreamentoSedex() {
     return (
       <div
         key={sale.id}
-        className={`rounded-xl border border-l-4 transition-all ${cfg.borderLeft} ${
-          isEntregue
-            ? 'bg-green-950/30 border-green-900/40'
-            : 'bg-gray-800/80 border-gray-700/60'
-        } ${compact ? 'p-3.5' : 'p-5'}`}
+        className={`rounded-xl transition-all ${compact ? 'p-3.5' : 'p-5'}`}
+        style={{
+          background: isEntregue ? 'rgba(22,101,52,0.08)' : 'var(--bg-card)',
+          border: `1px solid ${isEntregue ? 'rgba(22,101,52,0.28)' : 'var(--border-main)'}`,
+          borderLeft: `4px solid ${cfg.leftColor}`,
+        }}
       >
         {/* Cliente + status chip */}
         <div className={`flex items-start justify-between gap-3 ${compact ? 'mb-2' : 'mb-3'}`}>
           <div className="min-w-0">
-            <p className={`font-semibold text-white truncate ${compact ? 'text-sm' : 'text-base'}`}>
+            <p className={`font-semibold truncate ${compact ? 'text-sm' : 'text-base'}`} style={{ color: 'var(--text-primary)' }}>
               {sale.customer_name}
             </p>
             <p className={`text-xs mt-0.5 truncate ${compact ? 'text-gray-600' : 'text-gray-500'}`}>
@@ -419,18 +421,20 @@ export default function RastreamentoSedex() {
               </p>
             )}
           </div>
-          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0 ${cfg.color} bg-black/20 border border-white/5`}>
+          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0 ${cfg.color}`}
+            style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
             <span>{cfg.emoji}</span>
             <span>{cfg.label}</span>
           </span>
         </div>
 
         {/* Código de rastreio */}
-        <div className={`flex items-center justify-between py-2 px-3 rounded-lg bg-black/25 border border-white/5 ${compact ? 'mb-2' : 'mb-3'}`}>
+        <div className={`flex items-center justify-between py-2 px-3 rounded-lg ${compact ? 'mb-2' : 'mb-3'}`}
+          style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
           <div className="min-w-0 flex-1">
             <p className="text-xs text-gray-500 mb-0.5">Rastreio</p>
             {hasCode ? (
-              <p className="text-sm font-mono font-bold text-white tracking-wide">{sale.tracking_code}</p>
+              <p className="text-sm font-mono font-bold tracking-wide" style={{ color: 'var(--text-primary)' }}>{sale.tracking_code}</p>
             ) : (
               <p className="text-sm text-gray-600 italic">Código não disponível</p>
             )}
@@ -485,7 +489,10 @@ export default function RastreamentoSedex() {
             <span>Falha ao buscar{sale.tracking_error !== 'Erro ao rastrear' ? ` (${sale.tracking_error})` : ''} — clique em Atualizar para tentar novamente</span>
           </div>
         ) : sale.lastEvent ? (
-          <div className={`rounded-lg p-3 ${isEntregue ? 'bg-green-900/20 border border-green-800/30' : 'bg-black/20 border border-white/5'}`}>
+          <div className="rounded-lg p-3" style={{
+              background: isEntregue ? 'rgba(22,101,52,0.08)' : 'var(--bg-inner)',
+              border: `1px solid ${isEntregue ? 'rgba(22,101,52,0.25)' : 'var(--border-main)'}`,
+            }}>
             {/* Descrição */}
             <div className="flex items-start gap-1.5 mb-1.5">
               <StatusIcon size={12} className={`${cfg.color} flex-shrink-0 mt-0.5`} />
@@ -542,7 +549,7 @@ export default function RastreamentoSedex() {
         <div className="flex items-center gap-3">
           <PackageSearch className="text-orange-400 flex-shrink-0" size={28} />
           <div>
-            <h1 className="text-2xl font-bold text-white">Rastreamento SEDEX</h1>
+            <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Rastreamento SEDEX</h1>
             <p className="text-sm text-gray-500 mt-0.5">
               {sales.length} {sales.length === 1 ? 'envio' : 'envios'} pelos Correios
               {lastUpdated && (
@@ -583,7 +590,7 @@ export default function RastreamentoSedex() {
           {emAndamento.length > 0 && (
             <div>
               <div className="flex items-center gap-2.5 mb-4">
-                <h2 className="text-base font-semibold text-white">🚚 Em andamento</h2>
+                <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>🚚 Em andamento</h2>
                 <span className="bg-orange-500/15 text-orange-400 text-xs font-bold px-2 py-0.5 rounded-full border border-orange-500/25">
                   {emAndamento.length}
                 </span>
@@ -596,14 +603,14 @@ export default function RastreamentoSedex() {
 
           {/* Separador */}
           {emAndamento.length > 0 && entregues.length > 0 && (
-            <hr className="border-gray-700/50" />
+            <hr style={{ borderColor: 'var(--border-main)' }} />
           )}
 
           {/* Seção Entregues */}
           {entregues.length > 0 && (
             <div>
               <div className="flex items-center gap-2.5 mb-4">
-                <h2 className="text-base font-semibold text-white">✅ Entregues</h2>
+                <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>✅ Entregues</h2>
                 <span className="bg-green-500/15 text-green-400 text-xs font-bold px-2 py-0.5 rounded-full border border-green-500/25">
                   {entregues.length}
                 </span>
