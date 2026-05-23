@@ -752,7 +752,7 @@ export default function ResumoVendas() {
           >
             <div
               className="relative w-full max-w-sm rounded-2xl overflow-hidden"
-              style={{ background: '#111118', border: '1px solid #2a2a3a' }}
+              style={{ background: 'var(--bg-card)', border: '1px solid var(--border-main)' }}
               onClick={e => e.stopPropagation()}
             >
               {/* Gradiente decorativo topo */}
@@ -761,7 +761,8 @@ export default function ResumoVendas() {
               {/* Botão fechar */}
               <button
                 onClick={() => setShowShareModal(false)}
-                className="absolute top-4 right-4 p-1.5 rounded-full text-gray-500 hover:text-white hover:bg-white/10 transition-colors z-10"
+                className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-white/10 transition-colors z-10"
+                style={{ color: 'var(--text-secondary)' }}
               >
                 <X size={16} />
               </button>
@@ -770,8 +771,8 @@ export default function ResumoVendas() {
                 {/* Header */}
                 <div className="text-center mb-8">
                   <p className="text-xs font-bold tracking-[0.25em] uppercase text-orange-400 mb-1">Triumph Store</p>
-                  <p className="text-xs text-gray-600">{dateLabel}</p>
-                  <div className="mt-4 h-px bg-gradient-to-r from-transparent via-gray-700 to-transparent" />
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{dateLabel}</p>
+                  <div className="mt-4 h-px" style={{ background: 'var(--border-main)' }} />
                 </div>
 
                 {/* Métricas */}
@@ -817,8 +818,8 @@ export default function ResumoVendas() {
 
                 {/* Rodapé */}
                 <div className="mt-8">
-                  <div className="h-px bg-gradient-to-r from-transparent via-gray-700 to-transparent mb-4" />
-                  <p className="text-center text-xs text-gray-700 tracking-widest uppercase">triumphstore.com.br</p>
+                  <div className="h-px mb-4" style={{ background: 'var(--border-main)' }} />
+                  <p className="text-center text-xs tracking-widest uppercase" style={{ color: 'var(--text-secondary)' }}>triumphstore.com.br</p>
                 </div>
               </div>
             </div>
