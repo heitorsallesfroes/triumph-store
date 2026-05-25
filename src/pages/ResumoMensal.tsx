@@ -258,6 +258,32 @@ export default function ResumoMensal() {
   });
   const topModels = Array.from(modelColorMap.entries()).sort((a, b) => b[1] - a[1]);
 
+  const saleDataMap = new Map<string, SaleData>();
+  sales.forEach(s => saleDataMap.set(s.id, s));
+
+  const saleTotalSwQtyMap = new Map<string, number>();
+  saleItems.filter(i => i.products?.category === 'smartwatch').forEach(item => {
+    saleTotalSwQtyMap.set(item.sale_id, (saleTotalSwQtyMap.get(item.sale_id) || 0) + item.quantity);
+  });
+
+  const modelFinancialMap = new Map<string, { qty: number; lucroBruto: number }>();
+  saleItems.filter(i => i.products?.category === 'smartwatch').forEach(item => {
+    const key = `${item.products!.model} - ${item.products!.color}`;
+    const sale = saleDataMap.get(item.sale_id);
+    if (!sale) return;
+    const totalSwInSale = saleTotalSwQtyMap.get(item.sale_id) || 1;
+    const ratio = item.quantity / totalSwInSale;
+    const revenue = Number(sale.total_sale_price) * ratio;
+    const cardFee = (Number(sale.total_sale_price) - Number(sale.net_received)) * ratio;
+    const productCost = (Number(sale.total_cost || 0) - Number(sale.delivery_fee || 0) - Number(sale.delivery_cost || 0)) * ratio;
+    const deliveryCost = (Number(sale.delivery_fee || 0) + Number(sale.delivery_cost || 0)) * ratio;
+    const grossProfit = revenue - cardFee - productCost - deliveryCost;
+    const cur = modelFinancialMap.get(key) || { qty: 0, lucroBruto: 0 };
+    modelFinancialMap.set(key, { qty: cur.qty + item.quantity, lucroBruto: cur.lucroBruto + grossProfit });
+  });
+
+  const fixedCostPerUnit = swCount > 0 ? (adSpend + operationalCosts + custoEmbalagens) / swCount : 0;
+
   const paymentMap = new Map<string, number>();
   sales.forEach(s => {
     const pm = s.payment_method || 'Não informado';
@@ -889,25 +915,48 @@ export default function ResumoMensal() {
                 <p className="text-gray-400 text-sm">Nenhum dado de produto disponível</p>
               ) : (() => {
                 const total = topModels.reduce((s, [, q]) => s + q, 0);
-                return topModels.map(([model, qty], i) => {
-                  const pct = total > 0 ? (qty / total) * 100 : 0;
-                  return (
-                    <div key={model}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-xs font-bold w-5 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
-                            #{i + 1}
-                          </span>
-                          <span className="text-white text-sm">{model}</span>
-                        </div>
-                        <span className="text-orange-400 text-sm font-bold">{qty} un.</span>
-                      </div>
-                      <div className="w-full bg-gray-700 rounded-full h-1.5">
-                        <div className="bg-orange-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                return (
+                  <>
+                    <div className="flex items-center justify-between mb-1 pl-7 text-xs text-gray-500">
+                      <span className="flex-1">Modelo</span>
+                      <div className="flex gap-4 text-right">
+                        <span className="w-14">Qtd</span>
+                        <span className="w-24">Lucro Bruto/un</span>
+                        <span className="w-24">Lucro Líquido/un</span>
                       </div>
                     </div>
-                  );
-                });
+                    {topModels.map(([model, qty], i) => {
+                      const pct = total > 0 ? (qty / total) * 100 : 0;
+                      const fin = modelFinancialMap.get(model);
+                      const lucroBrutoPerUn = fin && fin.qty > 0 ? fin.lucroBruto / fin.qty : 0;
+                      const lucroLiquidoPerUn = lucroBrutoPerUn - fixedCostPerUnit;
+                      return (
+                        <div key={model}>
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <span className={`text-xs font-bold w-5 flex-shrink-0 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-400' : i === 2 ? 'text-orange-600' : 'text-gray-600'}`}>
+                                #{i + 1}
+                              </span>
+                              <span className="text-white text-sm truncate">{model}</span>
+                            </div>
+                            <div className="flex items-center gap-4 text-right flex-shrink-0">
+                              <span className="text-orange-400 text-sm font-bold w-14 text-right">{qty} un.</span>
+                              <span className={`text-sm font-bold w-24 text-right font-mono ${lucroBrutoPerUn >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {fmt(lucroBrutoPerUn)}
+                              </span>
+                              <span className={`text-sm font-bold w-24 text-right font-mono ${lucroLiquidoPerUn >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {fmt(lucroLiquidoPerUn)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="w-full bg-gray-700 rounded-full h-1.5">
+                            <div className="bg-orange-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                );
               })()}
             </div>
           </div>
