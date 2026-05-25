@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { calculateCardFee } from '../lib/cardFees';
 import {
   TrendingUp, DollarSign, ShoppingCart, Package, Truck,
-  Bike, BarChart3, MapPin, Star, ShoppingBag, Target, Zap,
+  Bike, BarChart3, MapPin, Star, ShoppingBag, Target, Zap, FileDown,
 } from 'lucide-react';
 
 const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
@@ -291,10 +292,142 @@ export default function ResumoMensal() {
   });
   const paymentMethods = Array.from(paymentMap.entries()).sort((a, b) => b[1] - a[1]);
 
-  if (loading) return <div className="p-8 text-white flex items-center gap-2"><BarChart3 className="animate-pulse" /> Carregando...</div>;
-
   const fmt = (v: number) => `R$ ${v.toFixed(2)}`;
   const cpvSw = adSpend > 0 && swCount > 0 ? adSpend / swCount : null;
+
+  const exportToExcel = () => {
+    const monthName = MONTHS[selected.month - 1];
+    const fileName = `Relatorio_Triumph_Store_${monthName}_${selected.year}.xlsx`;
+    const wb = XLSX.utils.book_new();
+
+    // DRE derived values
+    const dreCardFees     = totalTaxaCartao + smallSalesCardFees;
+    const dreRecLiquida   = consolidadoBruto - dreCardFees;
+    const dreCustoProd    = totalCustoProdutos + smallSalesCost;
+    const dreLucroBruto   = dreRecLiquida - dreCustoProd - custoEmbalagens;
+    const dreCustoEntr    = totalCustoEntregas + smallSalesDeliveryCost;
+    const dreMargemEbit   = consolidadoBruto > 0 ? (consolidadoLucro / consolidadoBruto) * 100 : 0;
+
+    // ── Aba 1: Smartwatches ──────────────────────────────────────────────────
+    const swSheet: any[][] = [
+      [`SMARTWATCHES — ${monthName} ${selected.year}`],
+      [],
+      ['RECEITAS', 'Valor (R$)'],
+      ['Faturamento Bruto', totalBruto],
+      ['Líquido Recebido', totalLiquido],
+      ['Taxa de Cartão', totalTaxaCartao],
+      ['Total de Vendas (qtd)', sales.length],
+      ['Qtd Smartwatches', swCount],
+      ['Ticket Médio', sales.length > 0 ? totalBruto / sales.length : 0],
+      [],
+      ['CUSTOS', 'Valor (R$)'],
+      ['Custo dos Produtos', totalCustoProdutos],
+      ['Embalagens', custoEmbalagens],
+      ['Custo Entregas (Total)', totalCustoEntregas],
+      ['  Motoboy', totalMotoboyDeliveries],
+      ['  Correios', totalCorreiosDeliveries],
+      ['  Avulsos (Pagamentos Motoboy)', motoboyExtras],
+      ['Investimento em Ads', adSpend],
+      ['Custos Operacionais', operationalCosts],
+      [],
+      ['MÉTRICAS DE MARKETING', 'Valor'],
+      ['ROAS', roas !== null ? roas : 'Sem dados de ads'],
+      ['ROI (%)', roi !== null ? roi : 'Sem dados de ads'],
+      ['CPV / Venda (R$)', cpv !== null ? cpv : 'Sem dados de ads'],
+      ['CPV / Smartwatch (R$)', cpvSw !== null ? cpvSw : 'Sem dados de ads'],
+      [],
+      ['RESULTADO', 'Valor'],
+      ['Lucro Smartwatches (R$)', lucroSmartwatch],
+      ['Margem (%)', margemSmartwatch],
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(swSheet), 'Smartwatches');
+
+    // ── Aba 2: Pequenas Vendas ───────────────────────────────────────────────
+    const pvSheet: any[][] = [
+      [`PEQUENAS VENDAS — ${monthName} ${selected.year}`],
+      [],
+      ['MÉTRICAS', 'Valor'],
+      ['Nº de Vendas', smallSales.length],
+      ['Faturamento Bruto (R$)', smallSalesRevenue],
+      ['Taxas de Cartão (R$)', smallSalesCardFees],
+      ['Líquido Recebido (R$)', smallSalesNet],
+      ['Custo dos Produtos (R$)', smallSalesCost],
+      ['Custo de Entregas (R$)', smallSalesDeliveryCost],
+      [],
+      ['RESULTADO', 'Valor'],
+      ['Lucro Pequenas Vendas (R$)', smallSalesProfit],
+      ['Margem (%)', margemPV],
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pvSheet), 'Pequenas Vendas');
+
+    // ── Aba 3: Resultado Consolidado ─────────────────────────────────────────
+    const consSheet: any[][] = [
+      [`RESULTADO CONSOLIDADO — ${monthName} ${selected.year}`],
+      [],
+      ['FATURAMENTO', 'Valor (R$)'],
+      ['Faturamento Total (Bruto)', consolidadoBruto],
+      ['  Smartwatches', totalBruto],
+      ['  Pequenas Vendas', smallSalesRevenue],
+      [],
+      ['DEDUÇÕES', 'Valor (R$)'],
+      ['Total Deduzido', consolidadoCusto],
+      ['  Taxas de Cartão', dreCardFees],
+      ['  Custo Produtos', dreCustoProd],
+      ['  Custo Entregas', dreCustoEntr],
+      ['  Ads + Operacional', adSpend + operationalCosts],
+      [],
+      ['RESULTADO', 'Valor (R$)'],
+      ['Lucro Total da Empresa', consolidadoLucro],
+      ['Margem Consolidada (%)', margemConsolidada],
+      ['  Lucro Smartwatches', lucroSmartwatch],
+      ['  Lucro Pequenas Vendas', smallSalesProfit],
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(consSheet), 'Resultado Consolidado');
+
+    // ── Aba 4: DRE ───────────────────────────────────────────────────────────
+    const dreSheet: any[][] = [
+      [`DRE — DEMONSTRATIVO DE RESULTADO — ${monthName} ${selected.year}`],
+      [],
+      ['LINHA', 'Valor (R$)'],
+      ['Receita Bruta', consolidadoBruto],
+      [`  Smartwatches (${sales.length} venda${sales.length !== 1 ? 's' : ''})`, totalBruto],
+      [`  Pequenas Vendas (${smallSales.length} venda${smallSales.length !== 1 ? 's' : ''})`, smallSalesRevenue],
+      ['(-) Taxas de Cartão', -dreCardFees],
+      ['= Receita Líquida', dreRecLiquida],
+      [],
+      ['(-) Custo dos Produtos', -dreCustoProd],
+      [`(-) Embalagens (${swCount} un. × R$2,00)`, -custoEmbalagens],
+      ['= Lucro Bruto', dreLucroBruto],
+      [],
+      ['(-) Custo de Entregas', -dreCustoEntr],
+      ['(-) Investimento em Ads', -adSpend],
+      ['(-) Custos Operacionais', -operationalCosts],
+      [],
+      ['= Lucro Operacional (EBIT)', consolidadoLucro],
+      ['Margem sobre Receita Bruta (%)', dreMargemEbit],
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(dreSheet), 'DRE');
+
+    // ── Aba 5: Modelos ───────────────────────────────────────────────────────
+    const modelsSheet: any[][] = [
+      [`MODELOS MAIS VENDIDOS — ${monthName} ${selected.year}`],
+      [],
+      ['#', 'Modelo', 'Quantidade', 'Lucro Bruto/un (R$)', 'Lucro Líquido/un (R$)'],
+    ];
+    topModels.forEach(([model, qty], i) => {
+      const fin = modelFinancialMap.get(model);
+      const lucroBrutoPerUn   = fin && fin.qty > 0 ? fin.lucroBruto / fin.qty : 0;
+      const lucroLiquidoPerUn = lucroBrutoPerUn - fixedCostPerUnit;
+      modelsSheet.push([i + 1, model, qty, lucroBrutoPerUn, lucroLiquidoPerUn]);
+    });
+    modelsSheet.push([]);
+    modelsSheet.push(['', 'Custo fixo/un (Ads+Op+Emb ÷ SW)', '', fixedCostPerUnit, '']);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(modelsSheet), 'Modelos');
+
+    XLSX.writeFile(wb, fileName);
+  };
+
+  if (loading) return <div className="p-8 text-white flex items-center gap-2"><BarChart3 className="animate-pulse" /> Carregando...</div>;
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -308,17 +441,27 @@ export default function ResumoMensal() {
       </div>
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 mb-6">
-        <div className="flex flex-wrap gap-2 items-center">
-          <span className="text-gray-400 text-sm">Mês:</span>
-          {getMonthOptions().map(opt => {
-            const isActive = opt.year === selected.year && opt.month === selected.month;
-            return (
-              <button key={`${opt.year}-${opt.month}`} onClick={() => setSelected(opt)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
-                {MONTHS[opt.month - 1]} {opt.year}
-              </button>
-            );
-          })}
+        <div className="flex flex-wrap gap-2 items-center justify-between">
+          <div className="flex flex-wrap gap-2 items-center">
+            <span className="text-gray-400 text-sm">Mês:</span>
+            {getMonthOptions().map(opt => {
+              const isActive = opt.year === selected.year && opt.month === selected.month;
+              return (
+                <button key={`${opt.year}-${opt.month}`} onClick={() => setSelected(opt)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
+                  {MONTHS[opt.month - 1]} {opt.year}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            onClick={exportToExcel}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            <FileDown size={16} />
+            Exportar Excel
+          </button>
         </div>
       </div>
 
