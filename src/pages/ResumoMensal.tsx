@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import { supabase } from '../lib/supabase';
 import { calculateCardFee } from '../lib/cardFees';
 import {
@@ -300,129 +300,245 @@ export default function ResumoMensal() {
     const fileName = `Relatorio_Triumph_Store_${monthName}_${selected.year}.xlsx`;
     const wb = XLSX.utils.book_new();
 
-    // DRE derived values
-    const dreCardFees     = totalTaxaCartao + smallSalesCardFees;
-    const dreRecLiquida   = consolidadoBruto - dreCardFees;
-    const dreCustoProd    = totalCustoProdutos + smallSalesCost;
-    const dreLucroBruto   = dreRecLiquida - dreCustoProd - custoEmbalagens;
-    const dreCustoEntr    = totalCustoEntregas + smallSalesDeliveryCost;
-    const dreMargemEbit   = consolidadoBruto > 0 ? (consolidadoLucro / consolidadoBruto) * 100 : 0;
+    // ── Primitivos de estilo ─────────────────────────────────────────────────
+    const T   = { style: 'thin' as const, color: { rgb: 'E5E7EB' } };
+    const bd  = { top: T, bottom: T, left: T, right: T };
+    const MON = '"R$ "#,##0.00';
+    const period = `${monthName} ${selected.year}`;
+
+    // Fábrica de célula
+    const mk = (v: any, s: object, t?: string): any =>
+      ({ v, t: t ?? (typeof v === 'number' ? 'n' : 's'), s });
+    const mt = (): any => mk('', {});
+
+    // ── Estilos reutilizáveis ────────────────────────────────────────────────
+    const sTitleCell = (txt: string) => mk(txt, {
+      font: { bold: true, sz: 13, color: { rgb: 'FFFFFF' } },
+      fill: { patternType: 'solid', fgColor: { rgb: 'F97316' } },
+      alignment: { horizontal: 'left', vertical: 'center' },
+    });
+    const sTitleBg = () => mk('', { fill: { patternType: 'solid', fgColor: { rgb: 'F97316' } } });
+
+    const sSecCell = (txt: string) => mk(txt, {
+      font: { bold: true, sz: 10, color: { rgb: '111827' } },
+      fill: { patternType: 'solid', fgColor: { rgb: 'E5E7EB' } },
+      alignment: { horizontal: 'left', vertical: 'center' },
+    });
+    const sSecBg = () => mk('', { fill: { patternType: 'solid', fgColor: { rgb: 'E5E7EB' } } });
+
+    const sColHead = (txt: string) => mk(txt, {
+      font: { bold: true, sz: 10, color: { rgb: 'FFFFFF' } },
+      fill: { patternType: 'solid', fgColor: { rgb: '4B5563' } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+      border: bd,
+    });
+
+    const sLbl = (txt: string, alt = false) => mk(txt, {
+      ...(alt ? { fill: { patternType: 'solid', fgColor: { rgb: 'F9FAFB' } } } : {}),
+      alignment: { horizontal: 'left', vertical: 'center' },
+      border: bd,
+    });
+
+    const sMon = (v: number, alt = false) => mk(v, {
+      font: { color: { rgb: v < 0 ? 'DC2626' : v > 0 ? '15803D' : '6B7280' } },
+      ...(alt ? { fill: { patternType: 'solid', fgColor: { rgb: 'F9FAFB' } } } : {}),
+      numFmt: MON,
+      alignment: { horizontal: 'right', vertical: 'center' },
+      border: bd,
+    });
+
+    const sPct = (v: number, alt = false) => mk(v / 100, {
+      font: { color: { rgb: v < 0 ? 'DC2626' : v > 0 ? '15803D' : '6B7280' } },
+      ...(alt ? { fill: { patternType: 'solid', fgColor: { rgb: 'F9FAFB' } } } : {}),
+      numFmt: '0.00%',
+      alignment: { horizontal: 'right', vertical: 'center' },
+      border: bd,
+    });
+
+    const sNum = (v: number, alt = false) => mk(v, {
+      ...(alt ? { fill: { patternType: 'solid', fgColor: { rgb: 'F9FAFB' } } } : {}),
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: bd,
+    });
+
+    const sResultMon = (v: number) => mk(v, {
+      font: { bold: true, sz: 11, color: { rgb: v < 0 ? 'DC2626' : v > 0 ? '15803D' : '6B7280' } },
+      fill: { patternType: 'solid', fgColor: { rgb: v < 0 ? 'FEF2F2' : 'F0FDF4' } },
+      numFmt: MON,
+      alignment: { horizontal: 'right', vertical: 'center' },
+      border: bd,
+    });
+
+    // Linha de subtotal com fundo cinza e valor na col B
+    const sSecRow = (label: string, v: number): any[] => [
+      mk(label, {
+        font: { bold: true, color: { rgb: '111827' } },
+        fill: { patternType: 'solid', fgColor: { rgb: 'E5E7EB' } },
+        alignment: { horizontal: 'left', vertical: 'center' },
+        border: bd,
+      }),
+      mk(v, {
+        font: { bold: true, color: { rgb: v < 0 ? 'DC2626' : v > 0 ? '15803D' : '6B7280' } },
+        fill: { patternType: 'solid', fgColor: { rgb: 'E5E7EB' } },
+        numFmt: MON,
+        alignment: { horizontal: 'right', vertical: 'center' },
+        border: bd,
+      }),
+    ];
+
+    // Linha de EBIT destacada com fundo verde/vermelho
+    const sEbitRow = (v: number): any[] => [
+      mk('= Lucro Operacional (EBIT)', {
+        font: { bold: true, sz: 11, color: { rgb: '111827' } },
+        fill: { patternType: 'solid', fgColor: { rgb: v >= 0 ? 'D1FAE5' : 'FEE2E2' } },
+        alignment: { horizontal: 'left', vertical: 'center' },
+        border: bd,
+      }),
+      mk(v, {
+        font: { bold: true, sz: 11, color: { rgb: v >= 0 ? '15803D' : 'DC2626' } },
+        fill: { patternType: 'solid', fgColor: { rgb: v >= 0 ? 'D1FAE5' : 'FEE2E2' } },
+        numFmt: MON,
+        alignment: { horizontal: 'right', vertical: 'center' },
+        border: bd,
+      }),
+    ];
+
+    // Cria worksheet: aplica colunas, altura do título e merges
+    const mkWs = (rows: any[][], colW: number[], merges?: any[]): any => {
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = colW.map(wch => ({ wch }));
+      ws['!rows'] = [{ hpt: 26 }];
+      if (merges) ws['!merges'] = merges;
+      return ws;
+    };
+
+    // ── Valores derivados do DRE ─────────────────────────────────────────────
+    const dreCardFees   = totalTaxaCartao + smallSalesCardFees;
+    const dreRecLiq     = consolidadoBruto - dreCardFees;
+    const dreCustoProd  = totalCustoProdutos + smallSalesCost;
+    const dreLucroBruto = dreRecLiq - dreCustoProd - custoEmbalagens;
+    const dreCustoEntr  = totalCustoEntregas + smallSalesDeliveryCost;
+    const dreMargemEbit = consolidadoBruto > 0 ? (consolidadoLucro / consolidadoBruto) * 100 : 0;
 
     // ── Aba 1: Smartwatches ──────────────────────────────────────────────────
-    const swSheet: any[][] = [
-      [`SMARTWATCHES — ${monthName} ${selected.year}`],
-      [],
-      ['RECEITAS', 'Valor (R$)'],
-      ['Faturamento Bruto', totalBruto],
-      ['Líquido Recebido', totalLiquido],
-      ['Taxa de Cartão', totalTaxaCartao],
-      ['Total de Vendas (qtd)', sales.length],
-      ['Qtd Smartwatches', swCount],
-      ['Ticket Médio', sales.length > 0 ? totalBruto / sales.length : 0],
-      [],
-      ['CUSTOS', 'Valor (R$)'],
-      ['Custo dos Produtos', totalCustoProdutos],
-      ['Embalagens', custoEmbalagens],
-      ['Custo Entregas (Total)', totalCustoEntregas],
-      ['  Motoboy', totalMotoboyDeliveries],
-      ['  Correios', totalCorreiosDeliveries],
-      ['  Avulsos (Pagamentos Motoboy)', motoboyExtras],
-      ['Investimento em Ads', adSpend],
-      ['Custos Operacionais', operationalCosts],
-      [],
-      ['MÉTRICAS DE MARKETING', 'Valor'],
-      ['ROAS', roas !== null ? roas : 'Sem dados de ads'],
-      ['ROI (%)', roi !== null ? roi : 'Sem dados de ads'],
-      ['CPV / Venda (R$)', cpv !== null ? cpv : 'Sem dados de ads'],
-      ['CPV / Smartwatch (R$)', cpvSw !== null ? cpvSw : 'Sem dados de ads'],
-      [],
-      ['RESULTADO', 'Valor'],
-      ['Lucro Smartwatches (R$)', lucroSmartwatch],
-      ['Margem (%)', margemSmartwatch],
-    ];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(swSheet), 'Smartwatches');
+    XLSX.utils.book_append_sheet(wb, mkWs([
+      [sTitleCell(`Triumph Store — Smartwatches — ${period}`), sTitleBg()],
+      [mt(), mt()],
+      [sSecCell('RECEITAS'), sSecBg()],
+      [sLbl('Faturamento Bruto'),     sMon(totalBruto)],
+      [sLbl('Líquido Recebido'),      sMon(totalLiquido)],
+      [sLbl('Taxa de Cartão'),        sMon(totalTaxaCartao)],
+      [sLbl('Total de Vendas'),       sNum(sales.length)],
+      [sLbl('Qtd Smartwatches'),      sNum(swCount)],
+      [sLbl('Ticket Médio'),          sMon(sales.length > 0 ? totalBruto / sales.length : 0)],
+      [mt(), mt()],
+      [sSecCell('CUSTOS'), sSecBg()],
+      [sLbl('Custo dos Produtos'),         sMon(totalCustoProdutos)],
+      [sLbl('Embalagens'),                 sMon(custoEmbalagens)],
+      [sLbl('Custo Entregas (Total)'),      sMon(totalCustoEntregas)],
+      [sLbl('  ↳ Motoboy', true),          sMon(totalMotoboyDeliveries, true)],
+      [sLbl('  ↳ Correios', true),         sMon(totalCorreiosDeliveries, true)],
+      [sLbl('  ↳ Avulsos', true),          sMon(motoboyExtras, true)],
+      [sLbl('Investimento em Ads'),        sMon(adSpend)],
+      [sLbl('Custos Operacionais'),        sMon(operationalCosts)],
+      [mt(), mt()],
+      [sSecCell('MÉTRICAS DE MARKETING'), sSecBg()],
+      [sLbl('ROAS'), roas !== null
+        ? mk(roas, { numFmt: '0.00"x"', alignment: { horizontal: 'right' }, border: bd })
+        : sLbl('—')],
+      [sLbl('ROI'),  roi  !== null ? sPct(roi)  : sLbl('—')],
+      [sLbl('CPV / Venda'),      cpv   !== null ? sMon(cpv)   : sLbl('—')],
+      [sLbl('CPV / Smartwatch'), cpvSw !== null ? sMon(cpvSw) : sLbl('—')],
+      [mt(), mt()],
+      [sSecCell('RESULTADO'), sSecBg()],
+      [sLbl('Lucro Smartwatches'), sResultMon(lucroSmartwatch)],
+      [sLbl('Margem'),             sPct(margemSmartwatch)],
+    ], [38, 18], [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }]), 'Smartwatches');
 
     // ── Aba 2: Pequenas Vendas ───────────────────────────────────────────────
-    const pvSheet: any[][] = [
-      [`PEQUENAS VENDAS — ${monthName} ${selected.year}`],
-      [],
-      ['MÉTRICAS', 'Valor'],
-      ['Nº de Vendas', smallSales.length],
-      ['Faturamento Bruto (R$)', smallSalesRevenue],
-      ['Taxas de Cartão (R$)', smallSalesCardFees],
-      ['Líquido Recebido (R$)', smallSalesNet],
-      ['Custo dos Produtos (R$)', smallSalesCost],
-      ['Custo de Entregas (R$)', smallSalesDeliveryCost],
-      [],
-      ['RESULTADO', 'Valor'],
-      ['Lucro Pequenas Vendas (R$)', smallSalesProfit],
-      ['Margem (%)', margemPV],
-    ];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pvSheet), 'Pequenas Vendas');
+    XLSX.utils.book_append_sheet(wb, mkWs([
+      [sTitleCell(`Triumph Store — Pequenas Vendas — ${period}`), sTitleBg()],
+      [mt(), mt()],
+      [sSecCell('MÉTRICAS'), sSecBg()],
+      [sLbl('Nº de Vendas'),       sNum(smallSales.length)],
+      [sLbl('Faturamento Bruto'),  sMon(smallSalesRevenue)],
+      [sLbl('Taxas de Cartão'),    sMon(smallSalesCardFees)],
+      [sLbl('Líquido Recebido'),   sMon(smallSalesNet)],
+      [sLbl('Custo dos Produtos'), sMon(smallSalesCost)],
+      [sLbl('Custo de Entregas'),  sMon(smallSalesDeliveryCost)],
+      [mt(), mt()],
+      [sSecCell('RESULTADO'), sSecBg()],
+      [sLbl('Lucro Pequenas Vendas'), sResultMon(smallSalesProfit)],
+      [sLbl('Margem'),                sPct(margemPV)],
+    ], [38, 18], [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }]), 'Pequenas Vendas');
 
     // ── Aba 3: Resultado Consolidado ─────────────────────────────────────────
-    const consSheet: any[][] = [
-      [`RESULTADO CONSOLIDADO — ${monthName} ${selected.year}`],
-      [],
-      ['FATURAMENTO', 'Valor (R$)'],
-      ['Faturamento Total (Bruto)', consolidadoBruto],
-      ['  Smartwatches', totalBruto],
-      ['  Pequenas Vendas', smallSalesRevenue],
-      [],
-      ['DEDUÇÕES', 'Valor (R$)'],
-      ['Total Deduzido', consolidadoCusto],
-      ['  Taxas de Cartão', dreCardFees],
-      ['  Custo Produtos', dreCustoProd],
-      ['  Custo Entregas', dreCustoEntr],
-      ['  Ads + Operacional', adSpend + operationalCosts],
-      [],
-      ['RESULTADO', 'Valor (R$)'],
-      ['Lucro Total da Empresa', consolidadoLucro],
-      ['Margem Consolidada (%)', margemConsolidada],
-      ['  Lucro Smartwatches', lucroSmartwatch],
-      ['  Lucro Pequenas Vendas', smallSalesProfit],
-    ];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(consSheet), 'Resultado Consolidado');
+    XLSX.utils.book_append_sheet(wb, mkWs([
+      [sTitleCell(`Triumph Store — Resultado Consolidado — ${period}`), sTitleBg()],
+      [mt(), mt()],
+      [sSecCell('FATURAMENTO'), sSecBg()],
+      [sLbl('Faturamento Total (Bruto)'),  sMon(consolidadoBruto)],
+      [sLbl('  ↳ Smartwatches', true),     sMon(totalBruto, true)],
+      [sLbl('  ↳ Pequenas Vendas', true),  sMon(smallSalesRevenue, true)],
+      [mt(), mt()],
+      [sSecCell('DEDUÇÕES'), sSecBg()],
+      [sLbl('Total Deduzido'),                  sMon(consolidadoCusto)],
+      [sLbl('  ↳ Taxas de Cartão', true),       sMon(dreCardFees, true)],
+      [sLbl('  ↳ Custo Produtos', true),        sMon(dreCustoProd, true)],
+      [sLbl('  ↳ Custo Entregas', true),        sMon(dreCustoEntr, true)],
+      [sLbl('  ↳ Ads + Operacional', true),     sMon(adSpend + operationalCosts, true)],
+      [mt(), mt()],
+      [sSecCell('RESULTADO'), sSecBg()],
+      [sLbl('Lucro Total da Empresa'),           sResultMon(consolidadoLucro)],
+      [sLbl('Margem Consolidada'),               sPct(margemConsolidada)],
+      [sLbl('  ↳ Lucro Smartwatches', true),    sMon(lucroSmartwatch, true)],
+      [sLbl('  ↳ Lucro Pequenas Vendas', true), sMon(smallSalesProfit, true)],
+    ], [40, 18], [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }]), 'Resultado Consolidado');
 
     // ── Aba 4: DRE ───────────────────────────────────────────────────────────
-    const dreSheet: any[][] = [
-      [`DRE — DEMONSTRATIVO DE RESULTADO — ${monthName} ${selected.year}`],
-      [],
-      ['LINHA', 'Valor (R$)'],
-      ['Receita Bruta', consolidadoBruto],
-      [`  Smartwatches (${sales.length} venda${sales.length !== 1 ? 's' : ''})`, totalBruto],
-      [`  Pequenas Vendas (${smallSales.length} venda${smallSales.length !== 1 ? 's' : ''})`, smallSalesRevenue],
-      ['(-) Taxas de Cartão', -dreCardFees],
-      ['= Receita Líquida', dreRecLiquida],
-      [],
-      ['(-) Custo dos Produtos', -dreCustoProd],
-      [`(-) Embalagens (${swCount} un. × R$2,00)`, -custoEmbalagens],
-      ['= Lucro Bruto', dreLucroBruto],
-      [],
-      ['(-) Custo de Entregas', -dreCustoEntr],
-      ['(-) Investimento em Ads', -adSpend],
-      ['(-) Custos Operacionais', -operationalCosts],
-      [],
-      ['= Lucro Operacional (EBIT)', consolidadoLucro],
-      ['Margem sobre Receita Bruta (%)', dreMargemEbit],
-    ];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(dreSheet), 'DRE');
+    XLSX.utils.book_append_sheet(wb, mkWs([
+      [sTitleCell(`Triumph Store — DRE — ${period}`), sTitleBg()],
+      [mt(), mt()],
+      [sLbl('Receita Bruta'),                                           sMon(consolidadoBruto)],
+      [sLbl(`  ↳ Smartwatches (${sales.length}v)`, true),              sMon(totalBruto, true)],
+      [sLbl(`  ↳ Pequenas Vendas (${smallSales.length}v)`, true),      sMon(smallSalesRevenue, true)],
+      [sLbl('(−) Taxas de Cartão'),                                     sMon(-dreCardFees)],
+      sSecRow('= Receita Líquida', dreRecLiq),
+      [mt(), mt()],
+      [sLbl('(−) Custo dos Produtos'),                                  sMon(-dreCustoProd)],
+      [sLbl(`(−) Embalagens (${swCount}un × R$2,00)`),                 sMon(-custoEmbalagens)],
+      sSecRow('= Lucro Bruto', dreLucroBruto),
+      [mt(), mt()],
+      [sLbl('(−) Custo de Entregas'),                                   sMon(-dreCustoEntr)],
+      [sLbl('(−) Investimento em Ads'),                                sMon(-adSpend)],
+      [sLbl('(−) Custos Operacionais'),                                sMon(-operationalCosts)],
+      [mt(), mt()],
+      sEbitRow(consolidadoLucro),
+      [sLbl('Margem sobre Receita Bruta'),                              sPct(dreMargemEbit)],
+    ], [42, 18], [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }]), 'DRE');
 
     // ── Aba 5: Modelos ───────────────────────────────────────────────────────
-    const modelsSheet: any[][] = [
-      [`MODELOS MAIS VENDIDOS — ${monthName} ${selected.year}`],
-      [],
-      ['#', 'Modelo', 'Quantidade', 'Lucro Bruto/un (R$)', 'Lucro Líquido/un (R$)'],
-    ];
-    topModels.forEach(([model, qty], i) => {
+    const modelDataRows = topModels.map(([model, qty], i) => {
       const fin = modelFinancialMap.get(model);
-      const lucroBrutoPerUn   = fin && fin.qty > 0 ? fin.lucroBruto / fin.qty : 0;
-      const lucroLiquidoPerUn = lucroBrutoPerUn - fixedCostPerUnit;
-      modelsSheet.push([i + 1, model, qty, lucroBrutoPerUn, lucroLiquidoPerUn]);
+      const lb  = fin && fin.qty > 0 ? fin.lucroBruto / fin.qty : 0;
+      const ll  = lb - fixedCostPerUnit;
+      const alt = i % 2 === 1;
+      return [sNum(i + 1, alt), sLbl(model, alt), sNum(qty, alt), sMon(lb, alt), sMon(ll, alt)];
     });
-    modelsSheet.push([]);
-    modelsSheet.push(['', 'Custo fixo/un (Ads+Op+Emb ÷ SW)', '', fixedCostPerUnit, '']);
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(modelsSheet), 'Modelos');
+    XLSX.utils.book_append_sheet(wb, mkWs([
+      [sTitleCell(`Triumph Store — Modelos Mais Vendidos — ${period}`), sTitleBg(), sTitleBg(), sTitleBg(), sTitleBg()],
+      [mt(), mt(), mt(), mt(), mt()],
+      [sColHead('#'), sColHead('Modelo'), sColHead('Qtd'), sColHead('Lucro Bruto/un'), sColHead('Lucro Líquido/un')],
+      ...modelDataRows,
+      [mt(), mt(), mt(), mt(), mt()],
+      [
+        mt(),
+        mk('Custo fixo/un (Ads + Op + Emb ÷ SW)', { font: { bold: true, color: { rgb: '6B7280' } }, border: bd }),
+        mt(),
+        sMon(fixedCostPerUnit),
+        mt(),
+      ],
+    ], [5, 45, 8, 18, 18], [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }]), 'Modelos');
 
     XLSX.writeFile(wb, fileName);
   };
