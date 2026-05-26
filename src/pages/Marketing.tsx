@@ -42,6 +42,7 @@ export default function Marketing() {
   const [fbSyncedCount, setFbSyncedCount] = useState<number | null>(null);
   const [totalSwCount, setTotalSwCount] = useState(0);
   const [activeTab, setActiveTab] = useState<'overview' | 'facebook' | 'detail'>('overview');
+  const [fbSyncing, setFbSyncing] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -188,6 +189,65 @@ export default function Marketing() {
     setFbSyncedCount(null);
     loadFacebookData();
   }, [activeTab, timeFilter, customStartDate, customEndDate]);
+
+  const syncPeriodToSupabase = async () => {
+    const dateRange = getDateRange();
+    if (!dateRange) return;
+    setFbSyncing(true);
+    setFbSyncedCount(null);
+    try {
+      // Build list of all days in period
+      const days: string[] = [];
+      const cur = new Date(dateRange.start + 'T12:00:00');
+      const end = new Date(dateRange.end + 'T12:00:00');
+      while (cur <= end) {
+        days.push(cur.toISOString().slice(0, 10));
+        cur.setDate(cur.getDate() + 1);
+      }
+
+      // Fetch spend per day in batches of 5
+      const rows: { date: string; amount: number }[] = [];
+      const BATCH = 5;
+      for (let i = 0; i < days.length; i += BATCH) {
+        const batch = days.slice(i, i + BATCH);
+        const results = await Promise.all(batch.map(async (day) => {
+          try {
+            const res = await fetch(`${SUPABASE_URL}/functions/v1/ad-manager`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'list',
+                level: 'campaign',
+                dateRange: { since: day, until: day },
+                parentId: null,
+                statusFilter: 'active_only',
+              }),
+            });
+            const data = await res.json();
+            if (data.success) {
+              const campaigns: any[] = data.data || [];
+              const spend = campaigns.reduce((s: number, c: any) => s + parseFloat(c.spend || '0'), 0);
+              return spend > 0 ? { date: day, amount: spend } : null;
+            }
+          } catch {}
+          return null;
+        }));
+        results.forEach(r => { if (r) rows.push(r); });
+      }
+
+      if (rows.length > 0) {
+        await supabase.from('ad_spend').upsert(rows, { onConflict: 'date' });
+        setFbSyncedCount(rows.length);
+        await loadData();
+      } else {
+        setFbSyncedCount(0);
+      }
+    } catch (e) {
+      console.error('Erro ao sincronizar período:', e);
+    } finally {
+      setFbSyncing(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -425,11 +485,19 @@ export default function Marketing() {
               </div>
             </div>
             {timeFilter !== 'today' && !(timeFilter === 'custom' && (!customStartDate || !customEndDate)) && (
-              <button onClick={loadFacebookData} disabled={fbLoading}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm disabled:opacity-50">
-                <RefreshCw size={16} className={fbLoading ? 'animate-spin' : ''} />
-                {fbLoading ? 'Sincronizando...' : 'Sincronizar'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={loadFacebookData} disabled={fbLoading || fbSyncing}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm disabled:opacity-50">
+                  <RefreshCw size={16} className={fbLoading ? 'animate-spin' : ''} />
+                  {fbLoading ? 'Buscando...' : 'Atualizar'}
+                </button>
+                <button onClick={syncPeriodToSupabase} disabled={fbLoading || fbSyncing || !fbMetrics}
+                  title="Salva os dados do período dia a dia no Supabase para que Visão Geral e Resumo Anual mostrem os valores corretos"
+                  className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                  <CheckCircle size={16} className={fbSyncing ? 'animate-spin' : ''} />
+                  {fbSyncing ? 'Salvando...' : 'Salvar no Supabase'}
+                </button>
+              </div>
             )}
           </div>
 
