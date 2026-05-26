@@ -16,6 +16,7 @@ import {
   PackageSearch,
   Layers,
   BarChart3,
+  Calendar,
   Sun,
   Moon,
 } from 'lucide-react';
@@ -59,6 +60,7 @@ const menuGroups = [
     items: [
       { id: 'resumo-vendas', label: 'Resumo de Vendas', icon: DollarSign },
       { id: 'resumo',        label: 'Relatório Mensal', icon: BarChart3  },
+      { id: 'resumo-anual',  label: 'Resumo Anual',     icon: Calendar   },
       { id: 'settings',      label: 'Configurações',    icon: Settings   },
     ],
   },

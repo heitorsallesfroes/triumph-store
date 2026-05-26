@@ -13,6 +13,7 @@ import Settings from './pages/Settings';
 import OperationalCosts from './pages/OperationalCosts';
 import ResumoMensal from './pages/ResumoMensal';
 import ResumoVendas from './pages/ResumoVendas';
+import ResumoAnual from './pages/ResumoAnual';
 import SmallSales from './pages/SmallSales';
 import RastreamentoSedex from './pages/RastreamentoSedex';
 
@@ -66,6 +67,8 @@ function App() {
         return <ResumoVendas />;
       case 'resumo':
         return <ResumoMensal />;
+      case 'resumo-anual':
+        return <ResumoAnual />;
       case 'settings':
         return <Settings />;
       default:
