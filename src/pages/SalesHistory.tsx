@@ -372,6 +372,11 @@ export default function SalesHistory() {
       }
 
       const nfeUrl = data.nfe_url || '';
+
+      if (data.nfe_chave) {
+        await supabase.from('sales').update({ nfe_chave: data.nfe_chave }).eq('id', sale.id);
+      }
+
       updateNFeInState(sale.id, nfeUrl, 'emitida', data.nfe_chave || undefined);
 
       // Abre antes do alert para não ser bloqueado como popup
