@@ -228,8 +228,7 @@ export default function SalesHistory() {
       let query = supabase
         .from('sales')
         .select('*')
-        .order('sale_date', { ascending: false })
-        .limit(200);
+        .order('sale_date', { ascending: false });
       if (statusFilter !== 'all') query = query.eq('status', statusFilter);
       if (deliveryTypeFilter !== 'all') query = query.eq('delivery_type', deliveryTypeFilter);
       if (deliveryTypeFilter === 'motoboy' && motoboyFilter !== 'all') query = query.eq('motoboy_id', motoboyFilter);
