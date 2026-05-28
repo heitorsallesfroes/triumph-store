@@ -444,16 +444,13 @@ export default function SalesHistory() {
 
       if (items.length === 0) items.push({ name: 'Smartwatch', quantity: 1, price: 100 });
 
-      // DEBUG: comparar nfe_chave no estado React vs no banco
       const { data: freshSale } = await supabase
         .from('sales')
         .select('nfe_chave')
         .eq('id', sale.id)
         .single();
-      console.log('[Etiqueta] nfe_chave no ESTADO React:', sale.nfe_chave ?? '(vazio)');
-      console.log('[Etiqueta] nfe_chave no BANCO (Supabase):', freshSale?.nfe_chave ?? '(vazio)');
-      const resolvedInvoiceKey = sale.nfe_chave || freshSale?.nfe_chave || undefined;
-      console.log('[Etiqueta] invoice_key que será enviado ao SuperFrete:', resolvedInvoiceKey ?? '(nenhum — vai gerar Declaração de Conteúdo)');
+
+      const resolvedInvoiceKey = freshSale?.nfe_chave || undefined;
 
       const result = await generateShippingLabel({
         customer_name: sale.customer_name,
