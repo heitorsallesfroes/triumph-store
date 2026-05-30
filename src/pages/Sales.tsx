@@ -663,6 +663,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
           volumes:            formData.volumes,
           manual_items:       manualItems.length > 0 ? manualItems : null,
           delivery_notes:     formData.delivery_notes.trim() || null,
+          sale_date:          saleDate + 'T' + new Date().toISOString().split('T')[1],
         }).eq('id', editSaleId);
         if (updateErr) throw updateErr;
 
