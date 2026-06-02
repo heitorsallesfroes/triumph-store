@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { RefreshCw, AlertCircle, Package, MapPin, Clock } from 'lucide-react';
+import { RefreshCw, AlertCircle, Package, MapPin, Clock, X } from 'lucide-react';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -20,6 +20,7 @@ interface TrackedSale {
   city: string;
   neighborhood: string;
   tracking_code: string | null;
+  shipping_label_url: string | null;
   shipping_status: string | null;
   sale_date: string;
   updated_at?: string | null;
@@ -42,13 +43,34 @@ function getCol(status: string | null): TrackingCol {
 
 function isOldDelivery(s: Pick<TrackedSale, 'shipping_status' | 'delivered_at' | 'updated_at' | 'sale_date'>): boolean {
   if (!(s.shipping_status ?? '').toLowerCase().includes('entregue')) return false;
-  // Usa delivered_at (data real de entrega) ou updated_at como proxy.
-  // NÃO usa sale_date: data da venda ≠ data de entrega e esconderia pacotes recentes.
   const ref = s.delivered_at || s.updated_at;
-  if (!ref) return false; // sem data de entrega conhecida → mostra por segurança
+  if (!ref) return false;
   return Date.now() - new Date(ref).getTime() > FIVE_DAYS_MS;
 }
 
+// Extrai order_id da URL da etiqueta (suporta formato orders[]=ID e JWT no path)
+function decodeJwtOrderId(url: string): string | null {
+  try {
+    const token = url.split('/').pop()?.split('?')[0] ?? '';
+    if (!token.startsWith('eyJ')) return null;
+    const parts = token.split('.');
+    const segment = parts.length >= 2 ? parts[1] : parts[0];
+    const padded = segment + '='.repeat((4 - segment.length % 4) % 4);
+    const decoded = JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/')));
+    const id = decoded.id ?? decoded.order_id ?? decoded.orderId
+      ?? (Array.isArray(decoded.order_ids) ? decoded.order_ids[0] : null)
+      ?? (Array.isArray(decoded.orders) ? decoded.orders[0] : null);
+    return id != null ? String(id) : null;
+  } catch { return null; }
+}
+
+function extractOrderId(url: string | null): string | null {
+  if (!url) return null;
+  const normalized = url.replace(/orders%5B%5D=/gi, 'orders[]=');
+  const match = normalized.split('orders[]=')[1];
+  if (match) return match.split('&')[0].trim() || null;
+  return decodeJwtOrderId(url);
+}
 
 function getEventIcon(desc: string): string {
   const d = desc.toLowerCase();
@@ -103,16 +125,27 @@ function StatusBadge({ status }: { status: string | null }) {
 function TrackingCard({
   sale,
   onUpdate,
+  onHide,
   formatDate,
 }: {
   sale: TrackedSale;
   onUpdate: () => void;
+  onHide: () => void;
   formatDate: (d: string) => string;
 }) {
   const lastDate = sale.delivered_at || sale.updated_at || sale.sale_date;
   return (
-    <div className="bg-gray-900 rounded-lg border border-gray-700 p-3 space-y-2 hover:border-orange-500/40 transition-colors">
-      <div>
+    <div className="relative bg-gray-900 rounded-lg border border-gray-700 p-3 space-y-2 hover:border-orange-500/40 transition-colors">
+      {/* Botão remover do rastreamento */}
+      <button
+        onClick={onHide}
+        title="Remover do rastreamento"
+        className="absolute top-2 right-2 text-gray-600 hover:text-red-400 hover:bg-red-400/10 rounded p-0.5 transition-colors"
+      >
+        <X size={12} />
+      </button>
+
+      <div className="pr-4">
         <h3 className="text-sm font-bold text-white leading-tight truncate">{sale.customer_name}</h3>
         <p className="text-gray-400 text-xs mt-0.5 flex items-center gap-1">
           <MapPin size={10} className="text-gray-500 flex-shrink-0" />
@@ -121,7 +154,7 @@ function TrackingCard({
       </div>
 
       <p className="text-gray-500 text-xs font-mono truncate">
-        {sale.tracking_code ? `🔍 ${sale.tracking_code}` : '📋 Sem código de rastreio ainda'}
+        {sale.tracking_code ? `🔍 ${sale.tracking_code}` : '📋 Aguardando código de rastreio...'}
       </p>
 
       <div>
@@ -194,18 +227,12 @@ const COLS: { id: TrackingCol; title: string; headerCls: string; badgeCls: strin
 ];
 
 function KanbanColumn({
-  title,
-  headerCls,
-  badgeCls,
-  sales,
-  onUpdateOne,
-  formatDate,
+  title, headerCls, badgeCls, sales, onUpdateOne, onHideOne, formatDate,
 }: {
-  title: string;
-  headerCls: string;
-  badgeCls: string;
+  title: string; headerCls: string; badgeCls: string;
   sales: TrackedSale[];
   onUpdateOne: (s: TrackedSale) => void;
+  onHideOne: (s: TrackedSale) => void;
   formatDate: (d: string) => string;
 }) {
   return (
@@ -228,6 +255,7 @@ function KanbanColumn({
               key={sale.id}
               sale={sale}
               onUpdate={() => onUpdateOne(sale)}
+              onHide={() => onHideOne(sale)}
               formatDate={formatDate}
             />
           ))
@@ -242,8 +270,34 @@ export default function CorreiosTracking() {
   const [loading, setLoading] = useState(true);
   const [updatingAll, setUpdatingAll] = useState(false);
 
+  // Busca o tracking_code para pacotes sem código mas com etiqueta gerada.
+  // O SuperFrete demora alguns minutos para atribuir o código após o checkout.
+  const fetchTrackingCodes = async (withoutCode: TrackedSale[]) => {
+    await Promise.all(withoutCode.map(async (sale) => {
+      const orderId = extractOrderId(sale.shipping_label_url);
+      if (!orderId) return;
+      try {
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/get-order-tracking`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ order_id: orderId }),
+        });
+        const data = await resp.json();
+        if (data.success && data.tracking_code) {
+          await supabase.from('sales').update({ tracking_code: data.tracking_code }).eq('id', sale.id);
+          setSales(prev =>
+            prev.map(s => s.id === sale.id ? { ...s, tracking_code: data.tracking_code } : s)
+          );
+        }
+      } catch { /* tenta novamente no próximo refresh */ }
+    }));
+  };
+
   const fetchAndSaveStatuses = async (targets: TrackedSale[]) => {
-    // Só rastreia pacotes que têm código de rastreio — os demais ficam em "Aguardando" sem erro
+    // Só rastreia pacotes que têm código de rastreio
     const trackable = targets.filter(t => t.tracking_code?.trim());
     if (trackable.length === 0) return;
 
@@ -280,7 +334,6 @@ export default function CorreiosTracking() {
             return;
           }
 
-          // Persiste no banco — salva delivered_at quando entregue
           const isNowDelivered = result.status.toLowerCase().includes('entregue');
           const updatePayload: Record<string, string> = { shipping_status: result.status };
           if (isNowDelivered) updatePayload.delivered_at = now;
@@ -302,7 +355,6 @@ export default function CorreiosTracking() {
                     }
                   : s
               )
-              // Remove pacotes entregues que ultrapassaram 5 dias
               .filter(s => !isOldDelivery(s))
           );
         })
@@ -322,18 +374,22 @@ export default function CorreiosTracking() {
     try {
       const { data, error } = await supabase
         .from('sales')
-        .select('id, customer_name, city, neighborhood, tracking_code, shipping_status, sale_date, updated_at, delivered_at')
+        .select('id, customer_name, city, neighborhood, tracking_code, shipping_label_url, shipping_status, sale_date, updated_at, delivered_at')
         .eq('delivery_type', 'correios')
+        .not('hide_from_tracking', 'is', true)
         .order('sale_date', { ascending: false });
 
       if (error) throw error;
 
-      // Filtra pacotes entregues há mais de 5 dias
       const filtered = (data || []).filter((s: any) => !isOldDelivery(s)) as TrackedSale[];
       setSales(filtered);
       setLoading(false);
 
-      // Auto-rastreia todos ao carregar
+      // Pacotes sem código: tenta buscar no SuperFrete (pode demorar alguns min após gerar etiqueta)
+      const withoutCode = filtered.filter(s => !s.tracking_code?.trim() && s.shipping_label_url);
+      if (withoutCode.length > 0) fetchTrackingCodes(withoutCode); // eslint-disable-line @typescript-eslint/no-floating-promises
+
+      // Pacotes com código: consulta status atualizado
       if (filtered.length > 0) fetchAndSaveStatuses(filtered); // eslint-disable-line @typescript-eslint/no-floating-promises
     } catch (err) {
       console.error('Erro ao carregar vendas:', err);
@@ -341,7 +397,6 @@ export default function CorreiosTracking() {
     }
   };
 
-  // Carrega na montagem e a cada 30 minutos
   useEffect(() => {
     loadAndUpdate(); // eslint-disable-line @typescript-eslint/no-floating-promises
     const interval = setInterval(loadAndUpdate, AUTO_REFRESH_MS); // eslint-disable-line @typescript-eslint/no-floating-promises
@@ -352,6 +407,11 @@ export default function CorreiosTracking() {
     setUpdatingAll(true);
     await fetchAndSaveStatuses(sales.filter(s => !s.updating));
     setUpdatingAll(false);
+  };
+
+  const handleHide = async (sale: TrackedSale) => {
+    setSales(prev => prev.filter(s => s.id !== sale.id));
+    await supabase.from('sales').update({ hide_from_tracking: true }).eq('id', sale.id);
   };
 
   const formatDate = (d: string) =>
@@ -422,6 +482,7 @@ export default function CorreiosTracking() {
               badgeCls={col.badgeCls}
               sales={grouped[col.id]}
               onUpdateOne={sale => fetchAndSaveStatuses([sale])} // eslint-disable-line @typescript-eslint/no-floating-promises
+              onHideOne={handleHide}
               formatDate={formatDate}
             />
           ))}
