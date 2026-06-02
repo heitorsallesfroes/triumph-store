@@ -66,7 +66,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const results: { code: string; status: string; events: { description: string; location: string; date: string }[]; error?: string }[] = [];
+    const results: { code: string; status: string; events: { description: string; location: string; destination: string; date: string }[]; error?: string }[] = [];
 
     await Promise.all(tracking_codes.map(async (code) => {
       try {
@@ -110,9 +110,10 @@ Deno.serve(async (req: Request) => {
 
         const events = rawEvents
           .map((e: any) => ({
-            description: String(e.descricao ?? e.description ?? e.status ?? "").trim(),
-            location:    String(e.local    ?? e.location    ?? e.cidade   ?? "").trim(),
-            date:        String(e.data     ?? e.date        ?? e.tracked_at ?? "").trim(),
+            description: String(e.descricao  ?? e.description ?? e.status     ?? "").trim(),
+            location:    String(e.local      ?? e.location    ?? e.cidade     ?? "").trim(),
+            destination: String(e.destino    ?? e.destination ?? e.destinoAcr ?? "").trim(),
+            date:        String(e.data       ?? e.date        ?? e.tracked_at ?? "").trim(),
           }))
           .filter((e) => e.description);
 

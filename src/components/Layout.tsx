@@ -19,13 +19,7 @@ import {
   Calendar,
   Sun,
   Moon,
-  X,
 } from 'lucide-react';
-
-interface ShippingBanner {
-  id: string;
-  customer_name: string;
-}
 
 interface LayoutProps {
   children: ReactNode;
@@ -80,11 +74,6 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
     return (localStorage.getItem('theme') as 'dark' | 'light') || 'dark';
   });
 
-  const [banners, setBanners] = useState<ShippingBanner[]>(() => {
-    try { return JSON.parse(localStorage.getItem('shipping_banners') || '[]'); }
-    catch { return []; }
-  });
-
   useEffect(() => {
     if (theme === 'light') {
       document.documentElement.classList.add('light');
@@ -94,28 +83,12 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  useEffect(() => {
-    const onUpdate = () => {
-      try { setBanners(JSON.parse(localStorage.getItem('shipping_banners') || '[]')); }
-      catch {}
-    };
-    window.addEventListener('shippingBannerUpdate', onUpdate);
-    return () => window.removeEventListener('shippingBannerUpdate', onUpdate);
-  }, []);
-
-  const dismissBanner = (id: string) => {
-    const updated = banners.filter(b => b.id !== id);
-    setBanners(updated);
-    localStorage.setItem('shipping_banners', JSON.stringify(updated));
-  };
-
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
 
   const now = new Date();
   const dateStr = now.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
-    <>
     <div className="flex h-screen" style={{ background: 'var(--bg-base)' }}>
 
       {/* ── Sidebar ── */}
@@ -248,33 +221,5 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
         {children}
       </main>
     </div>
-
-    {/* ── Banner global: pacote saiu para entrega ── */}
-    {banners.length > 0 && (
-      <div
-        className="fixed bottom-4 z-50 flex flex-col gap-2 items-center pointer-events-none"
-        style={{ left: '18rem', right: 0 }}
-      >
-        {banners.map(b => (
-          <div
-            key={b.id}
-            className="flex items-center gap-3 bg-purple-700 border border-purple-500/60 text-white px-5 py-3 rounded-xl shadow-2xl max-w-sm w-full pointer-events-auto"
-          >
-            <span className="text-xl flex-shrink-0">🚚</span>
-            <div className="flex-1 min-w-0">
-              <p className="font-bold text-sm truncate">{b.customer_name}</p>
-              <p className="text-xs text-purple-200">Pacote saiu para entrega!</p>
-            </div>
-            <button
-              onClick={() => dismissBanner(b.id)}
-              className="text-purple-300 hover:text-white flex-shrink-0 p-1 rounded hover:bg-purple-600 transition-colors"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        ))}
-      </div>
-    )}
-    </>
   );
 }

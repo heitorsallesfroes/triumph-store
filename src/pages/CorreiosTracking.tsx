@@ -10,6 +10,7 @@ const AUTO_REFRESH_MS = 30 * 60 * 1000;
 interface TrackingEvent {
   description: string;
   location: string;
+  destination: string;
   date: string;
 }
 
@@ -48,14 +49,6 @@ function isOldDelivery(s: Pick<TrackedSale, 'shipping_status' | 'delivered_at' |
   return Date.now() - new Date(ref).getTime() > FIVE_DAYS_MS;
 }
 
-function dispatchBanner(sale: TrackedSale) {
-  let banners: { id: string; customer_name: string }[] = [];
-  try { banners = JSON.parse(localStorage.getItem('shipping_banners') || '[]'); } catch {}
-  if (banners.some(b => b.id === sale.id)) return;
-  banners.push({ id: sale.id, customer_name: sale.customer_name });
-  localStorage.setItem('shipping_banners', JSON.stringify(banners));
-  window.dispatchEvent(new Event('shippingBannerUpdate'));
-}
 
 function getEventIcon(desc: string): string {
   const d = desc.toLowerCase();
@@ -162,9 +155,13 @@ function TrackingCard({
 
       {/* Linha do tempo de eventos */}
       {!sale.updating && !sale.error && sale.events && sale.events.length > 0 && (
-        <div className="border-t border-gray-700/50 pt-2 space-y-1.5 max-h-36 overflow-y-auto">
+        <div className="border-t border-gray-700/50 pt-2 space-y-1.5 max-h-40 overflow-y-auto">
           {sale.events.map((ev, i) => {
             const isCurrent = i === 0;
+            const place = ev.location && ev.destination
+              ? `${ev.location} → ${ev.destination}`
+              : ev.location || ev.destination || '';
+            const meta = [formatEventDate(ev.date), place].filter(Boolean).join(' • ');
             return (
               <div key={i} className="flex items-start gap-1.5">
                 <span className="text-xs mt-0.5 flex-shrink-0 w-4 text-center leading-none">
@@ -174,10 +171,8 @@ function TrackingCard({
                   <p className={`text-xs leading-snug ${isCurrent ? 'text-white font-semibold' : 'text-gray-500'}`}>
                     {ev.description}
                   </p>
-                  {(ev.date || ev.location) && (
-                    <p className="text-xs text-gray-600 mt-0.5">
-                      {[formatEventDate(ev.date), ev.location].filter(Boolean).join(' · ')}
-                    </p>
+                  {meta && (
+                    <p className="text-xs text-gray-600 mt-0.5">{meta}</p>
                   )}
                 </div>
               </div>
@@ -280,11 +275,6 @@ export default function CorreiosTracking() {
             );
             return;
           }
-
-          // Banner: notifica quando muda para "saiu para entrega"
-          const wasOut = (sale.shipping_status ?? '').toLowerCase().includes('saiu para entrega');
-          const nowOut = result.status.toLowerCase().includes('saiu para entrega');
-          if (nowOut && !wasOut) dispatchBanner(sale);
 
           // Persiste no banco — salva delivered_at quando entregue
           const isNowDelivered = result.status.toLowerCase().includes('entregue');
