@@ -15,7 +15,7 @@ import ResumoMensal from './pages/ResumoMensal';
 import ResumoVendas from './pages/ResumoVendas';
 import ResumoAnual from './pages/ResumoAnual';
 import SmallSales from './pages/SmallSales';
-import RastreamentoSedex from './pages/RastreamentoSedex';
+import CorreiosTracking from './pages/CorreiosTracking';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('home');
@@ -56,7 +56,7 @@ function App() {
       case 'logistics':
         return <Logistics />;
       case 'rastreamento-sedex':
-        return <RastreamentoSedex />;
+        return <CorreiosTracking />;
       case 'marketing':
         return <Marketing />;
       case 'ad-manager':
