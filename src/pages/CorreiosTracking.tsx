@@ -34,7 +34,10 @@ function getCol(status: string | null): TrackingCol {
 
 function isOldDelivery(s: Pick<TrackedSale, 'shipping_status' | 'delivered_at' | 'updated_at' | 'sale_date'>): boolean {
   if (!(s.shipping_status ?? '').toLowerCase().includes('entregue')) return false;
-  const ref = s.delivered_at || s.updated_at || s.sale_date;
+  // Usa delivered_at (data real de entrega) ou updated_at como proxy.
+  // NÃO usa sale_date: data da venda ≠ data de entrega e esconderia pacotes recentes.
+  const ref = s.delivered_at || s.updated_at;
+  if (!ref) return false; // sem data de entrega conhecida → mostra por segurança
   return Date.now() - new Date(ref).getTime() > FIVE_DAYS_MS;
 }
 
