@@ -66,7 +66,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const results: { code: string; status: string; error?: string }[] = [];
+    const results: { code: string; status: string; events: { description: string; location: string; date: string }[]; error?: string }[] = [];
 
     await Promise.all(tracking_codes.map(async (code) => {
       try {
@@ -95,14 +95,30 @@ Deno.serve(async (req: Request) => {
           throw new Error(data?.error || `HTTP ${res.status}`);
         }
 
-        if (data.status === "not_found" || !data.eventoMaisRecente) {
-          results.push({ code, status: "Sem informação", error: undefined });
+        if (data.status === "not_found" || (!data.eventoMaisRecente && !Array.isArray(data.eventos))) {
+          results.push({ code, status: "Sem informação", events: [], error: undefined });
           return;
         }
 
-        const ev = data.eventoMaisRecente;
-        const statusText = parseStatus(ev.descricao ?? "", ev.local ?? "");
-        results.push({ code, status: statusText });
+        // Usa todos os eventos — fallback para só o mais recente se não houver array
+        const rawEvents: any[] =
+          Array.isArray(data.eventos) && data.eventos.length > 0
+            ? data.eventos
+            : data.eventoMaisRecente
+            ? [data.eventoMaisRecente]
+            : [];
+
+        const events = rawEvents
+          .map((e: any) => ({
+            description: String(e.descricao ?? e.description ?? e.status ?? "").trim(),
+            location:    String(e.local    ?? e.location    ?? e.cidade   ?? "").trim(),
+            date:        String(e.data     ?? e.date        ?? e.tracked_at ?? "").trim(),
+          }))
+          .filter((e) => e.description);
+
+        const first = events[0];
+        const statusText = first ? parseStatus(first.description, first.location) : "Sem informação";
+        results.push({ code, status: statusText, events });
 
       } catch (err) {
         results.push({

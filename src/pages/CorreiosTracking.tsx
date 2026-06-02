@@ -7,6 +7,12 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
 const AUTO_REFRESH_MS = 30 * 60 * 1000;
 
+interface TrackingEvent {
+  description: string;
+  location: string;
+  date: string;
+}
+
 interface TrackedSale {
   id: string;
   customer_name: string;
@@ -17,6 +23,7 @@ interface TrackedSale {
   sale_date: string;
   updated_at?: string | null;
   delivered_at?: string | null;
+  events?: TrackingEvent[];
   updating?: boolean;
   error?: string;
 }
@@ -48,6 +55,25 @@ function dispatchBanner(sale: TrackedSale) {
   banners.push({ id: sale.id, customer_name: sale.customer_name });
   localStorage.setItem('shipping_banners', JSON.stringify(banners));
   window.dispatchEvent(new Event('shippingBannerUpdate'));
+}
+
+function getEventIcon(desc: string): string {
+  const d = desc.toLowerCase();
+  if (d.includes('entregue')) return '✅';
+  if (d.includes('saiu para entrega') || d.includes('em rota de entrega')) return '🚚';
+  if (d.includes('trânsito') || d.includes('transito') || d.includes('transferê') || d.includes('encaminhado')) return '📮';
+  if (d.includes('devolvido')) return '↩️';
+  if (d.includes('tentativa') || d.includes('ausente')) return '⚠️';
+  if (d.includes('aguardando') || d.includes('retirada')) return '📬';
+  if (d.includes('postado') || d.includes('coletado')) return '📦';
+  return '▪';
+}
+
+function formatEventDate(d: string): string {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return d.length > 16 ? d.substring(0, 16) : d;
+  return dt.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 function StatusBadge({ status }: { status: string | null }) {
@@ -133,6 +159,32 @@ function TrackingCard({
           Atualizar
         </button>
       </div>
+
+      {/* Linha do tempo de eventos */}
+      {!sale.updating && !sale.error && sale.events && sale.events.length > 0 && (
+        <div className="border-t border-gray-700/50 pt-2 space-y-1.5 max-h-36 overflow-y-auto">
+          {sale.events.map((ev, i) => {
+            const isCurrent = i === 0;
+            return (
+              <div key={i} className="flex items-start gap-1.5">
+                <span className="text-xs mt-0.5 flex-shrink-0 w-4 text-center leading-none">
+                  {isCurrent ? getEventIcon(ev.description) : '·'}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xs leading-snug ${isCurrent ? 'text-white font-semibold' : 'text-gray-500'}`}>
+                    {ev.description}
+                  </p>
+                  {(ev.date || ev.location) && (
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      {[formatEventDate(ev.date), ev.location].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -216,7 +268,7 @@ export default function CorreiosTracking() {
       const now = new Date().toISOString();
 
       await Promise.all(
-        (data.results as { code: string; status: string; error?: string }[]).map(async (result) => {
+        (data.results as { code: string; status: string; events?: TrackingEvent[]; error?: string }[]).map(async (result) => {
           const sale = targets.find(t => t.tracking_code === result.code);
           if (!sale) return;
 
@@ -248,6 +300,7 @@ export default function CorreiosTracking() {
                   ? {
                       ...s,
                       shipping_status: result.status,
+                      events: result.events ?? s.events,
                       updated_at: now,
                       ...(isNowDelivered ? { delivered_at: now } : {}),
                       updating: false,
