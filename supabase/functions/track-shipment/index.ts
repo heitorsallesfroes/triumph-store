@@ -6,21 +6,16 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-function parseShippingStatus(events: any[]): string {
-  if (!events || events.length === 0) return "Sem informação";
+function parseStatus(descricao: string, local: string): string {
+  if (!descricao) return "Sem informação";
 
-  const latest = events[0];
-  const desc = (latest.status || latest.description || latest.message || "").toLowerCase();
-  const city  = latest.city  || latest.location || "";
-  const state = latest.state || latest.uf || "";
-  const location = city ? `${city}${state ? "/" + state.toUpperCase() : ""}` : "";
+  const desc = descricao.toLowerCase();
+  const location = local?.trim() || "";
 
-  if (desc.includes("entregue ao destinatário") || desc.includes("objeto entregue")) {
-    const date = latest.date || latest.tracked_at || "";
-    const dateStr = date ? formatDateBR(date) : "";
-    return dateStr ? `Entregue - ${dateStr}` : "Entregue";
+  if (desc.includes("entregue ao destinatário") || desc.includes("objeto entregue") || desc.includes("entregue")) {
+    return location ? `Entregue - ${location}` : "Entregue";
   }
-  if (desc.includes("saiu para entrega") || desc.includes("saída para entrega")) {
+  if (desc.includes("saiu para entrega") || desc.includes("saída para entrega") || desc.includes("em rota de entrega")) {
     return location ? `Saiu para entrega - ${location}` : "Saiu para entrega";
   }
   if (
@@ -42,22 +37,10 @@ function parseShippingStatus(events: any[]): string {
     return "Devolvido ao remetente";
   }
   if (desc.includes("postado") || desc.includes("objeto postado") || desc.includes("coletado")) {
-    return "Postado";
+    return location ? `Postado - ${location}` : "Postado";
   }
 
-  // Fallback: use the raw status trimmed, appending location if available
-  const raw = (latest.status || latest.description || latest.message || "Em processamento").trim();
-  return location ? `${raw} - ${location}` : raw;
-}
-
-function formatDateBR(dateStr: string): string {
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-  } catch {
-    return dateStr;
-  }
+  return location ? `${descricao.trim()} - ${location}` : descricao.trim();
 }
 
 Deno.serve(async (req: Request) => {
@@ -66,9 +49,12 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const SUPERFRETE_TOKEN = Deno.env.get("SUPERFRETE_API_TOKEN");
-    if (!SUPERFRETE_TOKEN) {
-      throw new Error("SUPERFRETE_API_TOKEN não encontrado no backend");
+    const token = Deno.env.get("SEURASTREIO_TOKEN");
+    if (!token) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Configure SEURASTREIO_TOKEN nos secrets da edge function." }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     const { tracking_codes } = await req.json() as { tracking_codes: string[] };
@@ -76,46 +62,48 @@ Deno.serve(async (req: Request) => {
     if (!Array.isArray(tracking_codes) || tracking_codes.length === 0) {
       return new Response(
         JSON.stringify({ success: false, error: "tracking_codes deve ser um array não vazio" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    const headers = {
-      "Accept": "application/json",
-      "Authorization": `Bearer ${SUPERFRETE_TOKEN}`,
-      "User-Agent": "TriumphStore/1.0 (integracao@triumphstore.com.br)",
-    };
-
     const results: { code: string; status: string; error?: string }[] = [];
 
-    for (const code of tracking_codes) {
+    await Promise.all(tracking_codes.map(async (code) => {
       try {
-        const resp = await fetch(
-          `https://api.superfrete.com/api/v0/tracking/${encodeURIComponent(code)}`,
-          { method: "GET", headers }
+        const res = await fetch(
+          `https://seurastreio.com.br/api/public/rastreio/${encodeURIComponent(code)}`,
+          {
+            headers: {
+              "Authorization": `Bearer ${token}`,
+              "Accept": "application/json",
+            },
+            signal: AbortSignal.timeout(20000),
+          },
         );
 
-        const text = await resp.text();
+        const text = await res.text();
+        console.log(`[SeuRastreio] ${code} | HTTP ${res.status}`);
+
         let data: any;
         try {
           data = JSON.parse(text);
         } catch {
-          throw new Error(`Resposta inválida: ${text.substring(0, 150)}`);
+          throw new Error(`Resposta inválida do Seu Rastreio: ${text.substring(0, 120)}`);
         }
 
-        if (!resp.ok) {
-          throw new Error(data?.message || `HTTP ${resp.status}`);
+        if (!res.ok) {
+          throw new Error(data?.error || `HTTP ${res.status}`);
         }
 
-        // Super Frete pode retornar os eventos em data.events, data.tracking_events ou data.data
-        const events: any[] =
-          data?.events ??
-          data?.tracking_events ??
-          data?.data?.events ??
-          (Array.isArray(data?.data) ? data.data : []);
+        if (data.status === "not_found" || !data.eventoMaisRecente) {
+          results.push({ code, status: "Sem informação", error: undefined });
+          return;
+        }
 
-        const statusText = parseShippingStatus(events);
+        const ev = data.eventoMaisRecente;
+        const statusText = parseStatus(ev.descricao ?? "", ev.local ?? "");
         results.push({ code, status: statusText });
+
       } catch (err) {
         results.push({
           code,
@@ -123,16 +111,17 @@ Deno.serve(async (req: Request) => {
           error: err instanceof Error ? err.message : "Erro desconhecido",
         });
       }
-    }
+    }));
 
     return new Response(
       JSON.stringify({ success: true, results }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
+
   } catch (error) {
     return new Response(
       JSON.stringify({ success: false, error: error instanceof Error ? error.message : "Erro desconhecido" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });
