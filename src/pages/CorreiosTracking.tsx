@@ -19,7 +19,7 @@ interface TrackedSale {
   customer_name: string;
   city: string;
   neighborhood: string;
-  tracking_code: string;
+  tracking_code: string | null;
   shipping_status: string | null;
   sale_date: string;
   updated_at?: string | null;
@@ -120,7 +120,9 @@ function TrackingCard({
         </p>
       </div>
 
-      <p className="text-gray-500 text-xs font-mono truncate">🔍 {sale.tracking_code}</p>
+      <p className="text-gray-500 text-xs font-mono truncate">
+        {sale.tracking_code ? `🔍 ${sale.tracking_code}` : '📋 Sem código de rastreio ainda'}
+      </p>
 
       <div>
         {sale.updating ? (
@@ -241,10 +243,12 @@ export default function CorreiosTracking() {
   const [updatingAll, setUpdatingAll] = useState(false);
 
   const fetchAndSaveStatuses = async (targets: TrackedSale[]) => {
-    if (targets.length === 0) return;
+    // Só rastreia pacotes que têm código de rastreio — os demais ficam em "Aguardando" sem erro
+    const trackable = targets.filter(t => t.tracking_code?.trim());
+    if (trackable.length === 0) return;
 
     setSales(prev =>
-      prev.map(s => targets.some(t => t.id === s.id) ? { ...s, updating: true, error: undefined } : s)
+      prev.map(s => trackable.some(t => t.id === s.id) ? { ...s, updating: true, error: undefined } : s)
     );
 
     try {
@@ -254,7 +258,7 @@ export default function CorreiosTracking() {
           'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ tracking_codes: targets.map(t => t.tracking_code) }),
+        body: JSON.stringify({ tracking_codes: trackable.map(t => t.tracking_code) }),
       });
 
       const data = await resp.json();
@@ -264,7 +268,7 @@ export default function CorreiosTracking() {
 
       await Promise.all(
         (data.results as { code: string; status: string; events?: TrackingEvent[]; error?: string }[]).map(async (result) => {
-          const sale = targets.find(t => t.tracking_code === result.code);
+          const sale = trackable.find(t => t.tracking_code === result.code);
           if (!sale) return;
 
           if (result.error || !result.status) {
@@ -307,7 +311,7 @@ export default function CorreiosTracking() {
       const message = err instanceof Error ? err.message : 'Erro desconhecido';
       setSales(prev =>
         prev.map(s =>
-          targets.some(t => t.id === s.id) ? { ...s, updating: false, error: message } : s
+          trackable.some(t => t.id === s.id) ? { ...s, updating: false, error: message } : s
         )
       );
     }
@@ -320,7 +324,6 @@ export default function CorreiosTracking() {
         .from('sales')
         .select('id, customer_name, city, neighborhood, tracking_code, shipping_status, sale_date, updated_at, delivered_at')
         .eq('delivery_type', 'correios')
-        .not('tracking_code', 'is', null)
         .order('sale_date', { ascending: false });
 
       if (error) throw error;
