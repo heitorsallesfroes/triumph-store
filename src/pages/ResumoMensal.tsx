@@ -94,7 +94,7 @@ export default function ResumoMensal() {
       const [ey, em, ed] = endDate.split('-').map(Number);
       const endUTC = new Date(Date.UTC(ey, em - 1, ed + 1)).toISOString().split('T')[0] + 'T03:00:00.000Z';
 
-      const [salesRes, adRes, costsPayRes, allCostsRes, motoboyExtrasRes, motoboyFeesRes, motoboySmallFeesRes] = await Promise.all([
+      const [salesRes, adRes, costsPayRes, allCostsRes, motoboyExtrasRes, motoboyFeesRes, motoboySmallFeesRes, avulsosRes] = await Promise.all([
         supabase.from('sales')
           .select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status,city,neighborhood,payment_method')
           .neq('status', 'cancelado')
@@ -114,6 +114,9 @@ export default function ResumoMensal() {
           .not('motoboy_id', 'is', null)
           .gte('created_at', startUTC)
           .lt('created_at', endUTC),
+        supabase.from('operational_costs_avulsos').select('amount')
+          .gte('date', startDate)
+          .lte('date', endDate),
       ]);
 
       const salesData = salesRes.data || [];
@@ -132,7 +135,8 @@ export default function ResumoMensal() {
       setAdSpend((adRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
       const paymentsMap = new Map((costsPayRes.data || []).map(r => [r.cost_id, Number(r.amount_paid ?? 0)]));
       const totalOpCosts = (allCostsRes.data || []).reduce((sum, c) => sum + (paymentsMap.has(c.id) ? paymentsMap.get(c.id)! : Number(c.amount)), 0);
-      setOperationalCosts(totalOpCosts);
+      const avulsosTotal = (avulsosRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0);
+      setOperationalCosts(totalOpCosts + avulsosTotal);
       setMotoboyExtras((motoboyExtrasRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
       const salesFees = (motoboyFeesRes.data || []).reduce((sum, r) => sum + Number(r.delivery_fee || 0), 0);
       const smallFees = (motoboySmallFeesRes.data || []).reduce((sum, r) => sum + Number(r.delivery_fee || 0), 0);

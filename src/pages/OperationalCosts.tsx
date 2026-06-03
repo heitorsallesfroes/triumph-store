@@ -25,6 +25,14 @@ interface CostPayment {
   notes: string | null;
 }
 
+interface AvulsoExpense {
+  id: string;
+  description: string;
+  amount: number;
+  date: string;
+  created_at: string;
+}
+
 const PAYMENT_METHODS = ['Nubank PJ', 'Itaú PJ', 'Nubank PF', 'Cartão de Crédito'];
 const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
@@ -41,12 +49,15 @@ const formatMonthLabel = (monthStr: string) => {
 export default function OperationalCosts() {
   const [costs, setCosts] = useState<Cost[]>([]);
   const [payments, setPayments] = useState<CostPayment[]>([]);
+  const [avulsos, setAvulsos] = useState<AvulsoExpense[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
   const [showCostForm, setShowCostForm] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState<Cost | null>(null);
+  const [showAvulsoModal, setShowAvulsoModal] = useState(false);
   const [costForm, setCostForm] = useState({ name: '', amount: '', is_fixed: true, due_day: '' });
   const [paymentForm, setPaymentForm] = useState({ paid_date: new Date(), payment_method: 'Nubank PJ', amount_paid: '', notes: '' });
+  const [avulsoForm, setAvulsoForm] = useState({ description: '', amount: '', date: new Date() });
   const [copyPrompt, setCopyPrompt] = useState(false);
   const [copying, setCopying] = useState(false);
   const dismissedMonths = useRef<Set<string>>(new Set());
@@ -57,14 +68,22 @@ export default function OperationalCosts() {
     setLoading(true);
     setCopyPrompt(false);
     try {
-      const [costsRes, paymentsRes] = await Promise.all([
+      const [y, m] = selectedMonth.split('-').map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      const lastDayStr = `${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
+      const [costsRes, paymentsRes, avulsosRes] = await Promise.all([
         supabase.from('operational_costs').select('*').order('is_fixed', { ascending: false }).order('name'),
         supabase.from('operational_cost_payments').select('*').eq('month', selectedMonth),
+        supabase.from('operational_costs_avulsos').select('*')
+          .gte('date', `${selectedMonth}-01`)
+          .lte('date', lastDayStr)
+          .order('date', { ascending: false }),
       ]);
       const loadedCosts    = costsRes.data    || [];
       const loadedPayments = paymentsRes.data || [];
       setCosts(loadedCosts);
       setPayments(loadedPayments);
+      setAvulsos(avulsosRes.data || []);
       if (loadedCosts.length > 0 && loadedPayments.length === 0 && !dismissedMonths.current.has(selectedMonth)) {
         setCopyPrompt(true);
       }
@@ -127,6 +146,26 @@ export default function OperationalCosts() {
       setPaymentForm({ paid_date: new Date(), payment_method: 'Nubank PJ', amount_paid: '', notes: '' });
       loadData();
     } catch { alert('Erro ao registrar pagamento'); }
+  };
+
+  const handleAddAvulso = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await supabase.from('operational_costs_avulsos').insert([{
+        description: avulsoForm.description,
+        amount: Number(avulsoForm.amount),
+        date: avulsoForm.date.toISOString().split('T')[0],
+      }]);
+      setAvulsoForm({ description: '', amount: '', date: new Date() });
+      setShowAvulsoModal(false);
+      loadData();
+    } catch { alert('Erro ao salvar gasto avulso'); }
+  };
+
+  const handleDeleteAvulso = async (id: string) => {
+    if (!confirm('Excluir este gasto avulso?')) return;
+    await supabase.from('operational_costs_avulsos').delete().eq('id', id);
+    loadData();
   };
 
   const handleMarkUnpaid = async (costId: string) => {
@@ -195,6 +234,7 @@ export default function OperationalCosts() {
   const totalVariable = variableCosts.reduce((sum, c) => sum + getEffectiveAmount(c), 0);
   const totalPaid = payments.filter(p => p.paid).reduce((sum, p) => sum + (Number(p.amount_paid) || 0), 0);
   const totalPending = costs.filter(c => !getPayment(c.id)?.paid).reduce((sum, c) => sum + getEffectiveAmount(c), 0);
+  const totalAvulsos = avulsos.reduce((sum, a) => sum + Number(a.amount), 0);
 
   if (loading) return <div className="p-8 text-white">Carregando...</div>;
 
@@ -279,10 +319,11 @@ export default function OperationalCosts() {
       </div>
 
       {/* Cards resumo */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
         {[
           { label: 'Custos Fixos', value: totalFixed, color: 'text-red-400' },
           { label: 'Custos Variáveis', value: totalVariable, color: 'text-yellow-400' },
+          { label: 'Gastos Avulsos', value: totalAvulsos, color: 'text-purple-400' },
           { label: 'Total Pago', value: totalPaid, color: 'text-green-400' },
           { label: 'A Pagar', value: totalPending, color: 'text-orange-400' },
         ].map(card => (
@@ -415,6 +456,59 @@ export default function OperationalCosts() {
         </div>
       )}
 
+      {/* Modal Adicionar Gasto Avulso */}
+      {showAvulsoModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-white">Novo Gasto Avulso</h2>
+              <button onClick={() => setShowAvulsoModal(false)} className="text-gray-400 hover:text-white"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleAddAvulso} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Descrição</label>
+                <input
+                  type="text"
+                  value={avulsoForm.description}
+                  onChange={e => setAvulsoForm({ ...avulsoForm, description: e.target.value })}
+                  placeholder="Ex: Conserto de impressora, Material de limpeza..."
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Valor (R$)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={avulsoForm.amount}
+                  onChange={e => setAvulsoForm({ ...avulsoForm, amount: e.target.value })}
+                  placeholder="0.00"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Data</label>
+                <DatePicker
+                  selected={avulsoForm.date}
+                  onChange={(date: Date | null) => setAvulsoForm({ ...avulsoForm, date: date || new Date() })}
+                  maxDate={new Date()}
+                  dateFormat="dd/MM/yyyy"
+                  locale={ptBR}
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="submit" className="flex-1 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">Salvar</button>
+                <button type="button" onClick={() => setShowAvulsoModal(false)} className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Lista de Custos Fixos */}
       <CostSection
         title="Custos Fixos"
@@ -436,6 +530,51 @@ export default function OperationalCosts() {
         onMarkUnpaid={handleMarkUnpaid}
         onDelete={handleDeleteCost}
       />
+
+      {/* Lista de Gastos Avulsos */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden mb-4">
+        <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-white">Gastos Avulsos</h2>
+            <p className="text-gray-500 text-xs mt-0.5">Despesas não recorrentes do mês</p>
+          </div>
+          <button
+            onClick={() => setShowAvulsoModal(true)}
+            className="flex items-center gap-2 bg-orange-500 text-white px-3 py-1.5 rounded-lg hover:bg-orange-600 transition-colors text-sm"
+          >
+            <Plus size={16} /> Adicionar Gasto Avulso
+          </button>
+        </div>
+        {avulsos.length === 0 ? (
+          <div className="p-6">
+            <p className="text-gray-400 text-sm">Nenhum gasto avulso registrado neste mês.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-700">
+            {avulsos.map(avulso => (
+              <div key={avulso.id} className="px-6 py-4 flex items-center justify-between hover:bg-gray-700/30 transition-colors">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center flex-shrink-0">
+                    <DollarSign size={18} className="text-purple-400" />
+                  </div>
+                  <div>
+                    <p className="text-white font-medium">{avulso.description}</p>
+                    <p className="text-gray-500 text-xs mt-0.5">
+                      {new Date(avulso.date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-lg font-bold text-white">R$ {Number(avulso.amount).toFixed(2)}</span>
+                  <button onClick={() => handleDeleteAvulso(avulso.id)} className="text-red-400 hover:text-red-300">
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
