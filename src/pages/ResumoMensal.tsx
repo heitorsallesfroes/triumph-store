@@ -179,7 +179,9 @@ export default function ResumoMensal() {
   const CARD_METHODS = ['credit_card', 'debit_card', 'payment_link'];
   const smallSalesRevenue      = smallSales.reduce((s, v) => s + Number(v.sale_price) * Number(v.quantity), 0);
   const smallSalesCost         = smallSales.reduce((s, v) => s + Number(v.cost) * Number(v.quantity), 0);
-  const smallSalesDeliveryCost = smallSales.reduce((s, v) => s + Number(v.delivery_fee || 0), 0);
+  const smallSalesDeliveryCost        = smallSales.reduce((s, v) => s + Number(v.delivery_fee || 0), 0);
+  const smallSalesMotoboyDelivery     = smallSales.filter(v => v.delivery_type === 'motoboy').reduce((s, v) => s + Number(v.delivery_fee || 0), 0);
+  const smallSalesCorreiosDelivery    = smallSales.filter(v => v.delivery_type === 'correios').reduce((s, v) => s + Number(v.delivery_fee || 0), 0);
   const smallSalesCardFees     = smallSales.reduce((s, v) => {
     type PM = { method: string; card_brand: string; installments: number; amount: number };
     const pms = v.payment_methods as PM[] | null;
@@ -720,7 +722,8 @@ export default function ResumoMensal() {
                     <MetricCard label="Líquido Recebido"   value={smallSalesNet}           color="green"  icon={DollarSign}
                       subtitle={smallSalesCardFees > 0 ? `Taxas: ${fmt(smallSalesCardFees)}` : 'Sem taxas de cartão'} />
                     <MetricCard label="Custo Produtos"     value={smallSalesCost}          color="red"    icon={Package}   negative />
-                    <MetricCard label="Custo Entregas"     value={smallSalesDeliveryCost}  color="red"    icon={Truck}     negative />
+                    <MetricCard label="Custo Entregas"     value={smallSalesDeliveryCost}  color="red"    icon={Truck}     negative
+                      subtitle={`Motoboy: ${fmt(smallSalesMotoboyDelivery)} | Correios: ${fmt(smallSalesCorreiosDelivery)}`} />
                     <MetricCard label="Nº de Vendas"       value={smallSales.length}       color="blue"   icon={ShoppingCart} isCount />
                   </div>
 
