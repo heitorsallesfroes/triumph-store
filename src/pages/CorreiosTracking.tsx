@@ -288,7 +288,7 @@ export default function CorreiosTracking() {
 
     const [swRes, pvRes, avRes] = await Promise.all([
       supabase.from('sales')
-        .select('delivery_fee')
+        .select('delivery_cost')
         .eq('delivery_type', 'correios')
         .neq('status', 'cancelado')
         .gte('sale_date', startDate)
@@ -309,7 +309,7 @@ export default function CorreiosTracking() {
     const pvData = pvRes.data || [];
     setSwCorreios({
       count: swData.length,
-      freight: swData.reduce((s, r) => s + Number(r.delivery_fee || 0), 0),
+      freight: swData.reduce((s, r) => s + Number(r.delivery_cost || 0), 0),
     });
     setPvCorreios({
       count: pvData.length,
