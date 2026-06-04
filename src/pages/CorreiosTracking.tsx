@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { RefreshCw, AlertCircle, Package, MapPin, Clock, X } from 'lucide-react';
+import { RefreshCw, AlertCircle, Package, MapPin, Clock, X, DollarSign, Plus, Truck } from 'lucide-react';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
+import { ptBR } from 'date-fns/locale';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -269,6 +272,65 @@ export default function CorreiosTracking() {
   const [sales, setSales] = useState<TrackedSale[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingAll, setUpdatingAll] = useState(false);
+  const [swCorreios, setSwCorreios] = useState({ count: 0, freight: 0 });
+  const [pvCorreios, setPvCorreios] = useState({ count: 0, freight: 0 });
+  const [avulsosCorreios, setAvulsosCorreios] = useState(0);
+  const [showAvulsoModal, setShowAvulsoModal] = useState(false);
+  const [avulsoForm, setAvulsoForm] = useState({ description: '', amount: '', date: new Date() });
+
+  const loadMetrics = async () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+    const [swRes, pvRes, avRes] = await Promise.all([
+      supabase.from('sales')
+        .select('delivery_fee')
+        .eq('delivery_type', 'correios')
+        .neq('status', 'cancelado')
+        .gte('sale_date', startDate)
+        .lte('sale_date', endDate + 'T23:59:59'),
+      supabase.from('small_sales')
+        .select('delivery_fee')
+        .eq('delivery_type', 'correios')
+        .gte('created_at', startDate + 'T00:00:00')
+        .lte('created_at', endDate + 'T23:59:59'),
+      supabase.from('operational_costs_avulsos')
+        .select('amount')
+        .like('description', 'Correios:%')
+        .gte('date', startDate)
+        .lte('date', endDate),
+    ]);
+
+    const swData = swRes.data || [];
+    const pvData = pvRes.data || [];
+    setSwCorreios({
+      count: swData.length,
+      freight: swData.reduce((s, r) => s + Number(r.delivery_fee || 0), 0),
+    });
+    setPvCorreios({
+      count: pvData.length,
+      freight: pvData.reduce((s, r) => s + Number(r.delivery_fee || 0), 0),
+    });
+    setAvulsosCorreios((avRes.data || []).reduce((s, r) => s + Number(r.amount), 0));
+  };
+
+  const handleAddAvulso = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await supabase.from('operational_costs_avulsos').insert([{
+        description: `Correios: ${avulsoForm.description}`,
+        amount: Number(avulsoForm.amount),
+        date: avulsoForm.date.toISOString().split('T')[0],
+      }]);
+      setAvulsoForm({ description: '', amount: '', date: new Date() });
+      setShowAvulsoModal(false);
+      loadMetrics(); // eslint-disable-line @typescript-eslint/no-floating-promises
+    } catch { alert('Erro ao salvar custo avulso'); }
+  };
 
   // Busca o tracking_code para pacotes sem código mas com etiqueta gerada.
   // O SuperFrete demora alguns minutos para atribuir o código após o checkout.
@@ -399,6 +461,7 @@ export default function CorreiosTracking() {
 
   useEffect(() => {
     loadAndUpdate(); // eslint-disable-line @typescript-eslint/no-floating-promises
+    loadMetrics(); // eslint-disable-line @typescript-eslint/no-floating-promises
     const interval = setInterval(loadAndUpdate, AUTO_REFRESH_MS); // eslint-disable-line @typescript-eslint/no-floating-promises
     return () => clearInterval(interval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -442,7 +505,7 @@ export default function CorreiosTracking() {
     <div className="p-6 space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-1">Rastreamento SEDEX</h1>
+          <h1 className="text-3xl font-bold text-white mb-1">Correios</h1>
           <p className="text-gray-400">
             {sales.length} pacote{sales.length !== 1 ? 's' : ''} •{' '}
             <span className="text-green-400 font-medium">
@@ -463,6 +526,111 @@ export default function CorreiosTracking() {
           {updatingAll ? 'Atualizando...' : 'Atualizar Tudo'}
         </button>
       </div>
+
+      {/* ── Métricas do mês atual ── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-gray-400 text-xs uppercase tracking-wider">
+            Métricas — {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+          </p>
+          <button
+            onClick={() => setShowAvulsoModal(true)}
+            className="flex items-center gap-2 bg-orange-500 text-white px-3 py-1.5 rounded-lg hover:bg-orange-600 transition-colors text-sm"
+          >
+            <Plus size={16} /> Custo Avulso Correios
+          </button>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Truck size={15} className="text-blue-400" />
+              <p className="text-gray-400 text-xs">Total de Envios</p>
+            </div>
+            <p className="text-xl font-bold text-blue-400">{swCorreios.count + pvCorreios.count} envios</p>
+            <p className="text-gray-500 text-xs mt-1">
+              R$ {(swCorreios.freight + pvCorreios.freight).toFixed(2)} em frete
+            </p>
+          </div>
+          <div className="bg-gray-800 rounded-xl border border-gray-700 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Package size={15} className="text-orange-400" />
+              <p className="text-gray-400 text-xs">Smartwatches</p>
+            </div>
+            <p className="text-xl font-bold text-orange-400">{swCorreios.count} envios</p>
+            <p className="text-gray-500 text-xs mt-1">R$ {swCorreios.freight.toFixed(2)} em frete</p>
+          </div>
+          <div className="bg-gray-800 rounded-xl border border-gray-700 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Package size={15} className="text-purple-400" />
+              <p className="text-gray-400 text-xs">Pequenas Vendas</p>
+            </div>
+            <p className="text-xl font-bold text-purple-400">{pvCorreios.count} envios</p>
+            <p className="text-gray-500 text-xs mt-1">R$ {pvCorreios.freight.toFixed(2)} em frete</p>
+          </div>
+          <div className="bg-gray-800 rounded-xl border border-gray-700 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <DollarSign size={15} className="text-yellow-400" />
+              <p className="text-gray-400 text-xs">Trocas/Avulsos</p>
+            </div>
+            <p className="text-xl font-bold text-yellow-400">R$ {avulsosCorreios.toFixed(2)}</p>
+            <p className="text-gray-500 text-xs mt-1">Custos avulsos do mês</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal Custo Avulso Correios */}
+      {showAvulsoModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-white">Custo Avulso Correios</h2>
+              <button onClick={() => setShowAvulsoModal(false)} className="text-gray-400 hover:text-white"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleAddAvulso} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Descrição</label>
+                <input
+                  type="text"
+                  value={avulsoForm.description}
+                  onChange={e => setAvulsoForm({ ...avulsoForm, description: e.target.value })}
+                  placeholder="Ex: Troca produto, Reenvio..."
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  required
+                />
+                <p className="text-gray-500 text-xs mt-1">Salvo como "Correios: [descrição]"</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Valor (R$)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={avulsoForm.amount}
+                  onChange={e => setAvulsoForm({ ...avulsoForm, amount: e.target.value })}
+                  placeholder="0.00"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Data</label>
+                <DatePicker
+                  selected={avulsoForm.date}
+                  onChange={(date: Date | null) => setAvulsoForm({ ...avulsoForm, date: date || new Date() })}
+                  maxDate={new Date()}
+                  dateFormat="dd/MM/yyyy"
+                  locale={ptBR}
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="submit" className="flex-1 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">Salvar</button>
+                <button type="button" onClick={() => setShowAvulsoModal(false)} className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {sales.length === 0 ? (
         <div className="bg-gray-800 rounded-lg p-12 border border-gray-700 text-center">
