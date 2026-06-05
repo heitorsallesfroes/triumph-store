@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, Product } from '../lib/supabase';
-import { AlertTriangle, CheckCircle, Plus, Minus, History, Search, Package, ShoppingCart } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Plus, Minus, History, Search, Package, ShoppingCart, X } from 'lucide-react';
 
 const MODEL_ORDER = [
   'GT5 Mini', 'Ultra 3 Mini', 'W11 Mini', 'S11 Pro', 'Ultra 4 Pro',
@@ -47,7 +47,7 @@ const [showStockSummary, setShowStockSummary] = useState(false);
   const [stockOrders, setStockOrders] = useState<any[]>([]);
   const [allStockOrders, setAllStockOrders] = useState<any[]>([]);
   const [allOrdersLoading, setAllOrdersLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'produtos' | 'encomendas'>('produtos');
+  const [activeTab, setActiveTab] = useState<'produtos' | 'encomendas' | 'fornecedores'>('produtos');
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'pending' | 'received'>('all');
   const [showOrderForm, setShowOrderForm] = useState(false);
   const [orderQty, setOrderQty] = useState('');
@@ -66,6 +66,15 @@ const [showStockSummary, setShowStockSummary] = useState(false);
   const [confirmReceiveGroup, setConfirmReceiveGroup] = useState<string | null>(null);
   const [receivingGroup, setReceivingGroup] = useState(false);
   const [receiveQtys, setReceiveQtys] = useState<Record<string, string>>({});
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [supplierOrders, setSupplierOrders] = useState<any[]>([]);
+  const [supplierOrdersLoading, setSupplierOrdersLoading] = useState(false);
+  const [supplierPeriod, setSupplierPeriod] = useState<'hoje' | 'semana' | 'mes' | 'ano' | 'custom'>('mes');
+  const [supplierCustomStart, setSupplierCustomStart] = useState<string>('');
+  const [supplierCustomEnd, setSupplierCustomEnd] = useState<string>('');
+  const [showSupplierOrderModal, setShowSupplierOrderModal] = useState(false);
+  const [supplierOrderForm, setSupplierOrderForm] = useState({ supplier_name: '', amount: '', date: new Date().toISOString().split('T')[0], notes: '' });
+  const [savingSupplierOrder, setSavingSupplierOrder] = useState(false);
 
   useEffect(() => {
     loadProducts();
@@ -73,8 +82,13 @@ const [showStockSummary, setShowStockSummary] = useState(false);
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'encomendas') loadAllStockOrders();
-  }, [activeTab]);
+    if (activeTab === 'encomendas') loadAllStockOrders(); // eslint-disable-line @typescript-eslint/no-floating-promises
+    if (activeTab === 'fornecedores') { loadSuppliers(); loadSupplierOrders(); } // eslint-disable-line @typescript-eslint/no-floating-promises
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (activeTab === 'fornecedores') loadSupplierOrders(); // eslint-disable-line @typescript-eslint/no-floating-promises
+  }, [supplierPeriod, supplierCustomStart, supplierCustomEnd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (confirmReceiveGroup !== null) {
@@ -165,6 +179,69 @@ const [showStockSummary, setShowStockSummary] = useState(false);
       .order('created_at', { ascending: false });
     setAllStockOrders(data || []);
     setAllOrdersLoading(false);
+  };
+
+  const loadSuppliers = async () => {
+    const { data } = await supabase.from('suppliers').select('id, name').order('name');
+    setSuppliers(data || []);
+  };
+
+  const loadSupplierOrders = async () => {
+    setSupplierOrdersLoading(true);
+    try {
+      const now = new Date();
+      const fmt = (d: Date) => d.toISOString().split('T')[0];
+      let startDate: string | null = null;
+      let endDate: string | null = null;
+
+      if (supplierPeriod === 'hoje') {
+        startDate = endDate = fmt(now);
+      } else if (supplierPeriod === 'semana') {
+        const d = new Date(now); d.setDate(d.getDate() - 6);
+        startDate = fmt(d); endDate = fmt(now);
+      } else if (supplierPeriod === 'mes') {
+        const y = now.getFullYear(), m = now.getMonth() + 1;
+        const lastDay = new Date(y, m, 0).getDate();
+        startDate = `${y}-${String(m).padStart(2, '0')}-01`;
+        endDate = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      } else if (supplierPeriod === 'ano') {
+        startDate = `${now.getFullYear()}-01-01`;
+        endDate = `${now.getFullYear()}-12-31`;
+      } else if (supplierPeriod === 'custom') {
+        startDate = supplierCustomStart || null;
+        endDate = supplierCustomEnd || null;
+      }
+
+      let query = supabase.from('supplier_orders').select('*').order('date', { ascending: false });
+      if (startDate) query = query.gte('date', startDate);
+      if (endDate) query = query.lte('date', endDate);
+      const { data } = await query;
+      setSupplierOrders(data || []);
+    } catch (e) { console.error(e); }
+    finally { setSupplierOrdersLoading(false); }
+  };
+
+  const handleAddSupplierOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingSupplierOrder(true);
+    try {
+      await supabase.from('supplier_orders').insert([{
+        supplier_name: supplierOrderForm.supplier_name,
+        amount: Number(supplierOrderForm.amount),
+        date: supplierOrderForm.date,
+        notes: supplierOrderForm.notes.trim() || null,
+      }]);
+      setShowSupplierOrderModal(false);
+      setSupplierOrderForm({ supplier_name: '', amount: '', date: new Date().toISOString().split('T')[0], notes: '' });
+      loadSupplierOrders(); // eslint-disable-line @typescript-eslint/no-floating-promises
+    } catch { alert('Erro ao salvar pedido'); }
+    finally { setSavingSupplierOrder(false); }
+  };
+
+  const handleDeleteSupplierOrder = async (id: string) => {
+    if (!confirm('Excluir este pedido?')) return;
+    await supabase.from('supplier_orders').delete().eq('id', id);
+    loadSupplierOrders(); // eslint-disable-line @typescript-eslint/no-floating-promises
   };
 
   const handleCancelOrder = async (orderId: string) => {
@@ -611,6 +688,12 @@ const [showStockSummary, setShowStockSummary] = useState(false);
             </span>
           )}
         </button>
+        <button
+          onClick={() => setActiveTab('fornecedores')}
+          className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === 'fornecedores' ? 'bg-orange-500 text-white' : 'text-gray-400 hover:text-white'}`}
+        >
+          🏭 Fornecedores
+        </button>
       </div>
 
       {activeTab === 'encomendas' && (() => {
@@ -775,6 +858,116 @@ const [showStockSummary, setShowStockSummary] = useState(false);
           </div>
         );
       })()}
+
+      {activeTab === 'fornecedores' && (
+        <div>
+          {/* Barra de ações */}
+          <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+            <div className="flex gap-2 flex-wrap">
+              {(['hoje', 'semana', 'mes', 'ano', 'custom'] as const).map(p => {
+                const labels = { hoje: 'Hoje', semana: 'Semana', mes: 'Mês', ano: 'Ano', custom: 'Personalizado' };
+                return (
+                  <button key={p} onClick={() => setSupplierPeriod(p)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${supplierPeriod === p ? 'bg-orange-500 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-700'}`}>
+                    {labels[p]}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => setShowSupplierOrderModal(true)}
+              className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+            >
+              <Plus size={16} /> Registrar Pedido
+            </button>
+          </div>
+
+          {/* Filtro personalizado */}
+          {supplierPeriod === 'custom' && (
+            <div className="flex items-center gap-3 mb-4 bg-gray-800 border border-gray-700 rounded-xl p-4 flex-wrap">
+              <span className="text-gray-400 text-sm">De:</span>
+              <input type="date" value={supplierCustomStart}
+                onChange={e => setSupplierCustomStart(e.target.value)}
+                className="bg-gray-700 text-white rounded-lg px-3 py-1.5 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm" />
+              <span className="text-gray-400 text-sm">Até:</span>
+              <input type="date" value={supplierCustomEnd}
+                onChange={e => setSupplierCustomEnd(e.target.value)}
+                className="bg-gray-700 text-white rounded-lg px-3 py-1.5 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm" />
+            </div>
+          )}
+
+          {/* Cards por fornecedor */}
+          {supplierOrders.length > 0 && (() => {
+            const summaryMap = new Map<string, number>();
+            supplierOrders.forEach(o => summaryMap.set(o.supplier_name, (summaryMap.get(o.supplier_name) || 0) + Number(o.amount)));
+            const summary = Array.from(summaryMap.entries()).sort((a, b) => b[1] - a[1]);
+            const total = summary.reduce((s, [, v]) => s + v, 0);
+            return (
+              <div className="mb-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                  {summary.map(([name, value]) => (
+                    <div key={name} className="bg-gray-800 rounded-xl border border-gray-700 p-4">
+                      <p className="text-gray-400 text-xs mb-1">{name}</p>
+                      <p className="text-lg font-bold text-orange-400">R$ {value.toFixed(2)}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-gray-800 rounded-xl border border-orange-500/30 p-4 flex justify-between items-center">
+                  <p className="text-gray-400 text-sm font-medium">Total do período</p>
+                  <p className="text-xl font-bold text-orange-400">R$ {total.toFixed(2)}</p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Tabela */}
+          {supplierOrdersLoading ? (
+            <div className="py-16 text-center text-gray-400">Carregando pedidos...</div>
+          ) : supplierOrders.length === 0 ? (
+            <div className="py-16 text-center bg-gray-800 rounded-xl border border-gray-700">
+              <Package size={40} className="mx-auto text-gray-600 mb-3" />
+              <p className="text-gray-400">Nenhum pedido no período selecionado</p>
+            </div>
+          ) : (
+            <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-gray-900/60">
+                  <tr>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-400 uppercase">Data</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-400 uppercase">Fornecedor</th>
+                    <th className="px-5 py-3 text-right text-xs font-medium text-gray-400 uppercase">Valor</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-400 uppercase">Observação</th>
+                    <th className="px-5 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                  {supplierOrders.map(order => (
+                    <tr key={order.id} className="hover:bg-gray-700/40">
+                      <td className="px-5 py-3 text-gray-300 text-sm whitespace-nowrap">
+                        {new Date(order.date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                      </td>
+                      <td className="px-5 py-3 text-white font-medium text-sm">{order.supplier_name}</td>
+                      <td className="px-5 py-3 text-right">
+                        <span className="text-orange-400 font-bold text-sm">R$ {Number(order.amount).toFixed(2)}</span>
+                      </td>
+                      <td className="px-5 py-3 text-gray-400 text-sm">{order.notes || '—'}</td>
+                      <td className="px-5 py-3 text-center">
+                        <button onClick={() => handleDeleteSupplierOrder(order.id)}
+                          className="text-red-400 hover:text-red-300 transition-colors">
+                          <X size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="px-5 py-3 border-t border-gray-700">
+                <p className="text-gray-600 text-xs">{supplierOrders.length} pedido{supplierOrders.length !== 1 ? 's' : ''}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {activeTab === 'produtos' && <>
 
@@ -951,6 +1144,69 @@ const [showStockSummary, setShowStockSummary] = useState(false);
       </div>
 
       </> /* fim aba produtos */}
+
+      {/* Modal Registrar Pedido Fornecedor */}
+      {showSupplierOrderModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-white">Registrar Pedido</h2>
+              <button onClick={() => setShowSupplierOrderModal(false)} className="text-gray-400 hover:text-white"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleAddSupplierOrder} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Fornecedor</label>
+                <select
+                  value={supplierOrderForm.supplier_name}
+                  onChange={e => setSupplierOrderForm({ ...supplierOrderForm, supplier_name: e.target.value })}
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  required
+                >
+                  <option value="">Selecione um fornecedor...</option>
+                  {suppliers.map(s => (
+                    <option key={s.id} value={s.name}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Valor do pedido (R$)</label>
+                <input type="number" step="0.01" min="0"
+                  value={supplierOrderForm.amount}
+                  onChange={e => setSupplierOrderForm({ ...supplierOrderForm, amount: e.target.value })}
+                  placeholder="0.00"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Data do pedido</label>
+                <input type="date"
+                  value={supplierOrderForm.date}
+                  onChange={e => setSupplierOrderForm({ ...supplierOrderForm, date: e.target.value })}
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Observação (opcional)</label>
+                <input type="text"
+                  value={supplierOrderForm.notes}
+                  onChange={e => setSupplierOrderForm({ ...supplierOrderForm, notes: e.target.value })}
+                  placeholder="Ex: Pedido de reposição maio"
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="submit" disabled={savingSupplierOrder}
+                  className="flex-1 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-colors">
+                  {savingSupplierOrder ? 'Salvando...' : 'Salvar'}
+                </button>
+                <button type="button" onClick={() => setShowSupplierOrderModal(false)}
+                  className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal pedido em massa */}
       {showBulkOrderModal && (() => {
