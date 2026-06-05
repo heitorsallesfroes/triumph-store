@@ -1735,9 +1735,12 @@ const [showStockSummary, setShowStockSummary] = useState(false);
               <h2 className="text-xl font-bold text-white">📋 Resumo de Estoque</h2>
               <button onClick={() => setShowStockSummary(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
             </div>
-            <pre className="flex-1 overflow-y-auto bg-gray-900 rounded-lg p-4 text-sm text-gray-200 font-mono whitespace-pre-wrap mb-4 select-all">
-              {buildWhatsAppSummary()}
-            </pre>
+            <textarea
+              readOnly
+              value={buildWhatsAppSummary()}
+              className="flex-1 overflow-y-auto bg-gray-900 rounded-lg p-4 text-sm text-gray-200 font-mono whitespace-pre-wrap mb-4 resize-none border-0 outline-none select-text cursor-text"
+              style={{ userSelect: 'text' }}
+            />
             <button
               onClick={async () => {
                 await navigator.clipboard.writeText(buildWhatsAppSummary());
