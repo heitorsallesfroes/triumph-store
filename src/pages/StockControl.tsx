@@ -560,10 +560,11 @@ const [showStockSummary, setShowStockSummary] = useState(false);
         const pending = getPendingQty(p.id);
         const comprar = Math.max(0, ideal - stock - pending);
         const variant = getVariant(p.model, p.color);
-        const emoji = stock <= 0 ? '🔴' : stock < ideal ? '🟡' : '🟢';
-        const indicatorPart = comprar > 0 ? ` -${comprar}` : stock > ideal ? ` +${stock - ideal}` : '';
-        const pendingPart = pending > 0 ? ` (+${pending} a chegar)` : '';
-        text += `▸ ${variant}: ${stock}${pendingPart} / ${ideal} ${emoji}${indicatorPart}\n`;
+        const total = stock + pending;
+        const diff = total - ideal;
+        const stockPart = pending > 0 ? `${stock} + ${pending} = ${total}` : `${stock}`;
+        const indicatorPart = diff < 0 ? ` (${diff})` : diff > 0 ? ` (+${diff})` : '';
+        text += `▸ ${variant}: ${stockPart} / ${ideal}${indicatorPart}\n`;
         totalStock += stock;
         totalComprar += comprar;
       }
