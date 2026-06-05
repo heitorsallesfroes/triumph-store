@@ -908,13 +908,13 @@ const [showStockSummary, setShowStockSummary] = useState(false);
                   {summary.map(([name, value]) => (
                     <div key={name} className="bg-gray-800 rounded-xl border border-gray-700 p-4">
                       <p className="text-gray-400 text-xs mb-1">{name}</p>
-                      <p className="text-lg font-bold text-orange-400">R$ {value.toFixed(2)}</p>
+                      <p className="text-lg font-bold text-orange-400">{value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
                     </div>
                   ))}
                 </div>
                 <div className="bg-gray-800 rounded-xl border border-orange-500/30 p-4 flex justify-between items-center">
                   <p className="text-gray-400 text-sm font-medium">Total do período</p>
-                  <p className="text-xl font-bold text-orange-400">R$ {total.toFixed(2)}</p>
+                  <p className="text-xl font-bold text-orange-400">{total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
                 </div>
               </div>
             );
@@ -948,7 +948,7 @@ const [showStockSummary, setShowStockSummary] = useState(false);
                       </td>
                       <td className="px-5 py-3 text-white font-medium text-sm">{order.supplier_name}</td>
                       <td className="px-5 py-3 text-right">
-                        <span className="text-orange-400 font-bold text-sm">R$ {Number(order.amount).toFixed(2)}</span>
+                        <span className="text-orange-400 font-bold text-sm">{Number(order.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
                       </td>
                       <td className="px-5 py-3 text-gray-400 text-sm">{order.notes || '—'}</td>
                       <td className="px-5 py-3 text-center">
