@@ -1251,7 +1251,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                 {cpfError && <p className="text-red-500 text-sm mt-1">{cpfError}</p>}
               </div>
 
-              {formData.delivery_type === 'correios' && (
+              {(formData.delivery_type === 'correios' || formData.delivery_type === 'motoboy') && (
                 <>
                   <div>
                     <button
