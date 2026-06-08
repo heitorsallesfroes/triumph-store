@@ -305,11 +305,11 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       prodsRes, motoboyRes, smallTodayRes, pendingPixRes, weekAdRes,
       forecastSalesRes,
     ] = await Promise.all([
-      supabase.from('sales').select('id, total_sale_price, profit').neq('status', 'cancelado').gte('sale_date', `${today}T00:00:00`).lte('sale_date', `${today}T23:59:59`),
-      supabase.from('sales').select('total_sale_price, profit').neq('status', 'cancelado').gte('sale_date', `${yesterday}T00:00:00`).lte('sale_date', `${yesterday}T23:59:59`),
-      supabase.from('sales').select('sale_date, total_sale_price, profit').neq('status', 'cancelado').gte('sale_date', `${sixAgo}T00:00:00`).lte('sale_date', `${today}T23:59:59`),
-      supabase.from('sales').select('id, total_sale_price, profit').neq('status', 'cancelado').gte('sale_date', `${monthStart}T00:00:00`).lte('sale_date', `${today}T23:59:59`),
-      supabase.from('sales').select('total_sale_price').neq('status', 'cancelado').gte('sale_date', `${lmStart}T00:00:00`).lte('sale_date', `${lmEnd}T23:59:59`),
+      supabase.from('sales').select('id, total_sale_price, profit').neq('status', 'cancelado').neq('status', 'reembolsado').gte('sale_date', `${today}T00:00:00`).lte('sale_date', `${today}T23:59:59`),
+      supabase.from('sales').select('total_sale_price, profit').neq('status', 'cancelado').neq('status', 'reembolsado').gte('sale_date', `${yesterday}T00:00:00`).lte('sale_date', `${yesterday}T23:59:59`),
+      supabase.from('sales').select('sale_date, total_sale_price, profit').neq('status', 'cancelado').neq('status', 'reembolsado').gte('sale_date', `${sixAgo}T00:00:00`).lte('sale_date', `${today}T23:59:59`),
+      supabase.from('sales').select('id, total_sale_price, profit').neq('status', 'cancelado').neq('status', 'reembolsado').gte('sale_date', `${monthStart}T00:00:00`).lte('sale_date', `${today}T23:59:59`),
+      supabase.from('sales').select('total_sale_price').neq('status', 'cancelado').neq('status', 'reembolsado').gte('sale_date', `${lmStart}T00:00:00`).lte('sale_date', `${lmEnd}T23:59:59`),
       supabase.from('sales').select('status').in('status', ['em_separacao', 'embalado', 'em_rota', 'embalar_amanha']),
       supabase.from('ad_spend').select('amount').eq('date', today),
       supabase.from('ad_spend').select('amount').gte('date', monthStart).lte('date', today),
@@ -318,7 +318,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       supabase.from('small_sales').select('sale_price, quantity').gte('created_at', `${today}T00:00:00-03:00`).lte('created_at', `${today}T23:59:59-03:00`),
       supabase.from('sales').select('id', { count: 'exact', head: true }).eq('payment_method', 'pix').in('status', ['em_separacao', 'embalar_amanha']),
       supabase.from('ad_spend').select('date, amount').gte('date', sixAgo).lte('date', today),
-      supabase.from('sales').select('sale_date, total_sale_price').neq('status', 'cancelado').gte('sale_date', `${ninetyDaysAgo}T00:00:00`).lte('sale_date', `${yesterday}T23:59:59`),
+      supabase.from('sales').select('sale_date, total_sale_price').neq('status', 'cancelado').neq('status', 'reembolsado').gte('sale_date', `${ninetyDaysAgo}T00:00:00`).lte('sale_date', `${yesterday}T23:59:59`),
     ]);
 
     // Round 2: sale_items (needs IDs from round 1)

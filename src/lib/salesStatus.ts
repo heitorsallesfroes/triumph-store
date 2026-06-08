@@ -4,7 +4,8 @@ export type SaleStatus =
   | 'em_rota'
   | 'finalizado'
   | 'pago'
-  | 'embalar_amanha';
+  | 'embalar_amanha'
+  | 'reembolsado';
 
 export interface StatusConfig {
   value: SaleStatus;
@@ -63,6 +64,14 @@ export const SALE_STATUSES: StatusConfig[] = [
     color: 'text-orange-400',
     bgColor: 'bg-orange-500/20',
     borderColor: 'border-orange-500',
+  },
+  {
+    value: 'reembolsado',
+    label: 'Reembolsado',
+    icon: '↩️',
+    color: 'text-red-400',
+    bgColor: 'bg-red-500/20',
+    borderColor: 'border-red-500',
   },
 ];
 

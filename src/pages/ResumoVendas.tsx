@@ -109,6 +109,7 @@ export default function ResumoVendas() {
           .from('sales')
           .select('id, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, payment_methods, delivery_type, motoboy_id, city')
           .neq('status', 'cancelado')
+          .neq('status', 'reembolsado')
           .gte('sale_date', `${start}T00:00:00`)
           .lte('sale_date', `${end}T23:59:59`),
         supabase.from('ad_spend').select('amount').gte('date', start).lte('date', end),

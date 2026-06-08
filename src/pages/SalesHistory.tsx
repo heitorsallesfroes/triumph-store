@@ -549,6 +549,53 @@ export default function SalesHistory() {
   };
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [reembolsandoId, setReembolsandoId] = useState<string | null>(null);
+
+  const reembolsarSale = async (sale: Sale) => {
+    if (!confirm(`Reembolsar a venda de ${sale.customer_name}?\n\nOs produtos serão devolvidos ao estoque e os valores financeiros zerados. Esta ação não pode ser desfeita.`)) return;
+    setReembolsandoId(sale.id);
+    try {
+      const { data: items } = await supabase
+        .from('sale_items')
+        .select('product_id, quantity')
+        .eq('sale_id', sale.id);
+
+      if (items && items.length > 0) {
+        await Promise.all(
+          items.map(async (item) => {
+            const { data: product } = await supabase
+              .from('products')
+              .select('current_stock')
+              .eq('id', item.product_id)
+              .maybeSingle();
+            if (product) {
+              await supabase
+                .from('products')
+                .update({ current_stock: product.current_stock + item.quantity })
+                .eq('id', item.product_id);
+            }
+          })
+        );
+      }
+
+      const { error } = await supabase.from('sales').update({
+        status: 'reembolsado',
+        net_received: 0,
+        total_sale_price: 0,
+      }).eq('id', sale.id);
+      if (error) throw error;
+
+      const patch = (s: Sale) => s.id === sale.id
+        ? { ...s, status: 'reembolsado' as SaleStatus, net_received: 0, total_sale_price: 0 }
+        : s;
+      setFilteredSales(prev => prev.map(patch));
+      setSales(prev => prev.map(patch));
+    } catch {
+      alert('Erro ao reembolsar venda.');
+    } finally {
+      setReembolsandoId(null);
+    }
+  };
 
   const deleteSale = async (sale: Sale) => {
     if (!confirm(`Excluir a venda de ${sale.customer_name}?\n\nO estoque dos produtos será restaurado. Esta ação não pode ser desfeita.`)) return;
@@ -785,7 +832,7 @@ export default function SalesHistory() {
               onChange={e => setBulkStatus(e.target.value as SaleStatus)}
               className="bg-gray-700 rounded-lg px-3 py-2 border border-gray-600 focus:outline-none text-sm"
             >
-              {SALE_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              {SALE_STATUSES.filter(s => s.value !== 'reembolsado').map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
             <button
               onClick={updateBulkStatus}
@@ -961,14 +1008,23 @@ export default function SalesHistory() {
                     </div>
                     <div className="relative">
                       <select value={sale.status} onChange={(e) => updateSaleStatus(sale.id, e.target.value as SaleStatus)} className={`w-full appearance-none rounded-lg px-4 py-2.5 pr-10 border-2 font-semibold cursor-pointer transition-all ${statusConfig.color} ${statusConfig.bgColor} ${statusConfig.borderColor} hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-orange-500`}>
-                        {SALE_STATUSES.map((status) => (<option key={status.value} value={status.value}>{status.icon} {status.label}</option>))}
+                        {SALE_STATUSES.filter(s => s.value !== 'reembolsado').map((status) => (<option key={status.value} value={status.value}>{status.icon} {status.label}</option>))}
                       </select>
                       <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none" size={20} />
                     </div>
                     <button
+                      onClick={() => reembolsarSale(sale)}
+                      disabled={reembolsandoId === sale.id || sale.status === 'reembolsado'}
+                      className="mt-2 flex items-center gap-1.5 text-gray-500 hover:text-yellow-400 disabled:opacity-30 transition-colors text-xs"
+                      title="Reembolsar venda"
+                    >
+                      <span className="text-sm leading-none">↩️</span>
+                      <span>{reembolsandoId === sale.id ? 'Reembolsando...' : 'Reembolsar'}</span>
+                    </button>
+                    <button
                       onClick={() => deleteSale(sale)}
                       disabled={deletingId === sale.id}
-                      className="mt-2 flex items-center gap-1.5 text-gray-500 hover:text-red-400 disabled:opacity-30 transition-colors text-xs"
+                      className="mt-1 flex items-center gap-1.5 text-gray-500 hover:text-red-400 disabled:opacity-30 transition-colors text-xs"
                       title="Excluir venda"
                     >
                       <Trash2 size={14} />

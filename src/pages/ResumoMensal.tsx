@@ -75,6 +75,7 @@ export default function ResumoMensal() {
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [adSpend, setAdSpend] = useState(0);
   const [operationalCosts, setOperationalCosts] = useState(0);
+  const [refundData, setRefundData] = useState({ count: 0, total: 0 });
   const [motoboyExtras, setMotoboyExtras] = useState(0);
   const [motoboyDeliveryFees, setMotoboyDeliveryFees] = useState(0);
   const [smallSales, setSmallSales] = useState<any[]>([]);
@@ -94,10 +95,11 @@ export default function ResumoMensal() {
       const [ey, em, ed] = endDate.split('-').map(Number);
       const endUTC = new Date(Date.UTC(ey, em - 1, ed + 1)).toISOString().split('T')[0] + 'T03:00:00.000Z';
 
-      const [salesRes, adRes, costsPayRes, allCostsRes, motoboyExtrasRes, motoboyFeesRes, motoboySmallFeesRes, avulsosRes] = await Promise.all([
+      const [salesRes, adRes, costsPayRes, allCostsRes, motoboyExtrasRes, motoboyFeesRes, motoboySmallFeesRes, avulsosRes, refundRes] = await Promise.all([
         supabase.from('sales')
           .select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status,city,neighborhood,payment_method')
           .neq('status', 'cancelado')
+          .neq('status', 'reembolsado')
           .gte('sale_date', startDate)
           .lte('sale_date', endDate + 'T23:59:59'),
         supabase.from('ad_spend').select('amount').gte('date', startDate).lte('date', endDate),
@@ -117,6 +119,10 @@ export default function ResumoMensal() {
         supabase.from('operational_costs_avulsos').select('amount')
           .gte('date', startDate)
           .lte('date', endDate),
+        supabase.from('sales').select('total_sale_price')
+          .eq('status', 'reembolsado')
+          .gte('sale_date', startDate)
+          .lte('sale_date', endDate + 'T23:59:59'),
       ]);
 
       const salesData = salesRes.data || [];
@@ -137,6 +143,8 @@ export default function ResumoMensal() {
       const totalOpCosts = (allCostsRes.data || []).reduce((sum, c) => sum + (paymentsMap.has(c.id) ? paymentsMap.get(c.id)! : Number(c.amount)), 0);
       const avulsosTotal = (avulsosRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0);
       setOperationalCosts(totalOpCosts + avulsosTotal);
+      const refundSales = refundRes.data || [];
+      setRefundData({ count: refundSales.length, total: refundSales.reduce((s, r) => s + Number(r.total_sale_price), 0) });
       setMotoboyExtras((motoboyExtrasRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
       const salesFees = (motoboyFeesRes.data || []).reduce((sum, r) => sum + Number(r.delivery_fee || 0), 0);
       const smallFees = (motoboySmallFeesRes.data || []).reduce((sum, r) => sum + Number(r.delivery_fee || 0), 0);
@@ -607,6 +615,11 @@ export default function ResumoMensal() {
                 </span>
               </div>
               <p className="text-gray-500 text-xs mt-0.5">Vendas normais — inclui faturamento, custos, ads e métricas de marketing</p>
+              {refundData.count > 0 && (
+                <p className="text-red-400 text-xs mt-1">
+                  ↩️ {refundData.count} reembolso{refundData.count !== 1 ? 's' : ''} — {fmt(refundData.total)} devolvidos no mês
+                </p>
+              )}
             </div>
 
             <div className="p-6 space-y-6">
