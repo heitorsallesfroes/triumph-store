@@ -576,6 +576,13 @@ export default function SalesHistory() {
 
       let updatedPaymentMethods = freshSale.payment_methods;
       let cardFee: number;
+      console.log('[debug] params calculateCardFee:', {
+        total: freshSale.total_sale_price,
+        method: 'credit_card',
+        brand: freshSale.card_brand,
+        installments: newInstallments,
+        paymentMethods: freshSale.payment_methods,
+      });
       if (freshSale.payment_methods && freshSale.payment_methods.length > 0) {
         updatedPaymentMethods = freshSale.payment_methods.map((pm: { method: string; card_brand: string; installments: number; amount: number }) =>
           pm.method === 'credit_card' ? { ...pm, installments: newInstallments } : pm
