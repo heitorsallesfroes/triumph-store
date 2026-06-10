@@ -583,6 +583,7 @@ export default function SalesHistory() {
         installments: newInstallments,
         paymentMethods: freshSale.payment_methods,
       });
+      console.log('[debug] payment_methods items:', JSON.stringify(freshSale.payment_methods));
       const hasCreditCardItem = freshSale.payment_methods?.some((pm: { method: string }) => pm.method === 'credit_card') ?? false;
       if (hasCreditCardItem) {
         updatedPaymentMethods = freshSale.payment_methods!.map((pm: { method: string; card_brand: string; installments: number; amount: number }) =>
