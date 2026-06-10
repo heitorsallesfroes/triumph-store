@@ -596,9 +596,11 @@ export default function SalesHistory() {
       }).eq('id', sale.id);
       if (error) throw error;
 
-      const patch = (s: Sale) => s.id === sale.id
-        ? { ...s, installments: newInstallments, card_fee: cardFee, net_received: netReceived, profit, payment_methods: updatedPaymentMethods }
-        : s;
+      const patch = (s: Sale) => {
+        if (s.id !== sale.id) return s;
+        console.log('[handleUpdateInstallments] profit antes:', s.profit, '-> depois:', profit);
+        return { ...s, installments: newInstallments, card_fee: cardFee, net_received: netReceived, profit, payment_methods: updatedPaymentMethods };
+      };
       setFilteredSales(prev => prev.map(patch));
       setSales(prev => prev.map(patch));
     } catch {
