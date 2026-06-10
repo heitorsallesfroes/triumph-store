@@ -563,21 +563,29 @@ export default function SalesHistory() {
   };
 
   const handleUpdateInstallments = async (sale: Sale, newInstallments: number) => {
-    if (newInstallments === sale.installments) { setEditingInstallmentsId(null); return; }
     setUpdatingInstallmentsId(sale.id);
     try {
-      let updatedPaymentMethods = sale.payment_methods;
+      const { data: freshSale, error: fetchError } = await supabase
+        .from('sales')
+        .select('total_sale_price, card_brand, total_cost, payment_methods, installments')
+        .eq('id', sale.id)
+        .single();
+      if (fetchError) throw fetchError;
+
+      if (newInstallments === freshSale.installments) { setEditingInstallmentsId(null); return; }
+
+      let updatedPaymentMethods = freshSale.payment_methods;
       let cardFee: number;
-      if (sale.payment_methods && sale.payment_methods.length > 0) {
-        updatedPaymentMethods = sale.payment_methods.map(pm =>
+      if (freshSale.payment_methods && freshSale.payment_methods.length > 0) {
+        updatedPaymentMethods = freshSale.payment_methods.map((pm: { method: string; card_brand: string; installments: number; amount: number }) =>
           pm.method === 'credit_card' ? { ...pm, installments: newInstallments } : pm
         );
-        cardFee = updatedPaymentMethods.reduce((sum, pm) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0), 0);
+        cardFee = updatedPaymentMethods.reduce((sum: number, pm: { method: string; card_brand: string; installments: number; amount: number }) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0), 0);
       } else {
-        cardFee = calculateCardFee(sale.total_sale_price, 'credit_card', sale.card_brand || '', newInstallments);
+        cardFee = calculateCardFee(freshSale.total_sale_price, 'credit_card', freshSale.card_brand || '', newInstallments);
       }
-      const netReceived = sale.total_sale_price - cardFee;
-      const profit = netReceived - (sale.total_cost || 0);
+      const netReceived = freshSale.total_sale_price - cardFee;
+      const profit = netReceived - (freshSale.total_cost || 0);
 
       const { error } = await supabase.from('sales').update({
         installments: newInstallments,
