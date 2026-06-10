@@ -1,10 +1,11 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
-import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers, Link } from 'lucide-react';
+import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers, Link, Pencil } from 'lucide-react';
 import Receipt from '../components/Receipt';
 import Sales from './Sales';
 import { generateShippingLabel } from '../lib/superfrete';
+import { calculateCardFee } from '../lib/cardFees';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 
 type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
@@ -77,6 +78,10 @@ interface Sale {
   sale_date: string;
   payment_method: string;
   installments?: number;
+  card_brand?: string | null;
+  card_fee?: number;
+  total_cost?: number;
+  net_received?: number;
   motoboy_id?: string | null;
   motoboy_name?: string;
   delivery_fee?: number | null;
@@ -128,6 +133,8 @@ export default function SalesHistory() {
   const [bulkUpdating, setBulkUpdating] = useState(false);
   const [paymentPendingFilter, setPaymentPendingFilter] = useState(false);
   const [confirmingPaymentId, setConfirmingPaymentId] = useState<string | null>(null);
+  const [editingInstallmentsId, setEditingInstallmentsId] = useState<string | null>(null);
+  const [updatingInstallmentsId, setUpdatingInstallmentsId] = useState<string | null>(null);
 
   useEffect(() => { loadSales(); }, []);
   useEffect(() => { setVisibleCount(PAGE_SIZE); setSelectedIds(new Set()); }, [filteredSales]);
@@ -138,6 +145,13 @@ export default function SalesHistory() {
   }, [productFilter]);
 
   useEffect(() => { filterSales(); }, [statusFilter, deliveryTypeFilter, motoboyFilter, paymentFilter, paymentPendingFilter, searchTerm, debouncedProductFilter, period, dateFilter]);
+
+  useEffect(() => {
+    if (!editingInstallmentsId) return;
+    const handler = () => setEditingInstallmentsId(null);
+    window.addEventListener('click', handler);
+    return () => window.removeEventListener('click', handler);
+  }, [editingInstallmentsId]);
 
   const loadSales = async () => {
     try {
@@ -548,6 +562,45 @@ export default function SalesHistory() {
     }
   };
 
+  const handleUpdateInstallments = async (sale: Sale, newInstallments: number) => {
+    if (newInstallments === sale.installments) { setEditingInstallmentsId(null); return; }
+    setUpdatingInstallmentsId(sale.id);
+    try {
+      let updatedPaymentMethods = sale.payment_methods;
+      let cardFee: number;
+      if (sale.payment_methods && sale.payment_methods.length > 0) {
+        updatedPaymentMethods = sale.payment_methods.map(pm =>
+          pm.method === 'credit_card' ? { ...pm, installments: newInstallments } : pm
+        );
+        cardFee = updatedPaymentMethods.reduce((sum, pm) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0), 0);
+      } else {
+        cardFee = calculateCardFee(sale.total_sale_price, 'credit_card', sale.card_brand || '', newInstallments);
+      }
+      const netReceived = sale.total_sale_price - cardFee;
+      const profit = netReceived - (sale.total_cost || 0);
+
+      const { error } = await supabase.from('sales').update({
+        installments: newInstallments,
+        card_fee: cardFee,
+        net_received: netReceived,
+        profit,
+        ...(updatedPaymentMethods ? { payment_methods: updatedPaymentMethods } : {}),
+      }).eq('id', sale.id);
+      if (error) throw error;
+
+      const patch = (s: Sale) => s.id === sale.id
+        ? { ...s, installments: newInstallments, card_fee: cardFee, net_received: netReceived, profit, payment_methods: updatedPaymentMethods }
+        : s;
+      setFilteredSales(prev => prev.map(patch));
+      setSales(prev => prev.map(patch));
+    } catch {
+      alert('Erro ao atualizar parcelas');
+    } finally {
+      setUpdatingInstallmentsId(null);
+      setEditingInstallmentsId(null);
+    }
+  };
+
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [reembolsandoId, setReembolsandoId] = useState<string | null>(null);
 
@@ -934,9 +987,39 @@ export default function SalesHistory() {
                             const showInstallments = (sale.installments ?? 0) > 1
                               && (sale.payment_method === 'credit_card' || sale.payment_method === 'payment_link');
                             const badgeLabel = showInstallments ? `${cfg.label} ${sale.installments}x` : cfg.label;
+                            const canEditInstallments = paymentKey === 'credit_card';
                             return (
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium ${cfg.color} ${cfg.bg}`}>
-                                <Icon size={11} />{badgeLabel}
+                              <span className="relative inline-flex items-center gap-1">
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium ${cfg.color} ${cfg.bg}`}>
+                                  <Icon size={11} />{badgeLabel}
+                                </span>
+                                {canEditInstallments && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setEditingInstallmentsId(prev => prev === sale.id ? null : sale.id); }}
+                                    disabled={updatingInstallmentsId === sale.id}
+                                    className="p-0.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                                    title="Editar parcelas"
+                                  >
+                                    <Pencil size={11} />
+                                  </button>
+                                )}
+                                {canEditInstallments && editingInstallmentsId === sale.id && (
+                                  <div
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="absolute top-full left-0 mt-1 z-30 bg-gray-700 border border-gray-600 rounded-lg shadow-lg p-1.5 grid grid-cols-3 gap-1 w-32"
+                                  >
+                                    {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
+                                      <button
+                                        key={n}
+                                        onClick={() => handleUpdateInstallments(sale, n)}
+                                        disabled={updatingInstallmentsId === sale.id}
+                                        className={`px-1.5 py-1 rounded text-xs font-medium transition-colors disabled:opacity-50 ${sale.installments === n ? 'bg-orange-500 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-600'}`}
+                                      >
+                                        {n}x
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
                               </span>
                             );
                           })()}
