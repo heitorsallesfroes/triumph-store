@@ -583,8 +583,9 @@ export default function SalesHistory() {
         installments: newInstallments,
         paymentMethods: freshSale.payment_methods,
       });
-      if (freshSale.payment_methods && freshSale.payment_methods.length > 0) {
-        updatedPaymentMethods = freshSale.payment_methods.map((pm: { method: string; card_brand: string; installments: number; amount: number }) =>
+      const hasCreditCardItem = freshSale.payment_methods?.some((pm: { method: string }) => pm.method === 'credit_card') ?? false;
+      if (hasCreditCardItem) {
+        updatedPaymentMethods = freshSale.payment_methods!.map((pm: { method: string; card_brand: string; installments: number; amount: number }) =>
           pm.method === 'credit_card' ? { ...pm, installments: newInstallments } : pm
         );
         cardFee = updatedPaymentMethods.reduce((sum: number, pm: { method: string; card_brand: string; installments: number; amount: number }) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0), 0);
