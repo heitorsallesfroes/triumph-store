@@ -587,6 +587,12 @@ export default function SalesHistory() {
       const netReceived = freshSale.total_sale_price - cardFee;
       const profit = netReceived - (freshSale.total_cost || 0);
 
+      console.log('[debug] freshSale.total_sale_price:', freshSale.total_sale_price);
+      console.log('[debug] freshSale.total_cost:', freshSale.total_cost);
+      console.log('[debug] cardFee calculado:', cardFee);
+      console.log('[debug] netReceived:', netReceived);
+      console.log('[debug] profit final:', profit);
+
       const { error } = await supabase.from('sales').update({
         installments: newInstallments,
         card_fee: cardFee,
