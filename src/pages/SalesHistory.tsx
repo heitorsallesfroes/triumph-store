@@ -655,6 +655,13 @@ export default function SalesHistory() {
                 .update({ current_stock: product.current_stock + item.quantity })
                 .eq('id', item.product_id);
             }
+            await supabase.from('stock_movements').insert([{
+              product_id: item.product_id,
+              quantity: item.quantity,
+              type: 'reembolso',
+              notes: `Reembolso - ${sale.customer_name}`,
+              date: sale.sale_date,
+            }]);
           })
         );
       }
