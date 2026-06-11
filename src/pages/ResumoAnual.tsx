@@ -56,6 +56,7 @@ export default function ResumoAnual() {
         supabase.from('sales')
           .select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status')
           .neq('status', 'cancelado')
+          .neq('status', 'reembolsado')
           .gte('sale_date', yStart)
           .lte('sale_date', `${yEnd}T23:59:59`),
         supabase.from('sale_items')

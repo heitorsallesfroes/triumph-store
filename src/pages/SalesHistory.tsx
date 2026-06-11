@@ -342,8 +342,10 @@ export default function SalesHistory() {
         });
       }
 
+      const saleStatusMap = new Map(rawSales.map((s: any) => [s.id, s.status]));
       const swCount = itemsData
         .filter((i: any) => (productMap.get(i.product_id) as any)?.category === 'smartwatch')
+        .filter((i: any) => !['cancelado', 'reembolsado'].includes(saleStatusMap.get(i.sale_id)))
         .reduce((s: number, i: any) => s + i.quantity, 0);
       setFilteredSmartwatch(swCount);
       setFilteredSales(salesWithProducts);
@@ -868,6 +870,7 @@ export default function SalesHistory() {
 
       {/* Totalizador */}
       {!filterLoading && filteredSales.length > 0 && (() => {
+        const activeSales = filteredSales.filter(s => s.status !== 'cancelado' && s.status !== 'reembolsado');
         const totalRevenue = filteredSales.reduce((sum, s) => sum + Number(s.total_sale_price), 0);
         const totalProfit  = filteredSales.reduce((sum, s) => sum + Number(s.profit), 0);
         const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -877,7 +880,7 @@ export default function SalesHistory() {
               <Package size={16} className="text-orange-500 flex-shrink-0" />
               <div>
                 <p className="text-xs text-gray-400">Total de Vendas</p>
-                <p className="text-lg font-bold">{filteredSales.length}</p>
+                <p className="text-lg font-bold">{activeSales.length}</p>
                 {filteredSmartwatch > 0 && (
                   <p className="text-xs text-blue-400 mt-0.5">{filteredSmartwatch} smartwatches</p>
                 )}
