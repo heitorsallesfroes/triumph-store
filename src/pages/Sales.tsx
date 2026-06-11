@@ -57,6 +57,27 @@ interface SalesProps {
   onEditDone?: () => void;
 }
 
+const RECENT_CITIES_KEY = 'recent_cities';
+const RECENT_NEIGHBORHOODS_KEY = 'recent_neighborhoods';
+
+function loadRecentNames(key: string): string[] {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function reorderByRecent<T extends { name: string }>(items: T[], recentNames: string[]): T[] {
+  const recentSet = new Set(recentNames);
+  const recentItems = recentNames
+    .map((name) => items.find((item) => item.name === name))
+    .filter((item): item is T => !!item);
+  const restItems = items.filter((item) => !recentSet.has(item.name));
+  return [...recentItems, ...restItems];
+}
+
 export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditDone }: SalesProps) {
   console.log('Nova Venda loaded');
 
@@ -67,6 +88,8 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [cities, setCities] = useState<City[]>([]);
   const [neighborhoods, setNeighborhoods] = useState<Neighborhood[]>([]);
+  const cachedRecentCitiesRef = useRef<string[]>(loadRecentNames(RECENT_CITIES_KEY));
+  const cachedRecentNeighborhoodsRef = useRef<string[]>(loadRecentNames(RECENT_NEIGHBORHOODS_KEY));
   const [loading, setLoading] = useState(true);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [citySearch, setCitySearch] = useState('');
@@ -155,13 +178,14 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
   const loadData = async () => {
     try {
       console.log('Loading data for Nova Venda...');
-      const [productsRes, accessoriesRes, motoboysRes, suppliersRes, citiesRes, neighborhoodsRes] = await Promise.all([
+      const [productsRes, accessoriesRes, motoboysRes, suppliersRes, citiesRes, neighborhoodsRes, recentSalesRes] = await Promise.all([
         supabase.from('products').select('*').order('model'),
         supabase.from('accessories').select('*').order('name'),
         supabase.from('motoboys').select('*').order('name'),
         supabase.from('suppliers').select('*').order('name'),
         supabase.from('cities').select('*').order('name'),
         supabase.from('neighborhoods').select('*').order('name'),
+        supabase.from('sales').select('city, neighborhood, sale_date').order('sale_date', { ascending: false }).limit(50),
       ]);
 
       console.log('Data loaded:', {
@@ -178,8 +202,20 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
       setAccessories(accessoriesRes.data || []);
       setMotoboys(motoboysRes.data || []);
       setSuppliers(suppliersRes.data || []);
-      setCities(citiesRes.data || []);
-      setNeighborhoods(neighborhoodsRes.data || []);
+
+      const newRecentCities: string[] = [];
+      const newRecentNeighborhoods: string[] = [];
+      for (const s of recentSalesRes.data || []) {
+        if (s.city && !newRecentCities.includes(s.city)) newRecentCities.push(s.city);
+        if (s.neighborhood && !newRecentNeighborhoods.includes(s.neighborhood)) newRecentNeighborhoods.push(s.neighborhood);
+      }
+      const recentCities = newRecentCities.length > 0 ? newRecentCities : cachedRecentCitiesRef.current;
+      const recentNeighborhoods = newRecentNeighborhoods.length > 0 ? newRecentNeighborhoods : cachedRecentNeighborhoodsRef.current;
+      localStorage.setItem(RECENT_CITIES_KEY, JSON.stringify(recentCities));
+      localStorage.setItem(RECENT_NEIGHBORHOODS_KEY, JSON.stringify(recentNeighborhoods));
+
+      setCities(reorderByRecent(citiesRes.data || [], recentCities));
+      setNeighborhoods(reorderByRecent(neighborhoodsRes.data || [], recentNeighborhoods));
       if (editSaleId) {
         await loadExistingSale(editSaleId, suppliersRes.data || []);
       }
