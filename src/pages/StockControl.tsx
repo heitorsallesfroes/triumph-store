@@ -401,12 +401,13 @@ const [showStockSummary, setShowStockSummary] = useState(false);
 
       (saleItemsRes.data || []).forEach((item: any) => {
         if (!item.sales?.sale_date) return;
+        const isReembolso = item.sales.status === 'reembolso';
         events.push({
           id: `sale-${item.id}`,
-          type: 'venda',
+          type: isReembolso ? 'reembolso' : 'venda',
           date: item.sales.sale_date,
           qty: item.quantity,
-          delta: -item.quantity,
+          delta: isReembolso ? item.quantity : -item.quantity,
           customer: item.sales.customer_name,
           saleId: (item.sales.id || '').slice(0, 8).toUpperCase(),
           price: item.unit_price || 0,
@@ -1542,6 +1543,7 @@ const [showStockSummary, setShowStockSummary] = useState(false);
                 paginatedHistoryEvents.map(event => {
                   const cfgMap: Record<string, { emoji: string; label: string; bar: string; qty: string; bg: string }> = {
                     venda:             { emoji: '🛒', label: 'VENDA',              bar: 'bg-red-500',    qty: 'text-red-400',    bg: 'bg-red-500/5' },
+                    reembolso:         { emoji: '↩', label: 'REEMBOLSO',          bar: 'bg-green-500',  qty: 'text-green-400',  bg: 'bg-green-500/5' },
                     entrada:           { emoji: '📦', label: 'ENTRADA',            bar: 'bg-green-500',  qty: 'text-green-400',  bg: 'bg-green-500/5' },
                     encomenda_recebida:{ emoji: '🏭', label: 'ENCOMENDA RECEBIDA', bar: 'bg-blue-500',   qty: 'text-blue-400',   bg: 'bg-blue-500/5' },
                     saida:             { emoji: '➖', label: 'SAÍDA MANUAL',       bar: 'bg-yellow-500', qty: 'text-yellow-400', bg: 'bg-yellow-500/5' },
@@ -1550,7 +1552,7 @@ const [showStockSummary, setShowStockSummary] = useState(false);
                   const d = new Date(event.date);
                   const dateStr = d.toLocaleDateString('pt-BR');
                   const timeStr = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                  const isPositive = event.type === 'entrada' || event.type === 'encomenda_recebida';
+                  const isPositive = event.type === 'entrada' || event.type === 'encomenda_recebida' || event.type === 'reembolso';
 
                   return (
                     <div key={event.id} className={`flex rounded-lg border border-gray-700 ${c.bg} overflow-hidden`}>
@@ -1586,6 +1588,12 @@ const [showStockSummary, setShowStockSummary] = useState(false);
                                     </span>
                                   </>
                                 )}
+                              </>
+                            )}
+                            {event.type === 'reembolso' && event.customer && (
+                              <>
+                                <span className="text-gray-600">•</span>
+                                <span className="text-white text-sm font-medium">{event.customer}</span>
                               </>
                             )}
                             {event.type !== 'venda' && event.notes && (
