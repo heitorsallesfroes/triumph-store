@@ -68,67 +68,77 @@ Deno.serve(async (req: Request) => {
 
     const results: { code: string; status: string; events: { description: string; location: string; destination: string; date: string }[]; error?: string }[] = [];
 
-    await Promise.all(tracking_codes.map(async (code) => {
-      try {
-        const res = await fetch(
-          `https://seurastreio.com.br/api/public/rastreio/${encodeURIComponent(code)}`,
-          {
-            headers: {
-              "Authorization": `Bearer ${token}`,
-              "Accept": "application/json",
-            },
-            signal: AbortSignal.timeout(20000),
-          },
-        );
+    const BATCH_SIZE = 2;
+    const BATCH_DELAY_MS = 1000;
 
-        const text = await res.text();
-        console.log(`[SeuRastreio] ${code} | HTTP ${res.status}`);
-
-        let data: any;
+    for (let i = 0; i < tracking_codes.length; i += BATCH_SIZE) {
+      const batch = tracking_codes.slice(i, i + BATCH_SIZE);
+      await Promise.all(batch.map(async (code) => {
         try {
-          data = JSON.parse(text);
-        } catch {
-          throw new Error(`Resposta inválida do Seu Rastreio: ${text.substring(0, 120)}`);
+          const res = await fetch(
+            `https://seurastreio.com.br/api/public/rastreio/${encodeURIComponent(code)}`,
+            {
+              headers: {
+                "Authorization": `Bearer ${token}`,
+                "Accept": "application/json",
+              },
+              signal: AbortSignal.timeout(20000),
+            },
+          );
+
+          const text = await res.text();
+          console.log(`[SeuRastreio] ${code} | HTTP ${res.status}`);
+
+          let data: any;
+          try {
+            data = JSON.parse(text);
+          } catch {
+            throw new Error(`Resposta inválida do Seu Rastreio: ${text.substring(0, 120)}`);
+          }
+
+          if (!res.ok) {
+            throw new Error(data?.error || `HTTP ${res.status}`);
+          }
+
+          if (data.status === "not_found" || (!data.eventoMaisRecente && !Array.isArray(data.eventos))) {
+            results.push({ code, status: "Sem informação", events: [], error: undefined });
+            return;
+          }
+
+          // Usa todos os eventos — fallback para só o mais recente se não houver array
+          const rawEvents: any[] =
+            Array.isArray(data.eventos) && data.eventos.length > 0
+              ? data.eventos
+              : data.eventoMaisRecente
+              ? [data.eventoMaisRecente]
+              : [];
+
+          const events = rawEvents
+            .map((e: any) => ({
+              description: String(e.descricao  ?? e.description ?? e.status     ?? "").trim(),
+              location:    String(e.local      ?? e.location    ?? e.cidade     ?? "").trim(),
+              destination: String(e.destino    ?? e.destination ?? e.destinoAcr ?? "").trim(),
+              date:        String(e.data       ?? e.date        ?? e.tracked_at ?? "").trim(),
+            }))
+            .filter((e) => e.description);
+
+          const first = events[0];
+          const statusText = first ? parseStatus(first.description, first.location) : "Sem informação";
+          results.push({ code, status: statusText, events });
+
+        } catch (err) {
+          results.push({
+            code,
+            status: "",
+            error: err instanceof Error ? err.message : "Erro desconhecido",
+          });
         }
+      }));
 
-        if (!res.ok) {
-          throw new Error(data?.error || `HTTP ${res.status}`);
-        }
-
-        if (data.status === "not_found" || (!data.eventoMaisRecente && !Array.isArray(data.eventos))) {
-          results.push({ code, status: "Sem informação", events: [], error: undefined });
-          return;
-        }
-
-        // Usa todos os eventos — fallback para só o mais recente se não houver array
-        const rawEvents: any[] =
-          Array.isArray(data.eventos) && data.eventos.length > 0
-            ? data.eventos
-            : data.eventoMaisRecente
-            ? [data.eventoMaisRecente]
-            : [];
-
-        const events = rawEvents
-          .map((e: any) => ({
-            description: String(e.descricao  ?? e.description ?? e.status     ?? "").trim(),
-            location:    String(e.local      ?? e.location    ?? e.cidade     ?? "").trim(),
-            destination: String(e.destino    ?? e.destination ?? e.destinoAcr ?? "").trim(),
-            date:        String(e.data       ?? e.date        ?? e.tracked_at ?? "").trim(),
-          }))
-          .filter((e) => e.description);
-
-        const first = events[0];
-        const statusText = first ? parseStatus(first.description, first.location) : "Sem informação";
-        results.push({ code, status: statusText, events });
-
-      } catch (err) {
-        results.push({
-          code,
-          status: "",
-          error: err instanceof Error ? err.message : "Erro desconhecido",
-        });
+      if (i + BATCH_SIZE < tracking_codes.length) {
+        await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
       }
-    }));
+    }
 
     return new Response(
       JSON.stringify({ success: true, results }),
