@@ -5,6 +5,8 @@ import {
 } from 'recharts';
 import { supabase } from '../lib/supabase';
 import { getTodayInBrazil, getYesterdayInBrazil } from '../lib/dateUtils';
+import { toAdSpendReal } from '../lib/adTax';
+import AdTaxBreakdown from '../components/AdTaxBreakdown';
 import {
   ShoppingCart, TrendingUp, TrendingDown, Watch, DollarSign,
   AlertTriangle, Truck, Target, Clock, ArrowRight, RefreshCw,
@@ -455,8 +457,8 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
   const logTotal    = logistics.em_separacao + logistics.embalado + logistics.em_rota + logistics.embalar_amanha;
   const monthMargin = month.revenue > 0 ? (month.profit / month.revenue) * 100 : 0;
   const dayMargin   = day.revenue > 0 ? (day.profit / day.revenue) * 100 : 0;
-  const roas        = adsToday > 0 && day.revenue > 0 ? day.revenue / adsToday : null;
-  const monthRoas   = month.adSpend > 0 && month.revenue > 0 ? month.revenue / month.adSpend : null;
+  const roas        = adsToday > 0 && day.revenue > 0 ? day.revenue / toAdSpendReal(adsToday) : null;
+  const monthRoas   = month.adSpend > 0 && month.revenue > 0 ? month.revenue / toAdSpendReal(month.adSpend) : null;
   const hasAlerts   = outOfStock.length > 0 || pendingPix > 0;
   const axisColor   = isLight ? '#6b7280' : '#6b7280';
   const gridColor   = isLight ? '#e5e7eb' : '#1e1e2e';
@@ -575,16 +577,17 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
           sub="gasto em anúncios"
           onClick={() => onNavigate('marketing')}
         >
+          <AdTaxBreakdown bruto={adsToday} fontSize={11} />
           <CardRow
             label="ROAS"
             value={roas !== null ? `${roas.toFixed(2)}x` : '—'}
             color={roas === null ? undefined : roas >= 3 ? '#22c55e' : roas >= 1.5 ? '#f59e0b' : '#ef4444'}
           />
           {adsToday > 0 && day.salesCount > 0 && (
-            <CardRow label="CPV" value={fmtR(adsToday / day.salesCount)} />
+            <CardRow label="CPV" value={fmtR(toAdSpendReal(adsToday) / day.salesCount)} />
           )}
           {adsToday > 0 && day.revenue > 0 && (
-            <CardRow label="Receita / Gasto" value={`${(day.revenue / adsToday).toFixed(1)}x`} />
+            <CardRow label="Receita / Gasto" value={`${(day.revenue / toAdSpendReal(adsToday)).toFixed(1)}x`} />
           )}
         </DayCard>
 
@@ -672,13 +675,17 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
         <MonthCard icon={Target} iconColor="#a855f7" label="ROI / Ads" value={monthRoas !== null ? `${monthRoas.toFixed(2)}x` : '—'} sub="ROAS do mês">
           <div style={{ marginTop: 10 }}>
             <CardRow label="Gasto em ads" value={month.adSpend > 0 ? fmtR(month.adSpend) : '—'} />
-            {month.adSpend > 0 && (
-              <CardRow
-                label="ROI"
-                value={`${(((month.revenue - month.adSpend) / month.adSpend) * 100).toFixed(0)}%`}
-                color={month.revenue > month.adSpend ? '#22c55e' : '#ef4444'}
-              />
-            )}
+            <AdTaxBreakdown bruto={month.adSpend} fontSize={11} />
+            {month.adSpend > 0 && (() => {
+              const adSpendReal = toAdSpendReal(month.adSpend);
+              return (
+                <CardRow
+                  label="ROI"
+                  value={`${(((month.revenue - adSpendReal) / adSpendReal) * 100).toFixed(0)}%`}
+                  color={month.revenue > adSpendReal ? '#22c55e' : '#ef4444'}
+                />
+              );
+            })()}
           </div>
         </MonthCard>
       </div>

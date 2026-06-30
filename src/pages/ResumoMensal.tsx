@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { supabase } from '../lib/supabase';
 import { calculateCardFee } from '../lib/cardFees';
+import { toAdSpendReal } from '../lib/adTax';
+import AdTaxBreakdown from '../components/AdTaxBreakdown';
 import {
   TrendingUp, DollarSign, ShoppingCart, Package, Truck,
   Bike, BarChart3, MapPin, Star, ShoppingBag, Target, Zap, FileDown,
@@ -179,9 +181,10 @@ export default function ResumoMensal() {
   const lucroSmartwatch = totalLiquido - totalCustoProdutos - totalCustoEntregas - adSpend - operationalCosts - custoEmbalagens;
   const margemSmartwatch = totalBruto > 0 ? (lucroSmartwatch / totalBruto) * 100 : 0;
 
-  const roas = adSpend > 0 ? totalBruto / adSpend : null;
-  const roi  = adSpend > 0 ? (lucroSmartwatch / adSpend) * 100 : null;
-  const cpv  = adSpend > 0 && sales.length > 0 ? adSpend / sales.length : null;
+  const adSpendReal = toAdSpendReal(adSpend);
+  const roas = adSpend > 0 ? totalBruto / adSpendReal : null;
+  const roi  = adSpend > 0 ? (lucroSmartwatch / adSpendReal) * 100 : null;
+  const cpv  = adSpend > 0 && sales.length > 0 ? adSpendReal / sales.length : null;
 
   // ── BLOCO 2: Pequenas Vendas ─────────────────────────────────────────────
   const CARD_METHODS = ['credit_card', 'debit_card', 'payment_link'];
@@ -307,7 +310,7 @@ export default function ResumoMensal() {
   const paymentMethods = Array.from(paymentMap.entries()).sort((a, b) => b[1] - a[1]);
 
   const fmt = (v: number) => `R$ ${v.toFixed(2)}`;
-  const cpvSw = adSpend > 0 && swCount > 0 ? adSpend / swCount : null;
+  const cpvSw = adSpend > 0 && swCount > 0 ? adSpendReal / swCount : null;
 
   const exportToExcel = () => {
     const monthName = MONTHS[selected.month - 1];
@@ -453,7 +456,9 @@ export default function ResumoMensal() {
       [sLbl('  ↳ Motoboy', true),          sMon(totalMotoboyDeliveries, true)],
       [sLbl('  ↳ Correios', true),         sMon(totalCorreiosDeliveries, true)],
       [sLbl('  ↳ Avulsos', true),          sMon(motoboyExtras, true)],
-      [sLbl('Investimento em Ads'),        sMon(adSpend)],
+      [sLbl('Investimento em Ads (bruto)'), sMon(adSpend)],
+      [sLbl('  ↳ Imposto (13,83%)', true), sMon(adSpendReal - adSpend, true)],
+      [sLbl('  ↳ Total Real', true),       sMon(adSpendReal, true)],
       [sLbl('Custos Operacionais'),        sMon(operationalCosts)],
       [mt(), mt()],
       [sSecCell('MÉTRICAS DE MARKETING'), sSecBg()],
@@ -647,7 +652,8 @@ export default function ResumoMensal() {
                     subtitle={`${swCount} un. × R$2,00`} />
                   <MetricCard label="Custo de Entregas"    value={totalCustoEntregas}  color="red" icon={Truck}     negative
                     subtitle={`Motoboy: ${fmt(totalMotoboyDeliveries)} | Correios: ${fmt(totalCorreiosDeliveries)} | Avulsos: ${fmt(motoboyExtras)}`} />
-                  <MetricCard label="Investimento em Ads"  value={adSpend}             color="red" icon={BarChart3} negative />
+                  <MetricCard label="Investimento em Ads"  value={adSpend}             color="red" icon={BarChart3} negative
+                    extra={<AdTaxBreakdown bruto={adSpend} fontSize={11} />} />
                   <MetricCard label="Custos Operacionais"  value={operationalCosts}    color="red" icon={DollarSign} negative />
                 </div>
               </div>
@@ -1247,9 +1253,9 @@ export default function ResumoMensal() {
 
 // ── Sub-componentes ──────────────────────────────────────────────────────────
 
-function MetricCard({ label, value, color, icon: Icon, negative, subtitle, isCount }: {
+function MetricCard({ label, value, color, icon: Icon, negative, subtitle, isCount, extra }: {
   label: string; value: number; color: string; icon: React.ElementType;
-  negative?: boolean; subtitle?: string; isCount?: boolean;
+  negative?: boolean; subtitle?: string; isCount?: boolean; extra?: React.ReactNode;
 }) {
   const colors: Record<string, string> = {
     green: 'text-green-400', red: 'text-red-400', blue: 'text-blue-400', orange: 'text-orange-400',
@@ -1265,6 +1271,7 @@ function MetricCard({ label, value, color, icon: Icon, negative, subtitle, isCou
         {isCount ? value : `R$ ${value.toFixed(2)}`}
       </p>
       {subtitle && <p className="text-gray-500 text-xs mt-1">{subtitle}</p>}
+      {extra}
     </div>
   );
 }

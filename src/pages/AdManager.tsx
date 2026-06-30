@@ -15,6 +15,8 @@ import {
   getMonthRangeInBrazil,
   getLastMonthRangeInBrazil,
 } from '../lib/dateUtils';
+import { toAdSpendReal } from '../lib/adTax';
+import AdTaxBreakdown from '../components/AdTaxBreakdown';
 
 const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -133,7 +135,7 @@ function SmallMetric({ label, value, color = 'var(--text-secondary)' }: { label:
 function SummaryCard({
   label, value, sub, color = 'var(--text-primary)', icon: Icon,
 }: {
-  label: string; value: string; sub?: string; color?: string;
+  label: string; value: string; sub?: React.ReactNode; color?: string;
   icon?: React.ElementType;
 }) {
   return (
@@ -143,7 +145,7 @@ function SummaryCard({
         {Icon && <Icon size={15} color="var(--text-muted)" />}
       </div>
       <p style={{ fontSize: 22, fontWeight: 700, color, margin: 0, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{value}</p>
-      {sub && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>{sub}</p>}
+      {sub && <div style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>{sub}</div>}
     </div>
   );
 }
@@ -323,8 +325,8 @@ function ItemCard({
               <SmallMetric label="CTR"        value={`${ctr.toFixed(2)}%`} color={ctr >= 2 ? '#60a5fa' : 'var(--text-secondary)'} />
               <SmallMetric label="CPM"        value={cpm > 0 ? fmtR(item.cpm) : '—'} />
               <SmallMetric label="CPC"        value={cpc > 0 ? fmtR(item.cpc) : '—'} />
-              <SmallMetric label="ROAS"       value={spend > 0 && pValue > 0 ? `${(pValue / spend).toFixed(2)}x` : '—'} color={spend > 0 && pValue > 0 ? (pValue / spend >= 4 ? '#22c55e' : pValue / spend >= 2 ? '#eab308' : '#ef4444') : 'var(--text-secondary)'} />
-              <SmallMetric label="CPV"        value={spend > 0 && item.purchases > 0 ? fmtR(spend / item.purchases) : '—'} color={spend > 0 && item.purchases > 0 ? 'var(--text-secondary)' : 'var(--text-secondary)'} />
+              <SmallMetric label="ROAS"       value={spend > 0 && pValue > 0 ? `${(pValue / toAdSpendReal(spend)).toFixed(2)}x` : '—'} color={spend > 0 && pValue > 0 ? (pValue / toAdSpendReal(spend) >= 4 ? '#22c55e' : pValue / toAdSpendReal(spend) >= 2 ? '#eab308' : '#ef4444') : 'var(--text-secondary)'} />
+              <SmallMetric label="CPV"        value={spend > 0 && item.purchases > 0 ? fmtR(toAdSpendReal(spend) / item.purchases) : '—'} color={spend > 0 && item.purchases > 0 ? 'var(--text-secondary)' : 'var(--text-secondary)'} />
             </div>
           </div>
         </div>
@@ -659,8 +661,9 @@ export default function AdManager() {
   const totalSpend   = items.reduce((s, i) => s + parseFloat(i.spend), 0);
   const totalBuys    = items.reduce((s, i) => s + i.purchases, 0);
   const totalRevenue = items.reduce((s, i) => s + parseFloat(i.purchase_value), 0);
-  const roas         = totalSpend > 0 && totalRevenue > 0 ? (totalRevenue / totalSpend) : null;
-  const cpv          = totalSpend > 0 && totalBuys > 0 ? (totalSpend / totalBuys) : null;
+  const totalSpendReal = toAdSpendReal(totalSpend);
+  const roas         = totalSpend > 0 && totalRevenue > 0 ? (totalRevenue / totalSpendReal) : null;
+  const cpv          = totalSpend > 0 && totalBuys > 0 ? (totalSpendReal / totalBuys) : null;
   const hasMassTargets = level === 'campaign' && items.length > 0;
   const hasBudgetTargets = level === 'adset' && items.some(i => i.status === 'ACTIVE' && i.daily_budget !== null);
   const selectableCount = items.filter(i => i.status === 'ACTIVE' || i.status === 'PAUSED').length;
@@ -777,7 +780,9 @@ export default function AdManager() {
       {/* ── Summary bar (campaign level) ── */}
       {!loading && !error && items.length > 0 && level === 'campaign' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 16 }}>
-          <SummaryCard label="Total Gasto"   value={totalSpend > 0 ? fmtR(totalSpend) : '—'}         color="#f97316" icon={DollarSign} />
+          <SummaryCard label="Total Gasto"   value={totalSpend > 0 ? fmtR(totalSpend) : '—'}
+            sub={totalSpend > 0 ? <AdTaxBreakdown bruto={totalSpend} fontSize={10} /> : undefined}
+            color="#f97316" icon={DollarSign} />
           <SummaryCard label="Compras"       value={totalBuys > 0 ? String(totalBuys) : '—'}          color="#22c55e" icon={ShoppingCart} />
           <SummaryCard label="Receita Pixel" value={totalRevenue > 0 ? fmtR(totalRevenue) : '—'}      color="#22c55e" icon={TrendingUp} />
           <SummaryCard label="ROAS"

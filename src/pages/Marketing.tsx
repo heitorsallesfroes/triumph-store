@@ -10,6 +10,8 @@ import 'react-datepicker/dist/react-datepicker.css';
 import { ptBR } from 'date-fns/locale';
 import BarChart from '../components/BarChart';
 import DualBarChart from '../components/DualBarChart';
+import AdTaxBreakdown from '../components/AdTaxBreakdown';
+import { toAdSpendReal } from '../lib/adTax';
 import {
   getTodayInBrazil, getYesterdayInBrazil, formatDateDisplay, getWeekRangeInBrazil,
   getMonthRangeInBrazil, getLastMonthRangeInBrazil, isDateInRange, normalizeDateFromDB
@@ -86,7 +88,8 @@ export default function Marketing() {
         const revenue = daySales.reduce((s, x) => s + Number(x.total_sale_price), 0);
         const profit = daySales.reduce((s, x) => s + Number(x.profit), 0);
         const salesCount = daySales.length;
-        return { date: dateStr, adSpend: Number(adSpend), revenue, profit, sales: salesCount, roas: adSpend > 0 ? revenue / Number(adSpend) : 0, roi: adSpend > 0 ? ((profit - Number(adSpend)) / Number(adSpend)) * 100 : 0, cpv: salesCount > 0 ? Number(adSpend) / salesCount : 0 };
+        const adSpendReal = toAdSpendReal(Number(adSpend));
+        return { date: dateStr, adSpend: Number(adSpend), revenue, profit, sales: salesCount, roas: adSpend > 0 ? revenue / adSpendReal : 0, roi: adSpend > 0 ? ((profit - adSpendReal) / adSpendReal) * 100 : 0, cpv: salesCount > 0 ? adSpendReal / salesCount : 0 };
       });
       metrics.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setDailyMetrics(metrics);
@@ -153,6 +156,7 @@ export default function Marketing() {
         const totBuys   = campaigns.reduce((s, c) => s + (c.purchases || 0), 0);
         const totRev    = campaigns.reduce((s, c) => s + parseFloat(c.purchase_value || '0'), 0);
 
+        const totSpendReal = toAdSpendReal(totSpend);
         setFbMetrics({
           spend:          totSpend.toFixed(2),
           impressions:    String(totImpr),
@@ -164,8 +168,8 @@ export default function Marketing() {
           purchases:      String(totBuys),
           purchase_value: totRev.toFixed(2),
           profit:         '0',
-          roas:           totSpend > 0 ? (totRev  / totSpend).toFixed(2) : '0.00',
-          cpv:            totBuys  > 0 ? (totSpend / totBuys).toFixed(2) : '0.00',
+          roas:           totSpendReal > 0 ? (totRev  / totSpendReal).toFixed(2) : '0.00',
+          cpv:            totBuys  > 0 ? (totSpendReal / totBuys).toFixed(2) : '0.00',
         });
 
         // 2. Sync per-day to ad_spend (single day: use aggregated result directly)
@@ -258,7 +262,8 @@ export default function Marketing() {
     const totalRevenue = dailyMetrics.reduce((s, d) => s + d.revenue, 0);
     const totalProfit = dailyMetrics.reduce((s, d) => s + d.profit, 0);
     const totalSales = dailyMetrics.reduce((s, d) => s + d.sales, 0);
-    return { totalAdSpend, totalRevenue, totalProfit, totalSales, avgRoas: totalAdSpend > 0 ? totalRevenue / totalAdSpend : 0, avgRoi: totalAdSpend > 0 ? ((totalProfit - totalAdSpend) / totalAdSpend) * 100 : 0, avgCpv: totalSales > 0 ? totalAdSpend / totalSales : 0, avgCpvSw: totalAdSpend > 0 && totalSwCount > 0 ? totalAdSpend / totalSwCount : 0 };
+    const totalAdSpendReal = toAdSpendReal(totalAdSpend);
+    return { totalAdSpend, totalRevenue, totalProfit, totalSales, avgRoas: totalAdSpend > 0 ? totalRevenue / totalAdSpendReal : 0, avgRoi: totalAdSpend > 0 ? ((totalProfit - totalAdSpendReal) / totalAdSpendReal) * 100 : 0, avgCpv: totalSales > 0 ? totalAdSpendReal / totalSales : 0, avgCpvSw: totalAdSpend > 0 && totalSwCount > 0 ? totalAdSpendReal / totalSwCount : 0 };
   })();
 
   if (loading) return <div className="p-8 flex items-center justify-center h-64"><div className="text-white flex items-center gap-3"><RefreshCw size={20} className="animate-spin" /> Carregando...</div></div>;
@@ -365,7 +370,7 @@ export default function Marketing() {
       {activeTab === 'overview' && (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <StatCard title="Gasto Total" value={`R$ ${summary.totalAdSpend.toFixed(2)}`} subtitle={`${summary.totalSales} vendas`} icon={DollarSign} color="red" />
+            <StatCard title="Gasto Total" value={`R$ ${summary.totalAdSpend.toFixed(2)}`} subtitle={`${summary.totalSales} vendas`} icon={DollarSign} color="red" extra={<AdTaxBreakdown bruto={summary.totalAdSpend} />} />
             <StatCard title="Faturamento" value={`R$ ${summary.totalRevenue.toFixed(2)}`} subtitle="Receita bruta" icon={ShoppingCart} color="green" />
             <StatCard title="Lucro Total" value={`R$ ${summary.totalProfit.toFixed(2)}`} subtitle="Margem líquida" icon={TrendingUp} color="blue" />
             <StatCard title="ROAS Médio" value={`${summary.avgRoas.toFixed(2)}x`} subtitle={`ROI: ${summary.avgRoi.toFixed(0)}%`} icon={Target} color="orange" />
@@ -511,7 +516,7 @@ export default function Marketing() {
           {fbMetrics && !fbLoading && (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <FBCard title="Investimento" value={`R$ ${parseFloat(fbMetrics.spend).toFixed(2)}`} icon={DollarSign} color="red" subtitle="Gasto em anúncios" />
+                <FBCard title="Investimento" value={`R$ ${parseFloat(fbMetrics.spend).toFixed(2)}`} icon={DollarSign} color="red" subtitle="Gasto em anúncios" extra={<AdTaxBreakdown bruto={parseFloat(fbMetrics.spend)} fontSize={11} />} />
                 <FBCard title="Faturamento" value={`R$ ${parseFloat(fbMetrics.purchase_value).toFixed(2)}`} icon={ShoppingCart} color="green" subtitle="Vendas no período" />
                 <FBCard title="Lucro" value={`R$ ${parseFloat(fbMetrics.profit || '0').toFixed(2)}`} icon={TrendingUp} color="blue" subtitle="Receita - custos" />
                 <FBCard title="Vendas" value={`${fbMetrics.purchases}`} icon={Target} color="orange" subtitle="Total de pedidos" />
@@ -534,13 +539,14 @@ export default function Marketing() {
                       <div className="mt-4 bg-gray-800/50 rounded-lg p-3">
                         <p className="text-xs text-gray-400">Investimento total</p>
                         <p className="text-lg font-bold text-white">R$ {parseFloat(fbMetrics.spend).toFixed(2)}</p>
+                        <AdTaxBreakdown bruto={parseFloat(fbMetrics.spend)} fontSize={11} />
                       </div>
                     </div>
                   );
                 })()}
                 {(() => {
                   const cpvCfg = getCpvConfig(parseFloat(fbMetrics.cpv));
-                  const cpvSwVal = totalSwCount > 0 ? parseFloat(fbMetrics.spend) / totalSwCount : 0;
+                  const cpvSwVal = totalSwCount > 0 ? toAdSpendReal(parseFloat(fbMetrics.spend)) / totalSwCount : 0;
                   const cpvSwCfg = getCpvConfig(cpvSwVal);
                   return (
                     <div className="bg-gradient-to-br from-blue-900/40 to-blue-800/20 rounded-xl p-6 border border-blue-700/50">
@@ -655,7 +661,7 @@ function getRoiConfig(roi: number): { color: string; label: string } {
   return                 { color: 'text-red-400',     label: 'Ruim ⚠️' };
 }
 
-function StatCard({ title, value, subtitle, icon: Icon, color }: { title: string; value: string; subtitle: string; icon: React.ElementType; color: string }) {
+function StatCard({ title, value, subtitle, icon: Icon, color, extra }: { title: string; value: string; subtitle: string; icon: React.ElementType; color: string; extra?: React.ReactNode }) {
   const colors: Record<string, string> = { orange: 'text-orange-500 bg-orange-500/10', green: 'text-green-500 bg-green-500/10', blue: 'text-blue-500 bg-blue-500/10', red: 'text-red-500 bg-red-500/10' };
   return (
     <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
@@ -665,11 +671,12 @@ function StatCard({ title, value, subtitle, icon: Icon, color }: { title: string
       </div>
       <p className="text-2xl font-bold text-white mb-1">{value}</p>
       <p className="text-sm text-gray-400">{subtitle}</p>
+      {extra}
     </div>
   );
 }
 
-function FBCard({ title, value, icon: Icon, color, subtitle }: { title: string; value: string; icon: React.ElementType; color: string; subtitle?: string }) {
+function FBCard({ title, value, icon: Icon, color, subtitle, extra }: { title: string; value: string; icon: React.ElementType; color: string; subtitle?: string; extra?: React.ReactNode }) {
   const colors: Record<string, string> = { red: 'text-red-400 bg-red-500/10', blue: 'text-blue-400 bg-blue-500/10', green: 'text-green-400 bg-green-500/10', purple: 'text-purple-400 bg-purple-500/10', orange: 'text-orange-400 bg-orange-500/10', yellow: 'text-yellow-400 bg-yellow-500/10', cyan: 'text-cyan-400 bg-cyan-500/10' };
   return (
     <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
@@ -679,6 +686,7 @@ function FBCard({ title, value, icon: Icon, color, subtitle }: { title: string; 
       </div>
       <p className="text-xl font-bold text-white">{value}</p>
       {subtitle && <p className="text-gray-500 text-xs mt-1">{subtitle}</p>}
+      {extra}
     </div>
   );
 }

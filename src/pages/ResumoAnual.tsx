@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { calculateCardFee } from '../lib/cardFees';
+import { getAdSpendBreakdown, toAdSpendReal } from '../lib/adTax';
 
 interface MonthData {
   month: number;
@@ -210,7 +211,7 @@ export default function ResumoAnual() {
         row.margem = row.faturamentoBruto > 0
           ? (row.lucro / row.faturamentoBruto) * 100 : 0;
         row.roas = row.adSpend > 0
-          ? row.faturamentoBruto / row.adSpend : null;
+          ? row.faturamentoBruto / toAdSpendReal(row.adSpend) : null;
       });
 
       setRows(byMonth);
@@ -239,7 +240,7 @@ export default function ResumoAnual() {
     custoOperacional:activeRows.reduce((s, r) => s + r.custoOperacional, 0),
     margem:          totalFat > 0 ? (totalLucro / totalFat) * 100 : 0,
     roas:            activeRows.reduce((s, r) => s + r.adSpend, 0) > 0
-      ? totalFat / activeRows.reduce((s, r) => s + r.adSpend, 0) : null,
+      ? totalFat / toAdSpendReal(activeRows.reduce((s, r) => s + r.adSpend, 0)) : null,
   };
 
   // Chart data — all 12 months
@@ -416,7 +417,7 @@ export default function ResumoAnual() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: 'var(--bg-inner)' }}>
-                    {['Mês','Fat. Bruto','Lucro','Margem %','Vendas','SWs','Gasto Ads','ROAS','Custo Op.'].map(h => (
+                    {['Mês','Fat. Bruto','Lucro','Margem %','Vendas','SWs','Gasto Ads (bruto)','Imposto (13,83%)','Gasto Ads (real)','ROAS','Custo Op.'].map(h => (
                       <th key={h} style={{
                         padding: '10px 16px',
                         textAlign: h === 'Mês' ? 'left' : 'right',
@@ -464,6 +465,12 @@ export default function ResumoAnual() {
                           {r.hasData ? fmt(r.adSpend) : '—'}
                         </td>
                         <td style={{ padding: '9px 16px', textAlign: 'right', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+                          {r.hasData ? fmt(getAdSpendBreakdown(r.adSpend).imposto) : '—'}
+                        </td>
+                        <td style={{ padding: '9px 16px', textAlign: 'right', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+                          {r.hasData ? fmt(getAdSpendBreakdown(r.adSpend).total) : '—'}
+                        </td>
+                        <td style={{ padding: '9px 16px', textAlign: 'right', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
                           {r.hasData ? (r.roas !== null ? `${r.roas.toFixed(2)}x` : '∞') : '—'}
                         </td>
                         <td style={{ padding: '9px 16px', textAlign: 'right', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
@@ -496,6 +503,12 @@ export default function ResumoAnual() {
                       </td>
                       <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                         {fmt(totalRow.adSpend)}
+                      </td>
+                      <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                        {fmt(getAdSpendBreakdown(totalRow.adSpend).imposto)}
+                      </td>
+                      <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                        {fmt(getAdSpendBreakdown(totalRow.adSpend).total)}
                       </td>
                       <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                         {totalRow.roas !== null ? `${totalRow.roas.toFixed(2)}x` : '∞'}

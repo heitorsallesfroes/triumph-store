@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 import { calculateCardFee } from '../lib/cardFees';
+import { toAdSpendReal } from '../lib/adTax';
+import AdTaxBreakdown from '../components/AdTaxBreakdown';
 import {
   TrendingUp, DollarSign, CreditCard, Package, ShoppingCart,
   Truck, BarChart3, Zap, Calendar, Bike, MapPin, Watch, Target, Eye, X,
@@ -357,7 +359,7 @@ export default function ResumoVendas() {
 
           {/* Hero row — Faturamento, Gasto em Ads, ROAS */}
           {(() => {
-            const roas = summary.totalAdSpend > 0 ? summary.totalBruto / summary.totalAdSpend : null;
+            const roas = summary.totalAdSpend > 0 ? summary.totalBruto / toAdSpendReal(summary.totalAdSpend) : null;
             const roasCfg = roas !== null ? getRoasConfig(roas) : null;
             return (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -368,6 +370,7 @@ export default function ResumoVendas() {
                   icon={BarChart3}
                   accent="red"
                   negative
+                  extra={<AdTaxBreakdown bruto={summary.totalAdSpend} />}
                   action={
                     <button
                       onClick={() => setShowShareModal(true)}
@@ -409,12 +412,13 @@ export default function ResumoVendas() {
 
           {/* Cards métricas linha 2 — contagem, ticket, CPV, ROI */}
           {(() => {
-            const cpv = summary.totalSales > 0 ? summary.totalAdSpend / summary.totalSales : null;
-            const roi = summary.totalAdSpend > 0 ? (summary.lucroFinal / summary.totalAdSpend) * 100 : null;
+            const adSpendReal = toAdSpendReal(summary.totalAdSpend);
+            const cpv = summary.totalSales > 0 ? adSpendReal / summary.totalSales : null;
+            const roi = summary.totalAdSpend > 0 ? (summary.lucroFinal / adSpendReal) * 100 : null;
             const cpvCfg = cpv !== null ? getCpvConfig(cpv) : null;
             const roiCfg = roi !== null ? getRoiConfig(roi) : null;
             const totalSmartwatches = smartwatches.reduce((s, sw) => s + sw.quantity, 0);
-            const cpvSw = summary.totalAdSpend > 0 && totalSmartwatches > 0 ? summary.totalAdSpend / totalSmartwatches : null;
+            const cpvSw = summary.totalAdSpend > 0 && totalSmartwatches > 0 ? adSpendReal / totalSmartwatches : null;
             const cpvSwCfg = cpvSw !== null ? getCpvConfig(cpvSw) : null;
             return (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
@@ -739,7 +743,7 @@ export default function ResumoVendas() {
         </>
       )}
       {showShareModal && (() => {
-        const roas = summary.totalAdSpend > 0 ? summary.totalBruto / summary.totalAdSpend : null;
+        const roas = summary.totalAdSpend > 0 ? summary.totalBruto / toAdSpendReal(summary.totalAdSpend) : null;
         const roasCfg = roas !== null ? getRoasConfig(roas) : null;
         const today = getTodayInBrazil();
         const [year, month, day] = today.split('-');
@@ -798,6 +802,7 @@ export default function ResumoVendas() {
                   >
                     <p className="text-xs font-semibold text-red-500 uppercase tracking-widest mb-1">💸 Investido em Ads</p>
                     <p className="text-3xl font-black text-red-400 tracking-tight">{fmt(summary.totalAdSpend)}</p>
+                    <AdTaxBreakdown bruto={summary.totalAdSpend} fontSize={11} />
                   </div>
 
                   {/* ROAS */}
@@ -904,10 +909,10 @@ function PLRow({ label, value, color, bold }: { label: string; value: string; co
   );
 }
 
-function HeroCard({ label, value, icon: Icon, accent, negative, sub, action }: {
+function HeroCard({ label, value, icon: Icon, accent, negative, sub, action, extra }: {
   label: string; value: string; icon: React.ElementType;
   accent: 'green' | 'red' | 'orange'; negative?: boolean; sub?: string;
-  action?: React.ReactNode;
+  action?: React.ReactNode; extra?: React.ReactNode;
 }) {
   const c = {
     green:  { text: 'text-green-400',  border: 'border-l-green-500'  },
@@ -926,6 +931,7 @@ function HeroCard({ label, value, icon: Icon, accent, negative, sub, action }: {
         {value}
       </p>
       {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
+      {extra}
     </div>
   );
 }
