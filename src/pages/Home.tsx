@@ -573,7 +573,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
         <DayCard
           icon={BarChart2} iconColor="#ec4899"
           title="Ads Hoje"
-          value={adsToday > 0 ? fmtR(adsToday) : 'Sem dados'}
+          value={adsToday > 0 ? `− ${fmtR(toAdSpendReal(adsToday))}` : 'Sem dados'}
           sub="gasto em anúncios"
           onClick={() => onNavigate('marketing')}
         >
@@ -674,7 +674,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
 
         <MonthCard icon={Target} iconColor="#a855f7" label="ROI / Ads" value={monthRoas !== null ? `${monthRoas.toFixed(2)}x` : '—'} sub="ROAS do mês">
           <div style={{ marginTop: 10 }}>
-            <CardRow label="Gasto em ads" value={month.adSpend > 0 ? fmtR(month.adSpend) : '—'} />
+            <CardRow label="Gasto em ads" value={month.adSpend > 0 ? `− ${fmtR(toAdSpendReal(month.adSpend))}` : '—'} />
             <AdTaxBreakdown bruto={month.adSpend} fontSize={11} />
             {month.adSpend > 0 && (() => {
               const adSpendReal = toAdSpendReal(month.adSpend);

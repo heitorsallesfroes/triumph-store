@@ -366,7 +366,7 @@ export default function ResumoVendas() {
                 <HeroCard label="Faturamento Bruto" value={fmt(summary.totalBruto)} icon={TrendingUp} accent="green" sub={`${summary.totalSales} vendas`} />
                 <HeroCard
                   label="Gasto em Ads"
-                  value={fmt(summary.totalAdSpend)}
+                  value={fmt(toAdSpendReal(summary.totalAdSpend))}
                   icon={BarChart3}
                   accent="red"
                   negative
@@ -801,7 +801,7 @@ export default function ResumoVendas() {
                     style={{ background: '#1a0d0d', border: '1px solid #3a1a1a' }}
                   >
                     <p className="text-xs font-semibold text-red-500 uppercase tracking-widest mb-1">💸 Investido em Ads</p>
-                    <p className="text-3xl font-black text-red-400 tracking-tight">{fmt(summary.totalAdSpend)}</p>
+                    <p className="text-3xl font-black text-red-400 tracking-tight">{fmt(toAdSpendReal(summary.totalAdSpend))}</p>
                     <AdTaxBreakdown bruto={summary.totalAdSpend} fontSize={11} />
                   </div>
 

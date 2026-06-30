@@ -780,7 +780,7 @@ export default function AdManager() {
       {/* ── Summary bar (campaign level) ── */}
       {!loading && !error && items.length > 0 && level === 'campaign' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 16 }}>
-          <SummaryCard label="Total Gasto"   value={totalSpend > 0 ? fmtR(totalSpend) : '—'}
+          <SummaryCard label="Total Gasto"   value={totalSpend > 0 ? `− ${fmtR(totalSpendReal)}` : '—'}
             sub={totalSpend > 0 ? <AdTaxBreakdown bruto={totalSpend} fontSize={10} /> : undefined}
             color="#f97316" icon={DollarSign} />
           <SummaryCard label="Compras"       value={totalBuys > 0 ? String(totalBuys) : '—'}          color="#22c55e" icon={ShoppingCart} />

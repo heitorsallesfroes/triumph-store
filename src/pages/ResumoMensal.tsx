@@ -435,7 +435,9 @@ export default function ResumoMensal() {
     const dreCustoProd  = totalCustoProdutos + smallSalesCost;
     const dreLucroBruto = dreRecLiq - dreCustoProd - custoEmbalagens;
     const dreCustoEntr  = totalCustoEntregas + smallSalesDeliveryCost;
-    const dreMargemEbit = consolidadoBruto > 0 ? (consolidadoLucro / consolidadoBruto) * 100 : 0;
+    const dreImpostoAds = adSpendReal - adSpend;
+    const dreLucroOperacional = consolidadoLucro - dreImpostoAds;
+    const dreMargemEbit = consolidadoBruto > 0 ? (dreLucroOperacional / consolidadoBruto) * 100 : 0;
 
     // ── Aba 1: Smartwatches ──────────────────────────────────────────────────
     XLSX.utils.book_append_sheet(wb, mkWs([
@@ -530,9 +532,10 @@ export default function ResumoMensal() {
       [mt(), mt()],
       [sLbl('(−) Custo de Entregas'),                                   sMon(-dreCustoEntr)],
       [sLbl('(−) Investimento em Ads'),                                sMon(-adSpend)],
+      [sLbl('(−) Imposto sobre Ads (13,83%)'),                          sMon(-dreImpostoAds)],
       [sLbl('(−) Custos Operacionais'),                                sMon(-operationalCosts)],
       [mt(), mt()],
-      sEbitRow(consolidadoLucro),
+      sEbitRow(dreLucroOperacional),
       [sLbl('Margem sobre Receita Bruta'),                              sPct(dreMargemEbit)],
     ], [42, 18], [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }]), 'DRE');
 
@@ -652,7 +655,7 @@ export default function ResumoMensal() {
                     subtitle={`${swCount} un. × R$2,00`} />
                   <MetricCard label="Custo de Entregas"    value={totalCustoEntregas}  color="red" icon={Truck}     negative
                     subtitle={`Motoboy: ${fmt(totalMotoboyDeliveries)} | Correios: ${fmt(totalCorreiosDeliveries)} | Avulsos: ${fmt(motoboyExtras)}`} />
-                  <MetricCard label="Investimento em Ads"  value={adSpend}             color="red" icon={BarChart3} negative
+                  <MetricCard label="Investimento em Ads"  value={adSpendReal}         color="red" icon={BarChart3} negative
                     extra={<AdTaxBreakdown bruto={adSpend} fontSize={11} />} />
                   <MetricCard label="Custos Operacionais"  value={operationalCosts}    color="red" icon={DollarSign} negative />
                 </div>
@@ -859,7 +862,8 @@ export default function ResumoMensal() {
             const custoProdutos    = totalCustoProdutos + smallSalesCost;
             const lucroBruto       = receitaLiquida - custoProdutos - custoEmbalagens;
             const custoEntregas    = totalCustoEntregas + smallSalesDeliveryCost;
-            const lucroOperacional = consolidadoLucro;
+            const impostoAds       = adSpendReal - adSpend;
+            const lucroOperacional = consolidadoLucro - impostoAds;
             const margemEbit       = consolidadoBruto > 0 ? (lucroOperacional / consolidadoBruto) * 100 : 0;
             const R = (n: number) =>
               `R$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -940,6 +944,10 @@ export default function ResumoMensal() {
                       <span className="text-red-400 text-sm font-mono">({R(adSpend)})</span>
                     </div>
                     <div className={rowEven}>
+                      <span className="text-red-400 text-sm">(−) Imposto sobre Ads <span className="text-xs text-gray-500 ml-1">13,83%</span></span>
+                      <span className="text-red-400 text-sm font-mono">({R(impostoAds)})</span>
+                    </div>
+                    <div className={rowBase}>
                       <span className="text-red-400 text-sm">(−) Custos Operacionais</span>
                       <span className="text-red-400 text-sm font-mono">({R(operationalCosts)})</span>
                     </div>

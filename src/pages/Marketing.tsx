@@ -11,7 +11,7 @@ import { ptBR } from 'date-fns/locale';
 import BarChart from '../components/BarChart';
 import DualBarChart from '../components/DualBarChart';
 import AdTaxBreakdown from '../components/AdTaxBreakdown';
-import { toAdSpendReal } from '../lib/adTax';
+import { toAdSpendReal, getAdSpendBreakdown } from '../lib/adTax';
 import {
   getTodayInBrazil, getYesterdayInBrazil, formatDateDisplay, getWeekRangeInBrazil,
   getMonthRangeInBrazil, getLastMonthRangeInBrazil, isDateInRange, normalizeDateFromDB
@@ -370,7 +370,7 @@ export default function Marketing() {
       {activeTab === 'overview' && (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <StatCard title="Gasto Total" value={`R$ ${summary.totalAdSpend.toFixed(2)}`} subtitle={`${summary.totalSales} vendas`} icon={DollarSign} color="red" extra={<AdTaxBreakdown bruto={summary.totalAdSpend} />} />
+            <StatCard title="Gasto Total" value={`− R$ ${getAdSpendBreakdown(summary.totalAdSpend).total.toFixed(2)}`} subtitle={`${summary.totalSales} vendas`} icon={DollarSign} color="red" extra={<AdTaxBreakdown bruto={summary.totalAdSpend} />} />
             <StatCard title="Faturamento" value={`R$ ${summary.totalRevenue.toFixed(2)}`} subtitle="Receita bruta" icon={ShoppingCart} color="green" />
             <StatCard title="Lucro Total" value={`R$ ${summary.totalProfit.toFixed(2)}`} subtitle="Margem líquida" icon={TrendingUp} color="blue" />
             <StatCard title="ROAS Médio" value={`${summary.avgRoas.toFixed(2)}x`} subtitle={`ROI: ${summary.avgRoi.toFixed(0)}%`} icon={Target} color="orange" />
@@ -516,7 +516,7 @@ export default function Marketing() {
           {fbMetrics && !fbLoading && (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <FBCard title="Investimento" value={`R$ ${parseFloat(fbMetrics.spend).toFixed(2)}`} icon={DollarSign} color="red" subtitle="Gasto em anúncios" extra={<AdTaxBreakdown bruto={parseFloat(fbMetrics.spend)} fontSize={11} />} />
+                <FBCard title="Investimento" value={`− R$ ${getAdSpendBreakdown(parseFloat(fbMetrics.spend)).total.toFixed(2)}`} icon={DollarSign} color="red" subtitle="Gasto em anúncios" extra={<AdTaxBreakdown bruto={parseFloat(fbMetrics.spend)} fontSize={11} />} />
                 <FBCard title="Faturamento" value={`R$ ${parseFloat(fbMetrics.purchase_value).toFixed(2)}`} icon={ShoppingCart} color="green" subtitle="Vendas no período" />
                 <FBCard title="Lucro" value={`R$ ${parseFloat(fbMetrics.profit || '0').toFixed(2)}`} icon={TrendingUp} color="blue" subtitle="Receita - custos" />
                 <FBCard title="Vendas" value={`${fbMetrics.purchases}`} icon={Target} color="orange" subtitle="Total de pedidos" />
@@ -538,7 +538,7 @@ export default function Marketing() {
                       <p className="text-gray-400 text-sm mt-2">Para cada R$ 1 investido, você retornou R$ {parseFloat(fbMetrics.roas).toFixed(2)}</p>
                       <div className="mt-4 bg-gray-800/50 rounded-lg p-3">
                         <p className="text-xs text-gray-400">Investimento total</p>
-                        <p className="text-lg font-bold text-white">R$ {parseFloat(fbMetrics.spend).toFixed(2)}</p>
+                        <p className="text-lg font-bold text-white">− R$ {getAdSpendBreakdown(parseFloat(fbMetrics.spend)).total.toFixed(2)}</p>
                         <AdTaxBreakdown bruto={parseFloat(fbMetrics.spend)} fontSize={11} />
                       </div>
                     </div>
