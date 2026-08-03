@@ -48,6 +48,7 @@ interface PaymentEntry {
   card_brand: string;
   installments: number;
   amount: number;
+  net_amount?: number;
 }
 
 interface SalesProps {
@@ -423,6 +424,13 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
     setPaymentMethods(paymentMethods.filter((_, i) => i !== index));
   };
 
+  const calculatePaymentFee = (pm: PaymentEntry, amount: number) => {
+    if (pm.method === 'outros') {
+      return Math.max(0, (pm.amount || 0) - (pm.net_amount || 0));
+    }
+    return calculateCardFee(amount, pm.method, pm.card_brand || '', pm.installments || 0);
+  };
+
   const calculateTotals = () => {
     try {
       const totalSalePrice = (saleProducts || []).reduce((sum, sp) => sum + (sp.unit_price || 0) * (sp.quantity || 0), 0);
@@ -439,8 +447,8 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
       const allAmountsZero = paymentMethods.every((pm) => pm.amount === 0);
       const cardFee = allAmountsZero
-        ? calculateCardFee(totalWithManual, paymentMethods[0]?.method || 'pix', paymentMethods[0]?.card_brand || '', paymentMethods[0]?.installments || 0)
-        : paymentMethods.reduce((sum, pm) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0), 0);
+        ? calculatePaymentFee(paymentMethods[0] || { method: 'pix', card_brand: '', installments: 0, amount: 0 }, totalWithManual)
+        : paymentMethods.reduce((sum, pm) => sum + calculatePaymentFee(pm, pm.amount), 0);
 
       const deliveryFee = formData.delivery_type === 'motoboy' ? (formData.delivery_fee || 0) : 0;
       const deliveryCost = formData.delivery_type === 'correios' ? (formData.delivery_cost || 0) : 0;
@@ -1554,17 +1562,20 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       <option value="debit_card">Débito</option>
                       <option value="credit_card">Crédito</option>
                       <option value="payment_link">Link de Pagamento</option>
+                      <option value="outros">Outros</option>
                     </select>
 
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="Valor (R$)"
-                      value={pm.amount || ''}
-                      onChange={(e) => updatePaymentMethod(index, 'amount', parseFloat(e.target.value) || 0)}
-                      className="w-36 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
-                    />
+                    {pm.method !== 'outros' && (
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="Valor (R$)"
+                        value={pm.amount || ''}
+                        onChange={(e) => updatePaymentMethod(index, 'amount', parseFloat(e.target.value) || 0)}
+                        className="w-36 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                      />
+                    )}
 
                     {paymentMethods.length > 1 && (
                       <button
@@ -1609,6 +1620,41 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                   {(pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link') && pm.amount > 0 && pm.card_brand && (
                     <div className="text-xs text-red-400">
                       Taxa: R$ {calculateCardFee(pm.amount, pm.method, pm.card_brand, pm.installments).toFixed(2)} ({getFeePercentageLabel(pm.method, pm.card_brand, pm.installments)})
+                    </div>
+                  )}
+
+                  {pm.method === 'outros' && (
+                    <div className="flex gap-3">
+                      <div className="flex-1">
+                        <label className="block text-xs text-gray-400 mb-1">Valor Bruto (R$)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Valor Bruto (R$)"
+                          value={pm.amount || ''}
+                          onChange={(e) => updatePaymentMethod(index, 'amount', parseFloat(e.target.value) || 0)}
+                          className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="block text-xs text-gray-400 mb-1">Valor Líquido (R$)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Valor Líquido (R$)"
+                          value={pm.net_amount || ''}
+                          onChange={(e) => updatePaymentMethod(index, 'net_amount', parseFloat(e.target.value) || 0)}
+                          className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {pm.method === 'outros' && pm.amount > 0 && (pm.net_amount || 0) > 0 && (
+                    <div className="text-xs text-red-400">
+                      Taxa: R$ {(pm.amount - (pm.net_amount || 0)).toFixed(2)} ({(((pm.amount - (pm.net_amount || 0)) / pm.amount) * 100).toFixed(2)}%)
                     </div>
                   )}
                 </div>
