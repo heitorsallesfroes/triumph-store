@@ -262,6 +262,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
       setNeighborhoodSearch(sale.neighborhood || '');
       if (sale.customer_cpf) setCpfDisplay(formatCpf(sale.customer_cpf));
       setSaleDate((sale.sale_date || '').split('T')[0] || getTodayInBrazil());
+      setPaymentStatus(sale.payment_status === 'pago' ? 'pago' : 'a_cobrar');
 
       const supplier = suppliersData.find(s => s.id === sale.supplier_id);
       if (supplier) setSupplierSearch(supplier.name);
@@ -707,6 +708,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
           volumes:            formData.volumes,
           manual_items:       manualItems.length > 0 ? manualItems : null,
           delivery_notes:     formData.delivery_notes.trim() || null,
+          payment_status:     paymentStatus,
           sale_date:          saleDate + 'T' + new Date().toISOString().split('T')[1],
         }).eq('id', editSaleId);
         if (updateErr) throw updateErr;
