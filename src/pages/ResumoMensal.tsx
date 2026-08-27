@@ -89,6 +89,8 @@ export default function ResumoMensal() {
   const monthStr = `${selected.year}-${String(selected.month).padStart(2, '0')}`;
   const startDate = `${monthStr}-01`;
   const endDate = new Date(selected.year, selected.month, 0).toISOString().split('T')[0];
+  const nowMonth = getCurrentMonth();
+  const currentMonthStr = `${nowMonth.year}-${String(nowMonth.month).padStart(2, '0')}`;
 
   const loadData = async () => {
     setLoading(true);
@@ -106,7 +108,7 @@ export default function ResumoMensal() {
           .lte('sale_date', endDate + 'T23:59:59'),
         supabase.from('ad_spend').select('amount').gte('date', startDate).lte('date', endDate),
         supabase.from('operational_cost_payments').select('cost_id, amount_paid').eq('month', monthStr),
-        supabase.from('operational_costs').select('id, amount, is_active'),
+        supabase.from('operational_costs').select('id, amount, is_active, created_at'),
         supabase.from('motoboy_payments').select('amount').gte('date', startDate).lte('date', endDate),
         supabase.from('sales').select('delivery_fee')
           .eq('delivery_type', 'motoboy')
@@ -143,9 +145,11 @@ export default function ResumoMensal() {
       setAdSpend((adRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
       const paymentsMap = new Map((costsPayRes.data || []).map(r => [r.cost_id, Number(r.amount_paid ?? 0)]));
       const totalOpCosts = (allCostsRes.data || []).reduce((sum, c) => {
+        // Custo ainda não existia no mês consultado (criado depois do mês).
+        if (c.created_at && c.created_at.slice(0, 7) > monthStr) return sum;
+        // Custo excluído: some a partir do mês atual (inclusive) em diante, mas continua nos meses anteriores.
+        if (c.is_active === false && monthStr >= currentMonthStr) return sum;
         if (paymentsMap.has(c.id)) return sum + paymentsMap.get(c.id)!;
-        // Custos inativos (excluídos) sem pagamento registrado neste mês não entram no valor padrão.
-        if (c.is_active === false) return sum;
         return sum + Number(c.amount);
       }, 0);
       const avulsosTotal = (avulsosRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0);
