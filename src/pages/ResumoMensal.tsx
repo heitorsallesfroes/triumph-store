@@ -106,7 +106,7 @@ export default function ResumoMensal() {
           .lte('sale_date', endDate + 'T23:59:59'),
         supabase.from('ad_spend').select('amount').gte('date', startDate).lte('date', endDate),
         supabase.from('operational_cost_payments').select('cost_id, amount_paid').eq('month', monthStr),
-        supabase.from('operational_costs').select('id, amount'),
+        supabase.from('operational_costs').select('id, amount, is_active'),
         supabase.from('motoboy_payments').select('amount').gte('date', startDate).lte('date', endDate),
         supabase.from('sales').select('delivery_fee')
           .eq('delivery_type', 'motoboy')
@@ -142,7 +142,12 @@ export default function ResumoMensal() {
 
       setAdSpend((adRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0));
       const paymentsMap = new Map((costsPayRes.data || []).map(r => [r.cost_id, Number(r.amount_paid ?? 0)]));
-      const totalOpCosts = (allCostsRes.data || []).reduce((sum, c) => sum + (paymentsMap.has(c.id) ? paymentsMap.get(c.id)! : Number(c.amount)), 0);
+      const totalOpCosts = (allCostsRes.data || []).reduce((sum, c) => {
+        if (paymentsMap.has(c.id)) return sum + paymentsMap.get(c.id)!;
+        // Custos inativos (excluídos) sem pagamento registrado neste mês não entram no valor padrão.
+        if (c.is_active === false) return sum;
+        return sum + Number(c.amount);
+      }, 0);
       const avulsosTotal = (avulsosRes.data || []).reduce((sum, r) => sum + Number(r.amount), 0);
       setOperationalCosts(totalOpCosts + avulsosTotal);
       const refundSales = refundRes.data || [];

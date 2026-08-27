@@ -12,6 +12,7 @@ interface Cost {
   is_fixed: boolean;
   due_day: number | null;
   created_at: string;
+  is_active: boolean;
 }
 
 interface CostPayment {
@@ -72,7 +73,7 @@ export default function OperationalCosts() {
       const lastDay = new Date(y, m, 0).getDate();
       const lastDayStr = `${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
       const [costsRes, paymentsRes, avulsosRes] = await Promise.all([
-        supabase.from('operational_costs').select('*').order('is_fixed', { ascending: false }).order('name'),
+        supabase.from('operational_costs').select('*').eq('is_active', true).order('is_fixed', { ascending: false }).order('name'),
         supabase.from('operational_cost_payments').select('*').eq('month', selectedMonth),
         supabase.from('operational_costs_avulsos').select('*')
           .gte('date', `${selectedMonth}-01`)
@@ -106,8 +107,8 @@ export default function OperationalCosts() {
   };
 
   const handleDeleteCost = async (id: string) => {
-    if (!confirm('Excluir este custo? Os registros de pagamento também serão removidos.')) return;
-    await supabase.from('operational_costs').delete().eq('id', id);
+    if (!confirm('Excluir este custo? Ele deixará de aparecer para os próximos meses, mas o histórico de pagamentos já registrados será mantido.')) return;
+    await supabase.from('operational_costs').update({ is_active: false }).eq('id', id);
     loadData();
   };
 
