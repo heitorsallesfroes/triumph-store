@@ -69,6 +69,8 @@ export default function OperationalCosts() {
           .lte('date', lastDayStr)
           .order('date', { ascending: false }),
       ]);
+      console.log('[loadData] costsRes.error:', costsRes.error);
+      console.log('[loadData] costsRes.data (id/is_active):', (costsRes.data || []).map(c => ({ id: c.id, name: c.name, is_active: c.is_active })));
       setCosts(costsRes.data || []);
       setAvulsos(avulsosRes.data || []);
     } catch (e) { console.error(e); } finally { setLoading(false); }
@@ -129,6 +131,8 @@ export default function OperationalCosts() {
 
   const currentMonth = getCurrentMonth();
   const visibleCosts = costs.filter(c => isCostVisibleInMonth(c, selectedMonth, currentMonth));
+  console.log('[render] selectedMonth:', selectedMonth, 'currentMonth:', currentMonth, 'costs (id/is_active/visible):',
+    costs.map(c => ({ id: c.id, name: c.name, is_active: c.is_active, created_at: c.created_at, visible: isCostVisibleInMonth(c, selectedMonth, currentMonth) })));
   const fixedCosts = visibleCosts.filter(c => c.is_fixed);
   const variableCosts = visibleCosts.filter(c => !c.is_fixed);
   const totalFixed = fixedCosts.reduce((sum, c) => sum + Number(c.amount), 0);
