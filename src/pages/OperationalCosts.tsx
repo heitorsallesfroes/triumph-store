@@ -90,8 +90,10 @@ export default function OperationalCosts() {
   };
 
   const handleDeleteCost = async (id: string) => {
+    console.log('[handleDeleteCost] chamada com id:', id);
     if (!confirm('Excluir este custo? Ele deixará de aparecer a partir deste mês, mas os meses anteriores continuam mostrando o valor.')) return;
-    await supabase.from('operational_costs').update({ is_active: false }).eq('id', id);
+    const { data, error } = await supabase.from('operational_costs').update({ is_active: false }).eq('id', id).select();
+    console.log('[handleDeleteCost] resultado do update:', { data, error });
     loadData();
   };
 
