@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Trash2, X, DollarSign, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, X, DollarSign, Calendar, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { ptBR } from 'date-fns/locale';
@@ -14,6 +14,12 @@ interface Cost {
   created_at: string;
   is_active: boolean;
   deactivated_at: string | null;
+}
+
+interface CostPayment {
+  id: string;
+  cost_id: string;
+  amount_paid: number;
 }
 
 interface AvulsoExpense {
@@ -49,11 +55,14 @@ const isCostVisibleInMonth = (cost: Cost, month: string, currentMonth: string) =
 
 export default function OperationalCosts() {
   const [costs, setCosts] = useState<Cost[]>([]);
+  const [payments, setPayments] = useState<CostPayment[]>([]);
   const [avulsos, setAvulsos] = useState<AvulsoExpense[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
   const [showCostForm, setShowCostForm] = useState(false);
   const [showAvulsoModal, setShowAvulsoModal] = useState(false);
+  const [editingCost, setEditingCost] = useState<Cost | null>(null);
+  const [editAmount, setEditAmount] = useState('');
   const [costForm, setCostForm] = useState({ name: '', amount: '', is_fixed: true, due_day: '' });
   const [avulsoForm, setAvulsoForm] = useState({ description: '', amount: '', date: new Date() });
 
@@ -65,14 +74,16 @@ export default function OperationalCosts() {
       const [y, m] = selectedMonth.split('-').map(Number);
       const lastDay = new Date(y, m, 0).getDate();
       const lastDayStr = `${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
-      const [costsRes, avulsosRes] = await Promise.all([
+      const [costsRes, paymentsRes, avulsosRes] = await Promise.all([
         supabase.from('operational_costs').select('*').order('is_fixed', { ascending: false }).order('name'),
+        supabase.from('operational_cost_payments').select('id, cost_id, amount_paid').eq('month', selectedMonth),
         supabase.from('operational_costs_avulsos').select('*')
           .gte('date', `${selectedMonth}-01`)
           .lte('date', lastDayStr)
           .order('date', { ascending: false }),
       ]);
       setCosts(costsRes.data || []);
+      setPayments((paymentsRes.data || []) as CostPayment[]);
       setAvulsos(avulsosRes.data || []);
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
@@ -96,6 +107,32 @@ export default function OperationalCosts() {
     if (!confirm('Excluir este custo? Ele deixará de aparecer a partir deste mês, mas os meses anteriores continuam mostrando o valor.')) return;
     await supabase.from('operational_costs').update({ is_active: false, deactivated_at: new Date().toISOString() }).eq('id', id);
     loadData();
+  };
+
+  const handleOpenEdit = (cost: Cost) => {
+    const existing = payments.find(p => p.cost_id === cost.id);
+    setEditingCost(cost);
+    setEditAmount(String(existing ? existing.amount_paid : cost.amount));
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCost) return;
+    try {
+      const existing = payments.find(p => p.cost_id === editingCost.id);
+      if (existing) {
+        await supabase.from('operational_cost_payments').update({ amount_paid: Number(editAmount) }).eq('id', existing.id);
+      } else {
+        await supabase.from('operational_cost_payments').insert([{
+          cost_id: editingCost.id,
+          month: selectedMonth,
+          amount_paid: Number(editAmount),
+        }]);
+      }
+      setEditingCost(null);
+      setEditAmount('');
+      loadData();
+    } catch { alert('Erro ao salvar valor ajustado'); }
   };
 
   const handleAddAvulso = async (e: React.FormEvent) => {
@@ -129,11 +166,15 @@ export default function OperationalCosts() {
   const nextMonthStr = (() => { const d = new Date(selYear, selMonthNum, 1);     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })();
 
   const currentMonth = getCurrentMonth();
+  const getDisplayAmount = (cost: Cost) => {
+    const override = payments.find(p => p.cost_id === cost.id);
+    return override ? Number(override.amount_paid) : Number(cost.amount);
+  };
   const visibleCosts = costs.filter(c => isCostVisibleInMonth(c, selectedMonth, currentMonth));
   const fixedCosts = visibleCosts.filter(c => c.is_fixed);
   const variableCosts = visibleCosts.filter(c => !c.is_fixed);
-  const totalFixed = fixedCosts.reduce((sum, c) => sum + Number(c.amount), 0);
-  const totalVariable = variableCosts.reduce((sum, c) => sum + Number(c.amount), 0);
+  const totalFixed = fixedCosts.reduce((sum, c) => sum + getDisplayAmount(c), 0);
+  const totalVariable = variableCosts.reduce((sum, c) => sum + getDisplayAmount(c), 0);
   const totalAvulsos = avulsos.reduce((sum, a) => sum + Number(a.amount), 0);
   const totalGeral = totalFixed + totalVariable + totalAvulsos;
 
@@ -304,11 +345,38 @@ export default function OperationalCosts() {
         </div>
       )}
 
+      {/* Modal Editar Valor do Mês */}
+      {editingCost && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-white">Ajustar valor — {formatMonthLabel(selectedMonth)}</h2>
+              <button onClick={() => setEditingCost(null)} className="text-gray-400 hover:text-white"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">{editingCost.name}</label>
+                <input type="number" step="0.01" min="0" value={editAmount} onChange={e => setEditAmount(e.target.value)}
+                  placeholder="0.00" autoFocus
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none" required />
+                <p className="text-gray-500 text-xs mt-2">
+                  Vale só para {formatMonthLabel(selectedMonth)}. Nos próximos meses volta ao valor padrão do cadastro (R$ {Number(editingCost.amount).toFixed(2)}).
+                </p>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="submit" className="flex-1 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">Salvar</button>
+                <button type="button" onClick={() => setEditingCost(null)} className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Lista de Custos Fixos */}
-      <CostSection title="Custos Fixos" costs={fixedCosts} onDelete={handleDeleteCost} />
+      <CostSection title="Custos Fixos" costs={fixedCosts} getDisplayAmount={getDisplayAmount} onDelete={handleDeleteCost} onEdit={handleOpenEdit} />
 
       {/* Lista de Custos Variáveis */}
-      <CostSection title="Custos Variáveis" costs={variableCosts} onDelete={handleDeleteCost} />
+      <CostSection title="Custos Variáveis" costs={variableCosts} getDisplayAmount={getDisplayAmount} onDelete={handleDeleteCost} onEdit={handleOpenEdit} />
 
       {/* Lista de Gastos Avulsos */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden mb-4">
@@ -358,10 +426,12 @@ export default function OperationalCosts() {
   );
 }
 
-function CostSection({ title, costs, onDelete }: {
+function CostSection({ title, costs, getDisplayAmount, onDelete, onEdit }: {
   title: string;
   costs: Cost[];
+  getDisplayAmount: (cost: Cost) => number;
   onDelete: (id: string) => void;
+  onEdit: (cost: Cost) => void;
 }) {
   if (costs.length === 0) return (
     <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 mb-4">
@@ -388,7 +458,8 @@ function CostSection({ title, costs, onDelete }: {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-lg font-bold text-white">R$ {Number(cost.amount).toFixed(2)}</span>
+              <span className="text-lg font-bold text-white">R$ {getDisplayAmount(cost).toFixed(2)}</span>
+              <button onClick={() => onEdit(cost)} className="text-gray-400 hover:text-white"><Pencil size={16} /></button>
               <button onClick={() => onDelete(cost.id)} className="text-red-400 hover:text-red-300"><Trash2 size={16} /></button>
             </div>
           </div>
