@@ -16,10 +16,16 @@ import ResumoVendas from './pages/ResumoVendas';
 import ResumoAnual from './pages/ResumoAnual';
 import SmallSales from './pages/SmallSales';
 import CorreiosTracking from './pages/CorreiosTracking';
+import { loadSystemConfig } from './lib/systemConfig';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('home');
   const [triggerFastSale, setTriggerFastSale] = useState(0);
+  const [configReady, setConfigReady] = useState(false);
+
+  useEffect(() => {
+    loadSystemConfig().finally(() => setConfigReady(true));
+  }, []);
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -75,6 +81,14 @@ function App() {
         return <Home onNavigate={setCurrentPage} />;
     }
   };
+
+  if (!configReady) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white">Carregando...</div>
+      </div>
+    );
+  }
 
   return (
     <Layout currentPage={currentPage} onNavigate={setCurrentPage}>

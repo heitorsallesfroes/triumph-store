@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx-js-style';
 import { supabase } from '../lib/supabase';
 import { calculateCardFee } from '../lib/cardFees';
 import { toAdSpendReal } from '../lib/adTax';
+import { getConfigNumber } from '../lib/systemConfig';
 import AdTaxBreakdown from '../components/AdTaxBreakdown';
 import {
   TrendingUp, DollarSign, ShoppingCart, Package, Truck,
@@ -186,7 +187,8 @@ export default function ResumoMensal() {
   const totalCustoEntregas = totalMotoboyDeliveries + totalCorreiosDeliveries + motoboyExtras;
 
   const swCount         = saleItems.filter(i => (i.products as any)?.category === 'smartwatch').reduce((s, i) => s + i.quantity, 0);
-  const custoEmbalagens = swCount * 2;
+  const packagingCostPerUnit = getConfigNumber('packaging_cost');
+  const custoEmbalagens = swCount * packagingCostPerUnit;
   const lucroSmartwatch = totalLiquido - totalCustoProdutos - totalCustoEntregas - adSpend - operationalCosts - custoEmbalagens;
   const margemSmartwatch = totalBruto > 0 ? (lucroSmartwatch / totalBruto) * 100 : 0;
 
@@ -536,7 +538,7 @@ export default function ResumoMensal() {
       sSecRow('= Receita Líquida', dreRecLiq),
       [mt(), mt()],
       [sLbl('(−) Custo dos Produtos'),                                  sMon(-dreCustoProd)],
-      [sLbl(`(−) Embalagens (${swCount}un × R$2,00)`),                 sMon(-custoEmbalagens)],
+      [sLbl(`(−) Embalagens (${swCount}un × R$${packagingCostPerUnit.toFixed(2).replace('.', ',')})`),                 sMon(-custoEmbalagens)],
       sSecRow('= Lucro Bruto', dreLucroBruto),
       [mt(), mt()],
       [sLbl('(−) Custo de Entregas'),                                   sMon(-dreCustoEntr)],
@@ -661,7 +663,7 @@ export default function ResumoMensal() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                   <MetricCard label="Custo dos Produtos"   value={totalCustoProdutos}  color="red" icon={Package}   negative />
                   <MetricCard label="Embalagens"           value={custoEmbalagens}     color="red" icon={Package}   negative
-                    subtitle={`${swCount} un. × R$2,00`} />
+                    subtitle={`${swCount} un. × R$${packagingCostPerUnit.toFixed(2).replace('.', ',')}`} />
                   <MetricCard label="Custo de Entregas"    value={totalCustoEntregas}  color="red" icon={Truck}     negative
                     subtitle={`Motoboy: ${fmt(totalMotoboyDeliveries)} | Correios: ${fmt(totalCorreiosDeliveries)} | Avulsos: ${fmt(motoboyExtras)}`} />
                   <MetricCard label="Investimento em Ads"  value={adSpendReal}         color="red" icon={BarChart3} negative
@@ -932,7 +934,7 @@ export default function ResumoMensal() {
                     </div>
                     {/* (-) Embalagens */}
                     <div className={rowBase}>
-                      <span className="text-red-400 text-sm">(−) Embalagens <span className="text-xs text-gray-500 ml-1">{swCount} un. × R$2,00</span></span>
+                      <span className="text-red-400 text-sm">(−) Embalagens <span className="text-xs text-gray-500 ml-1">{swCount} un. × R${packagingCostPerUnit.toFixed(2).replace('.', ',')}</span></span>
                       <span className="text-red-400 text-sm font-mono">({R(custoEmbalagens)})</span>
                     </div>
 

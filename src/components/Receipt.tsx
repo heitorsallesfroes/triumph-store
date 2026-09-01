@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { X, Printer } from 'lucide-react';
 import { formatAddressForDisplay } from '../lib/addressValidation';
+import { getConfigString } from '../lib/systemConfig';
 
 interface ReceiptProps {
   saleId?: string;
@@ -259,6 +260,12 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
   const addressLine = [sale.address_street, sale.address_number, sale.address_complement].filter(Boolean).join(', ');
   const cityLine = [sale.city, sale.neighborhood, sale.state].filter(Boolean).join(' · ');
 
+  const storeName = getConfigString('store_name');
+  const storeCnpj = getConfigString('store_cnpj');
+  const storeAddress = getConfigString('store_address');
+  const storeWhatsapp = getConfigString('store_whatsapp');
+  const storeInstagram = getConfigString('store_instagram');
+
   // inline style helpers
   const cell = (extra?: React.CSSProperties): React.CSSProperties => ({
     padding: '5px 8px', ...extra,
@@ -297,12 +304,11 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
                 <img src="/Logo2p-1.png" alt="Triumph Store" style={{ maxWidth: '115px' }} />
                 <div>
-                  <p style={{ fontSize: '11px', fontWeight: 'bold', color: '#000', marginBottom: '2px' }}>Triumph Store Smartwatches</p>
+                  <p style={{ fontSize: '11px', fontWeight: 'bold', color: '#000', marginBottom: '2px' }}>{storeName}</p>
                   <p style={{ fontSize: '8.5px', color: '#444', lineHeight: '1.55' }}>
-                    Rua Quinze de Novembro n°106, Sala 908<br />
-                    Centro - Niterói - RJ · CEP: 24020-125<br />
-                    CNPJ: 49.923.481/0001-04<br />
-                    WhatsApp: (21) 98708-7535 · @store_triumph
+                    {storeAddress}<br />
+                    CNPJ: {storeCnpj}<br />
+                    WhatsApp: {storeWhatsapp} · {storeInstagram}
                   </p>
                 </div>
               </div>
@@ -453,7 +459,7 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
             {/* ════════ RODAPÉ ════════ */}
             <div style={{ textAlign: 'center', paddingTop: '8px', borderTop: '1px solid #bbb' }}>
               <p style={{ fontSize: '12px', fontWeight: 'bold', color: '#000', marginBottom: '3px' }}>Obrigado pela preferência!</p>
-              <p style={{ fontSize: '8.5px', color: '#666' }}>Suporte: WhatsApp (21) 98708-7535 · Instagram: @store_triumph</p>
+              <p style={{ fontSize: '8.5px', color: '#666' }}>Suporte: WhatsApp {storeWhatsapp} · Instagram: {storeInstagram}</p>
             </div>
 
           </div>
