@@ -13,6 +13,7 @@ interface Cost {
   due_day: number | null;
   created_at: string;
   is_active: boolean;
+  deactivated_at: string | null;
 }
 
 interface AvulsoExpense {
@@ -36,12 +37,14 @@ const formatMonthLabel = (monthStr: string) => {
 };
 
 // Um custo só aparece a partir do mês em que foi criado. Se estiver inativo (excluído),
-// só continua aparecendo nos meses anteriores ao mês atual — some do mês atual em diante.
+// só continua aparecendo nos meses anteriores ao mês em que foi excluído — some a partir
+// do mês da exclusão em diante (mesmo que seja o mês em que foi criado).
 const isCostVisibleInMonth = (cost: Cost, month: string, currentMonth: string) => {
   const createdMonth = cost.created_at.slice(0, 7);
   if (createdMonth > month) return false;
   if (cost.is_active) return true;
-  return month < currentMonth;
+  const deactivatedMonth = cost.deactivated_at ? cost.deactivated_at.slice(0, 7) : currentMonth;
+  return month < deactivatedMonth;
 };
 
 export default function OperationalCosts() {
@@ -69,8 +72,6 @@ export default function OperationalCosts() {
           .lte('date', lastDayStr)
           .order('date', { ascending: false }),
       ]);
-      console.log('[loadData] costsRes.error:', costsRes.error);
-      console.log('[loadData] costsRes.data (id/is_active):', (costsRes.data || []).map(c => ({ id: c.id, name: c.name, is_active: c.is_active })));
       setCosts(costsRes.data || []);
       setAvulsos(avulsosRes.data || []);
     } catch (e) { console.error(e); } finally { setLoading(false); }
@@ -92,10 +93,8 @@ export default function OperationalCosts() {
   };
 
   const handleDeleteCost = async (id: string) => {
-    console.log('[handleDeleteCost] chamada com id:', id);
     if (!confirm('Excluir este custo? Ele deixará de aparecer a partir deste mês, mas os meses anteriores continuam mostrando o valor.')) return;
-    const { data, error } = await supabase.from('operational_costs').update({ is_active: false }).eq('id', id).select();
-    console.log('[handleDeleteCost] resultado do update:', { data, error });
+    await supabase.from('operational_costs').update({ is_active: false, deactivated_at: new Date().toISOString() }).eq('id', id);
     loadData();
   };
 
@@ -131,8 +130,6 @@ export default function OperationalCosts() {
 
   const currentMonth = getCurrentMonth();
   const visibleCosts = costs.filter(c => isCostVisibleInMonth(c, selectedMonth, currentMonth));
-  console.log('[render] selectedMonth:', selectedMonth, 'currentMonth:', currentMonth, 'costs (id/is_active/visible):',
-    costs.map(c => ({ id: c.id, name: c.name, is_active: c.is_active, created_at: c.created_at, visible: isCostVisibleInMonth(c, selectedMonth, currentMonth) })));
   const fixedCosts = visibleCosts.filter(c => c.is_fixed);
   const variableCosts = visibleCosts.filter(c => !c.is_fixed);
   const totalFixed = fixedCosts.reduce((sum, c) => sum + Number(c.amount), 0);
