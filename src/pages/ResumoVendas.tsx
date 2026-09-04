@@ -6,7 +6,7 @@ import { toAdSpendReal } from '../lib/adTax';
 import AdTaxBreakdown from '../components/AdTaxBreakdown';
 import {
   TrendingUp, DollarSign, CreditCard, Package, ShoppingCart,
-  Truck, BarChart3, Zap, Calendar, Bike, MapPin, Watch, Target, Eye, X,
+  Truck, BarChart3, Zap, Calendar, Bike, MapPin, Watch, Target, Eye, X, ShoppingBag,
 } from 'lucide-react';
 
 type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
@@ -59,6 +59,23 @@ const EMPTY_SUMMARY: Summary = {
   lucroFinal: 0, totalSales: 0, averageTicket: 0,
 };
 
+interface SmallSalesSummary {
+  revenue: number;
+  net: number;
+  cardFees: number;
+  cost: number;
+  deliveryCost: number;
+  motoboyDelivery: number;
+  correiosDelivery: number;
+  profit: number;
+  count: number;
+}
+
+const EMPTY_SMALL_SALES: SmallSalesSummary = {
+  revenue: 0, net: 0, cardFees: 0, cost: 0, deliveryCost: 0,
+  motoboyDelivery: 0, correiosDelivery: 0, profit: 0, count: 0,
+};
+
 export default function ResumoVendas() {
   const loadIdRef = useRef(0);
   const [period, setPeriod] = useState<Period>('today');
@@ -76,6 +93,7 @@ export default function ResumoVendas() {
     debit:  { count: 0, bruto: 0, fees: 0, liquid: 0 },
     link:   { count: 0, bruto: 0, fees: 0, liquid: 0 },
   });
+  const [smallSalesSummary, setSmallSalesSummary] = useState<SmallSalesSummary>(EMPTY_SMALL_SALES);
   const [loading, setLoading] = useState(true);
   const [showShareModal, setShowShareModal] = useState(false);
 
@@ -106,7 +124,7 @@ export default function ResumoVendas() {
     try {
       const { start, end } = getDateRange();
 
-      const [{ data: salesRaw }, { data: adSpend }, { data: motoboysList }, { data: products }, { data: smallSalesRaw }] = await Promise.all([
+      const [{ data: salesRaw }, { data: adSpend }, { data: motoboysList }, { data: products }, { data: smallSalesRaw }, { data: smallSalesAllRaw }] = await Promise.all([
         supabase
           .from('sales')
           .select('id, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, payment_methods, delivery_type, motoboy_id, city')
@@ -121,6 +139,11 @@ export default function ResumoVendas() {
           .from('small_sales')
           .select('sale_price, quantity, payment_method, payment_methods, card_brand, installments')
           .in('payment_method', ['credit_card', 'debit_card', 'payment_link'])
+          .gte('created_at', `${start}T00:00:00-03:00`)
+          .lte('created_at', `${end}T23:59:59-03:00`),
+        supabase
+          .from('small_sales')
+          .select('sale_price, quantity, cost, delivery_fee, delivery_type, payment_method, payment_methods, card_brand, installments')
           .gte('created_at', `${start}T00:00:00-03:00`)
           .lte('created_at', `${end}T23:59:59-03:00`),
       ]);
@@ -207,6 +230,33 @@ export default function ResumoVendas() {
       });
 
       setCardConciliation(conciliation);
+
+      // ── Pequenas Vendas ─────────────────────────────────────────────────
+      const ss = smallSalesAllRaw || [];
+      const ssRevenue  = ss.reduce((sum, v) => sum + Number(v.sale_price) * Number(v.quantity), 0);
+      const ssCost     = ss.reduce((sum, v) => sum + Number(v.cost) * Number(v.quantity), 0);
+      const ssDelivery = ss.reduce((sum, v) => sum + Number(v.delivery_fee || 0), 0);
+      const ssMotoboyDelivery  = ss.filter(v => v.delivery_type === 'motoboy').reduce((sum, v) => sum + Number(v.delivery_fee || 0), 0);
+      const ssCorreiosDelivery = ss.filter(v => v.delivery_type === 'correios').reduce((sum, v) => sum + Number(v.delivery_fee || 0), 0);
+      const ssCardFees = ss.reduce((sum, v) => {
+        const pms = v.payment_methods as PaymentEntry[] | null;
+        if (pms && pms.length > 1) {
+          return sum + pms
+            .filter(pm => CARD_METHODS.includes(pm.method))
+            .reduce((pmSum, pm) => pmSum + calculateCardFee(Number(pm.amount), pm.method, pm.card_brand || '', pm.installments || 1), 0);
+        }
+        if (CARD_METHODS.includes(v.payment_method)) {
+          return sum + calculateCardFee(Number(v.sale_price) * Number(v.quantity), v.payment_method, v.card_brand || '', v.installments || 1);
+        }
+        return sum;
+      }, 0);
+      const ssNet = ssRevenue - ssCardFees;
+      const ssProfit = ssNet - ssCost - ssDelivery;
+      setSmallSalesSummary({
+        revenue: ssRevenue, net: ssNet, cardFees: ssCardFees, cost: ssCost,
+        deliveryCost: ssDelivery, motoboyDelivery: ssMotoboyDelivery, correiosDelivery: ssCorreiosDelivery,
+        profit: ssProfit, count: ss.length,
+      });
 
       // ── Formas de pagamento ────────────────────────────────────────────
       const paymentMap = new Map<string, { count: number; total: number }>();
@@ -504,6 +554,67 @@ export default function ResumoVendas() {
                 <PLRow label="= Lucro final" value={fmt(summary.lucroFinal)}
                   color={summary.lucroFinal >= 0 ? 'text-green-400' : 'text-red-400'} bold />
               </div>
+            </div>
+          </div>
+
+          {/* ══════════════════════════════════════════════════════════════
+              PEQUENAS VENDAS
+          ══════════════════════════════════════════════════════════════ */}
+          <div className="bg-gray-800 rounded-xl border border-purple-500/40 overflow-hidden mb-6">
+            <div className="px-6 py-4 border-b border-gray-700 bg-purple-500/5">
+              <div className="flex items-center gap-2">
+                <ShoppingBag size={20} className="text-purple-400" />
+                <h2 className="text-lg font-bold text-white">Pequenas Vendas</h2>
+                <span className="ml-2 text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full border border-purple-500/30">
+                  {smallSalesSummary.count} venda{smallSalesSummary.count !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <p className="text-gray-500 text-xs mt-0.5">Acessórios e vendas avulsas — sem métricas de ads ou ROI</p>
+            </div>
+
+            <div className="p-6">
+              {smallSalesSummary.count === 0 ? (
+                <p className="text-gray-500 text-sm">Nenhuma pequena venda neste período.</p>
+              ) : (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                    <MetricCard label="Faturamento Bruto"  value={smallSalesSummary.revenue}      color="green"  icon={TrendingUp} />
+                    <MetricCard label="Líquido Recebido"   value={smallSalesSummary.net}           color="green"  icon={DollarSign}
+                      subtitle={smallSalesSummary.cardFees > 0 ? `Taxas: ${fmt(smallSalesSummary.cardFees)}` : 'Sem taxas de cartão'} />
+                    <MetricCard label="Custo Produtos"     value={smallSalesSummary.cost}          color="red"    icon={Package}   negative />
+                    <MetricCard label="Custo Entregas"     value={smallSalesSummary.deliveryCost}  color="red"    icon={Truck}     negative
+                      subtitle={`Motoboy: ${fmt(smallSalesSummary.motoboyDelivery)} | Correios: ${fmt(smallSalesSummary.correiosDelivery)}`} />
+                    <MetricCard label="Nº de Vendas"       value={smallSalesSummary.count}         color="blue"   icon={ShoppingCart} isCount />
+                  </div>
+
+                  <div className="bg-gray-900 rounded-xl p-5 border border-gray-700">
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                      <div>
+                        <p className="text-gray-400 text-sm mb-1">Lucro Pequenas Vendas</p>
+                        <p className={`text-3xl font-bold ${smallSalesSummary.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {fmt(smallSalesSummary.profit)}
+                        </p>
+                        <p className="text-gray-400 text-sm mt-1">
+                          Margem: <span className={smallSalesSummary.profit >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            {(smallSalesSummary.revenue > 0 ? (smallSalesSummary.profit / smallSalesSummary.revenue) * 100 : 0).toFixed(1)}%
+                          </span>
+                        </p>
+                      </div>
+                      <div className="text-right space-y-1 text-sm min-w-56">
+                        <PLRow label="Líquido recebido" value={`+ ${fmt(smallSalesSummary.net)}`}          color="text-green-400" />
+                        <PLRow label="Custo produtos"   value={`− ${fmt(smallSalesSummary.cost)}`}         color="text-red-400" />
+                        {smallSalesSummary.deliveryCost > 0 && (
+                          <PLRow label="Custo entregas" value={`− ${fmt(smallSalesSummary.deliveryCost)}`} color="text-red-400" />
+                        )}
+                        <div className="border-t border-gray-700 pt-1">
+                          <PLRow label="Lucro" value={fmt(smallSalesSummary.profit)}
+                            color={smallSalesSummary.profit >= 0 ? 'text-green-400' : 'text-red-400'} bold />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -896,6 +1007,28 @@ function ConcCard({ label, value, unit, accent, negative }: {
         {value}
       </p>
       {unit && <p className="text-xs text-gray-600 mt-0.5">{unit}</p>}
+    </div>
+  );
+}
+
+function MetricCard({ label, value, color, icon: Icon, negative, subtitle, isCount }: {
+  label: string; value: number; color: string; icon: React.ElementType;
+  negative?: boolean; subtitle?: string; isCount?: boolean;
+}) {
+  const colors: Record<string, string> = {
+    green: 'text-green-400', red: 'text-red-400', blue: 'text-blue-400', orange: 'text-orange-400',
+  };
+  return (
+    <div className="bg-gray-900 rounded-xl p-4 border border-gray-700">
+      <div className="flex items-center gap-2 mb-2">
+        <Icon size={15} className={colors[color]} />
+        <p className="text-gray-400 text-xs">{label}</p>
+      </div>
+      <p className={`text-xl font-bold ${colors[color]}`}>
+        {negative && '− '}
+        {isCount ? value : `R$ ${value.toFixed(2)}`}
+      </p>
+      {subtitle && <p className="text-gray-500 text-xs mt-1">{subtitle}</p>}
     </div>
   );
 }
