@@ -26,7 +26,7 @@ interface DailyMetrics { date: string; adSpend: number; revenue: number; profit:
 interface PeriodSummary { totalAdSpend: number; totalRevenue: number; totalProfit: number; totalSales: number; avgRoas: number; avgRoi: number; avgCpv: number; avgCpvSw: number; }
 interface FBMetrics { spend: string; impressions: string; clicks: string; reach: string; cpm: string; cpc: string; ctr: string; purchases: string; purchase_value: string; profit: string; roas: string; cpv: string; }
 
-type TimeFilter = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
+type TimeFilter = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'max' | 'custom';
 
 export default function Marketing() {
   const [dailyMetrics, setDailyMetrics] = useState<DailyMetrics[]>([]);
@@ -58,6 +58,7 @@ export default function Marketing() {
     if (timeFilter === 'week') return getWeekRangeInBrazil();
     if (timeFilter === 'month') return getMonthRangeInBrazil();
     if (timeFilter === 'last_month') return getLastMonthRangeInBrazil();
+    if (timeFilter === 'max') return null;
     if (timeFilter === 'custom' && customStartDate && customEndDate) return { start: customStartDate, end: customEndDate };
     return null;
   };
@@ -312,10 +313,10 @@ export default function Marketing() {
       <div className="bg-gray-800 rounded-xl p-4 border border-gray-700 mb-6">
         <div className="flex flex-wrap gap-2 items-center">
           <Calendar size={18} className="text-gray-400" />
-          {(['today', 'yesterday', 'week', 'month', 'last_month', 'custom'] as TimeFilter[]).map(f => (
+          {(['today', 'yesterday', 'week', 'month', 'last_month', 'max', 'custom'] as TimeFilter[]).map(f => (
             <button key={f} onClick={() => { setTimeFilter(f); setFbMetrics(null); }}
               className={`px-4 py-2 rounded-lg transition-colors text-sm ${timeFilter === f ? 'bg-orange-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
-              {f === 'today' ? 'Hoje' : f === 'yesterday' ? 'Ontem' : f === 'week' ? 'Semana' : f === 'month' ? 'Mês' : f === 'last_month' ? 'Mês Anterior' : 'Personalizado'}
+              {f === 'today' ? 'Hoje' : f === 'yesterday' ? 'Ontem' : f === 'week' ? 'Semana' : f === 'month' ? 'Mês' : f === 'last_month' ? 'Mês Anterior' : f === 'max' ? 'Máximo' : 'Personalizado'}
             </button>
           ))}
           {timeFilter === 'custom' && (

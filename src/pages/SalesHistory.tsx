@@ -8,7 +8,7 @@ import { generateShippingLabel } from '../lib/superfrete';
 import { calculateCardFee } from '../lib/cardFees';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 
-type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
+type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'max' | 'custom';
 
 const PERIOD_LABELS: Record<Period, string> = {
   today: 'Hoje',
@@ -16,6 +16,7 @@ const PERIOD_LABELS: Record<Period, string> = {
   week: 'Semana',
   month: 'Mês',
   last_month: 'Mês Anterior',
+  max: 'Máximo',
   custom: 'Personalizado',
 };
 
@@ -55,6 +56,7 @@ const EMPTY_PERIOD_LABELS: Record<Period, string> = {
   yesterday: 'para ontem',
   week: 'para esta semana',
   month: 'para este mês',
+  max: 'no período máximo',
   custom: 'para o período selecionado',
 };
 
@@ -235,6 +237,8 @@ export default function SalesHistory() {
       } else if (period === 'last_month') {
         const { start: lmStart, end: lmEnd } = getLastMonthRangeInBrazil();
         startDate = lmStart; endDate = lmEnd;
+      } else if (period === 'max') {
+        startDate = ''; endDate = '';
       } else {
         startDate = dateFilter.start; endDate = dateFilter.end;
       }
@@ -754,7 +758,7 @@ export default function SalesHistory() {
 
         {/* Período */}
         <div className="flex flex-wrap gap-2">
-          {(['today', 'yesterday', 'week', 'month', 'last_month', 'custom'] as Period[]).map(p => (
+          {(['today', 'yesterday', 'week', 'month', 'last_month', 'max', 'custom'] as Period[]).map(p => (
             <button key={p} onClick={() => setPeriod(p)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${period === p ? 'bg-orange-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
               {PERIOD_LABELS[p]}

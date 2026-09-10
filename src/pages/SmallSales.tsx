@@ -41,7 +41,7 @@ interface LocationItem {
 }
 
 
-type FilterPeriod = 'today' | 'yesterday' | 'week' | 'month' | 'last_month';
+type FilterPeriod = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'max';
 
 const PAYMENT_LABELS: Record<string, string> = {
   pix: 'PIX',
@@ -123,19 +123,17 @@ export default function SmallSales() {
       const { start, end } = getLastMonthRangeInBrazil();
       return { start: new Date(start + 'T00:00:00').toISOString(), end: new Date(end + 'T23:59:59').toISOString() };
     }
+    if (filter === 'max') return null;
     return { start: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(), end: endOfNow };
   };
 
   const loadSales = async () => {
     setLoading(true);
     try {
-      const { start, end } = getDateRange();
-      const { data, error } = await supabase
-        .from('small_sales')
-        .select('*')
-        .gte('created_at', start)
-        .lte('created_at', end)
-        .order('created_at', { ascending: false });
+      const dateRange = getDateRange();
+      let query = supabase.from('small_sales').select('*');
+      if (dateRange) query = query.gte('created_at', dateRange.start).lte('created_at', dateRange.end);
+      const { data, error } = await query.order('created_at', { ascending: false });
       if (error) throw error;
       setSales(data || []);
     } catch (err) {
@@ -290,7 +288,7 @@ export default function SmallSales() {
   const totalProfit     = totalRevenue - totalCost - totalCardFees;
 
   const filterLabels: Record<FilterPeriod, string> = {
-    today: 'Hoje', yesterday: 'Ontem', week: 'Semana', month: 'Mês', last_month: 'Mês Anterior',
+    today: 'Hoje', yesterday: 'Ontem', week: 'Semana', month: 'Mês', last_month: 'Mês Anterior', max: 'Máximo',
   };
 
   return (

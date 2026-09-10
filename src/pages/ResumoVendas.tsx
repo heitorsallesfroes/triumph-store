@@ -9,7 +9,7 @@ import {
   Truck, BarChart3, Zap, Calendar, Bike, MapPin, Watch, Target, Eye, X, ShoppingBag,
 } from 'lucide-react';
 
-type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'custom';
+type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'max' | 'custom';
 
 interface Summary {
   totalBruto: number;
@@ -36,6 +36,7 @@ const PERIOD_LABELS: Record<Period, string> = {
   week: 'Semana',
   month: 'Mês atual',
   last_month: 'Mês Anterior',
+  max: 'Máximo',
   custom: 'Período personalizado',
 };
 
@@ -115,6 +116,7 @@ export default function ResumoVendas() {
       return { start: first, end: today };
     }
     if (period === 'last_month') return getLastMonthRangeInBrazil();
+    if (period === 'max') return { start: '', end: '' };
     return { start: customStart, end: customEnd };
   };
 
@@ -123,29 +125,36 @@ export default function ResumoVendas() {
     setLoading(true);
     try {
       const { start, end } = getDateRange();
+      const isMax = period === 'max';
+
+      let salesQuery = supabase
+        .from('sales')
+        .select('id, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, payment_methods, delivery_type, motoboy_id, city')
+        .neq('status', 'cancelado')
+        .neq('status', 'reembolsado');
+      if (!isMax) salesQuery = salesQuery.gte('sale_date', `${start}T00:00:00`).lte('sale_date', `${end}T23:59:59`);
+
+      let adSpendQuery = supabase.from('ad_spend').select('amount');
+      if (!isMax) adSpendQuery = adSpendQuery.gte('date', start).lte('date', end);
+
+      let smallSalesQuery = supabase
+        .from('small_sales')
+        .select('sale_price, quantity, payment_method, payment_methods, card_brand, installments')
+        .in('payment_method', ['credit_card', 'debit_card', 'payment_link']);
+      if (!isMax) smallSalesQuery = smallSalesQuery.gte('created_at', `${start}T00:00:00-03:00`).lte('created_at', `${end}T23:59:59-03:00`);
+
+      let smallSalesAllQuery = supabase
+        .from('small_sales')
+        .select('sale_price, quantity, cost, delivery_fee, delivery_type, payment_method, payment_methods, card_brand, installments');
+      if (!isMax) smallSalesAllQuery = smallSalesAllQuery.gte('created_at', `${start}T00:00:00-03:00`).lte('created_at', `${end}T23:59:59-03:00`);
 
       const [{ data: salesRaw }, { data: adSpend }, { data: motoboysList }, { data: products }, { data: smallSalesRaw }, { data: smallSalesAllRaw }] = await Promise.all([
-        supabase
-          .from('sales')
-          .select('id, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, payment_methods, delivery_type, motoboy_id, city')
-          .neq('status', 'cancelado')
-          .neq('status', 'reembolsado')
-          .gte('sale_date', `${start}T00:00:00`)
-          .lte('sale_date', `${end}T23:59:59`),
-        supabase.from('ad_spend').select('amount').gte('date', start).lte('date', end),
+        salesQuery,
+        adSpendQuery,
         supabase.from('motoboys').select('id, name'),
         supabase.from('products').select('id, model, color, category').eq('category', 'smartwatch'),
-        supabase
-          .from('small_sales')
-          .select('sale_price, quantity, payment_method, payment_methods, card_brand, installments')
-          .in('payment_method', ['credit_card', 'debit_card', 'payment_link'])
-          .gte('created_at', `${start}T00:00:00-03:00`)
-          .lte('created_at', `${end}T23:59:59-03:00`),
-        supabase
-          .from('small_sales')
-          .select('sale_price, quantity, cost, delivery_fee, delivery_type, payment_method, payment_methods, card_brand, installments')
-          .gte('created_at', `${start}T00:00:00-03:00`)
-          .lte('created_at', `${end}T23:59:59-03:00`),
+        smallSalesQuery,
+        smallSalesAllQuery,
       ]);
 
       if (myId !== loadIdRef.current) return;
@@ -369,7 +378,7 @@ export default function ResumoVendas() {
       {/* Filtros */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 mb-6">
         <div className="flex flex-wrap gap-2">
-          {(['today', 'yesterday', 'week', 'month', 'last_month', 'custom'] as Period[]).map(p => (
+          {(['today', 'yesterday', 'week', 'month', 'last_month', 'max', 'custom'] as Period[]).map(p => (
             <button
               key={p}
               onClick={() => setPeriod(p)}

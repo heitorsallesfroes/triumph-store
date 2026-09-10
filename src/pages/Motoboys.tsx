@@ -663,7 +663,7 @@ export default function Motoboys() {
       if (startDate) return startDate.toLocaleDateString('pt-BR');
       return 'Período Personalizado';
     }
-    return selectedPeriod === 'today' ? 'Hoje' : selectedPeriod === 'yesterday' ? 'Ontem' : selectedPeriod === 'week' ? 'Esta Semana' : selectedPeriod === 'month' ? 'Este Mês' : selectedPeriod === 'last_month' ? 'Mês Anterior' : 'Total Geral';
+    return selectedPeriod === 'today' ? 'Hoje' : selectedPeriod === 'yesterday' ? 'Ontem' : selectedPeriod === 'week' ? 'Esta Semana' : selectedPeriod === 'month' ? 'Este Mês' : selectedPeriod === 'last_month' ? 'Mês Anterior' : 'Máximo';
   };
 
   if (loading) return <div className="p-8"><div className="">Carregando...</div></div>;
@@ -697,7 +697,7 @@ export default function Motoboys() {
           {(['today', 'yesterday', 'week', 'month', 'last_month', 'total', 'custom'] as TimePeriod[]).map(p => (
             <button key={p} onClick={() => handlePeriodChange(p)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedPeriod === p ? 'bg-orange-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
-              {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === 'week' ? 'Semana' : p === 'month' ? 'Mês' : p === 'last_month' ? 'Mês Anterior' : p === 'total' ? 'Total' : 'Personalizado'}
+              {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === 'week' ? 'Semana' : p === 'month' ? 'Mês' : p === 'last_month' ? 'Mês Anterior' : p === 'total' ? 'Máximo' : 'Personalizado'}
             </button>
           ))}
           {selectedPeriod === 'custom' && (
@@ -973,7 +973,7 @@ export default function Motoboys() {
                 {(['today', 'yesterday', 'week', 'month', 'last_month', 'total'] as TimePeriod[]).map(p => (
                   <button key={p} onClick={() => handlePeriodChange(p)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedPeriod === p ? 'bg-orange-500' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-                    {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === 'week' ? 'Semana' : p === 'month' ? 'Mês' : p === 'last_month' ? 'Mês Ant.' : 'Total'}
+                    {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === 'week' ? 'Semana' : p === 'month' ? 'Mês' : p === 'last_month' ? 'Mês Ant.' : 'Máximo'}
                   </button>
                 ))}
               </div>
