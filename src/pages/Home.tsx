@@ -377,7 +377,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       supabase.from('ad_spend').select('amount').gte('date', monthStart).lte('date', today),
       supabase.from('products').select('id, model, color, current_stock, category'),
       supabase.from('motoboy_stats').select('name, deliveries_today, earnings_today').gt('deliveries_today', 0).order('deliveries_today', { ascending: false }),
-      supabase.from('small_sales').select('sale_price, quantity').gte('created_at', `${today}T00:00:00-03:00`).lte('created_at', `${today}T23:59:59-03:00`),
+      supabase.from('small_sales').select('sale_price, quantity, cost, delivery_fee').gte('created_at', `${today}T00:00:00-03:00`).lte('created_at', `${today}T23:59:59-03:00`),
       supabase.from('sales').select('id', { count: 'exact', head: true }).eq('payment_method', 'pix').in('status', ['em_separacao', 'embalar_amanha']),
       supabase.from('ad_spend').select('date, amount').gte('date', sixAgo).lte('date', today),
       supabase.from('sales').select('sale_date, total_sale_price').neq('status', 'cancelado').neq('status', 'reembolsado').gte('sale_date', `${ninetyDaysAgo}T00:00:00`).lte('sale_date', `${yesterday}T23:59:59`),
@@ -448,7 +448,8 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       : 0;
 
     const todayRev    = todaySales.reduce((s, v) => s + Number(v.total_sale_price), 0);
-    const todayProfit = todaySales.reduce((s, v) => s + Number(v.profit), 0);
+    const smallProfit = smallToday.reduce((s, v) => s + (Number(v.sale_price) * Number(v.quantity) - Number(v.cost || 0) * Number(v.quantity) - Number(v.delivery_fee || 0)), 0);
+    const todayProfit = todaySales.reduce((s, v) => s + Number(v.profit), 0) + smallProfit;
     const smallRev    = smallToday.reduce((s, v) => s + Number(v.sale_price) * Number(v.quantity), 0);
     const totalDayRev = todayRev + smallRev;
     const totalDayCnt = todaySales.length + smallToday.length;
@@ -519,18 +520,23 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     const currentBrazilNow = brazilNowDate();
     const currentMonthStr  = `${currentBrazilNow.getFullYear()}-${String(currentBrazilNow.getMonth() + 1).padStart(2, '0')}`;
 
-    const [salesRes, adRes, opCostsRes] = await Promise.all([
+    const [salesRes, adRes, opCostsRes, smallSalesRes] = await Promise.all([
       supabase.from('sales')
         .select('sale_date, total_sale_price, total_cost, delivery_fee, delivery_cost')
         .neq('status', 'cancelado').neq('status', 'reembolsado')
         .gte('sale_date', `${startStr}T00:00:00`).lte('sale_date', `${endStr}T23:59:59`),
       supabase.from('ad_spend').select('date, amount').gte('date', startStr).lte('date', endStr),
       supabase.from('operational_costs').select('amount, is_active, created_at'),
+      supabase.from('small_sales')
+        .select('created_at, sale_price, quantity, cost, delivery_fee')
+        .gte('created_at', `${startStr}T00:00:00-03:00`).lte('created_at', `${endStr}T23:59:59-03:00`),
     ]);
 
-    const sales    = salesRes.data    || [];
-    const adRows   = adRes.data       || [];
-    const opCosts  = opCostsRes.data  || [];
+    const sales      = salesRes.data      || [];
+    const adRows     = adRes.data         || [];
+    const opCosts    = opCostsRes.data    || [];
+    const smallSales = smallSalesRes.data || [];
+    const smallSaleDateStr = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 
     const monthlyOpCostCache = new Map<string, number>();
     const operationalCostForDay = (d: Date) => {
@@ -551,10 +557,14 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     const cursor = new Date(start);
     while (cursor <= end) {
       const ds = toDateStr(cursor);
-      const dayRows  = sales.filter(s => (s.sale_date || '').startsWith(ds));
-      const adForDay = adRows.filter(a => a.date === ds).reduce((s, a) => s + Number(a.amount), 0);
+      const dayRows      = sales.filter(s => (s.sale_date || '').startsWith(ds));
+      const adForDay     = adRows.filter(a => a.date === ds).reduce((s, a) => s + Number(a.amount), 0);
+      const smallDayRows = smallSales.filter(v => smallSaleDateStr(v.created_at) === ds);
 
-      const revenue        = dayRows.reduce((s, v) => s + Number(v.total_sale_price), 0);
+      const mainRevenue    = dayRows.reduce((s, v) => s + Number(v.total_sale_price), 0);
+      const smallRevenue   = smallDayRows.reduce((s, v) => s + Number(v.sale_price) * Number(v.quantity), 0);
+      const smallProfit    = smallDayRows.reduce((s, v) => s + (Number(v.sale_price) * Number(v.quantity) - Number(v.cost || 0) * Number(v.quantity) - Number(v.delivery_fee || 0)), 0);
+      const revenue        = mainRevenue + smallRevenue;
       const custoProdutos  = dayRows.reduce((s, v) => {
         const deliv = Number(v.delivery_fee || 0) + Number(v.delivery_cost || 0);
         return s + Number(v.total_cost || 0) - deliv;
@@ -562,7 +572,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       const custoEntregas  = dayRows.reduce((s, v) => s + Number(v.delivery_fee || 0) + Number(v.delivery_cost || 0), 0);
       const adSpendReal    = toAdSpendReal(adForDay);
       const custoOperacional = operationalCostForDay(cursor);
-      const profit = revenue - custoProdutos - custoEntregas - adSpendReal - custoOperacional;
+      const profit = mainRevenue - custoProdutos - custoEntregas - adSpendReal - custoOperacional + smallProfit;
 
       points.push({
         date:  ds,
