@@ -452,7 +452,6 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     const todayProfit = todaySales.reduce((s, v) => s + Number(v.profit), 0) + smallProfit;
     const smallRev    = smallToday.reduce((s, v) => s + Number(v.sale_price) * Number(v.quantity), 0);
     const totalDayRev = todayRev + smallRev;
-    const totalDayCnt = todaySales.length + smallToday.length;
 
     setData({
       day: {
@@ -461,7 +460,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
         salesCount:     todaySales.length,
         smallSalesCount: smallToday.length,
         smartwatches:   swToday,
-        avgTicket:      totalDayCnt > 0 ? totalDayRev / totalDayCnt : 0,
+        avgTicket:      todaySales.length > 0 ? todayRev / todaySales.length : 0,
       },
       yesterday: {
         revenue:    ySales.reduce((s, v) => s + Number(v.total_sale_price), 0),
