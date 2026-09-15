@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, type ReactNode } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import { supabase } from '../lib/supabase';
@@ -16,6 +16,10 @@ import {
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface DayPoint { day: string; date: string; revenue: number; adSpend: number }
+
+type ChartPeriod = '7d' | 'week' | '14d' | '30d' | 'month' | 'lastMonth';
+
+interface RevenueChartPoint { date: string; label: string; revenue: number; adSpend: number; profit: number }
 
 interface DashState {
   day: { revenue: number; profit: number; salesCount: number; smallSalesCount: number; smartwatches: number; avgTicket: number };
@@ -60,6 +64,62 @@ function brazilDateMinus(n: number): string {
   const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
   d.setDate(d.getDate() - n);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function brazilNowDate(): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+}
+
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const PERIOD_OPTIONS: { key: ChartPeriod; label: string }[] = [
+  { key: '7d',        label: 'Últimos 7 dias' },
+  { key: 'week',      label: 'Semana' },
+  { key: '14d',       label: 'Últimos 14 dias' },
+  { key: '30d',       label: 'Últimos 30 dias' },
+  { key: 'month',     label: 'Mês' },
+  { key: 'lastMonth', label: 'Mês Anterior' },
+];
+
+function getPeriodRange(period: ChartPeriod): { start: Date; end: Date } {
+  const now = brazilNowDate();
+  const start = new Date(now);
+  const end = new Date(now);
+
+  switch (period) {
+    case '7d':
+      start.setDate(start.getDate() - 6);
+      break;
+    case '14d':
+      start.setDate(start.getDate() - 13);
+      break;
+    case '30d':
+      start.setDate(start.getDate() - 29);
+      break;
+    case 'week':
+      start.setDate(start.getDate() - start.getDay());
+      end.setTime(start.getTime());
+      end.setDate(end.getDate() + 6);
+      break;
+    case 'month':
+      start.setDate(1);
+      break;
+    case 'lastMonth': {
+      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lastMonthEnd   = new Date(now.getFullYear(), now.getMonth(), 0);
+      start.setTime(lastMonthStart.getTime());
+      end.setTime(lastMonthEnd.getTime());
+      break;
+    }
+  }
+
+  return { start, end };
+}
+
+function daysInMonth(year: number, month1indexed: number): number {
+  return new Date(year, month1indexed, 0).getDate();
 }
 
 // ── Micro-components ───────────────────────────────────────────────────────
@@ -444,6 +504,89 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     return () => clearInterval(iv);
   }, [load]);
 
+  const [chartPeriod, setChartPeriod] = useState<ChartPeriod>('7d');
+  const [chartData, setChartData] = useState<RevenueChartPoint[]>([]);
+  const [chartLoading, setChartLoading] = useState(true);
+
+  const loadChartData = useCallback(async (period: ChartPeriod) => {
+    setChartLoading(true);
+
+    const { start, end } = getPeriodRange(period);
+    const startStr = toDateStr(start);
+    const endStr   = toDateStr(end);
+    const longRange = period === '14d' || period === '30d' || period === 'month' || period === 'lastMonth';
+
+    const currentBrazilNow = brazilNowDate();
+    const currentMonthStr  = `${currentBrazilNow.getFullYear()}-${String(currentBrazilNow.getMonth() + 1).padStart(2, '0')}`;
+
+    const [salesRes, adRes, opCostsRes] = await Promise.all([
+      supabase.from('sales')
+        .select('sale_date, total_sale_price, total_cost, delivery_fee, delivery_cost')
+        .neq('status', 'cancelado').neq('status', 'reembolsado')
+        .gte('sale_date', `${startStr}T00:00:00`).lte('sale_date', `${endStr}T23:59:59`),
+      supabase.from('ad_spend').select('date, amount').gte('date', startStr).lte('date', endStr),
+      supabase.from('operational_costs').select('amount, is_active, created_at'),
+    ]);
+
+    const sales    = salesRes.data    || [];
+    const adRows   = adRes.data       || [];
+    const opCosts  = opCostsRes.data  || [];
+
+    const monthlyOpCostCache = new Map<string, number>();
+    const operationalCostForDay = (d: Date) => {
+      const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      let monthTotal = monthlyOpCostCache.get(monthStr);
+      if (monthTotal === undefined) {
+        monthTotal = opCosts.reduce((sum, c) => {
+          if (c.created_at && c.created_at.slice(0, 7) > monthStr) return sum;
+          if (c.is_active === false && monthStr >= currentMonthStr) return sum;
+          return sum + Number(c.amount);
+        }, 0);
+        monthlyOpCostCache.set(monthStr, monthTotal);
+      }
+      return monthTotal / daysInMonth(d.getFullYear(), d.getMonth() + 1);
+    };
+
+    const points: RevenueChartPoint[] = [];
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const ds = toDateStr(cursor);
+      const dayRows  = sales.filter(s => (s.sale_date || '').startsWith(ds));
+      const adForDay = adRows.filter(a => a.date === ds).reduce((s, a) => s + Number(a.amount), 0);
+
+      const revenue        = dayRows.reduce((s, v) => s + Number(v.total_sale_price), 0);
+      const custoProdutos  = dayRows.reduce((s, v) => {
+        const deliv = Number(v.delivery_fee || 0) + Number(v.delivery_cost || 0);
+        return s + Number(v.total_cost || 0) - deliv;
+      }, 0);
+      const custoEntregas  = dayRows.reduce((s, v) => s + Number(v.delivery_fee || 0) + Number(v.delivery_cost || 0), 0);
+      const adSpendReal    = toAdSpendReal(adForDay);
+      const custoOperacional = operationalCostForDay(cursor);
+      const profit = revenue - custoProdutos - custoEntregas - adSpendReal - custoOperacional;
+
+      points.push({
+        date:  ds,
+        label: longRange
+          ? cursor.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+          : cursor.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').replace('-feira', ''),
+        revenue,
+        adSpend: adSpendReal,
+        profit,
+      });
+
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    setChartData(points);
+    setChartLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadChartData(chartPeriod);
+    const iv = setInterval(() => loadChartData(chartPeriod), 60_000);
+    return () => clearInterval(iv);
+  }, [chartPeriod, loadChartData]);
+
   if (loading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 12, color: 'var(--text-muted)' }}>
@@ -453,7 +596,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     );
   }
 
-  const { day, yesterday, week, month, lastMonth, logistics, adsToday, motoboys, outOfStock, pendingPix, forecast } = data;
+  const { day, yesterday, month, lastMonth, logistics, adsToday, motoboys, outOfStock, pendingPix, forecast } = data;
   const logTotal    = logistics.em_separacao + logistics.embalado + logistics.em_rota + logistics.embalar_amanha;
   const monthMargin = month.revenue > 0 ? (month.profit / month.revenue) * 100 : 0;
   const dayMargin   = day.revenue > 0 ? (day.profit / day.revenue) * 100 : 0;
@@ -613,41 +756,70 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
         />
       </div>
 
-      {/* ── Seção 2 — Gráfico 7 dias ────────────────────────────────────── */}
-      <SectionLabel>Últimos 7 Dias — Faturamento & Lucro</SectionLabel>
+      {/* ── Seção 2 — Gráfico Faturamento / Ads / Lucro ─────────────────── */}
+      <SectionLabel>
+        {PERIOD_OPTIONS.find(p => p.key === chartPeriod)?.label} — Faturamento, Ads & Lucro
+      </SectionLabel>
       <div style={{
         background: 'var(--bg-card)', border: '1px solid var(--border-main)',
         borderRadius: 16, padding: '20px 24px', marginBottom: 28,
       }}>
-        <ResponsiveContainer width="100%" height={230}>
-          <BarChart data={week} barGap={4} barCategoryGap="30%">
-            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-            <XAxis
-              dataKey="day"
-              tick={{ fill: axisColor, fontSize: 12, fontWeight: 600 }}
-              axisLine={false} tickLine={false}
-            />
-            <YAxis
-              tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
-              tick={{ fill: axisColor, fontSize: 11 }}
-              axisLine={false} tickLine={false}
-              width={48}
-            />
-            <Tooltip
-              contentStyle={{ background: tooltipBg, border: `1px solid ${tooltipBorder}`, borderRadius: 8, fontSize: 12, color: tooltipText }}
-              labelStyle={{ fontWeight: 700, marginBottom: 4, color: tooltipText }}
-              formatter={(value: number, name: string) => [fmtR(value), name]}
-              cursor={{ fill: isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.04)' }}
-            />
-            <Legend
-              formatter={(v) => (
-                <span style={{ fontSize: 12, color: axisColor }}>{v}</span>
-              )}
-            />
-            <Bar dataKey="revenue" name="Faturamento"  fill="#f97316" radius={[5, 5, 0, 0]} maxBarSize={40} />
-            <Bar dataKey="adSpend" name="Gasto em Ads" fill="#3b82f6" radius={[5, 5, 0, 0]} maxBarSize={40} />
-          </BarChart>
-        </ResponsiveContainer>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+          {PERIOD_OPTIONS.map(opt => {
+            const active = chartPeriod === opt.key;
+            return (
+              <button
+                key={opt.key}
+                onClick={() => setChartPeriod(opt.key)}
+                style={{
+                  padding: '6px 13px', borderRadius: 99, fontSize: 12, fontWeight: 700,
+                  cursor: 'pointer', transition: 'all 0.15s',
+                  background: active ? '#f97316' : 'var(--bg-inner)',
+                  border: `1px solid ${active ? '#f97316' : 'var(--border-main)'}`,
+                  color: active ? '#fff' : 'var(--text-muted)',
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {chartLoading ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 230, color: 'var(--text-muted)', fontSize: 13 }}>
+            Carregando gráfico...
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={230}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+              <XAxis
+                dataKey="label"
+                tick={{ fill: axisColor, fontSize: 12, fontWeight: 600 }}
+                axisLine={false} tickLine={false}
+              />
+              <YAxis
+                tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
+                tick={{ fill: axisColor, fontSize: 11 }}
+                axisLine={false} tickLine={false}
+                width={48}
+              />
+              <Tooltip
+                contentStyle={{ background: tooltipBg, border: `1px solid ${tooltipBorder}`, borderRadius: 8, fontSize: 12, color: tooltipText }}
+                labelStyle={{ fontWeight: 700, marginBottom: 4, color: tooltipText }}
+                formatter={(value: number, name: string) => [fmtR(value), name]}
+              />
+              <Legend
+                formatter={(v) => (
+                  <span style={{ fontSize: 12, color: axisColor }}>{v}</span>
+                )}
+              />
+              <Line type="monotone" dataKey="revenue" name="Faturamento"  stroke="#f97316" strokeWidth={2.5} dot={{ r: 4, fill: '#f97316' }} activeDot={{ r: 6 }} />
+              <Line type="monotone" dataKey="adSpend" name="Gasto em Ads" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 4, fill: '#ef4444' }} activeDot={{ r: 6 }} />
+              <Line type="monotone" dataKey="profit"  name="Lucro"        stroke="#22c55e" strokeWidth={2.5} dot={{ r: 4, fill: '#22c55e' }} activeDot={{ r: 6 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
 
       {/* ── Seção 3 — Mês Atual (4 cards) ──────────────────────────────── */}
