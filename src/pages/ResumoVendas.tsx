@@ -95,6 +95,8 @@ export default function ResumoVendas() {
     link:   { count: 0, bruto: 0, fees: 0, liquid: 0 },
   });
   const [smallSalesSummary, setSmallSalesSummary] = useState<SmallSalesSummary>(EMPTY_SMALL_SALES);
+  const [monthlyOpCost, setMonthlyOpCost] = useState(0);
+  const [opCostMonthStr, setOpCostMonthStr] = useState('');
   const [loading, setLoading] = useState(true);
   const [showShareModal, setShowShareModal] = useState(false);
 
@@ -118,6 +120,20 @@ export default function ResumoVendas() {
     if (period === 'last_month') return getLastMonthRangeInBrazil();
     if (period === 'max') return { start: '', end: '' };
     return { start: customStart, end: customEnd };
+  };
+
+  // Nº de dias do período selecionado, usado para ratear o custo operacional.
+  // Para "Máximo" (sem intervalo definido), usa os dias decorridos do mês atual.
+  const getPeriodDaysCount = (): number => {
+    const { start, end } = getDateRange();
+    if (start && end) {
+      const [sy, sm, sd] = start.split('-').map(Number);
+      const [ey, em, ed] = end.split('-').map(Number);
+      const s = new Date(sy, sm - 1, sd).getTime();
+      const e = new Date(ey, em - 1, ed).getTime();
+      return Math.round((e - s) / 86_400_000) + 1;
+    }
+    return Number(getTodayInBrazil().split('-')[2]);
   };
 
   const loadData = async () => {
@@ -158,6 +174,31 @@ export default function ResumoVendas() {
       ]);
 
       if (myId !== loadIdRef.current) return;
+
+      // ── Custo operacional (mesma lógica do ResumoMensal.tsx) ────────────
+      const opMonthStr = start ? start.slice(0, 7) : getTodayInBrazil().slice(0, 7);
+      const opCurrentMonthStr = getTodayInBrazil().slice(0, 7);
+      const [opY, opM] = opMonthStr.split('-').map(Number);
+      const opMonthLastDay = new Date(opY, opM, 0);
+      const opMonthEnd = `${opMonthLastDay.getFullYear()}-${String(opMonthLastDay.getMonth() + 1).padStart(2, '0')}-${String(opMonthLastDay.getDate()).padStart(2, '0')}`;
+
+      const [{ data: opCostPayments }, { data: opCostsAll }, { data: opAvulsos }] = await Promise.all([
+        supabase.from('operational_cost_payments').select('cost_id, amount_paid').eq('month', opMonthStr),
+        supabase.from('operational_costs').select('id, amount, is_active, created_at'),
+        supabase.from('operational_costs_avulsos').select('amount').gte('date', `${opMonthStr}-01`).lte('date', opMonthEnd),
+      ]);
+      if (myId !== loadIdRef.current) return;
+
+      const opPaymentsMap = new Map((opCostPayments || []).map(r => [r.cost_id, Number(r.amount_paid ?? 0)]));
+      const opTotalCosts = (opCostsAll || []).reduce((sum, c) => {
+        if (c.created_at && c.created_at.slice(0, 7) > opMonthStr) return sum;
+        if (c.is_active === false && opMonthStr >= opCurrentMonthStr) return sum;
+        if (opPaymentsMap.has(c.id)) return sum + opPaymentsMap.get(c.id)!;
+        return sum + Number(c.amount);
+      }, 0);
+      const opAvulsosTotal = (opAvulsos || []).reduce((sum, r) => sum + Number(r.amount), 0);
+      setMonthlyOpCost(opTotalCosts + opAvulsosTotal);
+      setOpCostMonthStr(opMonthStr);
 
       const s = salesRaw || [];
 
@@ -626,6 +667,93 @@ export default function ResumoVendas() {
               )}
             </div>
           </div>
+
+          {/* ══════════════════════════════════════════════════════════════
+              RESULTADO CONSOLIDADO
+          ══════════════════════════════════════════════════════════════ */}
+          {(() => {
+            const [ocYear, ocMonth] = opCostMonthStr ? opCostMonthStr.split('-').map(Number) : [0, 0];
+            const daysInOpMonth = opCostMonthStr ? new Date(ocYear, ocMonth, 0).getDate() : 0;
+            const periodDays = getPeriodDaysCount();
+            const operationalCostProrated = daysInOpMonth > 0 ? (monthlyOpCost / daysInOpMonth) * periodDays : 0;
+
+            const faturamentoTotal = summary.totalBruto + smallSalesSummary.revenue;
+            const lucroBrutoTotal  = summary.lucroFinal + smallSalesSummary.profit;
+            const lucroReal        = lucroBrutoTotal - operationalCostProrated;
+            const margemReal       = faturamentoTotal > 0 ? (lucroReal / faturamentoTotal) * 100 : 0;
+
+            return (
+              <div className="bg-gray-800 rounded-xl border border-orange-500/60 overflow-hidden mb-6">
+                <div className="px-6 py-4 border-b border-gray-700 bg-orange-500/10">
+                  <div className="flex items-center gap-2">
+                    <Zap size={20} className="text-orange-400" />
+                    <h2 className="text-lg font-bold text-white">Resultado Consolidado</h2>
+                  </div>
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    Smartwatches + Pequenas Vendas — {PERIOD_LABELS[period]}
+                  </p>
+                </div>
+
+                <div className="p-6">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="bg-gray-900 rounded-xl p-5 border border-gray-700">
+                      <p className="text-gray-400 text-xs mb-2">Faturamento Total</p>
+                      <p className="text-3xl font-bold text-white">{fmt(faturamentoTotal)}</p>
+                      <div className="mt-3 space-y-1 text-xs text-gray-500">
+                        <div className="flex justify-between">
+                          <span>Smartwatches</span><span className="text-gray-400">{fmt(summary.totalBruto)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Peq. Vendas</span><span className="text-gray-400">{fmt(smallSalesSummary.revenue)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900 rounded-xl p-5 border border-gray-700">
+                      <p className="text-gray-400 text-xs mb-2">Lucro Bruto Total</p>
+                      <p className={`text-3xl font-bold ${lucroBrutoTotal >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {fmt(lucroBrutoTotal)}
+                      </p>
+                      <div className="mt-3 space-y-1 text-xs text-gray-500">
+                        <div className="flex justify-between">
+                          <span>Smartwatches</span>
+                          <span className={summary.lucroFinal >= 0 ? 'text-green-600' : 'text-red-600'}>{fmt(summary.lucroFinal)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Peq. Vendas</span>
+                          <span className={smallSalesSummary.profit >= 0 ? 'text-green-600' : 'text-red-600'}>{fmt(smallSalesSummary.profit)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900 rounded-xl p-5 border border-gray-700">
+                      <p className="text-gray-400 text-xs mb-2">Custo Operacional</p>
+                      <p className="text-3xl font-bold text-red-400">− {fmt(operationalCostProrated)}</p>
+                      <div className="mt-3 space-y-1 text-xs text-gray-500">
+                        <div className="flex justify-between">
+                          <span>Mensal total</span><span className="text-gray-400">{fmt(monthlyOpCost)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Rateio</span><span className="text-gray-400">{daysInOpMonth} dias × {periodDays} no período</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={`rounded-xl p-5 border-2 ${lucroReal >= 0 ? 'border-green-500/50 bg-green-500/5' : 'border-red-500/50 bg-red-500/5'}`}>
+                      <p className="text-gray-400 text-xs mb-2">Lucro Real</p>
+                      <p className={`text-3xl font-bold ${lucroReal >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {fmt(lucroReal)}
+                      </p>
+                      <p className="text-gray-400 text-sm mt-1">
+                        Margem: <span className={lucroReal >= 0 ? 'text-green-400' : 'text-red-400'}>{margemReal.toFixed(1)}%</span>
+                      </p>
+                      <p className="text-gray-500 text-xs mt-3">Lucro bruto − custo operacional rateado</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Conciliação com Maquininha */}
           {(cardConciliation.credit.count > 0 || cardConciliation.debit.count > 0 || cardConciliation.link.count > 0) && (() => {
