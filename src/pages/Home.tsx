@@ -74,6 +74,12 @@ function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+const METRIC_TOGGLES: { key: 'revenue' | 'adSpend' | 'profit'; label: string; color: string }[] = [
+  { key: 'revenue', label: 'Faturamento', color: '#f97316' },
+  { key: 'adSpend', label: 'Ads',         color: '#ef4444' },
+  { key: 'profit',  label: 'Lucro',       color: '#22c55e' },
+];
+
 const PERIOD_OPTIONS: { key: ChartPeriod; label: string }[] = [
   { key: '7d',        label: 'Últimos 7 dias' },
   { key: 'week',      label: 'Semana' },
@@ -507,6 +513,9 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>('7d');
   const [chartData, setChartData] = useState<RevenueChartPoint[]>([]);
   const [chartLoading, setChartLoading] = useState(true);
+  const [visibleMetrics, setVisibleMetrics] = useState({ revenue: true, adSpend: true, profit: true });
+  const toggleMetric = (key: 'revenue' | 'adSpend' | 'profit') =>
+    setVisibleMetrics(v => ({ ...v, [key]: !v[key] }));
 
   const loadChartData = useCallback(async (period: ChartPeriod) => {
     setChartLoading(true);
@@ -814,6 +823,27 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
           })}
         </div>
 
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+          {METRIC_TOGGLES.map(m => {
+            const active = visibleMetrics[m.key];
+            return (
+              <button
+                key={m.key}
+                onClick={() => toggleMetric(m.key)}
+                style={{
+                  padding: '6px 13px', borderRadius: 99, fontSize: 12, fontWeight: 700,
+                  cursor: 'pointer', transition: 'all 0.15s',
+                  background: active ? m.color : 'var(--bg-inner)',
+                  border: `1px solid ${active ? m.color : 'var(--border-main)'}`,
+                  color: active ? '#fff' : 'var(--text-muted)',
+                }}
+              >
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+
         {chartLoading ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 230, color: 'var(--text-muted)', fontSize: 13 }}>
             Carregando gráfico...
@@ -843,9 +873,15 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
                   <span style={{ fontSize: 12, color: axisColor }}>{v}</span>
                 )}
               />
-              <Line type="monotone" dataKey="revenue" name="Faturamento"  stroke="#f97316" strokeWidth={2.5} dot={{ r: 4, fill: '#f97316' }} activeDot={{ r: 6 }} />
-              <Line type="monotone" dataKey="adSpend" name="Gasto em Ads" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 4, fill: '#ef4444' }} activeDot={{ r: 6 }} />
-              <Line type="monotone" dataKey="profit"  name="Lucro"        stroke="#22c55e" strokeWidth={2.5} dot={{ r: 4, fill: '#22c55e' }} activeDot={{ r: 6 }} />
+              {visibleMetrics.revenue && (
+                <Line type="monotone" dataKey="revenue" name="Faturamento"  stroke="#f97316" strokeWidth={2.5} dot={{ r: 4, fill: '#f97316' }} activeDot={{ r: 6 }} />
+              )}
+              {visibleMetrics.adSpend && (
+                <Line type="monotone" dataKey="adSpend" name="Gasto em Ads" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 4, fill: '#ef4444' }} activeDot={{ r: 6 }} />
+              )}
+              {visibleMetrics.profit && (
+                <Line type="monotone" dataKey="profit"  name="Lucro"        stroke="#22c55e" strokeWidth={2.5} dot={{ r: 4, fill: '#22c55e' }} activeDot={{ r: 6 }} />
+              )}
             </LineChart>
           </ResponsiveContainer>
         )}
