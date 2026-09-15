@@ -209,7 +209,7 @@ export default function ResumoVendas() {
       const totalDeliveryCost = s.reduce((sum, v) => sum + Number(v.delivery_fee || 0) + Number(v.delivery_cost || 0), 0);
       const totalProductCost  = s.reduce((sum, v) => sum + Number(v.total_cost || 0) - Number(v.delivery_fee || 0) - Number(v.delivery_cost || 0), 0);
       const totalAdSpend      = (adSpend || []).reduce((sum, a) => sum + Number(a.amount), 0);
-      const lucroFinal        = totalLiquido - totalProductCost - totalDeliveryCost - totalAdSpend;
+      const lucroFinal        = totalLiquido - totalProductCost - totalDeliveryCost - toAdSpendReal(totalAdSpend);
       const averageTicket     = s.length > 0 ? totalBruto / s.length : 0;
       setSummary({ totalBruto, totalLiquido, totalCardFee, totalProductCost, totalDeliveryCost, totalAdSpend, lucroFinal, totalSales: s.length, averageTicket });
 
