@@ -520,13 +520,23 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     const currentBrazilNow = brazilNowDate();
     const currentMonthStr  = `${currentBrazilNow.getFullYear()}-${String(currentBrazilNow.getMonth() + 1).padStart(2, '0')}`;
 
-    const [salesRes, adRes, opCostsRes, smallSalesRes] = await Promise.all([
+    const rangeStartMonthStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
+    const rangeEndMonthStr   = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}`;
+    const [reY, reM]         = rangeEndMonthStr.split('-').map(Number);
+    const rangeStartMonthFirstDay = `${rangeStartMonthStr}-01`;
+    const rangeEndMonthLastDay    = toDateStr(new Date(reY, reM, 0));
+
+    const [salesRes, adRes, opCostsRes, opPaymentsRes, opAvulsosRes, smallSalesRes] = await Promise.all([
       supabase.from('sales')
         .select('sale_date, total_sale_price, total_cost, delivery_fee, delivery_cost')
         .neq('status', 'cancelado').neq('status', 'reembolsado')
         .gte('sale_date', `${startStr}T00:00:00`).lte('sale_date', `${endStr}T23:59:59`),
       supabase.from('ad_spend').select('date, amount').gte('date', startStr).lte('date', endStr),
-      supabase.from('operational_costs').select('amount, is_active, created_at'),
+      supabase.from('operational_costs').select('id, amount, is_active, created_at'),
+      supabase.from('operational_cost_payments').select('cost_id, amount_paid, month')
+        .gte('month', rangeStartMonthStr).lte('month', rangeEndMonthStr),
+      supabase.from('operational_costs_avulsos').select('amount, date')
+        .gte('date', rangeStartMonthFirstDay).lte('date', rangeEndMonthLastDay),
       supabase.from('small_sales')
         .select('created_at, sale_price, quantity, cost, delivery_fee')
         .gte('created_at', `${startStr}T00:00:00-03:00`).lte('created_at', `${endStr}T23:59:59-03:00`),
@@ -535,6 +545,8 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     const sales      = salesRes.data      || [];
     const adRows     = adRes.data         || [];
     const opCosts    = opCostsRes.data    || [];
+    const opPayments = opPaymentsRes.data || [];
+    const opAvulsos  = opAvulsosRes.data  || [];
     const smallSales = smallSalesRes.data || [];
     const smallSaleDateStr = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 
@@ -543,11 +555,19 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       let monthTotal = monthlyOpCostCache.get(monthStr);
       if (monthTotal === undefined) {
-        monthTotal = opCosts.reduce((sum, c) => {
+        const paymentsMap = new Map(
+          opPayments.filter(p => p.month === monthStr).map(p => [p.cost_id, Number(p.amount_paid ?? 0)])
+        );
+        const baseTotal = opCosts.reduce((sum, c) => {
           if (c.created_at && c.created_at.slice(0, 7) > monthStr) return sum;
           if (c.is_active === false && monthStr >= currentMonthStr) return sum;
+          if (paymentsMap.has(c.id)) return sum + paymentsMap.get(c.id)!;
           return sum + Number(c.amount);
         }, 0);
+        const avulsosTotal = opAvulsos
+          .filter(a => (a.date || '').slice(0, 7) === monthStr)
+          .reduce((sum, a) => sum + Number(a.amount), 0);
+        monthTotal = baseTotal + avulsosTotal;
         monthlyOpCostCache.set(monthStr, monthTotal);
       }
       return monthTotal / daysInMonth(d.getFullYear(), d.getMonth() + 1);
