@@ -67,17 +67,19 @@ export default function Marketing() {
     setLoading(true);
     try {
       const dateRange = getDateRange();
+      let salesQuery = supabase.from('sales').select('id, sale_date, total_sale_price, profit, status').neq('status', 'cancelado').neq('status', 'reembolsado');
+      if (dateRange) {
+        salesQuery = salesQuery.gte('sale_date', `${dateRange.start}T00:00:00`).lte('sale_date', `${dateRange.end}T23:59:59`);
+      }
       const [adSpendResult, salesResult] = await Promise.all([
         supabase.from('ad_spend').select('*').order('date', { ascending: false }),
-        supabase.from('sales').select('id, sale_date, total_sale_price, profit, status').neq('status', 'cancelado').neq('status', 'reembolsado')
+        salesQuery
       ]);
       const allAd = adSpendResult.data || [];
-      const allSales = salesResult.data || [];
+      const salesData = salesResult.data || [];
       let adSpendData = allAd;
-      let salesData = allSales;
       if (dateRange) {
         adSpendData = allAd.filter(ad => isDateInRange(ad.date, dateRange.start, dateRange.end));
-        salesData = allSales.filter(sale => isDateInRange(normalizeDateFromDB(sale.sale_date), dateRange.start, dateRange.end));
       }
       setAdSpendRecords(adSpendData);
       const allDates = new Set<string>();
