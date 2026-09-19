@@ -88,7 +88,14 @@ export default function SmallSales() {
   const [form, setForm] = useState(emptyForm());
   const [paymentMethods, setPaymentMethods] = useState<PaymentEntry[]>([defaultPaymentEntry()]);
   const [editingDelivery, setEditingDelivery] = useState<SmallSale | null>(null);
-  const [editDeliveryForm, setEditDeliveryForm] = useState({ delivery_type: 'loja_fisica', motoboy_id: '', delivery_fee: '', city: '', neighborhood: '' });
+  const [editDeliveryForm, setEditDeliveryForm] = useState({
+    description: '', quantity: '1', sale_price: '', cost: '', sale_date: '',
+    payment_method: 'pix', card_brand: 'visa_mastercard', installments: 1,
+    delivery_type: 'loja_fisica', motoboy_id: '', delivery_fee: '', city: '', neighborhood: '',
+  });
+  const editIsMixedPayment = !!(editingDelivery?.payment_methods && editingDelivery.payment_methods.length > 1);
+  const editIsCard = ['credit_card', 'debit_card', 'payment_link'].includes(editDeliveryForm.payment_method);
+  const editIsCredit = editDeliveryForm.payment_method === 'credit_card' || editDeliveryForm.payment_method === 'payment_link';
 
   const saleTotal = (parseFloat(form.sale_price) || 0) * (parseInt(form.quantity) || 1);
   const allAmountsZero = paymentMethods.every(pm => pm.amount === 0);
@@ -261,6 +268,14 @@ export default function SmallSales() {
   const handleOpenEditDelivery = (sale: SmallSale) => {
     setEditingDelivery(sale);
     setEditDeliveryForm({
+      description: sale.description,
+      quantity: String(sale.quantity),
+      sale_price: String(sale.sale_price),
+      cost: String(sale.cost),
+      sale_date: new Date(sale.created_at).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }),
+      payment_method: sale.payment_method || 'pix',
+      card_brand: sale.card_brand || 'visa_mastercard',
+      installments: sale.installments || 1,
       delivery_type: sale.delivery_type || 'loja_fisica',
       motoboy_id: sale.motoboy_id || '',
       delivery_fee: sale.delivery_fee ? sale.delivery_fee.toString() : '',
@@ -275,7 +290,28 @@ export default function SmallSales() {
       alert('Selecione o motoboy.');
       return;
     }
+    if (!editDeliveryForm.description.trim() || editDeliveryForm.sale_price === '' || editDeliveryForm.cost === '') {
+      alert('Preencha descrição, valor de venda e custo.');
+      return;
+    }
+    const updates: Record<string, any> = {
+      description: editDeliveryForm.description.trim(),
+      quantity: parseInt(editDeliveryForm.quantity) || 1,
+      sale_price: parseFloat(editDeliveryForm.sale_price) || 0,
+      cost: parseFloat(editDeliveryForm.cost) || 0,
+    };
+    if (!editIsMixedPayment) {
+      updates.payment_method = editDeliveryForm.payment_method;
+      updates.card_brand = editIsCard ? editDeliveryForm.card_brand : null;
+      updates.installments = editIsCredit ? (editDeliveryForm.installments || 1) : null;
+      updates.payment_methods = null;
+    }
+    const originalDate = new Date(editingDelivery.created_at).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    if (editDeliveryForm.sale_date && editDeliveryForm.sale_date !== originalDate) {
+      updates.created_at = `${editDeliveryForm.sale_date}T12:00:00-03:00`;
+    }
     const { error } = await supabase.from('small_sales').update({
+      ...updates,
       delivery_type: editDeliveryForm.delivery_type,
       motoboy_id: editDeliveryForm.delivery_type === 'motoboy' ? editDeliveryForm.motoboy_id : null,
       delivery_fee: (editDeliveryForm.delivery_type === 'motoboy' || editDeliveryForm.delivery_type === 'correios') ? (parseFloat(editDeliveryForm.delivery_fee) || 0) : 0,
@@ -614,12 +650,102 @@ export default function SmallSales() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-bold text-white">Editar Entrega</h2>
+              <h2 className="text-lg font-bold text-white">Editar Venda</h2>
               <button onClick={() => setEditingDelivery(null)} className="text-gray-400 hover:text-white">
                 <X size={22} />
               </button>
             </div>
-            <p className="text-sm text-gray-400 mb-4 truncate">{editingDelivery.description}</p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div className="sm:col-span-2">
+                <label className="block text-xs text-gray-400 mb-1">Descrição*</label>
+                <input
+                  type="text"
+                  value={editDeliveryForm.description}
+                  onChange={e => setEditDeliveryForm(f => ({ ...f, description: e.target.value }))}
+                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Quantidade*</label>
+                <input
+                  type="number" min="1"
+                  value={editDeliveryForm.quantity}
+                  onChange={e => setEditDeliveryForm(f => ({ ...f, quantity: e.target.value }))}
+                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Data da venda*</label>
+                <input
+                  type="date"
+                  value={editDeliveryForm.sale_date}
+                  max={getTodayInBrazil()}
+                  onChange={e => setEditDeliveryForm(f => ({ ...f, sale_date: e.target.value }))}
+                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Valor de venda*</label>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={editDeliveryForm.sale_price}
+                  onChange={e => setEditDeliveryForm(f => ({ ...f, sale_price: e.target.value }))}
+                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Custo*</label>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={editDeliveryForm.cost}
+                  onChange={e => setEditDeliveryForm(f => ({ ...f, cost: e.target.value }))}
+                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <p className="text-xs text-gray-400 mb-2">Forma de pagamento</p>
+              {editIsMixedPayment ? (
+                <p className="text-sm text-gray-500">Pagamento misto — não editável aqui.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <select
+                    value={editDeliveryForm.payment_method}
+                    onChange={e => setEditDeliveryForm(f => ({ ...f, payment_method: e.target.value, installments: 1 }))}
+                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                  >
+                    <option value="pix">PIX</option>
+                    <option value="cash">Dinheiro</option>
+                    <option value="debit_card">Débito</option>
+                    <option value="credit_card">Crédito</option>
+                    <option value="payment_link">Link de Pagamento</option>
+                  </select>
+                  {editIsCard && (
+                    <select
+                      value={editDeliveryForm.card_brand}
+                      onChange={e => setEditDeliveryForm(f => ({ ...f, card_brand: e.target.value }))}
+                      className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                    >
+                      <option value="visa_mastercard">Visa / Mastercard</option>
+                      <option value="elo_amex">Elo / Amex</option>
+                    </select>
+                  )}
+                  {editIsCredit && (
+                    <select
+                      value={editDeliveryForm.installments}
+                      onChange={e => setEditDeliveryForm(f => ({ ...f, installments: parseInt(e.target.value) }))}
+                      className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm"
+                    >
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
+                        <option key={n} value={n}>{n}x</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+            </div>
 
             <div className="mb-4">
               <p className="text-xs text-gray-400 mb-2">Tipo de entrega</p>
