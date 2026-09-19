@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
-import { getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
+import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
 import { ShoppingBag, Plus, Trash2, Bike, Truck, ShoppingCart, Pencil, X } from 'lucide-react';
 import AutocompleteInput from '../components/AutocompleteInput';
 
@@ -57,7 +57,8 @@ const DELIVERY_LABELS: Record<string, string> = {
   correios: 'Correios',
 };
 
-const emptyForm = {
+const emptyForm = () => ({
+  sale_date: getTodayInBrazil(),
   description: '',
   quantity: '1',
   sale_price: '',
@@ -67,7 +68,7 @@ const emptyForm = {
   delivery_fee: '',
   city: '',
   neighborhood: '',
-};
+});
 
 const defaultPaymentEntry = (): PaymentEntry => ({
   method: 'pix',
@@ -84,7 +85,7 @@ export default function SmallSales() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState<FilterPeriod>('today');
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(emptyForm());
   const [paymentMethods, setPaymentMethods] = useState<PaymentEntry[]>([defaultPaymentEntry()]);
   const [editingDelivery, setEditingDelivery] = useState<SmallSale | null>(null);
   const [editDeliveryForm, setEditDeliveryForm] = useState({ delivery_type: 'loja_fisica', motoboy_id: '', delivery_fee: '', city: '', neighborhood: '' });
@@ -232,12 +233,16 @@ export default function SmallSales() {
         neighborhood: (form.delivery_type === 'motoboy' || form.delivery_type === 'correios') ? (form.neighborhood.trim() || null) : null,
       };
 
+      if (form.sale_date && form.sale_date !== getTodayInBrazil()) {
+        payload.created_at = `${form.sale_date}T12:00:00-03:00`;
+      }
+
       const { error } = await supabase.from('small_sales').insert(payload);
       if (error) {
         console.error('Supabase insert error:', JSON.stringify(error, null, 2));
         throw error;
       }
-      setForm(emptyForm);
+      setForm(emptyForm());
       setPaymentMethods([defaultPaymentEntry()]);
       loadSales();
     } catch (err: any) {
@@ -304,6 +309,19 @@ export default function SmallSales() {
           <Plus size={18} className="text-orange-400" /> Registrar Venda
         </h2>
         <form onSubmit={handleSubmit} className="space-y-5">
+
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Data da venda*</label>
+              <input
+                type="date"
+                value={form.sale_date}
+                max={getTodayInBrazil()}
+                onChange={e => setForm(f => ({ ...f, sale_date: e.target.value }))}
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+              />
+            </div>
+          </div>
 
           {/* Linha 1: Descrição / Qtd / Valor / Custo */}
           <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
