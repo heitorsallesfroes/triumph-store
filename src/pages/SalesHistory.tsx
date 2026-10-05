@@ -250,7 +250,6 @@ export default function SalesHistory() {
       if (statusFilter !== 'all') query = query.eq('status', statusFilter);
       if (deliveryTypeFilter !== 'all') query = query.eq('delivery_type', deliveryTypeFilter);
       if (deliveryTypeFilter === 'motoboy' && motoboyFilter !== 'all') query = query.eq('motoboy_id', motoboyFilter);
-      if (paymentFilter !== 'all') query = query.eq('payment_method', paymentFilter);
       if (searchTerm) query = query.or(`customer_name.ilike.%${searchTerm}%,neighborhood.ilike.%${searchTerm}%,city.ilike.%${searchTerm}%`);
       if (startDate) query = query.gte('sale_date', `${startDate}T00:00:00`);
       if (endDate) query = query.lte('sale_date', `${endDate}T23:59:59`);
@@ -259,6 +258,16 @@ export default function SalesHistory() {
       if (error) throw error;
 
       let rawSales: any[] = salesData || [];
+      if (paymentFilter !== 'all') {
+        console.log('[debug] paymentFilter:', paymentFilter);
+        rawSales.filter((s: any) => (s.payment_methods?.length ?? 0) > 1).forEach((s: any) => {
+          console.log('[debug] venda mista', s.id, 'payment_method:', s.payment_method, 'payment_methods:', JSON.stringify(s.payment_methods));
+        });
+        rawSales = rawSales.filter((s: any) =>
+          s.payment_method === paymentFilter ||
+          (s.payment_methods?.some((pm: any) => pm.method === paymentFilter) ?? false)
+        );
+      }
       const saleIds = rawSales.map((s: any) => s.id);
 
       let itemsData: any[] = [];
