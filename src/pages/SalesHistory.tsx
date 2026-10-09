@@ -137,6 +137,10 @@ export default function SalesHistory() {
   const [confirmingPaymentId, setConfirmingPaymentId] = useState<string | null>(null);
   const [editingInstallmentsId, setEditingInstallmentsId] = useState<string | null>(null);
   const [updatingInstallmentsId, setUpdatingInstallmentsId] = useState<string | null>(null);
+  const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
+  const [deliveryEditMotoboyId, setDeliveryEditMotoboyId] = useState('');
+  const [deliveryEditFee, setDeliveryEditFee] = useState('');
+  const [updatingDeliveryId, setUpdatingDeliveryId] = useState<string | null>(null);
 
   useEffect(() => { loadSales(); }, []);
   useEffect(() => { setVisibleCount(PAGE_SIZE); setSelectedIds(new Set()); }, [filteredSales]);
@@ -154,6 +158,13 @@ export default function SalesHistory() {
     window.addEventListener('click', handler);
     return () => window.removeEventListener('click', handler);
   }, [editingInstallmentsId]);
+
+  useEffect(() => {
+    if (!editingDeliveryId) return;
+    const handler = () => setEditingDeliveryId(null);
+    window.addEventListener('click', handler);
+    return () => window.removeEventListener('click', handler);
+  }, [editingDeliveryId]);
 
   const loadSales = async () => {
     try {
@@ -644,6 +655,44 @@ export default function SalesHistory() {
     }
   };
 
+  const handleUpdateDelivery = async (sale: Sale) => {
+    const newFee = parseFloat(deliveryEditFee) || 0;
+    const newMotoboyId = deliveryEditMotoboyId || null;
+    setUpdatingDeliveryId(sale.id);
+    try {
+      const { data: freshSale, error: fetchError } = await supabase
+        .from('sales')
+        .select('total_cost, net_received, delivery_fee')
+        .eq('id', sale.id)
+        .single();
+      if (fetchError) throw fetchError;
+
+      const oldFee = freshSale.delivery_fee || 0;
+      const newTotalCost = (freshSale.total_cost || 0) - oldFee + newFee;
+      const newProfit = (freshSale.net_received || 0) - newTotalCost;
+
+      const { error } = await supabase.from('sales').update({
+        motoboy_id: newMotoboyId,
+        delivery_fee: newFee,
+        total_cost: newTotalCost,
+        profit: newProfit,
+      }).eq('id', sale.id);
+      if (error) throw error;
+
+      const motoboyName = newMotoboyId ? motoboys.find(m => m.id === newMotoboyId)?.name : undefined;
+      const patch = (s: Sale) => s.id === sale.id
+        ? { ...s, motoboy_id: newMotoboyId, motoboy_name: motoboyName, delivery_fee: newFee, total_cost: newTotalCost, profit: newProfit }
+        : s;
+      setFilteredSales(prev => prev.map(patch));
+      setSales(prev => prev.map(patch));
+    } catch {
+      alert('Erro ao atualizar motoboy/taxa de entrega');
+    } finally {
+      setUpdatingDeliveryId(null);
+      setEditingDeliveryId(null);
+    }
+  };
+
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [reembolsandoId, setReembolsandoId] = useState<string | null>(null);
 
@@ -1107,10 +1156,74 @@ export default function SalesHistory() {
                           <p className={`text-sm font-semibold ${Number(sale.profit) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                             lucro {formatCurrency(Number(sale.profit))}
                           </p>
-                          {sale.delivery_type === 'motoboy' && Number(sale.delivery_fee) > 0 && (
-                            <p className="text-sm font-medium text-orange-400">
-                              🛵 {formatCurrency(Number(sale.delivery_fee))}
-                            </p>
+                          {sale.delivery_type === 'motoboy' && (
+                            <span className="relative inline-flex items-center gap-1">
+                              {Number(sale.delivery_fee) > 0 && (
+                                <p className="text-sm font-medium text-orange-400">
+                                  🛵 {formatCurrency(Number(sale.delivery_fee))}
+                                </p>
+                              )}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (editingDeliveryId === sale.id) { setEditingDeliveryId(null); return; }
+                                  setDeliveryEditMotoboyId(sale.motoboy_id || '');
+                                  setDeliveryEditFee(String(sale.delivery_fee ?? 0));
+                                  setEditingDeliveryId(sale.id);
+                                }}
+                                disabled={updatingDeliveryId === sale.id}
+                                className="p-0.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                                title="Editar motoboy e taxa de entrega"
+                              >
+                                <Pencil size={11} />
+                              </button>
+                              {editingDeliveryId === sale.id && (
+                                <div
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="absolute top-full left-0 mt-1 z-30 bg-gray-700 border border-gray-600 rounded-lg shadow-lg p-3 w-56 space-y-2"
+                                >
+                                  <div>
+                                    <label className="text-xs text-gray-400 block mb-1">Motoboy</label>
+                                    <select
+                                      value={deliveryEditMotoboyId}
+                                      onChange={(e) => setDeliveryEditMotoboyId(e.target.value)}
+                                      className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm"
+                                    >
+                                      <option value="">Selecione...</option>
+                                      {motoboys.map(m => (
+                                        <option key={m.id} value={m.id}>{m.name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="text-xs text-gray-400 block mb-1">Taxa de entrega</label>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={deliveryEditFee}
+                                      onChange={(e) => setDeliveryEditFee(e.target.value)}
+                                      className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm"
+                                    />
+                                  </div>
+                                  <div className="flex gap-2 justify-end pt-1">
+                                    <button
+                                      onClick={() => setEditingDeliveryId(null)}
+                                      disabled={updatingDeliveryId === sale.id}
+                                      className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500 disabled:opacity-50"
+                                    >
+                                      Cancelar
+                                    </button>
+                                    <button
+                                      onClick={() => handleUpdateDelivery(sale)}
+                                      disabled={updatingDeliveryId === sale.id}
+                                      className="px-2 py-1 text-xs rounded bg-orange-600 hover:bg-orange-700 disabled:opacity-50"
+                                    >
+                                      {updatingDeliveryId === sale.id ? 'Salvando...' : 'Salvar'}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </span>
                           )}
                         </div>
                       </div>
