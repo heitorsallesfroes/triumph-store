@@ -284,7 +284,8 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         product:    item.product,
         quantity:   item.quantity,
         unit_price: item.unit_price || 0,
-        unit_cost:  item.product?.cost || 0,
+        // Custo histórico salvo na venda; vendas antigas (sem unit_cost) caem no custo atual do produto
+        unit_cost:  Number(item.unit_cost) > 0 ? Number(item.unit_cost) : (item.product?.cost || 0),
       }));
       setSaleProducts(editableProducts);
       originalItemsRef.current = editableProducts.map(i => ({ product_id: i.product_id, quantity: i.quantity }));
@@ -663,6 +664,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
               sale_id: editSaleId, product_id: sp.product_id,
               quantity: sp.quantity, unit_price: sp.unit_price,
               total_price: sp.unit_price * sp.quantity,
+              unit_cost: sp.unit_cost || 0,
             }))
           );
           if (itemsErr) throw itemsErr;
@@ -767,6 +769,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         quantity: sp.quantity,
         unit_price: sp.unit_price,
         total_price: sp.unit_price * sp.quantity,
+        unit_cost: sp.unit_cost || 0,
         ...(isMultiSupplier ? { supplier_id: perProductSupplierIds[sp.product_id] || null } : {}),
       }));
 
@@ -1091,7 +1094,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                         min="0"
                         value={sp.unit_cost}
                         onChange={(e) => updateProduct(index, 'unit_cost', parseFloat(e.target.value) || 0)}
-                        onBlur={(e) => saveProductCost(sp.product_id, parseFloat(e.target.value) || 0)}
+                        onBlur={(e) => { if (!editSaleId) saveProductCost(sp.product_id, parseFloat(e.target.value) || 0); }}
                         className="w-full bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
