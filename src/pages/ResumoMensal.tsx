@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, Legend, ResponsiveContainer,
+} from 'recharts';
 import { supabase } from '../lib/supabase';
 import { calculateCardFee } from '../lib/cardFees';
 import { toAdSpendReal } from '../lib/adTax';
@@ -92,6 +96,38 @@ export default function ResumoMensal() {
   const endDate = new Date(selected.year, selected.month, 0).toISOString().split('T')[0];
   const nowMonth = getCurrentMonth();
   const currentMonthStr = `${nowMonth.year}-${String(nowMonth.month).padStart(2, '0')}`;
+
+  const [dailyData, setDailyData] = useState<{ day: number; revenue: number; adSpend: number; profit: number }[]>([]);
+
+  useEffect(() => { loadDailyData(); }, [selected]);
+
+  const loadDailyData = async () => {
+    try {
+      const [salesRes, adRes] = await Promise.all([
+        supabase.from('sales')
+          .select('sale_date,total_sale_price,profit')
+          .neq('status', 'cancelado')
+          .neq('status', 'reembolsado')
+          .gte('sale_date', startDate)
+          .lte('sale_date', endDate + 'T23:59:59'),
+        supabase.from('ad_spend').select('date,amount').gte('date', startDate).lte('date', endDate),
+      ]);
+      const daysInMonth = new Date(selected.year, selected.month, 0).getDate();
+      const points = Array.from({ length: daysInMonth }, (_, i) => ({ day: i + 1, revenue: 0, adSpend: 0, profit: 0 }));
+      (salesRes.data || []).forEach(s => {
+        const d = Number(String(s.sale_date).slice(8, 10));
+        if (!points[d - 1]) return;
+        points[d - 1].revenue += Number(s.total_sale_price || 0);
+        points[d - 1].profit  += Number(s.profit || 0);
+      });
+      (adRes.data || []).forEach(r => {
+        const d = Number(String(r.date).slice(8, 10));
+        if (!points[d - 1]) return;
+        points[d - 1].adSpend += Number(r.amount || 0);
+      });
+      setDailyData(points);
+    } catch (e) { console.error(e); }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -861,6 +897,52 @@ export default function ResumoMensal() {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* ══════════════════════════════════════════════════════════════
+              EVOLUÇÃO DIÁRIA
+          ══════════════════════════════════════════════════════════════ */}
+          <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden mb-6">
+            <div className="px-6 py-4 border-b border-gray-700">
+              <div className="flex items-center gap-2">
+                <BarChart3 size={20} className="text-orange-400" />
+                <h2 className="text-lg font-bold text-white">Evolução Diária</h2>
+              </div>
+              <p className="text-gray-500 text-xs mt-0.5">
+                Faturamento, gasto em ads e lucro por dia · {MONTHS[selected.month - 1]} {selected.year}
+              </p>
+            </div>
+            <div className="p-6">
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={dailyData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+                  <XAxis
+                    dataKey="day"
+                    tick={{ fill: '#9ca3af', fontSize: 11 }}
+                    axisLine={false} tickLine={false}
+                    interval={0}
+                  />
+                  <YAxis
+                    tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
+                    tick={{ fill: '#9ca3af', fontSize: 11 }}
+                    axisLine={false} tickLine={false}
+                  />
+                  <Tooltip
+                    contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: 8, fontSize: 12, color: '#f3f4f6' }}
+                    labelStyle={{ fontWeight: 700, marginBottom: 4, color: '#f3f4f6' }}
+                    labelFormatter={(d) => `Dia ${d}`}
+                    formatter={(value, name) => [
+                      `R$ ${Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                      name,
+                    ]}
+                  />
+                  <Legend formatter={(v) => <span style={{ fontSize: 12, color: '#9ca3af' }}>{v}</span>} />
+                  <Line type="monotone" dataKey="revenue" name="Faturamento"  stroke="#f97316" strokeWidth={2.5} dot={{ r: 3, fill: '#f97316' }} activeDot={{ r: 6 }} />
+                  <Line type="monotone" dataKey="adSpend" name="Gasto em Ads" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3, fill: '#ef4444' }} activeDot={{ r: 6 }} />
+                  <Line type="monotone" dataKey="profit"  name="Lucro"        stroke="#22c55e" strokeWidth={2.5} dot={{ r: 3, fill: '#22c55e' }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
 
