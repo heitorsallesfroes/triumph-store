@@ -123,7 +123,7 @@ export default function ResumoMensal() {
       (adRes.data || []).forEach(r => {
         const d = Number(String(r.date).slice(8, 10));
         if (!points[d - 1]) return;
-        points[d - 1].adSpend += Number(r.amount || 0);
+        points[d - 1].adSpend += toAdSpendReal(Number(r.amount || 0));
       });
       setDailyData(points);
     } catch (e) { console.error(e); }
