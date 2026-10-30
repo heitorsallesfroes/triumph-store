@@ -28,6 +28,8 @@
     copy:      '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
     back:      '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
     wifiOff:   '<path d="M12 20h.01"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M5 12.859a10 10 0 0 1 5.17-2.69"/><path d="M19 12.859a10 10 0 0 0-2.007-1.523"/><path d="M2 8.82a15 15 0 0 1 4.177-2.643"/><path d="M22 8.82a15 15 0 0 0-11.288-3.764"/><path d="m2 2 20 20"/>',
+    tag:       '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+    chat:      '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     inbox:     '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
     texto:     '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/>',
     audio:     '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
@@ -96,6 +98,15 @@
       '[data-id*="@c.us"], [data-id*="@g.us"]',
       '[data-id*="@"]',
     ],
+    // Caixa "Pesquisar" da lista de conversas (coluna da esquerda)
+    search: [
+      '#side div[contenteditable="true"][role="textbox"]',
+      '#side div[contenteditable="true"][data-tab="3"]',
+      '#side div[contenteditable="true"]',
+      '#side input[type="text"], #side input[role="textbox"], #side input:not([type])',
+      'div[contenteditable="true"][data-tab="3"]',
+      'input[aria-label*="pesquis" i], input[aria-label*="search" i]',
+    ],
   };
 
   // Textos do cabeçalho da conversa que não são o nome do contato
@@ -106,7 +117,7 @@
   // ── Estado ─────────────────────────────────────────────────────────────────
 
   const state = {
-    open: false, view: 'list', themePref: 'auto',
+    open: false, view: 'list', themePref: 'auto', tab: 'mensagens',
     categories: [], items: [], loaded: false, source: null, syncedAt: null,
     syncing: false, offline: false, error: null, lastSyncError: null,
     search: '', filter: 'tudo', collapsed: {}, previewId: null, busyId: null, lastUsed: '',
@@ -114,6 +125,12 @@
     // Etiquetas
     labels: [], labelsLoaded: false, labelsSource: null, labelsSyncedAt: null, labelsError: null,
     convKey: null, convLabelIds: [], convLoading: false, convError: false, menuOpen: false,
+  };
+  // Aba Etiquetas: contadores e lista de clientes da etiqueta aberta
+  const lt = {
+    counts: null, countsAt: null, countsError: null,
+    openId: null, clients: [], hasMore: false, loading: false, error: null, search: '',
+    reqId: 0, rowsSig: '', timer: null, searchTimer: null, hintTimer: null,
   };
   const convCache   = new Map(); // key do contato -> ids das etiquetas
   let convTimer     = null;
@@ -581,6 +598,75 @@
       .lopt .lcheck { width: 15px; height: 15px; color: var(--accent); stroke-width: 3; }
       .lmenu .lempty { padding: 10px; color: var(--muted); font-size: 12px; text-align: center; }
 
+      /* Abas do painel */
+      .tabs { display: flex; gap: 3px; margin: 0 12px 10px; padding: 3px; border-radius: 10px; background: var(--bg2); }
+      .tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 600; transition: background .15s, color .15s; }
+      .tab svg { width: 14px; height: 14px; }
+      .tab:hover { color: var(--fg); }
+      .tab.active { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px var(--shadow); }
+      .panel.tab-labels .status, .panel.tab-labels .labels, .panel.tab-labels .name-note,
+      .panel.tab-labels .tools, .panel.tab-labels .banner, .panel.tab-labels .list { display: none; }
+
+      /* Aba Etiquetas */
+      .ltab { display: none; flex: 1; overflow-y: auto; padding: 0 12px 12px; scrollbar-width: thin; }
+      .panel.tab-labels .ltab { display: block; }
+      .lt-sec { margin-bottom: 14px; }
+      .lt-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 2px 2px 8px; }
+      .lt-conv { padding: 10px; border-radius: 10px; background: var(--bg2); }
+      .lt-who { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; margin-bottom: 8px; min-width: 0; }
+      .lt-who .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+      .lt-who .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .lt-who.ok { color: var(--ok); }
+      .lt-who.warn { color: var(--warn); }
+      .lt-note { font-size: 10.5px; color: var(--muted); margin: -4px 0 8px; }
+      .lt-note[hidden] { display: none; }
+      .tchips { display: flex; flex-wrap: wrap; gap: 5px; transition: opacity .15s; }
+      .tchips.loading { opacity: .6; }
+      .tchip { --c: var(--accent); --on: #fff; display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: transparent; color: var(--fg); border: 1.5px solid var(--c); transition: background .15s, color .15s, transform .1s; }
+      .tchip:hover:not(:disabled) { background: color-mix(in srgb, var(--c) 15%, transparent); }
+      .tchip:active:not(:disabled) { transform: scale(.96); }
+      .tchip.on, .tchip.on:hover { background: var(--c); color: var(--on); }
+      .tchip svg { width: 12px; height: 12px; stroke-width: 3; }
+      .tchip .tdot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex-shrink: 0; }
+      .tchip:disabled { opacity: .45; cursor: default; }
+      .lt-none { font-size: 12px; color: var(--muted); }
+      .lt-rows { display: flex; flex-direction: column; gap: 5px; }
+      .lt-item { border-radius: 9px; border: 1px solid var(--border); background: var(--card); overflow: hidden; transition: border-color .15s; }
+      .lt-item.open { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+      .lt-row { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: none; background: transparent; text-align: left; font-size: 12.5px; }
+      .lt-row:hover { background: var(--hover); }
+      .lt-row .ldot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+      .lt-row .lname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+      .lt-row .chev { width: 14px; height: 14px; color: var(--muted); transition: transform .2s ease; }
+      .lt-item.open .lt-row .chev { transform: rotate(90deg); }
+      .lt-count { min-width: 24px; text-align: center; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--bg2); color: var(--muted); }
+      .lt-item.open .lt-count { background: var(--accent-soft); color: var(--accent); }
+      .lt-body { padding: 0 8px 8px; border-top: 1px solid var(--border); animation: fadeIn .15s ease both; }
+      .lt-search { margin: 8px 0 6px; display: flex; align-items: center; gap: 8px; padding: 0 9px; border-radius: 8px; background: var(--bg2); color: var(--muted); border: 1px solid transparent; }
+      .lt-search:focus-within { border-color: var(--accent); }
+      .lt-search svg { width: 14px; height: 14px; }
+      .lt-search input { flex: 1; min-width: 0; height: 30px; border: none; outline: none; background: transparent; color: var(--fg); font: inherit; font-size: 12px; }
+      .lt-search input::placeholder { color: var(--muted); }
+      .lt-clients { display: flex; flex-direction: column; gap: 1px; }
+      .lt-client { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 8px; border: none; border-radius: 7px; background: transparent; text-align: left; }
+      .lt-client:hover { background: var(--bg2); }
+      .lt-client .n { font-size: 12.5px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .lt-client .p { font-size: 11px; color: var(--muted); }
+      .lt-client .p.byname { font-style: italic; color: var(--warn); }
+      .lt-more { width: 100%; margin-top: 4px; padding: 6px; border: 1px dashed var(--border); border-radius: 7px; background: transparent; color: var(--accent); font-size: 12px; font-weight: 600; }
+      .lt-more:hover:not(:disabled) { border-color: var(--accent); }
+      .lt-more:disabled { color: var(--muted); cursor: default; }
+      .lt-msg { padding: 10px 6px; font-size: 12px; color: var(--muted); text-align: center; }
+      .lt-msg.err { color: var(--err); }
+      .lt-msg button { margin-left: 6px; border: none; background: transparent; padding: 0; color: inherit; text-decoration: underline; font-size: 12px; }
+      .lt-sk { display: flex; flex-direction: column; gap: 6px; padding: 8px 6px; }
+      .lt-hint { position: sticky; bottom: 0; margin-top: 10px; padding: 9px 10px; border-radius: 9px; background: var(--card); border: 1px solid var(--accent); color: var(--fg); font-size: 12px; line-height: 1.45; box-shadow: 0 -4px 12px var(--bg); animation: fadeIn .15s ease both; }
+      .lt-hint.warn { border-color: var(--warn); }
+      .lt-hint[hidden] { display: none; }
+      .lt-hint b { color: var(--accent); }
+      .lt-hint.warn b { color: var(--warn); }
+      .lt-hint .manual { margin-top: 4px; font-weight: 600; word-break: break-word; }
+
       /* Aviso e rodapé */
       .toast { margin: 0 12px; max-height: 0; padding: 0 10px; border-radius: 8px; font-size: 12px; opacity: 0; overflow: hidden; transition: all .2s ease; }
       .toast.show { max-height: 80px; padding: 8px 10px; margin-bottom: 8px; opacity: 1; }
@@ -608,6 +694,10 @@
           <div class="brand"><span class="logo">${svg('zap', 'fill')}</span>Mensagens</div>
           <div class="actions"></div>
         </header>
+        <div class="tabs" role="tablist">
+          <button class="tab" type="button" role="tab" data-tab="mensagens">${svg('chat')}Mensagens</button>
+          <button class="tab" type="button" role="tab" data-tab="etiquetas">${svg('tag')}Etiquetas</button>
+        </div>
         <div class="status warn"><span class="dot"></span><span class="txt"></span></div>
         <div class="labels">
           <span class="lbl">Etiquetas</span>
@@ -622,6 +712,21 @@
         </div>
         <div class="banner" hidden>${svg('wifiOff')}<span>Sem conexão: mostrando a última versão</span><button type="button">Tentar de novo</button></div>
         <div class="list"></div>
+        <div class="ltab" role="tabpanel" aria-label="Etiquetas">
+          <section class="lt-sec">
+            <div class="lt-title">Esta conversa</div>
+            <div class="lt-conv">
+              <div class="lt-who warn"><span class="dot"></span><span class="txt"></span></div>
+              <div class="lt-note" hidden>identificado só pelo nome</div>
+              <div class="tchips"></div>
+            </div>
+          </section>
+          <section class="lt-sec">
+            <div class="lt-title">Todas as etiquetas</div>
+            <div class="lt-rows"></div>
+          </section>
+          <div class="lt-hint" role="status" aria-live="polite" hidden></div>
+        </div>
         <div class="toast" role="status" aria-live="polite"></div>
         <footer class="foot"><span class="last">Último usado: <b>—</b></span><span class="ver"></span></footer>
       </aside>
@@ -645,6 +750,24 @@
   const laddBtn   = shadow.querySelector('.labels .add');
   const lmenuEl   = shadow.querySelector('.lmenu');
   const nameNote  = shadow.querySelector('.name-note');
+  const tabBtns   = [...shadow.querySelectorAll('.tab')];
+  const ltabEl    = shadow.querySelector('.ltab');
+  const ltWho     = shadow.querySelector('.lt-who');
+  const ltWhoTxt  = shadow.querySelector('.lt-who .txt');
+  const ltNote    = shadow.querySelector('.lt-note');
+  const ltChips   = shadow.querySelector('.tchips');
+  const ltRowsEl  = shadow.querySelector('.lt-rows');
+  const ltHint    = shadow.querySelector('.lt-hint');
+
+  // Busca de clientes e lista da etiqueta aberta: elementos fixos, movidos para a etiqueta aberta
+  const ltSearchWrap = el('label', 'lt-search');
+  ltSearchWrap.innerHTML = svg('search');
+  const ltSearchIn = el('input');
+  ltSearchIn.type = 'text';
+  ltSearchIn.placeholder = 'Buscar cliente';
+  ltSearchIn.setAttribute('aria-label', 'Buscar cliente');
+  ltSearchWrap.append(ltSearchIn);
+  const ltClientsEl = el('div', 'lt-clients');
   shadow.querySelector('.foot .ver').textContent = `v${VERSION}`;
   bannerEl.querySelector('button').addEventListener('click', () => sync({ manual: true }));
 
@@ -741,8 +864,11 @@
       contextTimer = setInterval(updateContext, 1000);
       refreshTimer = setInterval(() => sync(), REFRESH_MS);
       sync();
+      restartLabelsTabTimer();
+      if (state.tab === 'etiquetas') refreshLabelsTab();
     } else {
       clearTimeout(convTimer);
+      restartLabelsTabTimer();
       setMenuOpen(false);
       if (state.view === 'diag') showList();
     }
@@ -863,6 +989,7 @@
     }
     laddBtn.hidden = !canLabel(identity);
     if (state.menuOpen) renderMenu();
+    renderConvTab();
   }
 
   function renderMenu() {
@@ -920,12 +1047,318 @@
     try {
       const ids = await call('setContactLabel', { identity: identityPayload(identity), labelId, on });
       if (pendingLabelOps === 1) apply(ids);
+      afterLabelChange();
     } catch {
       apply(on ? current().filter((id) => id !== labelId) : [...current(), labelId]);
       toast('Não consegui salvar', 'error');
     } finally {
       pendingLabelOps--;
     }
+  }
+
+  // ── Abas do painel ─────────────────────────────────────────────────────────
+
+  function setTab(tab, { persist = true } = {}) {
+    state.tab = tab === 'etiquetas' ? 'etiquetas' : 'mensagens';
+    panel.classList.toggle('tab-labels', state.tab === 'etiquetas');
+    tabBtns.forEach((b) => {
+      const active = b.dataset.tab === state.tab;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', String(active));
+    });
+    if (persist) storageSet({ panelTab: state.tab });
+    setMenuOpen(false);
+    restartLabelsTabTimer();
+    if (state.tab === 'etiquetas' && state.open) refreshLabelsTab();
+  }
+
+  tabBtns.forEach((b) => b.addEventListener('click', () => {
+    if (state.view === 'diag') showList();
+    setTab(b.dataset.tab);
+  }));
+
+  // ── Aba Etiquetas ──────────────────────────────────────────────────────────
+
+  const labelsTabActive = () => state.open && state.tab === 'etiquetas';
+
+  function restartLabelsTabTimer() {
+    clearInterval(lt.timer);
+    if (labelsTabActive()) lt.timer = setInterval(refreshLabelsTab, 60 * 1000);
+  }
+
+  async function refreshLabelsTab() {
+    await Promise.all([syncLabels(), loadCounts()]);
+    renderAllLabels();
+    if (lt.openId) loadClients({ reset: true });
+  }
+
+  function afterLabelChange() {
+    if (!labelsTabActive()) return;
+    loadCounts();
+    if (lt.openId) loadClients({ reset: true });
+  }
+
+  function formatPhone(digits) {
+    if (!digits) return '';
+    const br = String(digits).match(/^55(\d{2})(\d{4,5})(\d{4})$/);
+    return br ? `+55 (${br[1]}) ${br[2]}-${br[3]}` : `+${digits}`;
+  }
+
+  // "Esta conversa": chips que marcam/desmarcam com 1 clique
+  function renderConvTab() {
+    const ctx = state.ctx;
+    const identity = ctx && ctx.identity;
+    let warning = null;
+    if (!ctx || !ctx.conv) warning = 'Abra uma conversa para etiquetar';
+    else if (identity.kind === 'group') warning = 'Grupos não recebem etiquetas';
+    else if (!canLabel(identity)) warning = 'Não consegui identificar a conversa';
+
+    ltWho.className = `lt-who ${warning ? 'warn' : 'ok'}`;
+    ltWhoTxt.textContent = warning || ctx.fullName || 'Contato sem nome';
+    ltWhoTxt.title = ltWhoTxt.textContent;
+    ltNote.hidden = !(identity && identity.kind === 'name');
+    ltChips.classList.toggle('loading', !warning && state.convLoading);
+    ltChips.textContent = '';
+
+    if (!state.labels.length) {
+      ltChips.append(el('span', 'lt-none', state.labelsLoaded
+        ? 'Nenhuma etiqueta. Crie na aba WhatsApp do ERP (Etiquetas).'
+        : 'Carregando etiquetas...'));
+      return;
+    }
+    state.labels.forEach((l) => {
+      const on = !warning && state.convLabelIds.includes(l.id);
+      const chip = el('button', `tchip${on ? ' on' : ''}`);
+      chip.type = 'button';
+      chip.disabled = !!warning;
+      chip.style.setProperty('--c', l.color);
+      chip.style.setProperty('--on', textOn(l.color));
+      chip.setAttribute('aria-pressed', String(on));
+      chip.title = warning || (on ? `Desmarcar "${l.name}"` : `Marcar "${l.name}"`);
+      chip.innerHTML = on ? svg('check') : '<span class="tdot"></span>';
+      chip.append(l.name);
+      chip.addEventListener('click', () => toggleLabel(l.id));
+      ltChips.append(chip);
+    });
+    if (!warning && state.convError) ltChips.append(el('span', 'lt-none', 'Não consegui carregar as etiquetas desta conversa.'));
+  }
+
+  async function loadCounts() {
+    try {
+      const counts = await call('fetchLabelCounts');
+      if (!counts || typeof counts !== 'object') throw new Error('Resposta inválida ao contar clientes');
+      lt.counts = counts;
+      lt.countsAt = Date.now();
+      lt.countsError = null;
+    } catch (e) {
+      lt.countsError = e.message;
+    }
+    renderAllLabels();
+  }
+
+  function ltSkeleton(lines) {
+    const box = el('div', 'lt-sk');
+    for (let i = 0; i < lines; i++) {
+      const bar = el('div', 'sk');
+      bar.style.cssText = `height: 12px; width: ${85 - i * 15}%;`;
+      box.append(bar);
+    }
+    return box;
+  }
+
+  function ltMessage(text, { error = false, retry = null } = {}) {
+    const box = el('div', `lt-msg${error ? ' err' : ''}`, text);
+    if (retry) {
+      const b = el('button', null, 'Tentar de novo');
+      b.type = 'button';
+      b.addEventListener('click', retry);
+      box.append(b);
+    }
+    return box;
+  }
+
+  // "Todas as etiquetas": só reconstrói quando a lista muda (não tira o foco da busca)
+  function renderAllLabels() {
+    const labelsFailed = !state.labelsLoaded && !!state.labelsError;
+    const sig = JSON.stringify([state.labelsLoaded, labelsFailed, state.labels.map((l) => [l.id, l.name, l.color]), lt.openId, !lt.counts && !!lt.countsError]);
+    if (sig !== lt.rowsSig) {
+      lt.rowsSig = sig;
+      ltRowsEl.textContent = '';
+      if (lt.openId && !state.labels.some((l) => l.id === lt.openId)) lt.openId = null;
+
+      if (labelsFailed) {
+        ltRowsEl.append(ltMessage('Não consegui carregar as etiquetas.', { error: true, retry: refreshLabelsTab }));
+      } else if (!state.labelsLoaded) {
+        ltRowsEl.append(ltSkeleton(3));
+      } else if (!state.labels.length) {
+        ltRowsEl.append(ltMessage('Nenhuma etiqueta. Crie na aba WhatsApp do ERP (Etiquetas).'));
+      } else {
+        if (!lt.counts && lt.countsError) {
+          ltRowsEl.append(ltMessage('Não consegui carregar os contadores.', { error: true, retry: loadCounts }));
+        }
+        state.labels.forEach((l) => {
+          const open = lt.openId === l.id;
+          const item = el('div', `lt-item${open ? ' open' : ''}`);
+          item.dataset.id = l.id;
+          const row = el('button', 'lt-row');
+          row.type = 'button';
+          row.setAttribute('aria-expanded', String(open));
+          const dot = el('span', 'ldot');
+          dot.style.background = l.color;
+          row.append(dot, el('span', 'lname', l.name), el('span', 'lt-count', '…'));
+          row.insertAdjacentHTML('beforeend', svg('chevron', 'chev'));
+          row.addEventListener('click', () => toggleLabelOpen(l.id));
+          item.append(row);
+          if (open) {
+            const body = el('div', 'lt-body');
+            body.append(ltSearchWrap, ltClientsEl);
+            item.append(body);
+          }
+          ltRowsEl.append(item);
+        });
+      }
+    }
+    updateCounts();
+  }
+
+  function updateCounts() {
+    ltRowsEl.querySelectorAll('.lt-item').forEach((item) => {
+      const badge = item.querySelector('.lt-count');
+      const n = lt.counts ? lt.counts[item.dataset.id] : undefined;
+      badge.textContent = n == null ? (lt.countsError ? '!' : '…') : String(n);
+      badge.title = n == null
+        ? (lt.countsError ? 'Não consegui carregar o contador' : 'Carregando')
+        : `${n} cliente${n === 1 ? '' : 's'}`;
+    });
+  }
+
+  function toggleLabelOpen(labelId) {
+    lt.openId = lt.openId === labelId ? null : labelId;
+    lt.search = '';
+    ltSearchIn.value = '';
+    lt.clients = [];
+    lt.hasMore = false;
+    lt.error = null;
+    renderAllLabels();
+    if (lt.openId) loadClients({ reset: true });
+  }
+
+  async function loadClients({ reset = false } = {}) {
+    const labelId = lt.openId;
+    if (!labelId) return;
+    const reqId = ++lt.reqId;
+    // Ao atualizar, recarrega o que já estava visível (até 200) para não "encolher" a lista
+    const limit = reset ? Math.min(200, Math.max(50, lt.clients.length)) : 50;
+    const offset = reset ? 0 : lt.clients.length;
+    lt.loading = true;
+    lt.error = null;
+    renderClients();
+    try {
+      const page = await call('fetchLabelClients', { labelId, offset, limit, search: lt.search });
+      if (reqId !== lt.reqId) return;
+      lt.clients = reset ? page.clients : [...lt.clients, ...page.clients];
+      lt.hasMore = page.hasMore;
+    } catch (e) {
+      if (reqId !== lt.reqId) return;
+      lt.error = e.message;
+    }
+    lt.loading = false;
+    renderClients();
+  }
+
+  function renderClients() {
+    ltClientsEl.textContent = '';
+    if (!lt.clients.length) {
+      if (lt.loading) ltClientsEl.append(ltSkeleton(3));
+      else if (lt.error) ltClientsEl.append(ltMessage('Não consegui carregar os clientes.', { error: true, retry: () => loadClients({ reset: true }) }));
+      else ltClientsEl.append(ltMessage(lt.search ? 'Nenhum cliente encontrado.' : 'Nenhum cliente com esta etiqueta.'));
+      return;
+    }
+    lt.clients.forEach((c) => {
+      const b = el('button', 'lt-client');
+      b.type = 'button';
+      b.title = 'Colocar na busca do WhatsApp';
+      b.append(el('span', 'n', c.name || formatPhone(c.phone) || '—'));
+      if (c.phone && c.name) b.append(el('span', 'p', formatPhone(c.phone)));
+      else if (!c.phone) b.append(el('span', 'p byname', 'só pelo nome'));
+      b.addEventListener('click', () => searchClientInWhatsApp(c));
+      ltClientsEl.append(b);
+    });
+    if (lt.hasMore || (lt.loading && lt.clients.length)) {
+      const more = el('button', 'lt-more', lt.loading ? 'Carregando...' : 'Ver mais');
+      more.type = 'button';
+      more.disabled = lt.loading;
+      more.addEventListener('click', () => loadClients());
+      ltClientsEl.append(more);
+    }
+    if (lt.error) ltClientsEl.append(ltMessage('Não consegui carregar mais.', { error: true, retry: () => loadClients() }));
+  }
+
+  ltSearchIn.addEventListener('input', () => {
+    clearTimeout(lt.searchTimer);
+    lt.searchTimer = setTimeout(() => {
+      lt.search = ltSearchIn.value.trim();
+      lt.clients = [];
+      loadClients({ reset: true });
+    }, 300);
+  });
+
+  // ── Clique no cliente: preenche a busca do WhatsApp (não abre a conversa) ──
+
+  function findSearchBox() {
+    for (const s of SEL.search) {
+      for (const node of document.querySelectorAll(s)) {
+        if (!host.contains(node) && isVisible(node)) return node;
+      }
+    }
+    return null;
+  }
+
+  async function fillSearchBox(box, term) {
+    const isInput = box.tagName === 'INPUT';
+    const textOf = () => ((isInput ? box.value : box.textContent) || '').trim();
+    box.focus();
+    await sleep(40);
+    if (isInput) {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, term);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await sleep(80);
+      return textOf() === term;
+    }
+    try { document.execCommand('selectAll', false); } catch { /* sem suporte */ }
+    const dt = new DataTransfer();
+    dt.setData('text/plain', term);
+    box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await sleep(120);
+    if (textOf() === term) return true;
+    try { document.execCommand('insertText', false, term); } catch { /* sem suporte */ }
+    await sleep(120);
+    return textOf() === term;
+  }
+
+  function showHint(ok, client) {
+    clearTimeout(lt.hintTimer);
+    ltHint.textContent = '';
+    ltHint.className = `lt-hint${ok ? '' : ' warn'}`;
+    if (ok) {
+      ltHint.append(el('b', null, 'Busca preenchida. '), 'Clique na conversa que apareceu na lista do WhatsApp.');
+      lt.hintTimer = setTimeout(() => { ltHint.hidden = true; }, 12000);
+    } else {
+      ltHint.append(el('b', null, 'Não achei a busca do WhatsApp. '), 'Procure manualmente por:');
+      const parts = [client.name, client.phone ? formatPhone(client.phone) : null].filter(Boolean);
+      ltHint.append(el('div', 'manual', parts.join(' · ') || '—'));
+    }
+    ltHint.hidden = false;
+  }
+
+  async function searchClientInWhatsApp(client) {
+    const term = client.phone || client.name || '';
+    const box = term ? findSearchBox() : null;
+    let ok = false;
+    if (box) {
+      try { ok = await fillSearchBox(box, term); } catch { ok = false; }
+    }
+    showHint(ok, client);
   }
 
   // ── Busca e filtros ────────────────────────────────────────────────────────
@@ -1016,6 +1449,7 @@
   async function syncLabels() {
     try {
       const labels = await call('fetchLabels');
+      if (!Array.isArray(labels)) throw new Error('Resposta inválida ao buscar etiquetas');
       const changed = JSON.stringify(labels) !== JSON.stringify(state.labels);
       state.labels = labels;
       state.labelsLoaded = true;
@@ -1024,8 +1458,10 @@
       state.labelsError = null;
       storageSet({ labels: { items: labels, savedAt: state.labelsSyncedAt } });
       if (changed) renderLabelsRow();
+      renderAllLabels();
     } catch (e) {
       state.labelsError = e.message;
+      renderAllLabels();
     }
   }
 
@@ -1385,6 +1821,13 @@
           ? `${state.labels.length} (${state.labelsSource === 'servidor' ? 'do servidor' : 'do cache local'}, ${timeStr(state.labelsSyncedAt)})${state.labelsError ? ` · última atualização falhou: ${state.labelsError}` : ''}`
           : `não carregadas${state.labelsError ? `: ${state.labelsError}` : ''}`,
       },
+      {
+        label: 'Aba Etiquetas: contadores carregados',
+        status: lt.counts ? 'ok' : lt.countsError ? 'fail' : 'warn',
+        screen: lt.counts
+          ? `sim (${timeStr(lt.countsAt)})${lt.countsError ? ` · última atualização falhou: ${lt.countsError}` : ''}`
+          : lt.countsError ? `não: ${lt.countsError}` : 'não (abra a aba Etiquetas)',
+      },
       { label: 'Tema', status: 'ok', screen: `${THEME_PREFS[state.themePref].label} → ${appliedDark() ? 'escuro' : 'claro'} (WhatsApp ${whatsappIsDark() ? 'escuro' : 'claro'})` },
       { label: 'Página do WhatsApp', status: document.querySelector('#app') ? 'ok' : 'fail', screen: document.querySelector('#app') ? '#app encontrado' : '#app não encontrado' },
       { label: 'Painel na página', status: host.isConnected && layoutStyle.isConnected ? 'ok' : 'fail', screen: host.isConnected && layoutStyle.isConnected ? 'injetado' : 'faltando (será re-injetado)' },
@@ -1450,6 +1893,7 @@
   }
 
   function showDiag() {
+    if (state.tab !== 'mensagens') setTab('mensagens', { persist: false });
     state.view = 'diag';
     panel.classList.add('diag');
     diagBtn.classList.add('on');
@@ -1472,9 +1916,11 @@
   renderFilters();
   renderLastUsed();
   renderLabelsRow();
+  renderAllLabels();
+  setTab('mensagens', { persist: false });
   renderList();
   try {
-    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref'], (saved) => {
+    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref', 'panelTab'], (saved) => {
       saved = saved || {};
       state.collapsed = saved.collapsed || {};
       state.lastUsed  = saved.lastUsed || '';
@@ -1487,6 +1933,8 @@
         state.labelsSyncedAt = saved.labels.savedAt || null;
       }
       renderLabelsRow();
+      renderAllLabels();
+      setTab(saved.panelTab, { persist: false });
       renderThemeButton();
       applyTheme();
       renderLastUsed();

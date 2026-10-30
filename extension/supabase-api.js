@@ -159,8 +159,62 @@
     return labelIdsOf(contact.id);
   }
 
+  // ── Aba Etiquetas (só leitura) ─────────────────────────────────────────────
+
+  // Total de linhas sem baixá-las (HEAD + Prefer: count=exact → Content-Range "*/N")
+  async function countRows(path) {
+    const { SUPABASE_URL, SUPABASE_ANON_KEY } = cfg();
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      method: 'HEAD',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'count=exact' },
+    });
+    if (!res.ok) throw new Error(`Supabase ${res.status}`);
+    const total = Number((res.headers.get('content-range') || '').split('/')[1]);
+    if (!Number.isFinite(total)) throw new Error('Contagem indisponível');
+    return total;
+  }
+
+  // { labelId: quantidade de clientes }
+  async function fetchLabelCounts() {
+    const labels = await rest('wa_labels?select=id');
+    const counts = await Promise.all(labels.map((l) => countRows(`wa_contact_labels?label_id=eq.${l.id}`)));
+    return Object.fromEntries(labels.map((l, i) => [l.id, counts[i]]));
+  }
+
+  // Busca por nome (contém, sem diferenciar maiúsculas) ou por trecho do telefone
+  function clientSearchFilter(search) {
+    const text = String(search || '').replace(/[^\p{L}\p{N} ]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!text) return '';
+    const parts = [`name.ilike.*${text}*`];
+    const digits = text.replace(/\D/g, '');
+    if (digits.length >= 3) parts.push(`phone.like.*${digits}*`);
+    return `&contact.or=${encodeURIComponent(`(${parts.join(',')})`)}`;
+  }
+
+  // Clientes de uma etiqueta, mais recentes primeiro, em páginas (máx. 200, abaixo do limite de 1000)
+  async function fetchLabelClients({ labelId, offset = 0, limit = 50, search = '' }) {
+    if (typeof labelId !== 'string' || !UUID_RE.test(labelId)) throw new Error('Etiqueta inválida');
+    const off = Math.max(0, Math.floor(Number(offset) || 0));
+    const lim = Math.min(200, Math.max(1, Math.floor(Number(limit) || 50)));
+    const rows = await rest(
+      `wa_contact_labels?select=created_at,contact:wa_contacts!inner(id,key,name,phone)` +
+      `&label_id=eq.${labelId}&order=created_at.desc,contact_id.asc&offset=${off}&limit=${lim + 1}` +
+      clientSearchFilter(search),
+    );
+    return {
+      clients: rows.slice(0, lim).map((r) => ({
+        id: r.contact.id,
+        name: r.contact.name,
+        phone: r.contact.phone,
+        byName: String(r.contact.key).startsWith('nome:'),
+      })),
+      hasMore: rows.length > lim,
+    };
+  }
+
   root.WaApi = {
     fetchLibrary, incrementUsage, fetchFile, isAllowedFileUrl, MAX_FILE_BYTES,
     fetchLabels, getContactLabels, setContactLabel,
+    fetchLabelCounts, fetchLabelClients,
   };
 })(globalThis);

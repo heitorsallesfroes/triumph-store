@@ -9,6 +9,8 @@ const HANDLERS = {
   fetchLabels:      ()  => WaApi.fetchLabels(),
   getContactLabels: (m) => WaApi.getContactLabels(m.identity),
   setContactLabel:  (m) => WaApi.setContactLabel({ identity: m.identity, labelId: m.labelId, on: m.on }),
+  fetchLabelCounts:  ()  => WaApi.fetchLabelCounts(),
+  fetchLabelClients: (m) => WaApi.fetchLabelClients({ labelId: m.labelId, offset: m.offset, limit: m.limit, search: m.search }),
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

@@ -10,7 +10,7 @@ sempre você.
 
 Também permite marcar **etiquetas** (criadas no ERP) na conversa aberta.
 
-Versão atual: **1.2.0**
+Versão atual: **1.3.0**
 
 ---
 
@@ -38,7 +38,7 @@ Versão atual: **1.2.0**
    ícone de **recarregar** (seta circular).
 4. Volte para a aba do WhatsApp Web e aperte **F5** para recarregar a página.
 5. Para conferir a versão: abra o painel e veja o número no canto direito do
-   rodapé (por exemplo, `v1.2.0`).
+   rodapé (por exemplo, `v1.3.0`).
 
 Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
 é só fazer o passo 4.
@@ -92,6 +92,28 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
 4. No ERP, em **WhatsApp → Etiquetas → Clientes etiquetados**, aparecem os
    clientes marcados, com busca por nome ou telefone e filtro por etiqueta.
 
+#### Aba "Etiquetas" do painel
+
+No topo do painel há duas abas: **Mensagens** (as respostas rápidas, como
+antes) e **Etiquetas**. O painel lembra qual aba estava aberta.
+
+Na aba **Etiquetas**:
+- **Esta conversa:** o nome da conversa aberta e todas as etiquetas. Clique
+  numa etiqueta para marcar ou desmarcar: a marcada fica com a cor cheia e
+  um ✓; a não marcada fica só com o contorno. Sem conversa aberta, ou num
+  grupo, as etiquetas ficam desativadas.
+- **Todas as etiquetas:** na mesma ordem do ERP, cada uma com o número de
+  clientes. Clique numa etiqueta para ver os clientes dela (os mais recentes
+  primeiro; "Ver mais" mostra mais 50). Use "Buscar cliente" para achar por
+  nome ou telefone dentro da etiqueta aberta.
+- **Clique num cliente** para colocar o telefone (ou o nome, se não houver
+  telefone) na busca de conversas do WhatsApp. A extensão **não abre** a
+  conversa: clique você no resultado que aparecer na lista da esquerda. Se a
+  busca do WhatsApp não for encontrada, o painel mostra o nome e o telefone
+  para você procurar à mão.
+- Os números se atualizam ao abrir a aba, depois de marcar ou desmarcar e a
+  cada minuto enquanto a aba estiver aberta.
+
 Como a extensão reconhece o cliente:
 - Pelo **telefone** da conversa, sempre que o WhatsApp Web mostra o número.
 - Se o número não aparece, pelo **nome** do contato. Nesse caso o painel
@@ -124,6 +146,16 @@ guardada.
 ---
 
 ## O que mudou
+
+### 1.3.0
+- Abas no topo do painel: "Mensagens" (igual a antes) e "Etiquetas". A aba
+  aberta fica salva.
+- Aba Etiquetas: marcar/desmarcar a conversa aberta com 1 clique, todas as
+  etiquetas com o número de clientes, lista de clientes por etiqueta (mais
+  recentes primeiro, "Ver mais" de 50 em 50) e busca por nome ou telefone.
+- Clicar num cliente coloca o telefone ou o nome na busca do WhatsApp (sem
+  abrir a conversa).
+- Diagnóstico mostra se os contadores da aba Etiquetas carregaram.
 
 ### 1.2.0
 - Etiquetas: linha "Etiquetas" no painel, com chips coloridos e o botão "+"
