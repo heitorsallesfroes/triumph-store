@@ -29,6 +29,7 @@
     back:      '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
     wifiOff:   '<path d="M12 20h.01"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M5 12.859a10 10 0 0 1 5.17-2.69"/><path d="M19 12.859a10 10 0 0 0-2.007-1.523"/><path d="M2 8.82a15 15 0 0 1 4.177-2.643"/><path d="M22 8.82a15 15 0 0 0-11.288-3.764"/><path d="m2 2 20 20"/>',
     tag:       '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+    mic:       '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
     chat:      '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     inbox:     '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
     texto:     '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/>',
@@ -98,6 +99,25 @@
       '[data-id*="@c.us"], [data-id*="@g.us"]',
       '[data-id*="@"]',
     ],
+    // Gravação de mensagem de voz (rodapé da conversa). O botão de gravar só aparece com a caixa vazia.
+    micButton: [
+      'button[aria-label*="mensagem de voz" i]', '[role="button"][aria-label*="mensagem de voz" i]',
+      'button[aria-label*="voice message" i]', '[role="button"][aria-label*="voice message" i]',
+      'button[aria-label*="mensaje de voz" i]', '[role="button"][aria-label*="mensaje de voz" i]',
+      'button[aria-label*="gravar" i]', 'button[aria-label*="record" i]', 'button[aria-label*="grabar" i]',
+      '[data-icon="ptt"]', '[data-icon="mic-outlined"]', '[data-icon="mic"]', '[data-icon="microphone"]',
+    ],
+    pauseButton: [
+      'button[aria-label*="pausar" i]', '[role="button"][aria-label*="pausar" i]',
+      'button[aria-label*="pause" i]', '[role="button"][aria-label*="pause" i]',
+      '[data-icon="ptt-pause"]', '[data-icon="pause"]', '[data-icon*="pause"]',
+    ],
+    discardButton: [
+      'button[aria-label*="descartar" i]', '[role="button"][aria-label*="descartar" i]',
+      'button[aria-label*="discard" i]', 'button[aria-label*="excluir" i]', 'button[aria-label*="apagar" i]',
+      'button[aria-label*="delete" i]', 'button[aria-label*="eliminar" i]',
+      '[data-icon="delete"]', '[data-icon*="trash"]', '[data-icon*="delete"]',
+    ],
     // Caixa "Pesquisar" da lista de conversas (coluna da esquerda)
     search: [
       '#side div[contenteditable="true"][role="textbox"]',
@@ -117,7 +137,7 @@
   // ── Estado ─────────────────────────────────────────────────────────────────
 
   const state = {
-    open: false, view: 'list', themePref: 'auto', tab: 'mensagens',
+    open: false, view: 'list', themePref: 'auto', tab: 'mensagens', bridgeOk: null,
     categories: [], items: [], loaded: false, source: null, syncedAt: null,
     syncing: false, offline: false, error: null, lastSyncError: null,
     search: '', filter: 'tudo', collapsed: {}, previewId: null, busyId: null, lastUsed: '',
@@ -598,6 +618,28 @@
       .lopt .lcheck { width: 15px; height: 15px; color: var(--accent); stroke-width: 3; }
       .lmenu .lempty { padding: 10px; color: var(--muted); font-size: 12px; text-align: center; }
 
+      /* Áudio como mensagem de voz */
+      .asfile { padding: 0 6px; height: 22px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 600; white-space: nowrap; align-self: center; }
+      .asfile:hover:not(:disabled) { color: var(--fg); border-color: var(--muted); }
+      .asfile:disabled { opacity: .4; cursor: default; }
+      .voice { margin: 0 12px 8px; padding: 10px; border-radius: 10px; background: var(--card); border: 1px solid var(--err); box-shadow: 0 2px 8px var(--shadow); animation: fadeIn .15s ease both; }
+      .voice[hidden] { display: none; }
+      .voice.prep { border-color: var(--border); }
+      .vrow { display: flex; align-items: center; gap: 9px; }
+      .vmic { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--err-soft); color: var(--err); flex-shrink: 0; }
+      .voice:not(.prep) .vmic { animation: pulse 1.2s ease-in-out infinite; }
+      .voice.prep .vmic { background: var(--bg2); color: var(--muted); }
+      .vmic svg { width: 14px; height: 14px; }
+      .vtxt { flex: 1; min-width: 0; }
+      .vtxt b { display: block; font-size: 12.5px; }
+      .vtime { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .vcancel { flex-shrink: 0; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border); background: transparent; font-size: 12px; font-weight: 600; }
+      .vcancel:hover { border-color: var(--err); color: var(--err); }
+      .vbar { margin-top: 8px; height: 4px; border-radius: 999px; background: var(--bg2); overflow: hidden; }
+      .vfill { height: 100%; width: 0; background: var(--err); border-radius: 999px; transition: width .25s linear; }
+      .voice.prep .vbar { display: none; }
+      @keyframes pulse { 50% { transform: scale(1.12); opacity: .75; } }
+
       /* Abas do painel */
       .tabs { display: flex; gap: 3px; margin: 0 12px 10px; padding: 3px; border-radius: 10px; background: var(--bg2); }
       .tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 600; transition: background .15s, color .15s; }
@@ -727,6 +769,14 @@
           </section>
           <div class="lt-hint" role="status" aria-live="polite" hidden></div>
         </div>
+        <div class="voice prep" role="status" aria-live="polite" hidden>
+          <div class="vrow">
+            <span class="vmic">${svg('mic')}</span>
+            <div class="vtxt"><b>Preparando áudio…</b><span class="vtime"></span></div>
+            <button class="vcancel" type="button">Cancelar</button>
+          </div>
+          <div class="vbar"><div class="vfill"></div></div>
+        </div>
         <div class="toast" role="status" aria-live="polite"></div>
         <footer class="foot"><span class="last">Último usado: <b>—</b></span><span class="ver"></span></footer>
       </aside>
@@ -750,6 +800,11 @@
   const laddBtn   = shadow.querySelector('.labels .add');
   const lmenuEl   = shadow.querySelector('.lmenu');
   const nameNote  = shadow.querySelector('.name-note');
+  const voiceEl   = shadow.querySelector('.voice');
+  const voiceTitle = shadow.querySelector('.voice .vtxt b');
+  const voiceTime = shadow.querySelector('.voice .vtime');
+  const voiceFill = shadow.querySelector('.voice .vfill');
+  shadow.querySelector('.voice .vcancel').addEventListener('click', () => cancelVoice('Gravação cancelada.'));
   const tabBtns   = [...shadow.querySelectorAll('.tab')];
   const ltabEl    = shadow.querySelector('.ltab');
   const ltWho     = shadow.querySelector('.lt-who');
@@ -864,6 +919,7 @@
       contextTimer = setInterval(updateContext, 1000);
       refreshTimer = setInterval(() => sync(), REFRESH_MS);
       sync();
+      pingBridge();
       restartLabelsTabTimer();
       if (state.tab === 'etiquetas') refreshLabelsTab();
     } else {
@@ -1611,8 +1667,18 @@
     const btns = el('div', 'btns');
     const eye  = iconButton('eye', 'Prévia', () => togglePreview(item, card, eye));
     eye.setAttribute('aria-pressed', 'false');
-    const send = iconButton('send', 'Colocar na conversa', () => sendItem(item, card, send), 'send');
-    btns.append(eye, send);
+    const isAudio = item.type === 'audio';
+    const send = iconButton('send', isAudio ? 'Gravar como mensagem de voz' : 'Colocar na conversa', () => sendItem(item, card, send), 'send');
+    btns.append(eye);
+    if (isAudio) {
+      // Jeito antigo, sempre disponível: anexar o áudio como arquivo
+      const asFile = el('button', 'asfile', 'Como arquivo');
+      asFile.type = 'button';
+      asFile.title = 'Anexar como arquivo de áudio';
+      asFile.addEventListener('click', (e) => { e.stopPropagation(); sendItem(item, card, send, { asFile: true }); });
+      btns.append(asFile);
+    }
+    btns.append(send);
     row.append(btns);
 
     const wrap  = el('div', 'pv-wrap');
@@ -1627,7 +1693,7 @@
       eye.setAttribute('aria-pressed', 'true');
     }
     if (state.busyId === item.id) setBusy(card, send, true);
-    else if (state.busyId) send.disabled = true;
+    else if (state.busyId) btns.querySelectorAll('.send, .asfile').forEach((b) => { b.disabled = true; });
     return card;
   }
 
@@ -1722,7 +1788,12 @@
     card.classList.toggle('busy', busy);
     setIcon(send, busy ? 'refresh' : 'send');
     if (busy) send.querySelector('svg').classList.add('spin');
-    listEl.querySelectorAll('.btns .send').forEach((b) => { b.disabled = busy; });
+    setSendButtonsDisabled(busy);
+  }
+
+  // Só um envio por vez (inclusive "Como arquivo")
+  function setSendButtonsDisabled(disabled) {
+    listEl.querySelectorAll('.btns .send, .btns .asfile').forEach((b) => { b.disabled = disabled; });
   }
 
   function registerUse(item) {
@@ -1736,12 +1807,18 @@
       .catch(() => { /* o contador local já foi atualizado */ });
   }
 
-  async function sendItem(item, card, send) {
+  async function sendItem(item, card, send, { asFile = false } = {}) {
     if (state.busyId) return;
     const ctx = getContext();
     state.ctx = ctx;
     if (!ctx.composer) { toast('Abra uma conversa', 'warn'); return; }
     const composer = ctx.composer.el;
+    const asVoice = item.type === 'audio' && !asFile;
+    // O botão de gravar do WhatsApp só aparece com a caixa vazia: nunca apagamos o texto
+    if (asVoice && composerText(composer)) {
+      toast('Apague o texto da caixa para enviar o áudio', 'warn', 6000);
+      return;
+    }
 
     state.busyId = item.id;
     setBusy(card, send, true);
@@ -1757,18 +1834,32 @@
       }
 
       if (!item.file_url) throw new Error('Este item não tem arquivo.');
-      toast('Baixando arquivo...', 'info', 0);
+
+      let fallbackNote = null;
+      if (asVoice) {
+        const result = await sendVoice(item, ctx);
+        if (result.status === 'ok') { registerUse(item); return; }
+        if (result.status === 'cancelled') return;
+        fallbackNote = 'Enviei como arquivo de áudio (gravação não disponível)';
+      }
+
+      const fresh = fallbackNote ? getContext() : ctx;
+      if (!fresh.composer) { toast('Abra uma conversa', 'warn'); return; }
+      toast(fallbackNote ? `${fallbackNote}. Anexando...` : 'Baixando arquivo...', fallbackNote ? 'warn' : 'info', 0);
       const blob = await getFile(item);
       const file = new File([blob], item.file_name || 'arquivo', { type: blob.type });
-      const caption = await attachFile(composer, file);
+      const caption = await attachFile(fresh.composer.el, file);
       if (!caption) {
         toast('O WhatsApp não abriu a prévia do anexo. Se ela abriu, confira antes de enviar.', 'warn', 6000);
         return;
       }
       registerUse(item);
-      if (!text.trim()) {
+      const captionOk = !text.trim() || (await insertText(caption, text));
+      if (fallbackNote) {
+        toast(`${fallbackNote}. Confira e envie.`, 'warn', 8000);
+      } else if (!text.trim()) {
         toast('Arquivo anexado. Confira e envie.', 'ok');
-      } else if (await insertText(caption, text)) {
+      } else if (captionOk) {
         toast('Arquivo anexado com legenda. Confira e envie.', 'ok');
       } else if (await copyToClipboard(text)) {
         toast('Arquivo anexado. Legenda copiada: cole com Ctrl+V.', 'warn', 6000);
@@ -1780,8 +1871,183 @@
     } finally {
       state.busyId = null;
       if (card.isConnected) setBusy(card, send, false);
-      else listEl.querySelectorAll('.btns .send').forEach((b) => { b.disabled = false; });
+      else setSendButtonsDisabled(false);
       if (state.filter === 'mais_usadas') renderList();
+    }
+  }
+
+  // ── Áudio como mensagem de voz (ponte do microfone em mic-bridge.js) ───────
+  // Fluxo: arma a ponte com o áudio → clica em gravar do WhatsApp → o WhatsApp pede o microfone
+  // e recebe o áudio → no fim, clica em PAUSAR. Nunca clica em enviar.
+
+  const BRIDGE_IN  = 'tsp-wa-content';
+  const BRIDGE_OUT = 'tsp-wa-bridge';
+  const bridgeWaiters = new Set();
+  let voice = null; // gravação em andamento
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window) return;
+    const d = e.data;
+    if (!d || d.source !== BRIDGE_OUT || typeof d.type !== 'string') return;
+    [...bridgeWaiters].forEach((fn) => fn(d));
+  });
+
+  function toBridge(msg, transfer) {
+    window.postMessage({ source: BRIDGE_IN, ...msg }, window.location.origin, transfer || []);
+  }
+
+  function waitBridge(match, timeout) {
+    return new Promise((resolve) => {
+      const fn = (d) => { if (match(d)) { clearTimeout(timer); bridgeWaiters.delete(fn); resolve(d); } };
+      const timer = setTimeout(() => { bridgeWaiters.delete(fn); resolve(null); }, timeout);
+      bridgeWaiters.add(fn);
+    });
+  }
+
+  async function pingBridge() {
+    const id = `p${Date.now()}${Math.random().toString(36).slice(2, 7)}`;
+    const reply = waitBridge((d) => d.type === 'pong' && d.id === id, 800);
+    toBridge({ type: 'ping', id });
+    const res = await reply;
+    state.bridgeOk = !!(res && res.ready);
+    return state.bridgeOk;
+  }
+
+  function composerText(box) {
+    return ((box.innerText != null ? box.innerText : box.textContent) || '').trim();
+  }
+
+  // Botões da gravação: procura no rodapé da conversa, nunca dentro das mensagens
+  function findConvButton(selectors, root) {
+    const scopes = [...root.querySelectorAll('footer'), root];
+    for (const scope of scopes) {
+      for (const s of selectors) {
+        for (const node of scope.querySelectorAll(s)) {
+          if (node.closest('[data-id]') || host.contains(node) || !isVisible(node)) continue;
+          return node.closest('button, [role="button"]') || node;
+        }
+      }
+    }
+    return null;
+  }
+
+  const convKeyOf = (ctx) => (ctx && ctx.identity && ctx.identity.key) || `${ctx && ctx.identity ? ctx.identity.kind : 'none'}:${(ctx && ctx.fullName) || ''}`;
+
+  const mmss = (s) => {
+    const t = Math.max(0, Math.round(s));
+    return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+  };
+
+  function renderVoice() {
+    if (!voice) { voiceEl.hidden = true; return; }
+    voiceEl.hidden = false;
+    const recording = voice.phase === 'rec';
+    voiceEl.classList.toggle('prep', !recording);
+    voiceTitle.textContent = recording ? 'Gravando áudio…' : 'Preparando áudio…';
+    if (recording) {
+      const elapsed = Math.min(voice.duration, (Date.now() - voice.startedAt) / 1000);
+      voiceTime.textContent = `${mmss(elapsed)} / ${mmss(voice.duration)}`;
+      voiceFill.style.width = `${voice.duration ? Math.min(100, (elapsed / voice.duration) * 100) : 0}%`;
+    } else {
+      voiceTime.textContent = '';
+      voiceFill.style.width = '0%';
+    }
+  }
+
+  function clickDiscard(root) {
+    const btn = root && findConvButton(SEL.discardButton, root);
+    if (btn) btn.click();
+    return !!btn;
+  }
+
+  function cancelVoice(message) {
+    if (!voice || voice.cancelled) return;
+    voice.cancelled = true;
+    toBridge({ type: 'stop', id: voice.id });
+    if (voice.phase === 'rec' || voice.micClicked) clickDiscard(voice.root);
+    toast(message, 'warn', 6000);
+    if (voice.wake) voice.wake();
+  }
+
+  async function sendVoice(item, ctx) {
+    const id = `v${Date.now()}${Math.random().toString(36).slice(2, 7)}`;
+    const startKey = convKeyOf(ctx);
+    voice = { id, phase: 'prep', cancelled: false, micClicked: false, root: ctx.conv.root, startedAt: 0, duration: 0, wake: null };
+    renderVoice();
+    let ticker = null;
+    // Trocou de conversa no meio: cancela
+    const watcher = setInterval(() => {
+      if (voice && voice.id === id && convKeyOf(getContext()) !== startKey) cancelVoice('Você trocou de conversa: gravação cancelada.');
+    }, 400);
+    const cancelled = () => !voice || voice.id !== id || voice.cancelled;
+
+    try {
+      const blob = await getFile(item);
+      if (cancelled()) return { status: 'cancelled' };
+      if (!(await pingBridge())) return { status: 'fallback', reason: 'ponte do microfone indisponível' };
+      if (cancelled()) return { status: 'cancelled' };
+
+      const now = getContext();
+      if (!now.composer) return { status: 'fallback', reason: 'conversa sem caixa de mensagem' };
+      if (composerText(now.composer.el)) {
+        toast('Apague o texto da caixa para enviar o áudio', 'warn', 6000);
+        return { status: 'cancelled' };
+      }
+      const mic = findConvButton(SEL.micButton, now.conv.root);
+      if (!mic) return { status: 'fallback', reason: 'botão de gravar não encontrado' };
+
+      const audio = await blob.arrayBuffer();
+      const armed = waitBridge((d) => d.id === id && (d.type === 'armed' || d.type === 'error'), 1000);
+      toBridge({ type: 'arm', id, audio }, [audio]);
+      const armReply = await armed;
+      if (!armReply || armReply.type !== 'armed') return { status: 'fallback', reason: 'ponte do microfone não respondeu' };
+      if (cancelled()) return { status: 'cancelled' };
+
+      const requested = waitBridge((d) => d.id === id && d.type === 'requested', 3000);
+      voice.micClicked = true;
+      mic.click();
+      if (!(await requested)) {
+        toBridge({ type: 'disarm' });
+        if (!cancelled()) clickDiscard(now.conv.root); // por segurança, se abriu a gravação com o microfone real
+        return cancelled() ? { status: 'cancelled' } : { status: 'fallback', reason: 'o WhatsApp não pediu o microfone' };
+      }
+
+      const playing = await waitBridge((d) => d.id === id && (d.type === 'playing' || d.type === 'error'), 8000);
+      if (cancelled()) return { status: 'cancelled' };
+      if (!playing || playing.type !== 'playing') {
+        toBridge({ type: 'stop', id });
+        clickDiscard(now.conv.root);
+        return { status: 'fallback', reason: 'não consegui tocar o áudio' };
+      }
+
+      voice.phase = 'rec';
+      voice.duration = Number(playing.duration) || 0;
+      voice.startedAt = Date.now() + 250; // a ponte começa a tocar com 0,25 s de folga
+      renderVoice();
+      ticker = setInterval(renderVoice, 250);
+
+      // Espera o fim do áudio (ou cancelar)
+      await Promise.race([
+        waitBridge((d) => d.id === id && (d.type === 'ended' || d.type === 'error'), voice.duration * 1000 + 15000),
+        new Promise((resolve) => { voice.wake = resolve; }),
+      ]);
+      if (cancelled()) return { status: 'cancelled' };
+
+      await sleep(400);
+      if (cancelled()) return { status: 'cancelled' };
+      const pause = findConvButton(SEL.pauseButton, now.conv.root);
+      if (pause) {
+        pause.click();
+        toast('Pronto! Confira e aperte enviar no WhatsApp.', 'ok', 8000);
+      } else {
+        toast('Terminou. Aperte enviar agora', 'warn', 8000);
+      }
+      return { status: 'ok' };
+    } finally {
+      clearInterval(watcher);
+      clearInterval(ticker);
+      if (voice && voice.id === id) voice = null;
+      renderVoice();
     }
   }
 
@@ -1822,6 +2088,12 @@
           : `não carregadas${state.labelsError ? `: ${state.labelsError}` : ''}`,
       },
       {
+        label: 'Ponte do microfone carregada',
+        status: state.bridgeOk ? 'ok' : state.bridgeOk === false ? 'fail' : 'warn',
+        screen: state.bridgeOk ? 'sim' : state.bridgeOk === false ? 'não (áudios vão como arquivo; recarregue o WhatsApp com F5)' : 'testando...',
+      },
+      { label: 'Botão de gravar encontrado', ...micDiag(ctx) },
+      {
         label: 'Aba Etiquetas: contadores carregados',
         status: lt.counts ? 'ok' : lt.countsError ? 'fail' : 'warn',
         screen: lt.counts
@@ -1833,6 +2105,12 @@
       { label: 'Painel na página', status: host.isConnected && layoutStyle.isConnected ? 'ok' : 'fail', screen: host.isConnected && layoutStyle.isConnected ? 'injetado' : 'faltando (será re-injetado)' },
     ];
     return rows;
+  }
+
+  function micDiag(ctx) {
+    if (!ctx.conv || !ctx.composer) return { status: 'warn', screen: 'sem conversa aberta' };
+    if (composerText(ctx.composer.el)) return { status: 'warn', screen: 'caixa com texto (o botão só aparece com a caixa vazia)', copy: 'caixa com texto' };
+    return findConvButton(SEL.micButton, ctx.conv.root) ? { status: 'ok', screen: 'sim' } : { status: 'fail', screen: 'não' };
   }
 
   // Na tela pode mostrar o telefone; no texto copiado, só o tipo de identificação
@@ -1901,6 +2179,7 @@
     listEl.scrollTop = 0;
     renderDiag();
     sync();
+    pingBridge().then(renderDiag);
   }
 
   function showList() {

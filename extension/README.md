@@ -10,7 +10,7 @@ sempre você.
 
 Também permite marcar **etiquetas** (criadas no ERP) na conversa aberta.
 
-Versão atual: **1.3.0**
+Versão atual: **1.4.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -38,7 +38,7 @@ Versão atual: **1.3.0**
    ícone de **recarregar** (seta circular).
 4. Volte para a aba do WhatsApp Web e aperte **F5** para recarregar a página.
 5. Para conferir a versão: abra o painel e veja o número no canto direito do
-   rodapé (por exemplo, `v1.3.0`).
+   rodapé (por exemplo, `v1.4.0`).
 
 Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
 é só fazer o passo 4.
@@ -74,11 +74,44 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
     antes de enviar.
   - **Imagem, vídeo e documento:** o arquivo é anexado e a legenda já vem
     preenchida. Confira e envie.
-  - **Áudio:** por enquanto vai como **arquivo de áudio** (não como mensagem
-    de voz gravada).
+  - **Áudio:** vai como **mensagem de voz gravada na hora** (veja abaixo).
+    O botão **Como arquivo**, no cartão do áudio, anexa como arquivo de
+    áudio, do jeito antigo.
   - Se nenhuma conversa estiver aberta, aparece o aviso **"Abra uma conversa"**.
 - Cada uso soma 1 no contador "Mais usadas" do ERP.
 - No rodapé aparecem o último item usado e a versão da extensão.
+
+### Áudio como mensagem de voz
+
+Ao clicar na **seta** de um áudio, ele chega para o cliente como uma
+**mensagem de voz** (com microfone e ondas), e o cliente vê "gravando
+áudio…", como se você estivesse falando.
+
+Como funciona:
+1. A caixa de mensagem precisa estar **vazia** (o botão de gravar do WhatsApp
+   só aparece assim). Se tiver texto, o painel avisa "Apague o texto da caixa
+   para enviar o áudio" e não apaga nada.
+2. A extensão aperta o botão de gravar do WhatsApp e, no lugar do seu
+   microfone, entrega o áudio da biblioteca. **Nada toca no seu computador** e
+   o seu microfone de verdade não é usado.
+3. O painel mostra "Gravando áudio… 00:12 / 00:35" e um botão **Cancelar**
+   (que para e descarta a gravação). Se você trocar de conversa no meio, a
+   gravação é cancelada.
+4. Quando o áudio acaba, a extensão **pausa** a gravação e mostra "Pronto!
+   Confira e aperte enviar no WhatsApp."
+5. **Você** aperte o botão de enviar do WhatsApp. A extensão nunca envia.
+
+Se não gravar:
+- O painel avisa "Enviei como arquivo de áudio (gravação não disponível)" e
+  anexa o áudio como arquivo, para você conferir e enviar.
+- Se aparecer "Terminou. Aperte enviar agora", a extensão não achou o botão
+  de pausar: é só apertar enviar.
+- Rode o **Diagnóstico**: as linhas "Ponte do microfone carregada" e "Botão
+  de gravar encontrado" mostram o que falhou. Se a ponte aparecer como "não",
+  confira se o Chrome é 111 ou mais novo e recarregue o WhatsApp com **F5**.
+- Se o WhatsApp pedir permissão de microfone, permita (a extensão não usa o
+  microfone de verdade, mas o WhatsApp só grava com a permissão dada).
+- Você sempre pode usar **Como arquivo**.
 
 ### Etiquetas
 
@@ -147,6 +180,18 @@ guardada.
 
 ## O que mudou
 
+### 1.4.0
+- Áudios vão como **mensagem de voz gravada na hora**: a extensão aperta
+  gravar no WhatsApp, toca o áudio no lugar do microfone (sem som no
+  computador) e pausa no fim. Você confere e aperta enviar.
+- Quadro "Gravando áudio…" com tempo, barra e botão Cancelar; cancela sozinho
+  se você trocar de conversa.
+- Se a gravação não estiver disponível, anexa como arquivo e avisa.
+- Botão "Como arquivo" no cartão de áudio (jeito antigo).
+- Diagnóstico mostra "Ponte do microfone carregada" e "Botão de gravar
+  encontrado".
+- Precisa do Chrome 111 ou mais novo.
+
 ### 1.3.0
 - Abas no topo do painel: "Mensagens" (igual a antes) e "Etiquetas". A aba
   aberta fica salva.
@@ -206,6 +251,13 @@ guardada.
 - `background.js` e `supabase-api.js`: buscam os dados e os arquivos no
   Supabase. Só leitura, exceto `wa_items.usage_count` e as etiquetas
   (`wa_contacts` e `wa_contact_labels`).
+- `mic-bridge.js`: roda no mundo da página (`"world": "MAIN"`,
+  `document_start`; por isso o Chrome 111+). Envolve
+  `navigator.mediaDevices.getUserMedia`: só quando o painel arma (via
+  `postMessage`), o próximo pedido só de áudio recebe um stream Web Audio com
+  o áudio da biblioteca (sem ligar no alto-falante). Desarma após usar, após
+  erro ou após 10 s. Qualquer outro pedido vai direto para a função original.
+  Não faz conexões de rede.
 - `content.js`: o painel (em Shadow DOM), o cache em `chrome.storage.local`
   (`library`, `labels`, `collapsed`, `lastUsed`, `themePref`) e a integração
   com o WhatsApp Web (seletores com alternativas na constante `SEL`; a
