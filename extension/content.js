@@ -137,7 +137,7 @@
   // ── Estado ─────────────────────────────────────────────────────────────────
 
   const state = {
-    open: false, view: 'list', themePref: 'auto', tab: 'mensagens', bridgeOk: null,
+    open: false, view: 'list', themePref: 'auto', tab: 'mensagens', bridgeOk: null, waStatus: null, waStatusAt: 0,
     categories: [], items: [], loaded: false, source: null, syncedAt: null,
     syncing: false, offline: false, error: null, lastSyncError: null,
     search: '', filter: 'tudo', collapsed: {}, previewId: null, busyId: null, lastUsed: '',
@@ -920,6 +920,7 @@
       refreshTimer = setInterval(() => sync(), REFRESH_MS);
       sync();
       pingBridge();
+      refreshWaStatus();
       restartLabelsTabTimer();
       if (state.tab === 'etiquetas') refreshLabelsTab();
     } else {
@@ -1814,11 +1815,6 @@
     if (!ctx.composer) { toast('Abra uma conversa', 'warn'); return; }
     const composer = ctx.composer.el;
     const asVoice = item.type === 'audio' && !asFile;
-    // O botão de gravar do WhatsApp só aparece com a caixa vazia: nunca apagamos o texto
-    if (asVoice && composerText(composer)) {
-      toast('Apague o texto da caixa para enviar o áudio', 'warn', 6000);
-      return;
-    }
 
     state.busyId = item.id;
     setBusy(card, send, true);
@@ -1837,9 +1833,17 @@
 
       let fallbackNote = null;
       if (asVoice) {
-        const result = await sendVoice(item, ctx);
+        // 1) Rápido: WA-JS envia como mensagem de voz (só arquivos Ogg/Opus)
+        const fast = await sendVoiceFast(item);
+        if (fast.status === 'ok') { registerUse(item); return; }
+        if (fast.status === 'stop') return;
+        // 2) Plano B: gravação simulada pela ponte do microfone (o WhatsApp codifica o áudio)
+        const planB = getContext();
+        if (!planB.composer) { toast('Abra uma conversa', 'warn'); return; }
+        const result = await sendVoice(item, planB);
         if (result.status === 'ok') { registerUse(item); return; }
         if (result.status === 'cancelled') return;
+        // 3) Plano C: anexar como arquivo
         fallbackNote = 'Enviei como arquivo de áudio (gravação não disponível)';
       }
 
@@ -1960,8 +1964,143 @@
     return !!btn;
   }
 
+  // ── Biblioteca WA-JS (wa-bridge.js, mundo da página) ───────────────────────
+  // Protocolo próprio, separado da ponte do microfone:
+  //   pedido   { source: 'tsp-wajs-content', id, type, payload }
+  //   resposta { source: 'tsp-wajs-bridge', id, type, ok, data | error: { code, message, stage } }
+
+  const WAJS_IN  = 'tsp-wajs-content';
+  const WAJS_OUT = 'tsp-wajs-bridge';
+  const waPending = new Map(); // id -> { resolve, reject, timer }
+
+  const newRequestId = (prefix) => `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window) return;
+    const d = e.data;
+    if (!d || typeof d !== 'object' || d.source !== WAJS_OUT || typeof d.id !== 'string') return;
+    const pending = waPending.get(d.id);
+    if (!pending) return;
+    waPending.delete(d.id);
+    clearTimeout(pending.timer);
+    if (d.ok) {
+      pending.resolve(d.data);
+    } else {
+      const info = d.error || {};
+      pending.reject(Object.assign(new Error(info.message || 'Erro na biblioteca'), { code: info.code || 'unexpected', stage: info.stage || 'before-send' }));
+    }
+  });
+
+  function waRequest(type, payload = {}, { timeout = 2000, transfer = [], id = newRequestId('w') } = {}) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        waPending.delete(id);
+        // Sem resposta: não dá para saber se algo já foi enviado
+        reject(Object.assign(new Error('A biblioteca não respondeu'), { code: 'timeout', stage: 'unknown' }));
+      }, timeout);
+      waPending.set(id, { resolve, reject, timer });
+      window.postMessage({ source: WAJS_IN, id, type, payload }, window.location.origin, transfer);
+    });
+  }
+
+  async function refreshWaStatus() {
+    try {
+      state.waStatus = await waRequest('status', {}, { timeout: 2000 });
+    } catch {
+      state.waStatus = null;
+    }
+    state.waStatusAt = Date.now();
+    return state.waStatus;
+  }
+
+  // Se a ponte não respondeu há pouco, não espera de novo a cada áudio
+  function waStatusForSend() {
+    const recentlyAbsent = state.waStatusAt && !state.waStatus && Date.now() - state.waStatusAt < 30 * 1000;
+    return recentlyAbsent ? Promise.resolve(null) : refreshWaStatus();
+  }
+
+  // Ogg/Opus: começa com "OggS" e tem "OpusHead" nos primeiros 64 bytes
+  function isOggOpus(bytes) {
+    let ascii = '';
+    for (const b of bytes) ascii += String.fromCharCode(b);
+    return ascii.startsWith('OggS') && ascii.includes('OpusHead');
+  }
+
+  async function audioDurationMs(blob) {
+    const ctx = new OfflineAudioContext(1, 1, 48000);
+    const buffer = await ctx.decodeAudioData(await blob.arrayBuffer());
+    return Math.round(buffer.duration * 1000);
+  }
+
+  // Resultado: 'ok' (enviado), 'stop' (não seguir para os planos B/C) ou 'fallback' (seguir para o plano B)
+  async function sendVoiceFast(item) {
+    const st = await waStatusForSend();
+    if (!st || !st.ready) return { status: 'fallback' };
+
+    const blob = await getFile(item);
+    const head = new Uint8Array(await blob.slice(0, 64).arrayBuffer());
+    if (!isOggOpus(head)) return { status: 'fallback' };
+
+    let chat;
+    try {
+      chat = await waRequest('activeChat', {}, { timeout: 2000 });
+    } catch {
+      return { status: 'fallback' };
+    }
+    if (!chat || chat.kind !== 'individual' || typeof chat.chatId !== 'string') {
+      toast('Abra uma conversa individual', 'warn', 6000);
+      return { status: 'stop' };
+    }
+
+    const durationMs = await audioDurationMs(blob).catch(() => 4000);
+    const recordMs = Math.min(8000, Math.max(2000, durationMs));
+    const startKey = convKeyOf(getContext());
+    const reqId = newRequestId('s');
+    voice = { id: reqId, mode: 'fast', phase: 'rec', cancelled: false, cancelRequested: false, startedAt: Date.now(), duration: recordMs / 1000 };
+    renderVoice();
+    const ticker = setInterval(renderVoice, 250);
+    // Trocou de conversa durante o "gravando…": cancela (o áudio iria para a conversa anterior)
+    const watcher = setInterval(() => {
+      if (voice && voice.id === reqId && convKeyOf(getContext()) !== startKey) cancelVoice('Você trocou de conversa: gravação cancelada.');
+    }, 400);
+
+    try {
+      const audio = await blob.arrayBuffer();
+      await waRequest('sendVoice', { chatId: chat.chatId, audio, recordMs }, { id: reqId, timeout: recordMs + 20000, transfer: [audio] });
+      toast('Áudio enviado como mensagem de voz (rápido).', 'ok', 6000);
+      return { status: 'ok' };
+    } catch (e) {
+      if (e.code === 'cancelled') return { status: 'stop' };
+      if (e.stage === 'before-send') return { status: 'fallback' };
+      // Envio já começou (ou sem resposta): nada de plano B, para não mandar em dobro
+      toast('Não consegui confirmar o envio. Confira a conversa antes de tentar de novo.', 'error', 12000);
+      return { status: 'stop' };
+    } finally {
+      clearInterval(ticker);
+      clearInterval(watcher);
+      if (voice && voice.id === reqId) voice = null;
+      renderVoice();
+    }
+  }
+
+  // Cancelar só funciona enquanto mostra "gravando…"; depois que o envio começou, não dá
+  async function cancelVoiceFast(message) {
+    const v = voice;
+    if (!v || v.cancelRequested) return;
+    v.cancelRequested = true;
+    let res = null;
+    try { res = await waRequest('cancel', { id: v.id }, { timeout: 2000 }); } catch { res = null; }
+    if (res && res.cancelled) {
+      v.cancelled = true;
+      toast(message, 'warn', 6000);
+    } else {
+      toast('O envio já começou: não dá mais para cancelar.', 'info', 5000);
+    }
+  }
+
   function cancelVoice(message) {
     if (!voice || voice.cancelled) return;
+    if (voice.mode === 'fast') { cancelVoiceFast(message); return; }
     voice.cancelled = true;
     toBridge({ type: 'stop', id: voice.id });
     if (voice.phase === 'rec' || voice.micClicked) clickDiscard(voice.root);
@@ -2038,7 +2177,7 @@
       const pause = findConvButton(SEL.pauseButton, now.conv.root);
       if (pause) {
         pause.click();
-        toast('Pronto! Confira e aperte enviar no WhatsApp.', 'ok', 8000);
+        toast('Pronto! Confira e aperte enviar no WhatsApp (gravação simulada, mais lenta).', 'ok', 8000);
       } else {
         toast('Terminou. Aperte enviar agora', 'warn', 8000);
       }
@@ -2087,6 +2226,7 @@
           ? `${state.labels.length} (${state.labelsSource === 'servidor' ? 'do servidor' : 'do cache local'}, ${timeStr(state.labelsSyncedAt)})${state.labelsError ? ` · última atualização falhou: ${state.labelsError}` : ''}`
           : `não carregadas${state.labelsError ? `: ${state.labelsError}` : ''}`,
       },
+      ...waDiagRows(),
       {
         label: 'Ponte do microfone carregada',
         status: state.bridgeOk ? 'ok' : state.bridgeOk === false ? 'fail' : 'warn',
@@ -2105,6 +2245,38 @@
       { label: 'Painel na página', status: host.isConnected && layoutStyle.isConnected ? 'ok' : 'fail', screen: host.isConnected && layoutStyle.isConnected ? 'injetado' : 'faltando (será re-injetado)' },
     ];
     return rows;
+  }
+
+  // Biblioteca WA-JS: sem ids nem telefones (só sim/não, tipo de conversa e quantidade)
+  function waDiagRows() {
+    const st = state.waStatus;
+    if (!st) {
+      const tested = !!state.waStatusAt;
+      return [
+        { label: 'Biblioteca WA-JS carregada', status: tested ? 'fail' : 'warn', screen: tested ? 'não (recarregue o WhatsApp com F5)' : 'testando...' },
+        { label: 'WhatsApp pronto para a biblioteca', status: 'warn', screen: 'não' },
+        { label: 'Telemetria e servidores de terceiros da biblioteca desligados', status: 'warn', screen: 'biblioteca não carregada' },
+        { label: 'Conversa aberta', status: 'warn', screen: 'não disponível' },
+        { label: 'Etiquetas do WhatsApp Business', status: 'warn', screen: 'não disponível' },
+      ];
+    }
+    const privacyOk = st.telemetryOff === true && st.linkServersOff === true;
+    const labels = st.labels || {};
+    return [
+      { label: 'Biblioteca WA-JS carregada', status: st.loaded ? 'ok' : 'fail', screen: st.loaded ? 'sim' : 'não' },
+      { label: 'WhatsApp pronto para a biblioteca', status: st.ready ? 'ok' : 'warn', screen: st.ready ? 'sim' : 'não (os áudios usam a gravação simulada)' },
+      {
+        label: 'Telemetria e servidores de terceiros da biblioteca desligados',
+        status: privacyOk ? 'ok' : 'fail',
+        screen: privacyOk ? 'sim' : `não (telemetria ${st.telemetryOff ? 'desligada' : 'LIGADA'}, servidores de prévia ${st.linkServersOff ? 'desligados' : 'LIGADOS'})`,
+      },
+      { label: 'Conversa aberta', status: st.chat === 'individual' ? 'ok' : 'warn', screen: ['individual', 'grupo', 'nenhuma'].includes(st.chat) ? st.chat : 'nenhuma' },
+      {
+        label: 'Etiquetas do WhatsApp Business',
+        status: labels.available ? 'ok' : 'warn',
+        screen: labels.available && Number.isFinite(labels.count) ? String(labels.count) : 'não disponível',
+      },
+    ];
   }
 
   function micDiag(ctx) {
@@ -2180,6 +2352,7 @@
     renderDiag();
     sync();
     pingBridge().then(renderDiag);
+    refreshWaStatus().then(renderDiag);
   }
 
   function showList() {

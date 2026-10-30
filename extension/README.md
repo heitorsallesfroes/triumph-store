@@ -10,7 +10,7 @@ sempre você.
 
 Também permite marcar **etiquetas** (criadas no ERP) na conversa aberta.
 
-Versão atual: **1.4.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **1.5.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -85,9 +85,27 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
 
 Ao clicar na **seta** de um áudio, ele chega para o cliente como uma
 **mensagem de voz** (com microfone e ondas), e o cliente vê "gravando
-áudio…", como se você estivesse falando.
+áudio…" antes. A extensão tenta três caminhos, nesta ordem:
 
-Como funciona:
+**1. Rápido (biblioteca WA-JS).** Vale quando o áudio está em **Ogg/Opus**
+(o formato dos áudios do próprio WhatsApp) e a conversa aberta é
+**individual**.
+1. O cliente vê "gravando áudio…" por alguns segundos (o tempo do áudio, entre
+   2 e 8 s). O painel mostra "Gravando áudio… 00:03 / 00:08" e um botão
+   **Cancelar**.
+2. Em seguida o áudio é **enviado** como mensagem de voz, e aparece "Áudio
+   enviado como mensagem de voz (rápido)." Neste caminho o envio é feito pela
+   extensão, porque você clicou na seta; nada é enviado sem esse clique.
+3. **Cancelar** (ou trocar de conversa) só funciona enquanto aparece "gravando
+   áudio…". Depois que o envio começou, não dá mais para cancelar.
+4. Em grupo, ou sem conversa aberta, aparece "Abra uma conversa individual" e
+   nada é enviado.
+5. Se aparecer "Não consegui confirmar o envio. Confira a conversa antes de
+   tentar de novo.", **olhe a conversa antes de clicar de novo**: o áudio pode
+   ter ido. Por isso a extensão não tenta outro caminho nesse caso.
+
+**2. Plano B: gravação simulada (mais lenta).** Usado quando o áudio não é
+Ogg/Opus, ou quando a biblioteca não está pronta.
 1. A caixa de mensagem precisa estar **vazia** (o botão de gravar do WhatsApp
    só aparece assim). Se tiver texto, o painel avisa "Apague o texto da caixa
    para enviar o áudio" e não apaga nada.
@@ -98,17 +116,32 @@ Como funciona:
    (que para e descarta a gravação). Se você trocar de conversa no meio, a
    gravação é cancelada.
 4. Quando o áudio acaba, a extensão **pausa** a gravação e mostra "Pronto!
-   Confira e aperte enviar no WhatsApp."
-5. **Você** aperte o botão de enviar do WhatsApp. A extensão nunca envia.
+   Confira e aperte enviar no WhatsApp (gravação simulada, mais lenta)."
+5. **Você** aperta o botão de enviar do WhatsApp.
+
+**3. Plano C: como arquivo.** Se nenhum dos dois funcionar, o áudio é anexado
+como arquivo (com o aviso "Enviei como arquivo de áudio (gravação não
+disponível)"), para você conferir e enviar. O botão **Como arquivo** no
+cartão faz isso direto.
+
+Dica: para usar sempre o caminho rápido, cadastre os áudios em **Ogg/Opus**
+(arquivo `.ogg` ou `.opus`).
 
 Se não gravar:
 - O painel avisa "Enviei como arquivo de áudio (gravação não disponível)" e
   anexa o áudio como arquivo, para você conferir e enviar.
 - Se aparecer "Terminou. Aperte enviar agora", a extensão não achou o botão
   de pausar: é só apertar enviar.
-- Rode o **Diagnóstico**: as linhas "Ponte do microfone carregada" e "Botão
-  de gravar encontrado" mostram o que falhou. Se a ponte aparecer como "não",
-  confira se o Chrome é 111 ou mais novo e recarregue o WhatsApp com **F5**.
+- Rode o **Diagnóstico**:
+  - caminho rápido: "Biblioteca WA-JS carregada", "WhatsApp pronto para a
+    biblioteca" e "Conversa aberta" precisam estar ✓ (e a conversa,
+    "individual");
+  - plano B: "Ponte do microfone carregada" e "Botão de gravar encontrado";
+  - se algo aparecer como "não", confira se o Chrome é 111 ou mais novo e
+    recarregue o WhatsApp com **F5**.
+- Se continuar falhando, clique em **Copiar diagnóstico** e mande o texto
+  (ele não tem nomes, telefones nem mensagens), dizendo também o formato do
+  áudio (`.ogg`, `.mp3`…) e se a conversa era individual ou grupo.
 - Se o WhatsApp pedir permissão de microfone, permita (a extensão não usa o
   microfone de verdade, mas o WhatsApp só grava com a permissão dada).
 - Você sempre pode usar **Como arquivo**.
@@ -159,6 +192,15 @@ Como a extensão reconhece o cliente:
 - Se a etiqueta não salvar (sem internet, por exemplo), ela some do painel e
   aparece o aviso "Não consegui salvar". É só tentar de novo.
 
+### Privacidade da biblioteca WA-JS
+
+A biblioteca WA-JS (código aberto, licença Apache-2.0) vem, por padrão,
+com estatísticas para o Google Analytics e com servidores de terceiros para
+prévia de links. Na extensão **as duas coisas ficam desligadas** antes de ela
+carregar. O Diagnóstico mostra "Telemetria e servidores de terceiros da
+biblioteca desligados: sim". A biblioteca só recebe o áudio como arquivo
+(nunca um link) e a extensão não registra telefones, conversas nem mensagens.
+
 ### Sem internet ou com o ERP fora do ar
 
 A extensão guarda a última lista de mensagens no próprio Chrome. Ao abrir o
@@ -179,6 +221,17 @@ guardada.
 ---
 
 ## O que mudou
+
+### 1.5.0
+- Áudios em Ogg/Opus vão pelo **caminho rápido**: o cliente vê "gravando
+  áudio…" por alguns segundos e o áudio é enviado na hora como mensagem de
+  voz, usando a biblioteca aberta WA-JS (embutida em `vendor/`, versão 4.7.2).
+- A gravação simulada da 1.4.0 virou o **plano B** e o anexo como arquivo, o
+  **plano C**. O aviso diz qual caminho foi usado.
+- Telemetria e servidores de terceiros da biblioteca **desligados**.
+- Diagnóstico com 5 linhas novas: biblioteca carregada, WhatsApp pronto,
+  telemetria desligada, tipo de conversa aberta e etiquetas do WhatsApp
+  Business.
 
 ### 1.4.0
 - Áudios vão como **mensagem de voz gravada na hora**: a extensão aperta
@@ -243,6 +296,41 @@ guardada.
 ---
 
 ## Para quem mantém o código
+
+### Arquitetura
+
+```
+WhatsApp Web (mundo da página, "world": "MAIN")
+  mic-bridge.js ............ document_start: ponte do microfone (plano B)
+  wa-before.js ............. document_idle: desliga telemetria/servidores, guarda WPP de outra extensão
+  vendor/wppconnect-wa.js .. biblioteca WA-JS 4.7.2, sem alterações (ver vendor/README.md)
+  wa-bridge.js ............. fala com a WA-JS (cópia privada do WPP)
+        ▲  window.postMessage (dois protocolos separados:
+        │  'tsp-wa-content'/'tsp-wa-bridge' e 'tsp-wajs-content'/'tsp-wajs-bridge')
+        ▼
+Mundo isolado da extensão
+  content.js ............... painel; áudio: rápido (WA-JS) → plano B (microfone) → plano C (arquivo)
+        ▲  chrome.runtime.sendMessage
+        ▼
+Service worker
+  background.js + supabase-api.js .. Supabase (biblioteca, arquivos, etiquetas)
+```
+
+- Só o service worker acessa a rede (Supabase). `content.js`, `mic-bridge.js`,
+  `wa-before.js` e `wa-bridge.js` não usam `fetch`, `XMLHttpRequest`,
+  `WebSocket`, `sendBeacon`, `eval` nem `new Function`.
+- Protocolo do `wa-bridge.js`: pedido `{ source: 'tsp-wajs-content', id,
+  type, payload }`; resposta `{ source: 'tsp-wajs-bridge', id, type, ok, data
+  | error: { code, message, stage } }`. Tipos: `status`, `activeChat`,
+  `sendVoice { chatId, audio, recordMs }` (só `@c.us`/`@lid`;
+  markIsRecording → espera → markIsPaused sempre → sendFileMessage com Blob
+  `audio/ogg; codecs=opus`) e `cancel { id }`. `stage: 'before-send'` = nada
+  foi enviado (pode ir para o plano B); `'sending'` = o envio começou (não
+  tentar de novo).
+- Atualizar a WA-JS: ver `vendor/README.md` (npm pack fora do repositório,
+  conferir SHA-256, trocar o arquivo sem alterar, rodar os testes).
+
+### Arquivos
 
 - `manifest.json`: configuração da extensão (Manifest V3). Acesso só a
   `web.whatsapp.com` e ao domínio do Supabase.
