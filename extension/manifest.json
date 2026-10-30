@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Triumph Store - Biblioteca WhatsApp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Painel lateral no WhatsApp Web com as mensagens, áudios e mídias da aba WhatsApp do ERP Triumph Store.",
   "permissions": ["storage"],
   "host_permissions": [
