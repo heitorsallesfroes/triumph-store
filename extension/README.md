@@ -10,7 +10,7 @@ sempre você.
 
 Também permite marcar **etiquetas** (criadas no ERP) na conversa aberta.
 
-Versão atual: **1.5.1** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **1.6.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -199,6 +199,31 @@ Como a extensão reconhece o cliente:
 - Se a etiqueta não salvar (sem internet, por exemplo), ela some do painel e
   aparece o aviso "Não consegui salvar". É só tentar de novo.
 
+### Barra de etiquetas e Quadro (WhatsApp Business)
+
+Se a sua conta é **WhatsApp Business** e tem etiquetas (por exemplo
+"Cliente", "Motoboy"), aparece uma **barra fina no topo** do WhatsApp Web:
+
+- À esquerda, "ETIQUETAS" e um botão para cada etiqueta, com a cor e o número
+  de conversas. Etiqueta com 0 fica mais apagada. Se tiver muitas, role para o
+  lado.
+- Clique numa etiqueta (ou em **Quadro**, à direita) para abrir o **Quadro**:
+  colunas por etiqueta, com um cartão por conversa (nome, última mensagem,
+  data e não lidas). **Clique num cartão** (ou aperte Enter) para abrir a
+  conversa no WhatsApp. **Colunas** escolhe até 6 etiquetas; **Esc** ou
+  **Fechar** fecha o Quadro.
+- **Só leitura:** a barra e o Quadro **não mudam etiquetas, não enviam nada e
+  não gravam nada** no ERP. Nomes, números e prévias ficam só na memória
+  enquanto o Quadro está aberto.
+- **O número da etiqueta** é o do WhatsApp e pode incluir conversas que o
+  WhatsApp Web ainda não carregou. Por isso o Quadro pode mostrar menos
+  cartões que o número; nesse caso aparece "Mostrando N conversas carregadas
+  no WhatsApp Web agora." Conversas arquivadas não entram.
+- **Ocultar a barra:** clique no **×** da barra ou no botão de etiqueta (🏷) no
+  cabeçalho do painel. O mesmo botão mostra de novo. A escolha fica salva.
+- Se a conta não tem etiquetas, ou a biblioteca WA-JS não estiver pronta, a
+  barra simplesmente não aparece (e não ocupa espaço).
+
 ### Privacidade da biblioteca WA-JS
 
 A biblioteca WA-JS (código aberto, licença Apache-2.0) vem, por padrão,
@@ -228,6 +253,15 @@ guardada.
 ---
 
 ## O que mudou
+
+### 1.6.0
+- **Barra de etiquetas** no topo do WhatsApp Web, com as etiquetas nativas do
+  WhatsApp Business e o número de conversas de cada uma.
+- **Quadro** com colunas por etiqueta e cartões que abrem a conversa.
+- Botão no cabeçalho do painel para mostrar/ocultar a barra.
+- Tudo **só leitura**: nada é alterado no WhatsApp nem gravado no ERP.
+- Diagnóstico: quantidade de etiquetas do WhatsApp Business e a nova linha
+  "Barra de etiquetas" (ativa / oculta por você / indisponível).
 
 ### 1.5.1
 - Tempo de "gravando áudio…" configurável em cada áudio, no ERP (vazio =
@@ -335,7 +369,11 @@ Service worker
   | error: { code, message, stage } }`. Tipos: `status`, `activeChat`,
   `sendVoice { chatId, audio, recordMs }` (só `@c.us`/`@lid`;
   markIsRecording → espera → markIsPaused sempre → sendFileMessage com Blob
-  `audio/ogg; codecs=opus`) e `cancel { id }`. `stage: 'before-send'` = nada
+  `audio/ogg; codecs=opus`) e `cancel { id }`. Só leitura (1.6.0):
+  `labels` (getAllLabels), `labelChats { labelId, offset, limit }`
+  (chat.list com `withLabels`, sem arquivadas, ordenado por data, prévia só da
+  mensagem já carregada) e `openChat { chatId }` (openChatBottom, só para
+  conversas já carregadas). `stage: 'before-send'` = nada
   foi enviado (pode ir para o plano B); `'sending'` = o envio começou (não
   tentar de novo).
 - Atualizar a WA-JS: ver `vendor/README.md` (npm pack fora do repositório,

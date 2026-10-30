@@ -5,6 +5,7 @@
   window.__tspWaLoaded = true;
 
   const PANEL_W    = 320;
+  const BAR_H      = 34; // barra de etiquetas do WhatsApp Business, no topo
   const ACCENT     = '#f97316';
   const REFRESH_MS = 5 * 60 * 1000;
   const VERSION    = (() => { try { return chrome.runtime.getManifest().version; } catch { return '?'; } })();
@@ -31,6 +32,7 @@
     tag:       '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
     mic:       '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
     chat:      '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    board:     '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>',
     inbox:     '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
     texto:     '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/>',
     audio:     '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
@@ -138,6 +140,8 @@
 
   const state = {
     open: false, view: 'list', themePref: 'auto', tab: 'mensagens', bridgeOk: null, waStatus: null, waStatusAt: 0,
+    // Barra de etiquetas do WhatsApp Business: waLabels = null enquanto indisponível (só ids, nomes, cores e números)
+    barHiddenByUser: false, waLabels: null,
     categories: [], items: [], loaded: false, source: null, syncedAt: null,
     syncing: false, offline: false, error: null, lastSyncError: null,
     search: '', filter: 'tudo', collapsed: {}, previewId: null, busyId: null, lastUsed: '',
@@ -433,6 +437,7 @@
   layoutStyle.textContent = `
     html.tsp-wa-open body { width: calc(100% - ${PANEL_W}px) !important; min-width: 0 !important; }
     html.tsp-wa-open #app { max-width: calc(100vw - ${PANEL_W}px) !important; }
+    html.tsp-wa-bar #app { margin-top: ${BAR_H}px !important; height: calc(100% - ${BAR_H}px) !important; max-height: calc(100vh - ${BAR_H}px) !important; }
   `;
 
   const host = document.createElement('div');
@@ -618,6 +623,69 @@
       .lopt .lcheck { width: 15px; height: 15px; color: var(--accent); stroke-width: 3; }
       .lmenu .lempty { padding: 10px; color: var(--muted); font-size: 12px; text-align: center; }
 
+      /* Barra de etiquetas do WhatsApp (topo) */
+      .toggle { z-index: 3; }
+      .panel { z-index: 4; }
+      .wabar { position: fixed; top: 0; left: 0; right: 0; height: ${BAR_H}px; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; background: var(--bg); color: var(--fg); border-bottom: 1px solid var(--border); box-shadow: 0 1px 4px var(--shadow); font-size: 12px; }
+      .wabar[hidden] { display: none; }
+      .root.open .wabar { right: ${PANEL_W}px; }
+      .root.bar-on .toggle { top: ${BAR_H}px; }
+      .wlabel { flex-shrink: 0; font-size: 10.5px; font-weight: 800; letter-spacing: .08em; color: var(--muted); }
+      .wchips { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 6px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scrollbar-width: thin; }
+      .wchip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); font-size: 11px; font-weight: 700; letter-spacing: .02em; transition: border-color .15s, opacity .15s; }
+      .wchip:hover { border-color: var(--accent); }
+      .wchip.zero { opacity: .5; }
+      .wchip.zero:hover { opacity: .8; }
+      .wdot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+      .wcount { min-width: 18px; padding: 1px 6px; border-radius: 999px; background: var(--bg2); color: var(--muted); font-size: 10.5px; font-weight: 700; text-align: center; }
+      .wboard { flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 700; }
+      .wboard svg { width: 13px; height: 13px; }
+      .wclose { flex-shrink: 0; width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; }
+      .wclose:hover { background: var(--bg2); color: var(--fg); }
+
+      /* Quadro de etiquetas */
+      .board { position: fixed; top: 0; left: 64px; right: 0; bottom: 0; z-index: 2; display: flex; flex-direction: column; background: var(--bg2); color: var(--fg); border-left: 1px solid var(--border); box-shadow: 0 0 20px var(--shadow); outline: none; animation: fadeIn .15s ease both; }
+      .board[hidden] { display: none; }
+      .root.bar-on .board { top: ${BAR_H}px; }
+      .root.open .board { right: ${PANEL_W}px; }
+      .bheader { position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--border); }
+      .btitle { display: flex; flex-direction: column; min-width: 0; }
+      .btitle b { font-size: 14.5px; }
+      .btitle span { font-size: 11.5px; color: var(--muted); }
+      .bstatus { flex: 1; min-width: 0; text-align: right; font-size: 12px; color: var(--err); }
+      .bactions { display: flex; gap: 6px; flex-shrink: 0; }
+      .bbtn { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+      .bbtn:hover, .bbtn.on { border-color: var(--accent); color: var(--accent); }
+      .bbtn.icon { width: 30px; padding: 0; }
+      .bbtn svg { width: 14px; height: 14px; }
+      .bcolsmenu { position: absolute; top: calc(100% + 4px); right: 14px; z-index: 3; width: 270px; max-height: 340px; overflow-y: auto; padding: 6px; border-radius: 10px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 6px 20px var(--shadow); }
+      .bcolsmenu[hidden] { display: none; }
+      .bopt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; font-size: 12.5px; cursor: pointer; }
+      .bopt:hover { background: var(--bg2); }
+      .bopt input { margin: 0; accent-color: var(--accent); }
+      .boptname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bopthint { padding: 6px 8px 2px; font-size: 11px; color: var(--muted); }
+      .bcols { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 12px; overflow-x: auto; overflow-y: hidden; }
+      .bcol { flex: 0 0 290px; display: flex; flex-direction: column; min-height: 0; border-radius: 12px; background: var(--bg); border: 1px solid var(--border); border-top: 3px solid var(--c); }
+      .bhead { display: flex; align-items: center; gap: 7px; padding: 10px 12px; font-size: 12px; font-weight: 800; letter-spacing: .03em; border-bottom: 1px solid var(--border); }
+      .bname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bbody { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; scrollbar-width: thin; }
+      .bcard { flex-shrink: 0; display: flex; gap: 8px; padding: 8px 10px; border-radius: 9px; background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--c); cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+      .bcard:hover, .bcard:focus-visible { border-color: var(--accent); border-left-color: var(--c); box-shadow: 0 1px 6px var(--shadow); }
+      .bmain { flex: 1; min-width: 0; }
+      .bcname { font-weight: 700; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bprev { margin-top: 2px; min-height: 1.2em; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bside { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+      .bdate { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+      .bunread { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #25d366; color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+      .bmsg { padding: 18px 8px; text-align: center; font-size: 12px; color: var(--muted); }
+      .bmsg button, .bmore { margin-top: 8px; padding: 6px 12px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); font-size: 12px; font-weight: 600; }
+      .bmore { flex-shrink: 0; margin-top: 2px; border-style: dashed; color: var(--accent); }
+      .bmsg button:hover, .bmore:hover:not(:disabled) { border-color: var(--accent); }
+      .bmore:disabled { color: var(--muted); cursor: default; }
+      .bnote { flex-shrink: 0; padding: 6px 4px 2px; text-align: center; font-size: 11px; color: var(--muted); }
+      .bempty { padding: 30px; font-size: 13px; color: var(--muted); }
+
       /* Áudio como mensagem de voz */
       .asfile { padding: 0 6px; height: 22px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 600; white-space: nowrap; align-self: center; }
       .asfile:hover:not(:disabled) { color: var(--fg); border-color: var(--muted); }
@@ -731,6 +799,25 @@
     </style>
     <div class="root light">
       <button class="toggle" type="button" title="Mensagens (Triumph Store)" aria-label="Abrir ou fechar mensagens">${svg('zap', 'fill')}</button>
+      <div class="wabar" role="toolbar" aria-label="Etiquetas do WhatsApp" hidden>
+        <span class="wlabel">ETIQUETAS</span>
+        <div class="wchips"></div>
+        <button class="wboard" type="button" title="Abrir o quadro de etiquetas">${svg('board')}Quadro</button>
+        <button class="wclose" type="button" title="Ocultar a barra de etiquetas" aria-label="Ocultar a barra de etiquetas">×</button>
+      </div>
+      <div class="board" role="dialog" aria-label="Quadro de etiquetas" tabindex="-1" hidden>
+        <div class="bheader">
+          <div class="btitle"><b>Quadro de etiquetas</b><span>Clique num cartão para abrir a conversa</span></div>
+          <span class="bstatus" role="status" aria-live="polite"></span>
+          <div class="bactions">
+            <button class="bbtn bcolsbtn" type="button" aria-haspopup="true" aria-expanded="false">Colunas</button>
+            <button class="bbtn icon brefresh" type="button" title="Atualizar" aria-label="Atualizar">${svg('refresh')}</button>
+            <button class="bbtn bclose" type="button" title="Fechar (Esc)">Fechar</button>
+          </div>
+          <div class="bcolsmenu" hidden></div>
+        </div>
+        <div class="bcols"></div>
+      </div>
       <aside class="panel" aria-label="Mensagens">
         <header class="head">
           <div class="brand"><span class="logo">${svg('zap', 'fill')}</span>Mensagens</div>
@@ -838,6 +925,15 @@
     if (!layoutStyle.isConnected) (document.head || document.documentElement).appendChild(layoutStyle);
     const html = document.documentElement;
     if (html.classList.contains('tsp-wa-open') !== state.open) html.classList.toggle('tsp-wa-open', state.open);
+    // Barra de etiquetas: só reserva espaço quando está visível
+    let wantBar = false;
+    try { wantBar = barActive(); } catch { wantBar = false; }
+    if (html.classList.contains('tsp-wa-bar') !== wantBar) html.classList.toggle('tsp-wa-bar', wantBar);
+    if (root.classList.contains('bar-on') !== wantBar) root.classList.toggle('bar-on', wantBar);
+  }
+
+  function barActive() {
+    return !state.barHiddenByUser && Array.isArray(state.waLabels) && state.waLabels.length > 0 && !!document.querySelector('#app');
   }
 
   let observedBody = null;
@@ -2274,6 +2370,7 @@
         { label: 'Telemetria e servidores de terceiros da biblioteca desligados', status: 'warn', screen: 'biblioteca não carregada' },
         { label: 'Conversa aberta', status: 'warn', screen: 'não disponível' },
         { label: 'Etiquetas do WhatsApp Business', status: 'warn', screen: 'não disponível' },
+        barDiagRow(),
       ];
     }
     const privacyOk = st.telemetryOff === true && st.linkServersOff === true;
@@ -2290,9 +2387,19 @@
       {
         label: 'Etiquetas do WhatsApp Business',
         status: labels.available ? 'ok' : 'warn',
-        screen: labels.available && Number.isFinite(labels.count) ? String(labels.count) : 'não disponível',
+        screen: labels.available && Number.isFinite(labels.count) ? `${labels.count} etiqueta${labels.count === 1 ? '' : 's'}` : 'não disponível',
       },
+      barDiagRow(),
     ];
+  }
+
+  // Barra de etiquetas: só o estado (nunca nomes de etiquetas ou de clientes)
+  function barDiagRow() {
+    let active = false;
+    try { active = barActive(); } catch { active = false; }
+    if (active) return { label: 'Barra de etiquetas', status: 'ok', screen: 'ativa' };
+    if (state.barHiddenByUser) return { label: 'Barra de etiquetas', status: 'warn', screen: 'oculta por você' };
+    return { label: 'Barra de etiquetas', status: 'warn', screen: 'indisponível' };
   }
 
   function micDiag(ctx) {
@@ -2376,6 +2483,386 @@
     panel.classList.remove('diag');
     diagBtn.classList.remove('on');
     renderList();
+  }
+
+  // ── Barra de etiquetas do WhatsApp Business + Quadro (SÓ LEITURA) ─────────
+  // Lê as etiquetas nativas pelo wa-bridge.js (pedidos labels, labelChats e openChat).
+  // Nomes, telefones e prévias ficam só na memória enquanto o Quadro está aberto:
+  // nunca vão para o Supabase, chrome.storage, console ou Diagnóstico.
+
+  const BOARD_MAX_COLS = 6;
+  const BOARD_PAGE = 50;
+  const BAR_REFRESH_MS = 30 * 1000;
+  const PREVIEW_ICON = { audio: '🎤', foto: '📷', video: '🎬', documento: '📄', figurinha: '😀', localizacao: '📍' };
+  const PREVIEW_LABEL = { audio: 'Áudio', foto: 'Foto', video: 'Vídeo', documento: 'Documento', figurinha: 'Figurinha', localizacao: 'Localização', outro: 'Mensagem' };
+
+  const bar = { el: null, chips: null, btn: null, busy: false, lastAt: 0 };
+  const board = { open: false, columns: [], data: new Map(), savedIds: null, menuOpen: false, opening: false };
+  let boardEls = null;
+
+  const waLabelById = (id) => (state.waLabels || []).find((l) => l.id === id) || null;
+
+  function renderBar() {
+    if (!bar.el) return;
+    const active = barActive();
+    bar.el.hidden = !active;
+    ensureInjected();
+    if (bar.btn) {
+      bar.btn.classList.toggle('on', active);
+      const label = state.barHiddenByUser ? 'Mostrar a barra de etiquetas' : 'Ocultar a barra de etiquetas';
+      bar.btn.title = 'Mostrar ou ocultar a barra de etiquetas';
+      bar.btn.setAttribute('aria-label', label);
+      bar.btn.setAttribute('aria-pressed', String(active));
+    }
+    if (!active) return;
+    const scroll = bar.chips.scrollLeft;
+    bar.chips.textContent = '';
+    state.waLabels.forEach((l) => {
+      const chip = el('button', `wchip${l.count ? '' : ' zero'}`);
+      chip.type = 'button';
+      chip.title = `Abrir o quadro com "${l.name}"`;
+      const dot = el('span', 'wdot');
+      dot.style.background = l.hexColor;
+      chip.append(dot, el('span', null, l.name.toUpperCase()), el('span', 'wcount', String(l.count)));
+      chip.addEventListener('click', () => openBoard(l.id));
+      bar.chips.append(chip);
+    });
+    bar.chips.scrollLeft = scroll;
+  }
+
+  async function refreshBar() {
+    if (bar.busy) return;
+    bar.busy = true;
+    try {
+      const labels = await waRequest('labels', {}, { timeout: 5000 });
+      state.waLabels = Array.isArray(labels) ? labels : [];
+    } catch (e) {
+      // Biblioteca ausente ou WhatsApp ainda não pronto: barra some (sem reservar espaço)
+      if (e.code === 'not_ready' || e.code === 'timeout' || !Array.isArray(state.waLabels)) state.waLabels = null;
+    } finally {
+      bar.busy = false;
+      bar.lastAt = Date.now();
+      renderBar();
+      if (board.open) updateBoardCounts();
+    }
+  }
+
+  // Tenta a cada 5 s até ficar pronta; depois atualiza a cada 30 s, só com a aba visível
+  function barTick() {
+    if (document.visibilityState !== 'visible') return;
+    if (state.barHiddenByUser && !board.open) return;
+    if (!Array.isArray(state.waLabels) || Date.now() - bar.lastAt >= BAR_REFRESH_MS) refreshBar();
+  }
+
+  function setBarHidden(hidden) {
+    state.barHiddenByUser = hidden;
+    storageSet({ labelsBarHidden: hidden });
+    renderBar();
+    if (!hidden && !Array.isArray(state.waLabels)) refreshBar();
+    if (!hidden && !Array.isArray(state.waLabels)) toast('A barra aparece quando o WhatsApp Business estiver pronto.', 'info', 4000);
+  }
+
+  // ── Quadro ──
+
+  function boardStatus(text) {
+    if (boardEls) boardEls.status.textContent = text || '';
+  }
+
+  function boardColumnIds(firstId) {
+    const labels = state.waLabels || [];
+    const valid = new Set(labels.map((l) => l.id));
+    let ids = (board.savedIds || []).filter((id) => valid.has(id));
+    if (!ids.length) ids = labels.filter((l) => l.count > 0).slice(0, 3).map((l) => l.id);
+    if (firstId && valid.has(firstId)) ids = [firstId, ...ids.filter((id) => id !== firstId)];
+    return ids.slice(0, BOARD_MAX_COLS);
+  }
+
+  function openBoard(firstId) {
+    if (!boardEls || !Array.isArray(state.waLabels)) return;
+    board.open = true;
+    board.columns = boardColumnIds(firstId);
+    board.data = new Map();
+    boardEls.root.hidden = false;
+    boardStatus('');
+    setColsMenu(false);
+    renderBoardColumns();
+    board.columns.forEach((id) => loadColumn(id, true));
+    boardEls.root.focus();
+  }
+
+  // Fecha e apaga da memória as conversas carregadas
+  function closeBoard() {
+    if (!boardEls) return;
+    board.open = false;
+    board.data = new Map();
+    setColsMenu(false);
+    boardEls.cols.textContent = '';
+    boardEls.root.hidden = true;
+  }
+
+  function columnEls(id) {
+    const col = [...boardEls.cols.querySelectorAll('.bcol')].find((c) => c.dataset.id === id);
+    return col ? { col, body: col.querySelector('.bbody'), count: col.querySelector('.wcount') } : null;
+  }
+
+  function renderBoardColumns() {
+    boardEls.cols.textContent = '';
+    const ids = board.columns.filter((id) => waLabelById(id));
+    if (!ids.length) {
+      boardEls.cols.append(el('div', 'bempty', 'Nenhuma coluna escolhida. Use "Colunas" para escolher as etiquetas.'));
+      return;
+    }
+    ids.forEach((id) => {
+      const label = waLabelById(id);
+      const col = el('section', 'bcol');
+      col.dataset.id = id;
+      col.style.setProperty('--c', label.hexColor);
+      const head = el('div', 'bhead');
+      const dot = el('span', 'wdot');
+      dot.style.background = label.hexColor;
+      const name = el('span', 'bname', label.name.toUpperCase());
+      name.title = label.name;
+      head.append(dot, name, el('span', 'wcount', String(label.count)));
+      col.append(head, el('div', 'bbody'));
+      boardEls.cols.append(col);
+      renderColumn(id);
+    });
+  }
+
+  function updateBoardCounts() {
+    if (!boardEls) return;
+    boardEls.cols.querySelectorAll('.bcol').forEach((col) => {
+      const label = waLabelById(col.dataset.id);
+      if (label) col.querySelector('.wcount').textContent = String(label.count);
+    });
+  }
+
+  async function loadColumn(id, reset) {
+    const prev = board.data.get(id);
+    const d = reset || !prev ? { cards: [], total: 0, loading: false, error: false, req: 0 } : prev;
+    const req = ++d.req;
+    d.loading = true;
+    d.error = false;
+    board.data.set(id, d);
+    renderColumn(id);
+    try {
+      const res = await waRequest('labelChats', { labelId: id, offset: d.cards.length, limit: BOARD_PAGE }, { timeout: 8000 });
+      if (!board.open || board.data.get(id) !== d || d.req !== req) return;
+      d.cards = d.cards.concat(Array.isArray(res && res.chats) ? res.chats : []);
+      d.total = Number(res && res.total) || 0;
+    } catch {
+      if (!board.open || board.data.get(id) !== d || d.req !== req) return;
+      d.error = true;
+    }
+    d.loading = false;
+    renderColumn(id);
+  }
+
+  function formatChatDate(t) {
+    if (!t) return '';
+    const d = new Date(t * 1000);
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const two = (n) => String(n).padStart(2, '0');
+    if (d.toDateString() === now.toDateString()) return `${two(d.getHours())}:${two(d.getMinutes())}`;
+    if (d.toDateString() === yesterday.toDateString()) return 'Ontem';
+    return `${two(d.getDate())}/${two(d.getMonth() + 1)}/${String(d.getFullYear()).slice(-2)}`;
+  }
+
+  function previewLine(c) {
+    const p = c.preview || {};
+    if (p.kind === 'nenhum') return '';
+    const icon = PREVIEW_ICON[p.kind] || '';
+    const text = p.text || (p.kind === 'texto' ? '' : PREVIEW_LABEL[p.kind] || '');
+    if (!text && !icon) return '';
+    return `${c.fromMe ? '✓ ' : ''}${icon ? `${icon} ` : ''}${text}`;
+  }
+
+  function boardCard(c, label) {
+    const card = el('div', 'bcard');
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.style.setProperty('--c', label.hexColor);
+    const main = el('div', 'bmain');
+    const name = el('div', 'bcname', c.name || '—');
+    name.title = c.name || '';
+    main.append(name, el('div', 'bprev', previewLine(c)));
+    const side = el('div', 'bside');
+    side.append(el('span', 'bdate', formatChatDate(c.t)));
+    if (c.unread > 0) side.append(el('span', 'bunread', c.unread > 99 ? '99+' : String(c.unread)));
+    card.append(main, side);
+    const open = () => openBoardChat(c.id);
+    card.addEventListener('click', open);
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    });
+    return card;
+  }
+
+  function renderColumn(id) {
+    const els = columnEls(id);
+    const label = waLabelById(id);
+    if (!els || !label) return;
+    const d = board.data.get(id);
+    const scroll = els.body.scrollTop;
+    els.body.textContent = '';
+    if (!d || (d.loading && !d.cards.length)) {
+      els.body.append(el('div', 'bmsg', 'Carregando…'));
+      return;
+    }
+    if (d.error && !d.cards.length) {
+      const box = el('div', 'bmsg', 'Não consegui carregar estas conversas agora.');
+      const retry = el('button', null, 'Tentar de novo');
+      retry.type = 'button';
+      retry.addEventListener('click', () => loadColumn(id, true));
+      box.append(el('br'), retry);
+      els.body.append(box);
+      return;
+    }
+    if (!d.cards.length) {
+      els.body.append(el('div', 'bmsg', 'Nenhuma conversa carregada com esta etiqueta.'));
+      return;
+    }
+    d.cards.forEach((c) => els.body.append(boardCard(c, label)));
+    if (d.cards.length < d.total || d.loading) {
+      const more = el('button', 'bmore', d.loading ? 'Carregando…' : 'Mostrar mais');
+      more.type = 'button';
+      more.disabled = d.loading;
+      more.addEventListener('click', () => loadColumn(id, false));
+      els.body.append(more);
+    }
+    if (d.error) {
+      const box = el('div', 'bmsg', 'Não consegui carregar mais conversas. ');
+      const retry = el('button', null, 'Tentar de novo');
+      retry.type = 'button';
+      retry.addEventListener('click', () => loadColumn(id, false));
+      box.append(retry);
+      els.body.append(box);
+    }
+    if (d.total < label.count) {
+      els.body.append(el('div', 'bnote', `Mostrando ${d.total} conversas carregadas no WhatsApp Web agora.`));
+    }
+    els.body.scrollTop = scroll;
+  }
+
+  async function openBoardChat(chatId) {
+    if (board.opening) return;
+    board.opening = true;
+    boardStatus('');
+    try {
+      await waRequest('openChat', { chatId }, { timeout: 6000 });
+      closeBoard();
+    } catch {
+      boardStatus('Não consegui abrir a conversa. Tente de novo.');
+    } finally {
+      board.opening = false;
+    }
+  }
+
+  function setColsMenu(open) {
+    if (!boardEls) return;
+    board.menuOpen = open;
+    boardEls.menu.hidden = !open;
+    boardEls.colsBtn.classList.toggle('on', open);
+    boardEls.colsBtn.setAttribute('aria-expanded', String(open));
+    if (open) renderColsMenu();
+  }
+
+  function renderColsMenu() {
+    boardEls.menu.textContent = '';
+    (state.waLabels || []).forEach((l) => {
+      const row = el('label', 'bopt');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = board.columns.includes(l.id);
+      cb.disabled = !cb.checked && board.columns.length >= BOARD_MAX_COLS;
+      cb.addEventListener('change', () => toggleBoardColumn(l.id, cb.checked));
+      const dot = el('span', 'wdot');
+      dot.style.background = l.hexColor;
+      row.append(cb, dot, el('span', 'boptname', l.name), el('span', 'wcount', String(l.count)));
+      boardEls.menu.append(row);
+    });
+    boardEls.menu.append(el('div', 'bopthint', `Escolha até ${BOARD_MAX_COLS} colunas.`));
+  }
+
+  function toggleBoardColumn(id, on) {
+    const order = (state.waLabels || []).map((l) => l.id);
+    const chosen = on ? [...board.columns, id] : board.columns.filter((x) => x !== id);
+    board.columns = order.filter((x) => chosen.includes(x)).slice(0, BOARD_MAX_COLS); // na ordem da barra
+    board.savedIds = board.columns.slice();
+    storageSet({ boardLabelIds: board.savedIds }); // só ids de etiquetas
+    renderBoardColumns();
+    board.columns.forEach((x) => { if (!board.data.has(x)) loadColumn(x, true); });
+    renderColsMenu();
+  }
+
+  async function refreshBoard() {
+    boardStatus('');
+    await refreshBar();
+    if (!board.open) return;
+    if (!Array.isArray(state.waLabels)) { boardStatus('O WhatsApp ainda não está pronto. Tente de novo em instantes.'); return; }
+    board.data = new Map();
+    renderBoardColumns();
+    board.columns.forEach((id) => { if (waLabelById(id)) loadColumn(id, true); });
+  }
+
+  function initLabelsBar() {
+    bar.el = shadow.querySelector('.wabar');
+    bar.chips = shadow.querySelector('.wabar .wchips');
+    boardEls = {
+      root: shadow.querySelector('.board'),
+      cols: shadow.querySelector('.board .bcols'),
+      menu: shadow.querySelector('.board .bcolsmenu'),
+      colsBtn: shadow.querySelector('.board .bcolsbtn'),
+      status: shadow.querySelector('.board .bstatus'),
+    };
+
+    shadow.querySelector('.wabar .wboard').addEventListener('click', () => openBoard());
+    shadow.querySelector('.wabar .wclose').addEventListener('click', () => setBarHidden(true));
+    boardEls.colsBtn.addEventListener('click', (e) => { e.stopPropagation(); setColsMenu(!board.menuOpen); });
+    shadow.querySelector('.board .brefresh').addEventListener('click', () => refreshBoard());
+    shadow.querySelector('.board .bclose').addEventListener('click', () => closeBoard());
+    boardEls.root.addEventListener('click', (e) => {
+      if (board.menuOpen && !e.composedPath().includes(boardEls.menu) && !e.composedPath().includes(boardEls.colsBtn)) setColsMenu(false);
+    });
+    // Esc fecha só o Quadro (ou o menu de colunas); teclas não vão para os atalhos do WhatsApp
+    ['keydown', 'keypress', 'keyup'].forEach((type) => boardEls.root.addEventListener(type, (e) => {
+      if (type === 'keydown' && e.key === 'Escape') {
+        e.preventDefault();
+        if (board.menuOpen) setColsMenu(false);
+        else closeBoard();
+      }
+      e.stopPropagation();
+    }));
+
+    // Botão no cabeçalho do painel: mostrar/ocultar a barra
+    bar.btn = iconButton('tag', 'Mostrar ou ocultar a barra de etiquetas', () => setBarHidden(!state.barHiddenByUser));
+    actions.insertBefore(bar.btn, closeBtn);
+
+    try {
+      chrome.storage.local.get(['labelsBarHidden', 'boardLabelIds'], (saved) => {
+        saved = saved || {};
+        state.barHiddenByUser = saved.labelsBarHidden === true;
+        board.savedIds = Array.isArray(saved.boardLabelIds) ? saved.boardLabelIds.filter((x) => typeof x === 'string').slice(0, BOARD_MAX_COLS) : null;
+        renderBar();
+      });
+    } catch { /* extensão recarregada */ }
+
+    renderBar();
+    setTimeout(() => { try { barTick(); } catch { /* ok */ } }, 1500);
+    setInterval(() => { try { barTick(); } catch { /* ok */ } }, 5000);
+    document.addEventListener('visibilitychange', () => { try { barTick(); } catch { /* ok */ } });
+  }
+
+  // Se a barra ou o Quadro falhar, o resto da extensão continua funcionando
+  try {
+    initLabelsBar();
+  } catch {
+    bar.el = null;
+    boardEls = null;
+    state.waLabels = null;
+    try { ensureInjected(); } catch { /* ok */ }
   }
 
   // ── Início: mostra o cache na hora ─────────────────────────────────────────
