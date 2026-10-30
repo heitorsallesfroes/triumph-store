@@ -12,7 +12,7 @@
   const FROM_PANEL = 'tsp-wajs-content';
   const TO_PANEL   = 'tsp-wajs-bridge';
   const MIN_RECORD_MS = 1500;
-  const MAX_RECORD_MS = 12000;
+  const MAX_RECORD_MS = 60000;
 
   const before = window.__tspWaBefore || { wpp: null, config: null };
   try { delete window.__tspWaBefore; } catch { /* ok */ }
@@ -88,27 +88,32 @@
       throw new BridgeError('invalid_chat', 'Conversa inválida (só conversas individuais)', 'before-send');
     }
     if (!(audio instanceof ArrayBuffer) || audio.byteLength === 0) throw new BridgeError('invalid_audio', 'Áudio inválido', 'before-send');
+    // recordMs: inteiro >= 0 (0 = na hora, sem "gravando…"); qualquer outra coisa é erro (nunca vira 0)
+    if (!Number.isInteger(recordMs) || recordMs < 0) throw new BridgeError('invalid_record_ms', 'Tempo de gravação inválido', 'before-send');
     if (jobs.has(requestId)) throw new BridgeError('duplicate', 'Pedido repetido', 'before-send');
-    const waitMs = Math.min(MAX_RECORD_MS, Math.max(MIN_RECORD_MS, Math.round(Number(recordMs) || 0)));
+    const instant = recordMs === 0;
+    const waitMs = instant ? 0 : Math.min(MAX_RECORD_MS, Math.max(MIN_RECORD_MS, recordMs));
 
     const job = { cancelled: false, stage: 'before-send', wake: null };
     jobs.set(requestId, job);
     try {
-      try {
-        // (a) "gravando áudio…" para o cliente
-        await wpp.chat.markIsRecording(chatId);
-        // (b) espera, podendo ser cancelada
-        if (!job.cancelled) {
-          await new Promise((resolve) => {
-            const timer = setTimeout(resolve, waitMs);
-            job.wake = () => { clearTimeout(timer); resolve(); };
-          });
+      if (!instant) {
+        try {
+          // (a) "gravando áudio…" para o cliente
+          await wpp.chat.markIsRecording(chatId);
+          // (b) espera, podendo ser cancelada
+          if (!job.cancelled) {
+            await new Promise((resolve) => {
+              const timer = setTimeout(resolve, waitMs);
+              job.wake = () => { clearTimeout(timer); resolve(); };
+            });
+          }
+        } catch {
+          throw new BridgeError('recording_failed', 'Não consegui mostrar "gravando áudio"', 'before-send');
+        } finally {
+          // (c) sempre tira o "gravando…", inclusive em erro ou cancelamento
+          try { await wpp.chat.markIsPaused(chatId); } catch { /* ok */ }
         }
-      } catch {
-        throw new BridgeError('recording_failed', 'Não consegui mostrar "gravando áudio"', 'before-send');
-      } finally {
-        // (c) sempre tira o "gravando…", inclusive em erro ou cancelamento
-        try { await wpp.chat.markIsPaused(chatId); } catch { /* ok */ }
       }
       if (job.cancelled) throw new BridgeError('cancelled', 'Envio cancelado', 'before-send');
 

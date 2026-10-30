@@ -1669,7 +1669,9 @@
     const eye  = iconButton('eye', 'Prévia', () => togglePreview(item, card, eye));
     eye.setAttribute('aria-pressed', 'false');
     const isAudio = item.type === 'audio';
-    const send = iconButton('send', isAudio ? 'Gravar como mensagem de voz' : 'Colocar na conversa', () => sendItem(item, card, send), 'send');
+    const fixedSeconds = isAudio ? recordSecondsOf(item) : null;
+    const voiceHint = fixedSeconds == null ? 'gravando automático' : fixedSeconds === 0 ? 'na hora' : `gravando ${fixedSeconds} s`;
+    const send = iconButton('send', isAudio ? `Enviar como mensagem de voz (${voiceHint})` : 'Colocar na conversa', () => sendItem(item, card, send), 'send');
     btns.append(eye);
     if (isAudio) {
       // Jeito antigo, sempre disponível: anexar o áudio como arquivo
@@ -2032,6 +2034,12 @@
     return Math.round(buffer.duration * 1000);
   }
 
+  // record_seconds do cadastro: inteiro de 0 a 60; qualquer outra coisa (vazio etc.) = automático
+  function recordSecondsOf(item) {
+    const s = item && item.record_seconds;
+    return Number.isInteger(s) && s >= 0 && s <= 60 ? s : null;
+  }
+
   // Resultado: 'ok' (enviado), 'stop' (não seguir para os planos B/C) ou 'fallback' (seguir para o plano B)
   async function sendVoiceFast(item) {
     const st = await waStatusForSend();
@@ -2052,17 +2060,25 @@
       return { status: 'stop' };
     }
 
-    const durationMs = await audioDurationMs(blob).catch(() => 4000);
-    const recordMs = Math.min(8000, Math.max(2000, durationMs));
+    // Tempo de "gravando áudio…": o do cadastro (0 a 60 s) ou automático (duração do áudio, 2 a 8 s)
+    const fixedSeconds = recordSecondsOf(item);
+    const recordMs = fixedSeconds != null
+      ? fixedSeconds * 1000
+      : Math.min(8000, Math.max(2000, await audioDurationMs(blob).catch(() => 4000)));
+    const instant = recordMs === 0; // na hora: sem "gravando…" e sem tempo para cancelar
     const startKey = convKeyOf(getContext());
     const reqId = newRequestId('s');
-    voice = { id: reqId, mode: 'fast', phase: 'rec', cancelled: false, cancelRequested: false, startedAt: Date.now(), duration: recordMs / 1000 };
-    renderVoice();
-    const ticker = setInterval(renderVoice, 250);
-    // Trocou de conversa durante o "gravando…": cancela (o áudio iria para a conversa anterior)
-    const watcher = setInterval(() => {
-      if (voice && voice.id === reqId && convKeyOf(getContext()) !== startKey) cancelVoice('Você trocou de conversa: gravação cancelada.');
-    }, 400);
+    let ticker = null;
+    let watcher = null;
+    if (!instant) {
+      voice = { id: reqId, mode: 'fast', phase: 'rec', cancelled: false, cancelRequested: false, startedAt: Date.now(), duration: recordMs / 1000 };
+      renderVoice();
+      ticker = setInterval(renderVoice, 250);
+      // Trocou de conversa durante o "gravando…": cancela (o áudio iria para a conversa anterior)
+      watcher = setInterval(() => {
+        if (voice && voice.id === reqId && convKeyOf(getContext()) !== startKey) cancelVoice('Você trocou de conversa: gravação cancelada.');
+      }, 400);
+    }
 
     try {
       const audio = await blob.arrayBuffer();

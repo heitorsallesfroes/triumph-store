@@ -27,10 +27,25 @@
     return text ? JSON.parse(text) : null;
   }
 
+  const ITEM_COLUMNS = 'id,category_id,type,title,body,file_url,file_name,file_size,usage_count,position,created_at';
+  const ITEM_ORDER = 'order=position.asc,created_at.asc';
+
+  // Pede também record_seconds; se a coluna ainda não existe no banco (erro 400), busca sem ela
+  async function fetchItems() {
+    try {
+      return await rest(`wa_items?select=${ITEM_COLUMNS},record_seconds&${ITEM_ORDER}`);
+    } catch (err) {
+      if (/^Supabase 400:/.test(err.message) && /record_seconds/.test(err.message)) {
+        return rest(`wa_items?select=${ITEM_COLUMNS}&${ITEM_ORDER}`);
+      }
+      throw err;
+    }
+  }
+
   async function fetchLibrary() {
     const [categories, items] = await Promise.all([
       rest('wa_categories?select=id,name,position,created_at&order=position.asc,created_at.asc'),
-      rest('wa_items?select=id,category_id,type,title,body,file_url,file_name,file_size,usage_count,position,created_at&order=position.asc,created_at.asc'),
+      fetchItems(),
     ]);
     return { categories, items };
   }

@@ -30,6 +30,7 @@ interface WaItem {
   usage_count: number;
   position: number;
   created_at: string;
+  record_seconds?: number | null;
 }
 
 interface ItemForm {
@@ -42,6 +43,7 @@ interface ItemForm {
   file_url: string | null;
   file_name: string | null;
   file_size: number | null;
+  record_seconds: string;
 }
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -129,6 +131,7 @@ export default function WhatsApp() {
 
   const [form, setForm]     = useState<ItemForm | null>(null);
   const [saving, setSaving] = useState(false);
+  const [recordError, setRecordError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<'respostas' | 'etiquetas'>('respostas');
@@ -208,13 +211,16 @@ export default function WhatsApp() {
   function openNewItem() {
     const category_id = selectedCat !== 'all' ? selectedCat : categories[0]?.id;
     if (!category_id) { alert('Crie uma categoria primeiro.'); return; }
-    setForm({ category_id, type: 'texto', title: '', body: '', file: null, file_url: null, file_name: null, file_size: null });
+    setRecordError(null);
+    setForm({ category_id, type: 'texto', title: '', body: '', file: null, file_url: null, file_name: null, file_size: null, record_seconds: '' });
   }
 
   function openEditItem(item: WaItem) {
+    setRecordError(null);
     setForm({
       id: item.id, category_id: item.category_id, type: item.type, title: item.title, body: item.body || '',
       file: null, file_url: item.file_url, file_name: item.file_name, file_size: item.file_size,
+      record_seconds: item.record_seconds == null ? '' : String(item.record_seconds),
     });
   }
 
@@ -224,6 +230,16 @@ export default function WhatsApp() {
     if (!title) { alert('Informe o título.'); return; }
     if (form.type === 'texto' && !form.body.trim()) { alert('Informe o texto da mensagem.'); return; }
     if (form.type !== 'texto' && !form.file && !form.file_url) { alert('Selecione um arquivo.'); return; }
+
+    // Tempo de "gravando áudio…": vazio = automático (null); inteiro de 0 a 60
+    let recordSeconds: number | null = null;
+    if (form.type === 'audio') {
+      const raw = form.record_seconds.trim();
+      if (raw !== '') {
+        if (!/^\d+$/.test(raw) || Number(raw) > 60) { setRecordError('Use um número inteiro de 0 a 60, ou deixe vazio.'); return; }
+        recordSeconds = Number(raw);
+      }
+    }
 
     setSaving(true);
     let file_url  = form.type === 'texto' ? null : form.file_url;
@@ -242,7 +258,11 @@ export default function WhatsApp() {
       file_size = form.file.size;
     }
 
-    const payload = { category_id: form.category_id, type: form.type, title, body: form.body.trim() || null, file_url, file_name, file_size };
+    const payload = {
+      category_id: form.category_id, type: form.type, title, body: form.body.trim() || null, file_url, file_name, file_size,
+      // Só áudio leva a coluna nova: salvar os outros tipos não depende dela
+      ...(form.type === 'audio' ? { record_seconds: recordSeconds } : {}),
+    };
 
     if (form.id) {
       const { data, error } = await supabase.from('wa_items').update(payload).eq('id', form.id).select().single();
@@ -562,6 +582,18 @@ export default function WhatsApp() {
                     Arquivo acima de 50 MB. O upload pode falhar e o envio pelo WhatsApp pode ser recusado.
                   </div>
                 )}
+              </Field>
+            )}
+
+            {form.type === 'audio' && (
+              <Field label="Tempo de 'gravando áudio…' (segundos)">
+                <input type="number" min={0} max={60} step={1} inputMode="numeric" value={form.record_seconds}
+                  onChange={e => { setForm({ ...form, record_seconds: e.target.value }); setRecordError(null); }}
+                  placeholder="Automático" style={inputStyle} />
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Vazio = automático (tamanho do áudio, entre 2 e 8 s). 0 = envia na hora. Máximo 60.
+                </p>
+                {recordError && <p style={{ fontSize: 12, color: '#ef4444', marginTop: 6 }}>{recordError}</p>}
               </Field>
             )}
 

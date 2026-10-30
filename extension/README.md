@@ -10,7 +10,7 @@ sempre você.
 
 Também permite marcar **etiquetas** (criadas no ERP) na conversa aberta.
 
-Versão atual: **1.5.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **1.5.1** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -127,6 +127,13 @@ cartão faz isso direto.
 Dica: para usar sempre o caminho rápido, cadastre os áudios em **Ogg/Opus**
 (arquivo `.ogg` ou `.opus`).
 
+**Tempo de "gravando áudio…" por áudio:** no ERP, no cadastro do áudio, o
+campo "Tempo de 'gravando áudio…' (segundos)" define quanto tempo o cliente vê
+"gravando áudio…" no caminho rápido: **vazio** = automático (tamanho do áudio,
+entre 2 e 8 s); **0** = envia na hora, sem "gravando…" (e sem Cancelar);
+**1 a 60** = esse número de segundos. A gravação simulada (plano B) não usa
+esse campo. Passe o mouse na seta do áudio para ver o tempo configurado.
+
 Se não gravar:
 - O painel avisa "Enviei como arquivo de áudio (gravação não disponível)" e
   anexa o áudio como arquivo, para você conferir e enviar.
@@ -221,6 +228,10 @@ guardada.
 ---
 
 ## O que mudou
+
+### 1.5.1
+- Tempo de "gravando áudio…" configurável em cada áudio, no ERP (vazio =
+  automático, 0 = na hora, 1 a 60 s). O aviso da seta mostra o tempo.
 
 ### 1.5.0
 - Áudios em Ogg/Opus vão pelo **caminho rápido**: o cliente vê "gravando
