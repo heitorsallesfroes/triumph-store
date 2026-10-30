@@ -9,6 +9,7 @@ import Motoboys from './pages/Motoboys';
 import Logistics from './pages/Logistics';
 import Marketing from './pages/Marketing';
 import AdManager from './pages/AdManager';
+import WhatsApp from './pages/WhatsApp';
 import Settings from './pages/Settings';
 import OperationalCosts from './pages/OperationalCosts';
 import ResumoMensal from './pages/ResumoMensal';
@@ -67,6 +68,8 @@ function App() {
         return <Marketing />;
       case 'ad-manager':
         return <AdManager />;
+      case 'whatsapp':
+        return <WhatsApp />;
       case 'costs':
         return <OperationalCosts />;
       case 'resumo-vendas':

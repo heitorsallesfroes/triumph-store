@@ -19,6 +19,7 @@ import {
   Calendar,
   Sun,
   Moon,
+  MessageCircle,
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -52,6 +53,7 @@ const menuGroups = [
       { id: 'motoboys',   label: 'Motoboys',                icon: Bike       },
       { id: 'marketing',  label: 'Marketing / Ads',         icon: TrendingUp },
       { id: 'ad-manager', label: 'Gerenciador de Anúncios', icon: Layers     },
+      { id: 'whatsapp',   label: 'WhatsApp',                icon: MessageCircle },
       { id: 'costs',      label: 'Custos Operacionais',     icon: Receipt    },
     ],
   },
