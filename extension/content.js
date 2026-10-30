@@ -91,6 +91,11 @@
       'div[contenteditable="true"][aria-label*="caption" i]',
       'div[contenteditable="true"][aria-placeholder*="caption" i]',
     ],
+    // Mensagens da conversa aberta: o data-id traz o id do chat (ex.: false_5511999999999@c.us_ABC)
+    messageIds: [
+      '[data-id*="@c.us"], [data-id*="@g.us"]',
+      '[data-id*="@"]',
+    ],
   };
 
   // Textos do cabeçalho da conversa que não são o nome do contato
@@ -106,7 +111,13 @@
     syncing: false, offline: false, error: null, lastSyncError: null,
     search: '', filter: 'tudo', collapsed: {}, previewId: null, busyId: null, lastUsed: '',
     ctx: null,
+    // Etiquetas
+    labels: [], labelsLoaded: false, labelsSource: null, labelsSyncedAt: null, labelsError: null,
+    convKey: null, convLabelIds: [], convLoading: false, convError: false, menuOpen: false,
   };
+  const convCache   = new Map(); // key do contato -> ids das etiquetas
+  let convTimer     = null;
+  let pendingLabelOps = 0;
   const fileCache   = new Map(); // "id|url" -> Promise<Blob>
   const previewUrls = new Map(); // "id|url" -> blob: URL
   let refreshTimer = null;
@@ -248,8 +259,44 @@
     const contact  = conv ? findContact(conv.root) : null;
     const fullName = contact ? contact.text : '';
     const isNumber = !!fullName && /^[+\d\s().-]+$/.test(fullName);
-    return { conv, composer, contact, fullName, isNumber, firstName: fullName && !isNumber ? fullName.split(/\s+/)[0] : '' };
+    return {
+      conv, composer, contact, fullName, isNumber,
+      firstName: fullName && !isNumber ? fullName.split(/\s+/)[0] : '',
+      identity: conv ? identifyConversation(conv.root, fullName) : null,
+    };
   }
+
+  // Identifica a conversa aberta para as etiquetas:
+  // 1) telefone no data-id das mensagens (<dígitos>@c.us; @g.us = grupo; @lid não é telefone)
+  // 2) título do cabeçalho, se parecer telefone (10+ dígitos)
+  // 3) só o nome
+  function identifyConversation(root, title) {
+    const cleanTitle = (title || '').trim().replace(/\s+/g, ' ');
+    for (let i = 0; i < SEL.messageIds.length; i++) {
+      const ids = [...root.querySelectorAll(SEL.messageIds[i])].map((n) => n.getAttribute('data-id') || '');
+      if (!ids.length) continue;
+      if (ids.some((id) => /@g\.us/i.test(id))) return { kind: 'group', via: 'data-id' };
+      for (const id of ids) {
+        const m = id.match(/(?:^|_)(\d{8,15})@c\.us/i);
+        if (m) return makeIdentity('tel', m[1], cleanTitle, 'data-id das mensagens');
+      }
+    }
+    const digits = cleanTitle.replace(/\D/g, '');
+    if (/^[+\d\s().-]+$/.test(cleanTitle) && digits.length >= 10 && digits.length <= 15) {
+      return makeIdentity('tel', digits, cleanTitle, 'título do cabeçalho');
+    }
+    if (cleanTitle) return makeIdentity('name', null, cleanTitle, 'nome');
+    return { kind: 'none', via: 'falhou' };
+  }
+
+  function makeIdentity(kind, phone, title, via) {
+    const name = title && !/^[+\d\s().-]+$/.test(title) ? title.slice(0, 100) : null;
+    if (kind === 'tel') return { kind, key: `tel:${phone}`, phone, name, via };
+    const asName = title.slice(0, 100);
+    return { kind, key: `nome:${asName.toLowerCase()}`, phone: null, name: asName, via };
+  }
+
+  const canLabel = (identity) => !!identity && (identity.kind === 'tel' || identity.kind === 'name');
 
   async function insertText(box, text) {
     box.focus();
@@ -512,6 +559,28 @@
       .diag-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
       .diag-hint { font-size: 11px; color: var(--muted); margin-top: 10px; }
 
+      /* Etiquetas da conversa */
+      .labels { position: relative; display: flex; align-items: flex-start; gap: 8px; margin: -2px 12px 8px; font-size: 12px; }
+      .labels .lbl { flex-shrink: 0; color: var(--muted); font-weight: 600; padding-top: 3px; }
+      .labels .chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 22px; }
+      .labels .none { color: var(--muted); padding-top: 3px; }
+      .lchip { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: fadeIn .15s ease both; }
+      .root.dark .lchip { box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
+      .labels .add { width: 24px; height: 24px; border-radius: 50%; border: 1px dashed var(--muted); background: transparent; color: var(--muted); display: flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 0; transition: all .15s; }
+      .labels .add:hover, .labels .add.on { border-style: solid; border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+      .labels .add svg { width: 13px; height: 13px; }
+      .labels .add[hidden] { display: none; }
+      .name-note { margin: -4px 12px 8px 70px; font-size: 10.5px; color: var(--muted); }
+      .name-note[hidden] { display: none; }
+      .lmenu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 5; max-height: 280px; overflow-y: auto; padding: 4px; border-radius: 10px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 6px 20px var(--shadow); animation: fadeIn .15s ease both; }
+      .lmenu[hidden] { display: none; }
+      .lopt { width: 100%; display: flex; align-items: center; gap: 9px; padding: 7px 8px; border: none; border-radius: 7px; background: transparent; text-align: left; font-size: 12.5px; }
+      .lopt:hover { background: var(--bg2); }
+      .lopt .ldot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+      .lopt .lname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .lopt .lcheck { width: 15px; height: 15px; color: var(--accent); stroke-width: 3; }
+      .lmenu .lempty { padding: 10px; color: var(--muted); font-size: 12px; text-align: center; }
+
       /* Aviso e rodapé */
       .toast { margin: 0 12px; max-height: 0; padding: 0 10px; border-radius: 8px; font-size: 12px; opacity: 0; overflow: hidden; transition: all .2s ease; }
       .toast.show { max-height: 80px; padding: 8px 10px; margin-bottom: 8px; opacity: 1; }
@@ -540,6 +609,13 @@
           <div class="actions"></div>
         </header>
         <div class="status warn"><span class="dot"></span><span class="txt"></span></div>
+        <div class="labels">
+          <span class="lbl">Etiquetas</span>
+          <div class="chips"></div>
+          <button class="add" type="button" title="Marcar etiquetas" aria-label="Marcar etiquetas" aria-haspopup="true" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
+          <div class="lmenu" role="menu" hidden></div>
+        </div>
+        <div class="name-note" hidden title="Sem telefone visível nesta conversa: a etiqueta fica ligada ao nome do contato. Se o nome mudar, ela não acompanha.">identificado só pelo nome</div>
         <div class="tools">
           <label class="search">${svg('search')}<input type="text" placeholder="Pesquisar resposta rápida" aria-label="Pesquisar resposta rápida" /></label>
           <div class="filters" role="group" aria-label="Filtros"></div>
@@ -564,6 +640,11 @@
   const listEl    = shadow.querySelector('.list');
   const toastEl   = shadow.querySelector('.toast');
   const lastEl    = shadow.querySelector('.foot b');
+  const labelsEl  = shadow.querySelector('.labels');
+  const lchipsEl  = shadow.querySelector('.labels .chips');
+  const laddBtn   = shadow.querySelector('.labels .add');
+  const lmenuEl   = shadow.querySelector('.lmenu');
+  const nameNote  = shadow.querySelector('.name-note');
   shadow.querySelector('.foot .ver').textContent = `v${VERSION}`;
   bannerEl.querySelector('button').addEventListener('click', () => sync({ manual: true }));
 
@@ -655,11 +736,14 @@
     clearInterval(contextTimer);
     if (open) {
       applyTheme();
+      state.convKey = undefined; // força buscar as etiquetas da conversa de novo
       updateContext();
       contextTimer = setInterval(updateContext, 1000);
       refreshTimer = setInterval(() => sync(), REFRESH_MS);
       sync();
     } else {
+      clearTimeout(convTimer);
+      setMenuOpen(false);
       if (state.view === 'diag') showList();
     }
   }
@@ -670,8 +754,13 @@
   ['keydown', 'keypress', 'keyup'].forEach((type) => panel.addEventListener(type, (e) => {
     if (type === 'keydown' && e.key === 'Escape') {
       e.preventDefault();
-      setOpen(false);
-      toggleBtn.focus();
+      if (state.menuOpen) {
+        setMenuOpen(false);
+        laddBtn.focus();
+      } else {
+        setOpen(false);
+        toggleBtn.focus();
+      }
     }
     e.stopPropagation();
   }));
@@ -691,6 +780,152 @@
     }
     statusTxt.title = statusTxt.textContent;
     if (prevFirst !== null && prevFirst !== state.ctx.firstName) refreshOpenBubble();
+    onConversationIdentity(state.ctx.identity);
+  }
+
+  // ── Etiquetas da conversa ──────────────────────────────────────────────────
+
+  let lastIdentityKind = null;
+
+  function onConversationIdentity(identity) {
+    const key  = canLabel(identity) ? identity.key : null;
+    const kind = identity ? identity.kind : 'none';
+    if (key === state.convKey && kind === lastIdentityKind) return;
+    lastIdentityKind = kind;
+    const keyChanged = key !== state.convKey;
+    state.convKey = key;
+    if (keyChanged) {
+      state.convLabelIds = key && convCache.has(key) ? convCache.get(key) : [];
+      state.convLoading  = !!key;
+      state.convError    = false;
+      clearTimeout(convTimer);
+      if (key) convTimer = setTimeout(() => loadConvLabels(key), 300);
+    }
+    if (!key) setMenuOpen(false);
+    renderLabelsRow();
+  }
+
+  async function loadConvLabels(key) {
+    const identity = state.ctx && state.ctx.identity;
+    if (!canLabel(identity) || identity.key !== key) return;
+    try {
+      const ids = await call('getContactLabels', { identity: identityPayload(identity) });
+      convCache.set(key, ids);
+      if (state.convKey === key && pendingLabelOps === 0) {
+        state.convLabelIds = ids;
+        state.convError = false;
+      }
+    } catch {
+      if (state.convKey === key) state.convError = true;
+    } finally {
+      if (state.convKey === key) {
+        state.convLoading = false;
+        renderLabelsRow();
+      }
+    }
+  }
+
+  function identityPayload(identity) {
+    return { key: identity.key, phone: identity.phone, name: identity.name };
+  }
+
+  function textOn(hex) {
+    const n = parseInt(String(hex).replace('#', ''), 16);
+    if (Number.isNaN(n)) return '#ffffff';
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    return 0.299 * r + 0.587 * g + 0.114 * b > 160 ? '#111111' : '#ffffff';
+  }
+
+  function renderLabelsRow() {
+    const identity = state.ctx && state.ctx.identity;
+    lchipsEl.textContent = '';
+    nameNote.hidden = !(identity && identity.kind === 'name');
+
+    if (!state.ctx || !state.ctx.conv) {
+      lchipsEl.append(el('span', 'none', 'Abra uma conversa para etiquetar'));
+    } else if (identity.kind === 'group') {
+      lchipsEl.append(el('span', 'none', 'Grupos não recebem etiquetas'));
+    } else if (!canLabel(identity)) {
+      lchipsEl.append(el('span', 'none', 'Não consegui identificar a conversa'));
+    } else {
+      const applied = state.labels.filter((l) => state.convLabelIds.includes(l.id));
+      applied.forEach((l) => {
+        const chip = el('span', 'lchip', l.name);
+        chip.title = l.name;
+        chip.style.background = l.color;
+        chip.style.color = textOn(l.color);
+        lchipsEl.append(chip);
+      });
+      if (!applied.length) {
+        const msg = state.convLoading ? '…' : state.convError ? 'Não consegui carregar' : 'Nenhuma';
+        lchipsEl.append(el('span', 'none', msg));
+      }
+    }
+    laddBtn.hidden = !canLabel(identity);
+    if (state.menuOpen) renderMenu();
+  }
+
+  function renderMenu() {
+    lmenuEl.textContent = '';
+    if (!state.labels.length) {
+      lmenuEl.append(el('div', 'lempty', state.labelsLoaded
+        ? 'Nenhuma etiqueta. Crie na aba WhatsApp do ERP (Etiquetas).'
+        : 'Carregando etiquetas...'));
+      return;
+    }
+    state.labels.forEach((l) => {
+      const on = state.convLabelIds.includes(l.id);
+      const opt = el('button', 'lopt');
+      opt.type = 'button';
+      opt.setAttribute('role', 'menuitemcheckbox');
+      opt.setAttribute('aria-checked', String(on));
+      const dot = el('span', 'ldot');
+      dot.style.background = l.color;
+      opt.append(dot, el('span', 'lname', l.name));
+      if (on) opt.insertAdjacentHTML('beforeend', svg('check', 'lcheck'));
+      opt.addEventListener('click', (e) => { e.stopPropagation(); toggleLabel(l.id); });
+      lmenuEl.append(opt);
+    });
+  }
+
+  function setMenuOpen(open) {
+    state.menuOpen = open;
+    lmenuEl.hidden = !open;
+    laddBtn.classList.toggle('on', open);
+    laddBtn.setAttribute('aria-expanded', String(open));
+    if (open) renderMenu();
+  }
+
+  laddBtn.addEventListener('click', (e) => { e.stopPropagation(); setMenuOpen(!state.menuOpen); });
+  const closeMenuOnOutsideClick = (e) => {
+    if (state.menuOpen && !e.composedPath().includes(labelsEl)) setMenuOpen(false);
+  };
+  shadow.addEventListener('click', closeMenuOnOutsideClick);
+  document.addEventListener('click', closeMenuOnOutsideClick, true);
+
+  // Marca/desmarca na hora; se o Supabase falhar, desfaz e avisa
+  async function toggleLabel(labelId) {
+    const identity = state.ctx && state.ctx.identity;
+    if (!canLabel(identity)) return;
+    const key = identity.key;
+    const on = !state.convLabelIds.includes(labelId);
+    const apply = (ids) => {
+      convCache.set(key, ids);
+      if (state.convKey === key) { state.convLabelIds = ids; renderLabelsRow(); }
+    };
+    const current = () => (state.convKey === key ? state.convLabelIds : convCache.get(key) || []);
+    apply(on ? [...current(), labelId] : current().filter((id) => id !== labelId));
+
+    pendingLabelOps++;
+    try {
+      const ids = await call('setContactLabel', { identity: identityPayload(identity), labelId, on });
+      if (pendingLabelOps === 1) apply(ids);
+    } catch {
+      apply(on ? current().filter((id) => id !== labelId) : [...current(), labelId]);
+      toast('Não consegui salvar', 'error');
+    } finally {
+      pendingLabelOps--;
+    }
   }
 
   // ── Busca e filtros ────────────────────────────────────────────────────────
@@ -754,7 +989,7 @@
     renderSyncing();
     if (!state.loaded) renderList();
     try {
-      const lib = await call('fetchLibrary');
+      const [lib] = await Promise.all([call('fetchLibrary'), syncLabels()]);
       const changed = !state.loaded
         || JSON.stringify(lib) !== JSON.stringify({ categories: state.categories, items: state.items });
       applyLibrary(lib, 'servidor', Date.now());
@@ -774,6 +1009,23 @@
       renderSyncing();
       renderBanner();
       if (state.view === 'diag') renderDiag();
+    }
+  }
+
+  // Etiquetas do ERP; nunca lança erro (a falha fica em state.labelsError)
+  async function syncLabels() {
+    try {
+      const labels = await call('fetchLabels');
+      const changed = JSON.stringify(labels) !== JSON.stringify(state.labels);
+      state.labels = labels;
+      state.labelsLoaded = true;
+      state.labelsSource = 'servidor';
+      state.labelsSyncedAt = Date.now();
+      state.labelsError = null;
+      storageSet({ labels: { items: labels, savedAt: state.labelsSyncedAt } });
+      if (changed) renderLabelsRow();
+    } catch (e) {
+      state.labelsError = e.message;
     }
   }
 
@@ -1125,11 +1377,29 @@
       { label: 'Conversa detectada', status: ctx.conv ? 'ok' : 'warn', screen: ctx.conv ? `sim (${ctx.conv.via})` : 'nenhuma conversa aberta' },
       { label: 'Caixa de mensagem', status: ctx.composer ? 'ok' : (ctx.conv ? 'fail' : 'warn'), screen: ctx.composer ? `encontrada (${ctx.composer.via})` : 'não encontrada' },
       { label: 'Nome do contato', status: contact.status, screen: contact.screen, copy: contact.copy },
+      { label: 'Identificação da conversa', ...identityDiag(ctx) },
+      {
+        label: 'Etiquetas carregadas',
+        status: state.labelsLoaded ? (state.labelsError ? 'warn' : 'ok') : 'fail',
+        screen: state.labelsLoaded
+          ? `${state.labels.length} (${state.labelsSource === 'servidor' ? 'do servidor' : 'do cache local'}, ${timeStr(state.labelsSyncedAt)})${state.labelsError ? ` · última atualização falhou: ${state.labelsError}` : ''}`
+          : `não carregadas${state.labelsError ? `: ${state.labelsError}` : ''}`,
+      },
       { label: 'Tema', status: 'ok', screen: `${THEME_PREFS[state.themePref].label} → ${appliedDark() ? 'escuro' : 'claro'} (WhatsApp ${whatsappIsDark() ? 'escuro' : 'claro'})` },
       { label: 'Página do WhatsApp', status: document.querySelector('#app') ? 'ok' : 'fail', screen: document.querySelector('#app') ? '#app encontrado' : '#app não encontrado' },
       { label: 'Painel na página', status: host.isConnected && layoutStyle.isConnected ? 'ok' : 'fail', screen: host.isConnected && layoutStyle.isConnected ? 'injetado' : 'faltando (será re-injetado)' },
     ];
     return rows;
+  }
+
+  // Na tela pode mostrar o telefone; no texto copiado, só o tipo de identificação
+  function identityDiag(ctx) {
+    const id = ctx.identity;
+    if (!ctx.conv || !id) return { status: 'warn', screen: 'sem conversa aberta' };
+    if (id.kind === 'tel') return { status: 'ok', screen: `telefone ${id.phone} (${id.via})`, copy: `telefone (${id.via})` };
+    if (id.kind === 'name') return { status: 'warn', screen: `só nome (${id.via})`, copy: `só nome (${id.via})` };
+    if (id.kind === 'group') return { status: 'warn', screen: 'grupo (não recebe etiquetas)' };
+    return { status: 'fail', screen: 'falhou' };
   }
 
   function diagnosticsText(rows) {
@@ -1201,14 +1471,22 @@
   renderThemeButton();
   renderFilters();
   renderLastUsed();
+  renderLabelsRow();
   renderList();
   try {
-    chrome.storage.local.get(['library', 'collapsed', 'lastUsed', 'themePref'], (saved) => {
+    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref'], (saved) => {
       saved = saved || {};
       state.collapsed = saved.collapsed || {};
       state.lastUsed  = saved.lastUsed || '';
       state.themePref = THEME_PREFS[saved.themePref] ? saved.themePref : 'auto';
       if (saved.library && !state.loaded) applyLibrary(saved.library, 'cache', saved.library.savedAt);
+      if (saved.labels && !state.labelsLoaded) {
+        state.labels = saved.labels.items || [];
+        state.labelsLoaded = true;
+        state.labelsSource = 'cache';
+        state.labelsSyncedAt = saved.labels.savedAt || null;
+      }
+      renderLabelsRow();
       renderThemeButton();
       applyTheme();
       renderLastUsed();

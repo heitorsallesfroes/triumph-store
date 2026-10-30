@@ -1,0 +1,11 @@
+create table if not exists wa_labels (id uuid primary key default gen_random_uuid(), name text not null, color text not null default '#f97316', position integer not null default 0, in_funnel boolean not null default false, created_at timestamptz not null default now());
+create unique index if not exists wa_labels_name_lower_key on wa_labels (lower(name));
+create table if not exists wa_contacts (id uuid primary key default gen_random_uuid(), key text not null unique, name text, phone text, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+create table if not exists wa_contact_labels (contact_id uuid not null references wa_contacts(id) on delete cascade, label_id uuid not null references wa_labels(id) on delete cascade, created_at timestamptz not null default now(), primary key (contact_id, label_id));
+create index if not exists wa_contact_labels_label_id_idx on wa_contact_labels (label_id);
+alter table wa_labels enable row level security;
+alter table wa_contacts enable row level security;
+alter table wa_contact_labels enable row level security;
+create policy "public access wa_labels" on wa_labels for all using (true) with check (true);
+create policy "public access wa_contacts" on wa_contacts for all using (true) with check (true);
+create policy "public access wa_contact_labels" on wa_contact_labels for all using (true) with check (true);

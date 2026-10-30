@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   MessageCircle, Plus, Pencil, Trash2, ChevronUp, ChevronDown, Check, X,
   Search, Copy, Download, FileText, Mic, Image as ImageIcon, Video, File,
-  Flame, Upload, AlertTriangle, Folder,
+  Flame, Upload, AlertTriangle, Folder, Tag, Users, Sparkles,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
@@ -131,6 +131,7 @@ export default function WhatsApp() {
   const [saving, setSaving] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [tab, setTab] = useState<'respostas' | 'etiquetas'>('respostas');
 
   useEffect(() => { load(); }, []);
 
@@ -353,12 +354,28 @@ export default function WhatsApp() {
           </h1>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>Biblioteca de mensagens, áudios e mídias</p>
         </div>
-        <button onClick={openNewItem}
-          style={{ ...btnBase, padding: '9px 18px', fontSize: 13, background: ORANGE, border: `1px solid ${ORANGE}`, color: '#fff' }}>
-          <Plus size={14} /> Novo item
-        </button>
+        {tab === 'respostas' && (
+          <button onClick={openNewItem}
+            style={{ ...btnBase, padding: '9px 18px', fontSize: 13, background: ORANGE, border: `1px solid ${ORANGE}`, color: '#fff' }}>
+            <Plus size={14} /> Novo item
+          </button>
+        )}
       </div>
 
+      {/* ── Abas ── */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border-main)' }}>
+        {([['respostas', 'Respostas rápidas', MessageCircle], ['etiquetas', 'Etiquetas', Tag]] as const).map(([id, label, Icon]) => (
+          <button key={id} onClick={() => setTab(id)}
+            style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              background: 'transparent', border: 'none', marginBottom: -1,
+              borderBottom: tab === id ? `2px solid ${ORANGE}` : '2px solid transparent',
+              color: tab === id ? ORANGE : 'var(--text-muted)' }}>
+            <Icon size={15} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'etiquetas' ? <LabelsTab /> : (<>
       {error && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', borderRadius: 10, marginBottom: 16,
           background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', fontSize: 13 }}>
@@ -468,6 +485,7 @@ export default function WhatsApp() {
           )}
         </div>
       </div>
+      </>)}
 
       {/* ── Modal de item ── */}
       {form && (
@@ -663,6 +681,373 @@ function ItemCard({ item, categoryName, copied, onCopy, onDownload, onEdit, onDe
             <Download size={13} /> Baixar
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Etiquetas ────────────────────────────────────────────────────────────────
+
+interface WaLabel {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  created_at: string;
+}
+
+interface WaContact {
+  id: string;
+  key: string;
+  name: string | null;
+  phone: string | null;
+}
+
+interface WaContactLabel {
+  contact_id: string;
+  label_id: string;
+}
+
+const LABEL_COLORS = ['#f97316', '#ef4444', '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#6366f1', '#a855f7', '#ec4899', '#6b7280'];
+
+const SUGGESTED_LABELS: [string, string][] = [
+  ['Novo lead', '#3b82f6'],
+  ['Orçamento enviado', '#eab308'],
+  ['Negociando', '#f97316'],
+  ['Aguardando pagamento', '#a855f7'],
+  ['Venda fechada', '#22c55e'],
+  ['Cliente antigo', '#6b7280'],
+];
+
+// Texto preto ou branco conforme a cor de fundo
+function textOn(hex: string): string {
+  const n = parseInt(hex.replace('#', ''), 16);
+  if (Number.isNaN(n)) return '#ffffff';
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b > 160 ? '#111111' : '#ffffff';
+}
+
+function labelErrorMessage(err: { code?: string; message: string }): string {
+  return err.code === '23505' ? 'Já existe uma etiqueta com esse nome.' : err.message;
+}
+
+// Busca todas as linhas, de 1000 em 1000 (limite por consulta do Supabase)
+async function fetchAllRows<T>(table: string, select: string, orderCols: string[]): Promise<T[]> {
+  const PAGE = 1000;
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    let query = supabase.from(table).select(select);
+    for (const col of orderCols) query = query.order(col);
+    const { data, error } = await query.range(from, from + PAGE - 1);
+    if (error) throw error;
+    rows.push(...((data || []) as unknown as T[]));
+    if (!data || data.length < PAGE) return rows;
+  }
+}
+
+function LabelChip({ label }: { label: WaLabel }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 9px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+      background: label.color, color: textOn(label.color), whiteSpace: 'nowrap' }}>
+      {label.name}
+    </span>
+  );
+}
+
+function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      {LABEL_COLORS.map(c => (
+        <button key={c} type="button" title={c} onClick={() => onChange(c)}
+          style={{ width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer', padding: 0,
+            border: value === c ? '2px solid var(--text-primary)' : '2px solid transparent',
+            boxShadow: value === c ? '0 0 0 2px var(--bg-card) inset' : 'none' }} />
+      ))}
+    </div>
+  );
+}
+
+function LabelsTab() {
+  const [labels, setLabels]     = useState<WaLabel[]>([]);
+  const [contacts, setContacts] = useState<WaContact[]>([]);
+  const [links, setLinks]       = useState<WaContactLabel[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState<string | null>(null);
+
+  const [newName, setNewName]     = useState('');
+  const [newColor, setNewColor]   = useState(LABEL_COLORS[0]);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [creating, setCreating]   = useState(false);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName]   = useState('');
+  const [editColor, setEditColor] = useState(LABEL_COLORS[0]);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const [search, setSearch]           = useState('');
+  const [labelFilter, setLabelFilter] = useState('');
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const [l, c, cl] = await Promise.all([
+        fetchAllRows<WaLabel>('wa_labels', 'id, name, color, position, created_at', ['position', 'created_at']),
+        fetchAllRows<WaContact>('wa_contacts', 'id, key, name, phone', ['created_at', 'id']),
+        fetchAllRows<WaContactLabel>('wa_contact_labels', 'contact_id, label_id', ['contact_id', 'label_id']),
+      ]);
+      setLabels(l);
+      setContacts(c);
+      setLinks(cl);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setLoading(false);
+  }
+
+  const countByLabel = useMemo(() => {
+    const m = new Map<string, number>();
+    links.forEach(l => m.set(l.label_id, (m.get(l.label_id) || 0) + 1));
+    return m;
+  }, [links]);
+
+  const nameTaken = (name: string, exceptId?: string) =>
+    labels.some(l => l.id !== exceptId && l.name.trim().toLowerCase() === name.trim().toLowerCase());
+
+  async function createLabel() {
+    const name = newName.trim();
+    if (!name) { setFormError('Informe o nome da etiqueta.'); return; }
+    if (nameTaken(name)) { setFormError('Já existe uma etiqueta com esse nome.'); return; }
+    setCreating(true);
+    const position = labels.length ? Math.max(...labels.map(l => l.position)) + 1 : 0;
+    const { data, error } = await supabase.from('wa_labels').insert({ name, color: newColor, position })
+      .select('id, name, color, position, created_at').single();
+    setCreating(false);
+    if (error) { setFormError(labelErrorMessage(error)); return; }
+    setLabels(prev => [...prev, data as WaLabel]);
+    setNewName('');
+    setFormError(null);
+  }
+
+  async function createSuggested() {
+    setCreating(true);
+    const rows = SUGGESTED_LABELS.map(([name, color], position) => ({ name, color, position }));
+    const { data, error } = await supabase.from('wa_labels').insert(rows).select('id, name, color, position, created_at');
+    setCreating(false);
+    if (error) { setFormError(labelErrorMessage(error)); return; }
+    setLabels((data || []) as WaLabel[]);
+  }
+
+  function startEdit(label: WaLabel) {
+    setEditingId(label.id);
+    setEditName(label.name);
+    setEditColor(label.color);
+    setEditError(null);
+  }
+
+  async function saveEdit(id: string) {
+    const name = editName.trim();
+    if (!name) { setEditError('Informe o nome.'); return; }
+    if (nameTaken(name, id)) { setEditError('Já existe uma etiqueta com esse nome.'); return; }
+    const { error } = await supabase.from('wa_labels').update({ name, color: editColor }).eq('id', id);
+    if (error) { setEditError(labelErrorMessage(error)); return; }
+    setLabels(prev => prev.map(l => l.id === id ? { ...l, name, color: editColor } : l));
+    setEditingId(null);
+  }
+
+  async function moveLabel(index: number, dir: -1 | 1) {
+    const target = index + dir;
+    if (target < 0 || target >= labels.length) return;
+    const reordered = [...labels];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    const withPos = reordered.map((l, i) => ({ ...l, position: i }));
+    setLabels(withPos);
+    const changed = withPos.filter((l, i) => labels[i].id !== l.id || labels[i].position !== l.position);
+    const results = await Promise.all(changed.map(l => supabase.from('wa_labels').update({ position: l.position }).eq('id', l.id)));
+    if (results.some(r => r.error)) { alert('Erro ao reordenar etiquetas.'); load(); }
+  }
+
+  async function deleteLabel(label: WaLabel) {
+    const n = countByLabel.get(label.id) || 0;
+    if (!confirm(`Isso remove a etiqueta de ${n} cliente${n === 1 ? '' : 's'}. Excluir "${label.name}"?`)) return;
+    const { error } = await supabase.from('wa_labels').delete().eq('id', label.id);
+    if (error) { alert('Erro ao excluir: ' + error.message); return; }
+    setLabels(prev => prev.filter(l => l.id !== label.id));
+    setLinks(prev => prev.filter(l => l.label_id !== label.id));
+  }
+
+  // ── Clientes etiquetados ──
+  const labelById = useMemo(() => new Map(labels.map(l => [l.id, l])), [labels]);
+
+  const taggedClients = useMemo(() => {
+    const byContact = new Map<string, WaLabel[]>();
+    links.forEach(link => {
+      const label = labelById.get(link.label_id);
+      if (!label) return;
+      const list = byContact.get(link.contact_id) || [];
+      list.push(label);
+      byContact.set(link.contact_id, list);
+    });
+    const q = search.trim().toLowerCase();
+    const qDigits = q.replace(/\D/g, '');
+    return contacts
+      .filter(c => byContact.has(c.id))
+      .map(c => ({ ...c, labels: byContact.get(c.id)!.sort((a, b) => a.position - b.position) }))
+      .filter(c => !labelFilter || c.labels.some(l => l.id === labelFilter))
+      .filter(c => !q
+        || (c.name || '').toLowerCase().includes(q)
+        || (qDigits !== '' && (c.phone || '').includes(qDigits)))
+      .sort((a, b) => (a.name || a.phone || '').localeCompare(b.name || b.phone || '', 'pt-BR'));
+  }, [contacts, links, labelById, search, labelFilter]);
+
+  const cardStyle: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border-main)', borderRadius: 14, padding: 16 };
+  const sectionTitle: React.CSSProperties = { fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 };
+  const th: React.CSSProperties = { padding: '8px 10px', fontWeight: 600, borderBottom: '1px solid var(--border-main)' };
+  const td: React.CSSProperties = { padding: 10, borderBottom: '1px solid var(--border-main)', verticalAlign: 'top' };
+
+  if (loading) return <p style={{ color: 'var(--text-muted)', fontSize: 13, padding: 20 }}>Carregando...</p>;
+
+  return (
+    <div>
+      {error && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', borderRadius: 10, marginBottom: 16,
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', fontSize: 13 }}>
+          <AlertTriangle size={15} /> Erro ao carregar: {error}
+          <button onClick={load} style={{ ...btnBase, marginLeft: 'auto', background: 'transparent', border: '1px solid rgba(239,68,68,0.4)', color: '#ef4444' }}>
+            Tentar de novo
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 380px) 1fr', gap: 20, alignItems: 'start' }}>
+
+        {/* ── Lista de etiquetas ── */}
+        <div style={cardStyle}>
+          <div style={sectionTitle}><Tag size={13} /> ETIQUETAS</div>
+
+          <div style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)', borderRadius: 10, padding: 12, marginBottom: 14 }}>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+              <input value={newName} onChange={e => { setNewName(e.target.value); setFormError(null); }}
+                onKeyDown={e => { if (e.key === 'Enter') createLabel(); }}
+                placeholder="Nome da nova etiqueta" style={inputStyle} />
+              <button onClick={createLabel} disabled={creating}
+                style={{ ...btnBase, background: ORANGE, border: `1px solid ${ORANGE}`, color: '#fff', opacity: creating ? 0.6 : 1, flexShrink: 0 }}>
+                <Plus size={13} /> Criar
+              </button>
+            </div>
+            <ColorPicker value={newColor} onChange={setNewColor} />
+            {formError && <p style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{formError}</p>}
+          </div>
+
+          {labels.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '16px 8px' }}>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Nenhuma etiqueta ainda.</p>
+              <button onClick={createSuggested} disabled={creating}
+                style={{ ...btnBase, margin: '0 auto', background: 'rgba(249,115,22,0.12)', border: '1px solid rgba(249,115,22,0.3)', color: ORANGE }}>
+                <Sparkles size={13} /> Criar etiquetas sugeridas
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {labels.map((label, idx) => {
+                const n = countByLabel.get(label.id) || 0;
+                if (editingId === label.id) {
+                  return (
+                    <div key={label.id} style={{ padding: 10, borderRadius: 10, border: `1px solid ${ORANGE}`, background: 'var(--bg-inner)' }}>
+                      <div style={{ display: 'flex', gap: 4, marginBottom: 8, alignItems: 'center' }}>
+                        <input autoFocus value={editName} onChange={e => { setEditName(e.target.value); setEditError(null); }}
+                          onKeyDown={e => { if (e.key === 'Enter') saveEdit(label.id); if (e.key === 'Escape') setEditingId(null); }}
+                          style={{ ...inputStyle, padding: '6px 10px' }} />
+                        <button onClick={() => saveEdit(label.id)} title="Salvar" style={{ ...iconBtn, color: '#22c55e' }}><Check size={14} /></button>
+                        <button onClick={() => setEditingId(null)} title="Cancelar" style={iconBtn}><X size={14} /></button>
+                      </div>
+                      <ColorPicker value={editColor} onChange={setEditColor} />
+                      {editError && <p style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{editError}</p>}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={label.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px 8px 10px', borderRadius: 10,
+                    background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
+                    <span style={{ width: 12, height: 12, borderRadius: '50%', background: label.color, flexShrink: 0 }} />
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {label.name}
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{n} cliente{n === 1 ? '' : 's'}</span>
+                    <button title="Subir" disabled={idx === 0} onClick={() => moveLabel(idx, -1)}
+                      style={{ ...iconBtn, opacity: idx === 0 ? 0.3 : 1 }}><ChevronUp size={13} /></button>
+                    <button title="Descer" disabled={idx === labels.length - 1} onClick={() => moveLabel(idx, 1)}
+                      style={{ ...iconBtn, opacity: idx === labels.length - 1 ? 0.3 : 1 }}><ChevronDown size={13} /></button>
+                    <button title="Editar" onClick={() => startEdit(label)} style={iconBtn}><Pencil size={12} /></button>
+                    <button title="Excluir" onClick={() => deleteLabel(label)} style={{ ...iconBtn, color: '#ef4444' }}><Trash2 size={12} /></button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── Clientes etiquetados ── */}
+        <div style={cardStyle}>
+          <div style={sectionTitle}><Users size={13} /> CLIENTES ETIQUETADOS</div>
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', flex: '1 1 220px' }}>
+              <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar por nome ou telefone..."
+                style={{ ...inputStyle, paddingLeft: 34 }} />
+            </div>
+            <select value={labelFilter} onChange={e => setLabelFilter(e.target.value)} style={{ ...inputStyle, width: 'auto', flex: '0 0 200px' }}>
+              <option value="">Todas as etiquetas</option>
+              {labels.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+
+          {taggedClients.length === 0 ? (
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>
+              {links.length === 0
+                ? 'Nenhum cliente etiquetado ainda. Marque as conversas pelo painel da extensão no WhatsApp Web.'
+                : 'Nenhum cliente encontrado.'}
+            </p>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'left' }}>
+                    <th style={th}>NOME</th>
+                    <th style={th}>TELEFONE</th>
+                    <th style={th}>ETIQUETAS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {taggedClients.map(c => (
+                    <tr key={c.id}>
+                      <td style={{ ...td, color: 'var(--text-primary)' }}>
+                        {c.name || '—'}
+                        {c.key.startsWith('nome:') && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#eab308', marginTop: 3 }}>
+                            <AlertTriangle size={11} /> identificado só pelo nome
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ ...td, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>
+                      <td style={td}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {c.labels.map(l => <LabelChip key={l.id} label={l} />)}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
+                {taggedClients.length} cliente{taggedClients.length === 1 ? '' : 's'}
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

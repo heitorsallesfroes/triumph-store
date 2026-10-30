@@ -8,7 +8,9 @@ Ela **nunca envia nada sozinha**: só coloca o texto na caixa de mensagem ou
 abre a prévia do anexo. Quem confere e aperta Enter (ou o botão de enviar) é
 sempre você.
 
-Versão atual: **1.1.0**
+Também permite marcar **etiquetas** (criadas no ERP) na conversa aberta.
+
+Versão atual: **1.2.0**
 
 ---
 
@@ -36,7 +38,7 @@ Versão atual: **1.1.0**
    ícone de **recarregar** (seta circular).
 4. Volte para a aba do WhatsApp Web e aperte **F5** para recarregar a página.
 5. Para conferir a versão: abra o painel e veja o número no canto direito do
-   rodapé (por exemplo, `v1.1.0`).
+   rodapé (por exemplo, `v1.2.0`).
 
 Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
 é só fazer o passo 4.
@@ -78,6 +80,30 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
 - Cada uso soma 1 no contador "Mais usadas" do ERP.
 - No rodapé aparecem o último item usado e a versão da extensão.
 
+### Etiquetas
+
+1. No ERP, abra **WhatsApp → Etiquetas** e crie as etiquetas (nome e cor).
+   Se ainda não houver nenhuma, o botão **Criar etiquetas sugeridas** cria
+   Novo lead, Orçamento enviado, Negociando, Aguardando pagamento, Venda
+   fechada e Cliente antigo.
+2. No WhatsApp Web, abra a conversa do cliente e o painel.
+3. Abaixo de "Conversa: …" fica a linha **Etiquetas**. Clique no **+** e
+   marque ou desmarque as etiquetas (o ✓ mostra as aplicadas). Salva na hora.
+4. No ERP, em **WhatsApp → Etiquetas → Clientes etiquetados**, aparecem os
+   clientes marcados, com busca por nome ou telefone e filtro por etiqueta.
+
+Como a extensão reconhece o cliente:
+- Pelo **telefone** da conversa, sempre que o WhatsApp Web mostra o número.
+- Se o número não aparece, pelo **nome** do contato. Nesse caso o painel
+  avisa "identificado só pelo nome" e, no ERP, o cliente aparece com esse
+  aviso. Quando o telefone aparecer depois, a extensão passa a usar o
+  telefone e mantém as etiquetas.
+- **Grupos** não recebem etiquetas.
+- Só abrir uma conversa não grava nada: o cliente só é salvo (nome e
+  telefone, nunca mensagens) quando você marca a primeira etiqueta.
+- Se a etiqueta não salvar (sem internet, por exemplo), ela some do painel e
+  aparece o aviso "Não consegui salvar". É só tentar de novo.
+
 ### Sem internet ou com o ERP fora do ar
 
 A extensão guarda a última lista de mensagens no próprio Chrome. Ao abrir o
@@ -98,6 +124,16 @@ guardada.
 ---
 
 ## O que mudou
+
+### 1.2.0
+- Etiquetas: linha "Etiquetas" no painel, com chips coloridos e o botão "+"
+  para marcar ou desmarcar na conversa aberta.
+- Reconhece o cliente pelo telefone (ou só pelo nome, com aviso) e não
+  etiqueta grupos.
+- As etiquetas ficam guardadas no Chrome junto com as mensagens e são
+  atualizadas ao abrir o painel e a cada 5 minutos.
+- Diagnóstico mostra a identificação da conversa e quantas etiquetas foram
+  carregadas (o texto copiado continua sem nomes, telefones ou mensagens).
 
 ### 1.1.0
 - Visual novo: título "Mensagens", linha de status da conversa, categorias
@@ -136,8 +172,10 @@ guardada.
 - `config.js`: URL e anon key do Supabase (os mesmos valores do `.env` do ERP;
   a anon key é pública por design).
 - `background.js` e `supabase-api.js`: buscam os dados e os arquivos no
-  Supabase. Só leitura, exceto `usage_count`.
+  Supabase. Só leitura, exceto `wa_items.usage_count` e as etiquetas
+  (`wa_contacts` e `wa_contact_labels`).
 - `content.js`: o painel (em Shadow DOM), o cache em `chrome.storage.local`
-  (`library`, `collapsed`, `lastUsed`, `themePref`) e a integração com o
-  WhatsApp Web (seletores com alternativas na constante `SEL`).
+  (`library`, `labels`, `collapsed`, `lastUsed`, `themePref`) e a integração
+  com o WhatsApp Web (seletores com alternativas na constante `SEL`; a
+  identificação da conversa fica em `identifyConversation`).
 - Não precisa de build: o Chrome carrega os arquivos como estão.

@@ -6,6 +6,9 @@ const HANDLERS = {
   fetchLibrary:   ()  => WaApi.fetchLibrary(),
   incrementUsage: (m) => WaApi.incrementUsage(m.id),
   fetchFile:      (m) => WaApi.fetchFile(m.url),
+  fetchLabels:      ()  => WaApi.fetchLabels(),
+  getContactLabels: (m) => WaApi.getContactLabels(m.identity),
+  setContactLabel:  (m) => WaApi.setContactLabel({ identity: m.identity, labelId: m.labelId, on: m.on }),
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
