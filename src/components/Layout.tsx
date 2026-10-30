@@ -53,8 +53,13 @@ const menuGroups = [
       { id: 'motoboys',   label: 'Motoboys',                icon: Bike       },
       { id: 'marketing',  label: 'Marketing / Ads',         icon: TrendingUp },
       { id: 'ad-manager', label: 'Gerenciador de Anúncios', icon: Layers     },
-      { id: 'whatsapp',   label: 'WhatsApp',                icon: MessageCircle },
       { id: 'costs',      label: 'Custos Operacionais',     icon: Receipt    },
+    ],
+  },
+  {
+    label: 'CANAIS DE VENDAS',
+    items: [
+      { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
     ],
   },
   {
