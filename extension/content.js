@@ -735,6 +735,27 @@
       .panel.sec-labels .ltab { display: flex; }
       .panel.sec-labels .status, .panel.sec-labels .labels, .panel.sec-labels .name-note,
       .panel.sec-labels .tools, .panel.sec-labels .banner, .panel.sec-labels .list { display: none; }
+      /* Seção Agendados */
+      .stab { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 10px; flex-direction: column; gap: 10px; scrollbar-width: thin; }
+      .stab > * { flex-shrink: 0; }
+      .panel.sec-sched .stab { display: flex; }
+      .panel.sec-sched .status, .panel.sec-sched .labels, .panel.sec-sched .name-note,
+      .panel.sec-sched .tools, .panel.sec-sched .banner, .panel.sec-sched .list { display: none; }
+      .stab .crmsec { display: flex; flex-direction: column; gap: 7px; }
+      .sc-row { display: flex; flex-wrap: wrap; gap: 8px; }
+      .sc-row .ed-field { flex: 1; min-width: 110px; }
+      .sc-radio { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+      .sc-radio input { margin: 0; accent-color: var(--accent); }
+      .sc-item { display: flex; gap: 8px; padding: 7px 8px; border-radius: 8px; background: var(--bg2); font-size: 12px; }
+      .sc-main { flex: 1; min-width: 0; }
+      .sc-who { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .sc-prev { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .sc-side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
+      .sc-when { font-size: 11px; font-variant-numeric: tabular-nums; }
+      .sc-status { padding: 0 6px; border-radius: 999px; background: var(--card); color: var(--muted); font-size: 10px; font-weight: 700; }
+      .st-enviada .sc-status { color: var(--ok); }
+      .st-falhou .sc-status, .st-expirada .sc-status { color: var(--err); }
+      .st-enviando .sc-status { color: var(--accent); }
       .crm-intro { padding: 0 2px; font-size: 11px; color: var(--muted); line-height: 1.4; }
       /* Seletor WhatsApp | CRM (barra e Quadro) */
       .wfam { flex-shrink: 0; display: inline-flex; padding: 2px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--border); }
@@ -1004,7 +1025,7 @@
           <button type="button" data-sec="mensagens" title="Mensagens" aria-pressed="false">${svg('zap')}<span>Mensagens</span></button>
           <button type="button" data-sec="etiquetas" title="Etiquetas CRM" aria-pressed="false">${svg('tag')}<span>Etiquetas</span></button>
           <button type="button" class="pboard" title="Abrir o Quadro" aria-pressed="false">${svg('board')}<span>Quadro</span></button>
-          <button type="button" aria-disabled="true" title="Chega nas próximas versões">${svg('clock')}<span>Agendados</span><span class="psoon">em breve</span></button>
+          <button type="button" data-sec="agendados" title="Agendados" aria-pressed="false">${svg('clock')}<span>Agendados</span></button>
           <button type="button" aria-disabled="true" title="Chega nas próximas versões">${svg('megaphone')}<span>Disparos</span><span class="psoon">em breve</span></button>
           <button type="button" aria-disabled="true" title="Chega nas próximas versões">${svg('repeat')}<span>Follows</span><span class="psoon">em breve</span></button>
         </nav>
@@ -1069,6 +1090,7 @@
           </div>
           <div class="vbar"><div class="vfill"></div></div>
         </div>
+        <div class="stab" role="region" aria-label="Agendados"></div>
         <div class="seqbar" role="status" aria-live="polite" hidden><span class="seqtxt"></span><button class="seqstop" type="button">Parar</button></div>
         <div class="toast" role="status" aria-live="polite"></div>
         <footer class="foot"><span class="last">Último usado: <b>—</b></span><span class="ver"></span></footer>
@@ -1088,6 +1110,7 @@
   const listEl    = shadow.querySelector('.list');
   const toastEl   = shadow.querySelector('.toast');
   const seqEl     = shadow.querySelector('.seqbar');
+  const stabEl    = shadow.querySelector('.stab');
   const seqTxt    = shadow.querySelector('.seqbar .seqtxt');
   const seqStop   = shadow.querySelector('.seqbar .seqstop');
   seqStop.addEventListener('click', () => stopSequence());
@@ -1265,14 +1288,15 @@
   }
 
   function setSection(section, { persist = true } = {}) {
-    state.section = section === 'etiquetas' ? 'etiquetas' : 'mensagens';
+    state.section = ['etiquetas', 'agendados'].includes(section) ? section : 'mensagens';
     const labels = state.section === 'etiquetas';
     panel.classList.toggle('sec-labels', labels);
-    brandTxt.textContent = labels ? 'Etiquetas CRM' : 'Mensagens';
+    panel.classList.toggle('sec-sched', state.section === 'agendados');
+    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados' }[state.section];
     panel.setAttribute('aria-label', brandTxt.textContent);
     if (persist) storageSet({ panelSection: state.section }); // só o nome da seção
     setMenuOpen(false);
-    if (labels && state.view === 'diag') showList();
+    if (state.section !== 'mensagens' && state.view === 'diag') showList();
     renderPanelNav();
     syncCrmActive();
   }
@@ -1282,6 +1306,7 @@
     const want = state.open && state.section === 'etiquetas';
     if (want && !crm.open) openCrm();
     else if (!want && crm.open) closeCrm();
+    syncSchedActive();
   }
 
   navBtns.forEach((b) => b.addEventListener('click', () => {
@@ -2814,10 +2839,7 @@
     box.append(btn('Editar', () => { itemMenu = null; openEditor(item); }));
     box.append(btn('Duplicar', () => { itemMenu = null; openEditor(item, { duplicate: true }); }));
     if (!isMultiPart(item) && item.type === 'texto') box.append(btn('Colocar na caixa', () => { itemMenu = null; renderList(); sendItem(item, card, send); }));
-    const sched = btn('Agendar nesta conversa', () => {}, 'soon');
-    sched.disabled = true;
-    sched.title = 'Chega na próxima parte desta versão';
-    box.append(sched);
+    box.append(btn('Agendar nesta conversa', () => { itemMenu = null; renderList(); scheduleItem(item); }));
     box.append(btn('Excluir', () => { itemMenu = { id: item.id, mode: 'delete' }; renderList(); }, 'danger'));
     return box;
   }
@@ -3239,6 +3261,358 @@
     }
   }
 
+  // ── Agendamentos (1.9.0): seção ⏰ Agendados + executor ────────────────────
+  // Só envia o que o usuário agendou. O executor roda a cada 30 s com o WhatsApp pronto, reserva a linha
+  // no Supabase (pendente → enviando, só uma aba consegue) e usa o mesmo motor de sequência.
+  // Atraso acima de 24 h = 'expirada' (não envia). Erro no envio = 'falhou' (nunca reenvia).
+
+  const SCHED_TICK_MS = 30 * 1000;
+  const SCHED_FIRST_MS = 5 * 1000;
+  const SCHED_MAX_LATE_MS = 24 * 3600 * 1000;
+  const SCHED_GAP_MIN_MS = 15 * 1000;
+  const SCHED_GAP_EXTRA_MS = 15 * 1000;
+  const SCHED_STATUS_LABEL = { pendente: 'pendente', enviando: 'enviando', enviada: 'enviada', falhou: 'falhou', cancelada: 'cancelada', expirada: 'expirada' };
+  const SCHED_ERROR_LABEL = {
+    chat_not_loaded: 'conversa não carregada', send_unconfirmed: 'envio não confirmado', item_not_found: 'mensagem salva não existe mais',
+    stopped: 'parado por você', not_ready: 'WhatsApp não estava pronto',
+  };
+
+  const sched = {
+    available: null, pending: [], recent: [], loading: false, error: '', timer: null,
+    form: { mode: 'texto', itemId: '', body: '', date: '', time: '', saving: false, msg: '', error: false },
+    target: null, targetReq: 0, // conversa aberta para o formulário: { chatId, name } (só na memória)
+    runner: { busy: false, cooldownUntil: 0, probeAt: 0, current: null },
+  };
+
+  const two = (n) => String(n).padStart(2, '0');
+  const dateInput = (d) => `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+  const timeInput = (d) => `${two(d.getHours())}:${two(d.getMinutes())}`;
+
+  function schedWhen(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${two(d.getDate())}/${two(d.getMonth() + 1)} ${two(d.getHours())}:${two(d.getMinutes())}`;
+  }
+
+  // Atalhos de data/hora (hora local)
+  function shortcutDate(kind, now = new Date()) {
+    const d = new Date(now.getTime());
+    d.setSeconds(0, 0);
+    if (kind === '+1h') d.setHours(d.getHours() + 1);
+    else if (kind === '+3h') d.setHours(d.getHours() + 3);
+    else if (kind === 'amanha9') { d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); }
+    else if (kind === 'amanha14') { d.setDate(d.getDate() + 1); d.setHours(14, 0, 0, 0); }
+    else if (kind === '2dias') d.setDate(d.getDate() + 2);
+    return d;
+  }
+
+  function schedPreview(row) {
+    if (row.item_id) {
+      const item = state.items.find((i) => i.id === row.item_id);
+      return item ? `Mensagem salva: ${item.title}` : 'Mensagem salva';
+    }
+    if (!row.item_id && !row.body) return 'Mensagem salva (excluída)';
+    return firstWords(row.body || '', 8) || '—';
+  }
+
+  async function loadSchedules() {
+    sched.loading = true;
+    renderSched();
+    try {
+      const res = await call('fetchSchedules');
+      sched.available = !!res.available;
+      sched.pending = Array.isArray(res.pending) ? res.pending : [];
+      sched.recent = Array.isArray(res.recent) ? res.recent : [];
+      sched.error = '';
+    } catch (e) {
+      sched.error = 'Não consegui carregar os agendamentos.';
+    }
+    sched.loading = false;
+    renderSched();
+  }
+
+  // Conversa aberta (individual) para o formulário
+  async function loadSchedTarget() {
+    const req = ++sched.targetReq;
+    let chat = null;
+    try { chat = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { chat = null; }
+    if (req !== sched.targetReq) return;
+    const ctx = state.ctx || getContext();
+    sched.target = chat && chat.kind === 'individual' && typeof chat.chatId === 'string' && /^[0-9]+@(c\.us|lid)$/.test(chat.chatId)
+      ? { chatId: chat.chatId, name: (ctx.fullName || '').slice(0, 100) }
+      : { chatId: null, kind: chat ? chat.kind : 'nenhuma' };
+    renderSched();
+  }
+
+  function syncSchedActive() {
+    const want = state.open && state.section === 'agendados';
+    clearInterval(sched.timer);
+    sched.timer = null;
+    if (!want) return;
+    loadSchedules();
+    loadSchedTarget();
+    sched.timer = setInterval(() => { loadSchedules(); loadSchedTarget(); }, SCHED_TICK_MS);
+  }
+
+  // "Agendar nesta conversa" no menu do item
+  function scheduleItem(item) {
+    sched.form.mode = 'salva';
+    sched.form.itemId = item.id;
+    sched.form.msg = '';
+    sched.form.error = false;
+    setSection('agendados');
+  }
+
+  function schedField(label, input) {
+    const f = el('label', 'ed-field', label);
+    f.append(input);
+    return f;
+  }
+
+  function renderSched() {
+    if (!stabEl) return;
+    const f = sched.form;
+    stabEl.textContent = '';
+    stabEl.append(el('div', 'crm-intro', 'Sai na hora marcada com o WhatsApp Web aberto; se estiver fechado, sai quando você abrir (até 24 h de atraso; depois disso expira).'));
+    if (sched.available === false) {
+      stabEl.append(el('div', 'ed-note', 'Atualize o banco para usar este recurso.'));
+      return;
+    }
+
+    // Formulário
+    const form = el('section', 'crmsec');
+    const t = sched.target;
+    const who = t && t.chatId ? t.name || 'conversa aberta' : null;
+    form.append(el('div', 'wt-head', who ? `AGENDAR PARA ${who.toUpperCase()}` : 'AGENDAR'));
+    if (!who) {
+      form.append(el('div', 'ed-note', t && t.kind === 'grupo' ? 'Grupos não recebem agendamentos. Abra uma conversa individual.' : 'Abra uma conversa individual no WhatsApp para agendar.'));
+    }
+    const date = el('input', 'ed-title');
+    date.type = 'date';
+    date.value = f.date;
+    date.setAttribute('aria-label', 'Data');
+    date.addEventListener('input', () => { f.date = date.value; });
+    const time = el('input', 'ed-title');
+    time.type = 'time';
+    time.value = f.time;
+    time.setAttribute('aria-label', 'Hora');
+    time.addEventListener('input', () => { f.time = time.value; });
+    const dt = el('div', 'sc-row');
+    dt.append(schedField('Data', date), schedField('Hora', time));
+    form.append(dt);
+    const quick = el('div', 'ed-add');
+    [['+1h', '+1h'], ['+3h', '+3h'], ['amanha9', 'amanhã 9h'], ['amanha14', 'amanhã 14h'], ['2dias', 'em 2 dias']].forEach(([k, label]) => {
+      const b = el('button', 'ed-mini', label);
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        const d = shortcutDate(k);
+        f.date = dateInput(d);
+        f.time = timeInput(d);
+        renderSched();
+      });
+      quick.append(b);
+    });
+    form.append(quick);
+
+    const modeRow = el('div', 'sc-row');
+    [['texto', 'Escrever agora'], ['salva', 'Mensagem salva']].forEach(([m, label]) => {
+      const l = el('label', 'sc-radio');
+      const r = el('input');
+      r.type = 'radio';
+      r.name = 'sc-mode';
+      r.value = m;
+      r.checked = f.mode === m;
+      r.addEventListener('change', () => { f.mode = m; renderSched(); });
+      l.append(r, label);
+      modeRow.append(l);
+    });
+    form.append(modeRow);
+    if (f.mode === 'texto') {
+      const ta = el('textarea', 'ed-text');
+      ta.maxLength = 4096;
+      ta.rows = 3;
+      ta.value = f.body;
+      ta.placeholder = 'Mensagem ({nome} vira o primeiro nome do contato)';
+      ta.setAttribute('aria-label', 'Mensagem do agendamento');
+      const count = el('div', 'ed-count', `${f.body.length}/4096`);
+      ta.addEventListener('input', () => { f.body = ta.value; count.textContent = `${ta.value.length}/4096`; });
+      form.append(ta, count);
+    } else {
+      const sel = el('select', 'ed-cat');
+      sel.setAttribute('aria-label', 'Mensagem salva');
+      const none = el('option', null, 'Escolha uma mensagem…');
+      none.value = '';
+      sel.append(none);
+      state.items.forEach((i) => {
+        const o = el('option', null, `${i.title}${isMultiPart(i) ? ` (${i.parts.length} partes)` : ''}`);
+        o.value = i.id;
+        o.selected = i.id === f.itemId;
+        sel.append(o);
+      });
+      sel.addEventListener('change', () => { f.itemId = sel.value; });
+      form.append(sel);
+    }
+    const go = el('button', 'btn primary', f.saving ? 'Agendando…' : 'Agendar');
+    go.type = 'button';
+    go.disabled = f.saving || !who;
+    go.addEventListener('click', () => createScheduleFromForm());
+    form.append(go, el('div', `ed-msg${f.error ? ' err' : ''}`, f.msg));
+    stabEl.append(form);
+
+    // Listas
+    const listSec = (title, rows, withCancel) => {
+      const sec = el('section', 'crmsec');
+      sec.append(el('div', 'wt-head', title));
+      if (!rows.length) sec.append(el('div', 'lt-none', sched.loading ? 'Carregando…' : 'Nenhum.'));
+      rows.forEach((row) => {
+        const line = el('div', `sc-item st-${row.status}`);
+        const main = el('div', 'sc-main');
+        main.append(el('div', 'sc-who', row.chat_name || 'Conversa'), el('div', 'sc-prev', schedPreview(row)));
+        const side = el('div', 'sc-side');
+        side.append(el('span', 'sc-when', schedWhen(row.send_at)));
+        const status = el('span', 'sc-status', SCHED_STATUS_LABEL[row.status] || row.status);
+        if (row.error_code) status.title = SCHED_ERROR_LABEL[row.error_code] || row.error_code;
+        side.append(status);
+        if (withCancel && row.status === 'pendente') {
+          const c = el('button', 'ed-mini', 'Cancelar');
+          c.type = 'button';
+          c.addEventListener('click', () => cancelScheduleRow(row));
+          side.append(c);
+        }
+        line.append(main, side);
+        sec.append(line);
+      });
+      return sec;
+    };
+    if (sched.error) stabEl.append(el('div', 'ed-msg err', sched.error));
+    stabEl.append(listSec('PENDENTES', sched.pending, true), listSec('ÚLTIMOS 3 DIAS', sched.recent, false));
+  }
+
+  async function createScheduleFromForm() {
+    const f = sched.form;
+    const t = sched.target;
+    if (f.saving || !t || !t.chatId) return;
+    const fail = (msg) => { f.msg = msg; f.error = true; renderSched(); };
+    if (!f.date || !f.time) return fail('Escolha a data e a hora.');
+    const when = new Date(`${f.date}T${f.time}:00`);
+    if (Number.isNaN(when.getTime())) return fail('Data e hora inválidas.');
+    if (when.getTime() < Date.now() - 60 * 1000) return fail('Escolha uma data e hora no futuro.');
+    const payload = { chat_id: t.chatId, chat_name: t.name || null, send_at: when.toISOString() };
+    if (f.mode === 'texto') {
+      if (!f.body.trim()) return fail('Escreva a mensagem.');
+      payload.body = f.body;
+    } else {
+      if (!state.items.some((i) => i.id === f.itemId)) return fail('Escolha uma mensagem salva.');
+      payload.item_id = f.itemId;
+    }
+    f.saving = true;
+    f.msg = '';
+    f.error = false;
+    renderSched();
+    try {
+      await call('createSchedule', payload);
+      f.body = '';
+      f.msg = `Agendado para ${schedWhen(payload.send_at)}.`;
+      f.error = false;
+    } catch (e) {
+      f.msg = e.message === 'Atualize o banco para usar este recurso' ? e.message : `Não consegui agendar: ${e.message}`;
+      f.error = true;
+    }
+    f.saving = false;
+    await loadSchedules();
+  }
+
+  async function cancelScheduleRow(row) {
+    try {
+      const res = await call('cancelSchedule', { id: row.id });
+      toast(res && res.cancelled ? 'Agendamento cancelado.' : 'Esse agendamento já saiu da fila.', res && res.cancelled ? 'ok' : 'warn', 4000);
+    } catch {
+      toast('Não consegui cancelar. Tente de novo.', 'error', 5000);
+    }
+    loadSchedules();
+  }
+
+  // ── Executor ──
+
+  const finishSched = (id, status, error_code = null) => call('finishSchedule', { id, status, error_code }).catch(() => null);
+
+  async function schedTick() {
+    const r = sched.runner;
+    if (r.busy || seq || state.busyId || Date.now() < r.cooldownUntil) return;
+    if (sched.available === false && Date.now() - r.probeAt < 5 * 60 * 1000) return;
+    r.busy = true;
+    try {
+      const st = await refreshWaStatus();
+      if (!st || !st.ready) return;
+      let due;
+      try {
+        due = await call('dueSchedules');
+        sched.available = true;
+      } catch (e) {
+        if (e.message === 'Atualize o banco para usar este recurso') { sched.available = false; r.probeAt = Date.now(); }
+        return;
+      }
+      if (!Array.isArray(due) || !due.length) return;
+      let target = null;
+      for (const row of due) {
+        if (Date.now() - Date.parse(row.send_at) > SCHED_MAX_LATE_MS) await finishSched(row.id, 'expirada');
+        else { target = row; break; }
+      }
+      if (!target) { if (state.section === 'agendados') loadSchedules(); return; }
+      if (seq || state.busyId) return;
+      const claimed = await call('claimSchedule', { id: target.id }).catch(() => null);
+      if (!claimed) return; // outra aba/PC pegou
+      await runScheduled(claimed);
+      r.cooldownUntil = Date.now() + SCHED_GAP_MIN_MS + Math.floor(Math.random() * SCHED_GAP_EXTRA_MS);
+      setTimeout(() => { schedTick(); }, r.cooldownUntil - Date.now() + 50);
+      if (state.section === 'agendados') loadSchedules();
+    } finally {
+      r.busy = false;
+    }
+  }
+
+  async function runScheduled(row) {
+    let parts;
+    let item = null;
+    if (row.item_id) {
+      item = state.items.find((i) => i.id === row.item_id);
+      if (!item) { await reloadLibrary().catch(() => {}); item = state.items.find((i) => i.id === row.item_id); }
+      if (!item) { await finishSched(row.id, 'falhou', 'item_not_found'); return; }
+      parts = partsOf(item);
+    } else {
+      parts = [{ type: 'texto', body: row.body, wait_seconds: 0, typing_seconds: 0 }];
+    }
+    const name = (row.chat_name || '').trim();
+    const firstName = name && !/^[+\d\s().-]+$/.test(name) ? name.split(/\s+/)[0] : '';
+    sched.runner.current = row.id;
+    let res;
+    try {
+      res = await runSequence({ parts, chatId: row.chat_id, firstName, label: 'Agendado' });
+    } finally {
+      sched.runner.current = null;
+    }
+    if (res.status === 'ok') {
+      await finishSched(row.id, 'enviada');
+      if (item) registerUse(item);
+      toast(`Agendamento enviado${row.chat_name ? ` para ${row.chat_name}` : ''}.`, 'ok', 5000);
+    } else if (res.status === 'stopped') {
+      await finishSched(row.id, 'cancelada', 'stopped');
+      toast('Agendamento parado e cancelado.', 'warn', 5000);
+    } else if (res.stage === 'before-send') {
+      const code = res.code === 'invalid_chat' ? 'chat_not_loaded' : res.code === 'not_ready' ? 'not_ready' : 'send_unconfirmed';
+      await finishSched(row.id, 'falhou', res.sent ? 'send_unconfirmed' : code);
+      toast(code === 'chat_not_loaded' ? 'Agendamento não saiu: a conversa não está carregada no WhatsApp Web.' : 'Agendamento não saiu. Veja em Agendados.', 'error', 8000);
+    } else {
+      await finishSched(row.id, 'falhou', 'send_unconfirmed');
+      toast('Agendamento: não consegui confirmar o envio. Confira a conversa antes de tentar de novo.', 'error', 12000);
+    }
+  }
+
+  function startScheduler() {
+    setTimeout(() => { schedTick(); }, SCHED_FIRST_MS);
+    setInterval(() => { schedTick(); }, SCHED_TICK_MS);
+  }
+
   // ── Diagnóstico (nunca inclui conteúdo de conversa) ────────────────────────
 
   function diagnostics() {
@@ -3277,6 +3651,7 @@
       },
       schemaDiagRow(),
       partsDiagRow(),
+      schedDiagRow(),
       ...waDiagRows(),
       {
         label: 'Ponte do microfone carregada',
@@ -3303,6 +3678,13 @@
     if (state.partsAvailable === true) return { label: 'Itens com várias partes', status: 'ok', screen: 'ok' };
     if (state.partsAvailable === false) return { label: 'Itens com várias partes', status: 'warn', screen: 'falta atualizar o banco (migration 20261031130000)' };
     return { label: 'Itens com várias partes', status: 'warn', screen: 'testando...' };
+  }
+
+  // Agendamentos (migration 20261031140000): só ok / falta atualizar (sem textos nem números)
+  function schedDiagRow() {
+    if (sched.available === true) return { label: 'Agendamentos', status: 'ok', screen: 'ok' };
+    if (sched.available === false) return { label: 'Agendamentos', status: 'warn', screen: 'falta atualizar o banco (migration 20261031140000)' };
+    return { label: 'Agendamentos', status: 'warn', screen: 'testando...' };
   }
 
   // Etiquetas CRM: só quantidades (sem nomes)
@@ -3448,6 +3830,7 @@
     pingBridge().then(renderDiag);
     refreshWaStatus().then(renderDiag);
     loadSchema().then(renderDiag);
+    call('fetchSchedules').then((r) => { sched.available = !!(r && r.available); }, () => {}).then(renderDiag);
   }
 
   function showList() {
@@ -4840,6 +5223,8 @@
   }
 
   // ── Início: mostra o cache na hora ─────────────────────────────────────────
+
+  startScheduler();
 
   renderThemeButton();
   renderFilters();

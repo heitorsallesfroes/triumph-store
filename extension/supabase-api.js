@@ -1,7 +1,8 @@
 // Acesso ao Supabase (REST + Storage) usado pelo background.
 // Escreve só a pedido de um clique no painel: wa_items.usage_count (+1), as etiquetas CRM
 // (wa_labels, wa_contacts, wa_contact_labels) e a biblioteca pelo editor (wa_categories, wa_items,
-// wa_item_parts e arquivos novos no bucket wa-media).
+// wa_item_parts e arquivos novos no bucket wa-media) e os agendamentos (wa_schedules: criar e cancelar
+// por clique; o executor do painel reserva e marca o resultado dos que o usuário agendou).
 (function (root) {
   // Mensagens entre background e página têm limite (~64 MB); o arquivo vai em base64 (+33%).
   const MAX_FILE_BYTES = 40 * 1024 * 1024;
@@ -617,7 +618,91 @@
     };
   }
 
+  // ── Agendamentos (1.9.0): criados por um clique; enviados pelo executor do painel na hora marcada ──
+
+  const SCHED_CHAT_RE = /^[0-9]+@(c\.us|lid)$/;
+  const SCHED_COLUMNS = 'id,chat_id,chat_name,item_id,body,send_at,status,error_code,sent_at,created_at';
+  const SCHED_FINAL = ['enviada', 'falhou', 'cancelada', 'expirada'];
+  const SCHED_MISSING = 'Atualize o banco para usar este recurso';
+
+  async function schedRest(path, init) {
+    try {
+      return await rest(path, init);
+    } catch (err) {
+      if (missingTable(err, 'wa_schedules')) throw new Error(SCHED_MISSING);
+      throw err;
+    }
+  }
+
+  // Pendentes (e "enviando") + últimos 3 dias; sem a tabela: { available: false }
+  async function fetchSchedules() {
+    const since = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+    try {
+      const [pending, recent] = await Promise.all([
+        schedRest(`wa_schedules?select=${SCHED_COLUMNS}&status=in.(pendente,enviando)&order=send_at.asc&limit=200`),
+        schedRest(`wa_schedules?select=${SCHED_COLUMNS}&status=in.(${SCHED_FINAL.join(',')})&send_at=gte.${encodeURIComponent(since)}&order=send_at.desc&limit=100`),
+      ]);
+      return { available: true, pending, recent };
+    } catch (err) {
+      if (err.message === SCHED_MISSING) return { available: false, pending: [], recent: [] };
+      throw err;
+    }
+  }
+
+  async function createSchedule({ chat_id, chat_name, item_id, body, send_at }) {
+    if (typeof chat_id !== 'string' || !SCHED_CHAT_RE.test(chat_id)) throw new Error('Conversa inválida (só conversas individuais)');
+    const name = typeof chat_name === 'string' && chat_name.trim() ? chat_name.trim().replace(/\s+/g, ' ').slice(0, 100) : null;
+    const hasItem = item_id !== undefined && item_id !== null;
+    if (hasItem) checkUuid(item_id, 'Mensagem salva inválida');
+    let text = null;
+    if (!hasItem) {
+      if (typeof body !== 'string' || !body.trim() || body.length > TEXT_MAX) throw new Error(`Mensagem: 1 a ${TEXT_MAX} caracteres`);
+      text = body;
+    }
+    const when = Date.parse(send_at);
+    if (typeof send_at !== 'string' || !Number.isFinite(when)) throw new Error('Data e hora inválidas');
+    if (when < Date.now() - 60 * 1000) throw new Error('Escolha uma data e hora no futuro');
+    if (when > Date.now() + 366 * 24 * 3600 * 1000) throw new Error('No máximo 1 ano para frente');
+    const rows = await schedRest('wa_schedules', json('POST', 'return=representation', {
+      chat_id, chat_name: name, item_id: hasItem ? item_id : null, body: text, send_at: new Date(when).toISOString(), status: 'pendente',
+    }));
+    return { id: rows[0].id };
+  }
+
+  // Só cancela se ainda estiver pendente
+  async function cancelSchedule({ id }) {
+    checkUuid(id, 'Agendamento inválido');
+    const rows = await schedRest(`wa_schedules?id=eq.${id}&status=eq.pendente`, json('PATCH', 'return=representation', { status: 'cancelada' }));
+    return { cancelled: rows.length > 0 };
+  }
+
+  // Pendentes com horário vencido (mais antigos primeiro)
+  async function dueSchedules() {
+    const now = new Date().toISOString();
+    return schedRest(`wa_schedules?select=${SCHED_COLUMNS}&status=eq.pendente&send_at=lte.${encodeURIComponent(now)}&order=send_at.asc&limit=20`);
+  }
+
+  // Reserva: só uma aba/PC consegue passar de 'pendente' para 'enviando' (o filtro status=eq.pendente garante)
+  async function claimSchedule({ id }) {
+    checkUuid(id, 'Agendamento inválido');
+    const rows = await schedRest(`wa_schedules?id=eq.${id}&status=eq.pendente`, json('PATCH', 'return=representation', { status: 'enviando' }));
+    return rows.length ? rows[0] : null;
+  }
+
+  // Resultado final. 'expirada' só sai de 'pendente'; os outros, de 'enviando'.
+  async function finishSchedule({ id, status, error_code }) {
+    checkUuid(id, 'Agendamento inválido');
+    if (!SCHED_FINAL.includes(status)) throw new Error('Status inválido');
+    if (error_code != null && (typeof error_code !== 'string' || !/^[a-z_]{1,40}$/.test(error_code))) throw new Error('Código inválido');
+    const from = status === 'expirada' ? 'pendente' : 'enviando';
+    const patch = { status, error_code: error_code || null };
+    if (status === 'enviada') patch.sent_at = new Date().toISOString();
+    const rows = await schedRest(`wa_schedules?id=eq.${id}&status=eq.${from}`, json('PATCH', 'return=representation', patch));
+    return { updated: rows.length > 0 };
+  }
+
   root.WaApi = {
+    fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,
     saveItem, deleteItem, createCategory, renameCategory, deleteCategory, uploadFile, partsTableExists,
     fetchLibrary, incrementUsage, fetchFile, isAllowedFileUrl, MAX_FILE_BYTES,
     fetchLabels, getContactLabels, setContactLabel,

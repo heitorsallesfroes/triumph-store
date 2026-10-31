@@ -29,6 +29,13 @@ const HANDLERS = {
   renameCategory:  (m) => WaApi.renameCategory({ id: m.id, name: m.name }),
   deleteCategory:  (m) => WaApi.deleteCategory({ id: m.id }),
   uploadFile:      (m) => WaApi.uploadFile({ partType: m.partType, base64: m.base64, mime: m.mime, fileName: m.fileName }),
+  // Agendamentos (1.9.0)
+  fetchSchedules:  ()  => WaApi.fetchSchedules(),
+  createSchedule:  (m) => WaApi.createSchedule({ chat_id: m.chat_id, chat_name: m.chat_name, item_id: m.item_id, body: m.body, send_at: m.send_at }),
+  cancelSchedule:  (m) => WaApi.cancelSchedule({ id: m.id }),
+  dueSchedules:    ()  => WaApi.dueSchedules(),
+  claimSchedule:   (m) => WaApi.claimSchedule({ id: m.id }),
+  finishSchedule:  (m) => WaApi.finishSchedule({ id: m.id, status: m.status, error_code: m.error_code }),
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

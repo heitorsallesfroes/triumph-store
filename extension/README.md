@@ -126,6 +126,32 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
   funciona só com **1 parte** e mostra "Atualize o banco para usar este
   recurso" nas opções de várias partes, esperar e digitando.
 
+### Agendamento (seção ⏰ Agendados)
+
+- Abra a conversa individual no WhatsApp, abra o painel e clique em
+  **Agendados** (ou use **Agendar nesta conversa** no menu **···** de uma
+  mensagem).
+- **Agendar para <conversa aberta>**: escolha a data e a hora (ou um atalho:
+  **+1h**, **+3h**, **amanhã 9h**, **amanhã 14h**, **em 2 dias**) e a mensagem:
+  **Escrever agora** (texto, até 4096 caracteres) ou uma **mensagem salva**
+  (inclusive as de várias partes). Clique em **Agendar**.
+- Grupos não recebem agendamentos.
+- **Pendentes**: conversa, prévia curta, data/hora e **Cancelar**.
+  **Últimos 3 dias**: enviada, falhou, cancelada ou expirada.
+- **Sai na hora marcada com o WhatsApp Web aberto; se estiver fechado, sai
+  quando você abrir (até 24 h de atraso; depois disso expira).**
+- A extensão confere os agendamentos a cada 30 segundos (com o WhatsApp
+  pronto) e envia **um de cada vez**, com 15 a 30 segundos entre eles. Antes de
+  enviar, ela "reserva" o agendamento no banco: com duas abas ou dois
+  computadores abertos, só um envia.
+- Enquanto envia, o rodapé do painel mostra "Agendado · Enviando 1/3 …" com
+  **Parar** (Parar marca o agendamento como cancelado).
+- Se a conversa não estiver carregada no WhatsApp Web, o agendamento fica como
+  **falhou** (não cria conversa). Se o WhatsApp não confirmar o envio, também
+  fica **falhou** e a extensão **nunca reenvia sozinha**: confira a conversa.
+- Sem a migration `20261031140000_wa_schedules.sql` aplicada, a seção mostra
+  "Atualize o banco para usar este recurso" (o resto funciona).
+
 ### Áudio como mensagem de voz
 
 Ao clicar na **seta** de um áudio, ele chega para o cliente como uma
@@ -205,11 +231,12 @@ Logo abaixo do cabeçalho do painel há uma fileira de botões, com ícone e nom
 - **Mensagens**: a biblioteca de mensagens (como antes).
 - **Etiquetas**: as etiquetas do CRM, dentro do próprio painel (veja abaixo).
 - **Quadro**: abre o Quadro grande. O painel continua na seção em que estava.
-- **Agendados**, **Disparos** e **Follows**: desativados, com o selo "em
-  breve" (passe o mouse: "Chega nas próximas versões").
+- **Agendados**: agendar mensagens (veja "Agendamento" abaixo).
+- **Disparos** e **Follows**: desativados, com o selo "em breve" (passe o
+  mouse: "Chega nas próximas versões").
 
 A seção ativa fica destacada em laranja e o título do cabeçalho muda
-("Mensagens" ou "Etiquetas CRM"). O painel lembra a última seção escolhida.
+("Mensagens", "Etiquetas CRM" ou "Agendados"). O painel lembra a última seção escolhida.
 O **Diagnóstico** sempre abre na seção Mensagens.
 
 ### Barra do topo
@@ -382,8 +409,13 @@ guardada.
 - A **seta envia** a mensagem na conversa aberta, parte por parte, com
   "Enviando 2/5 · aguardando 3s" e **Parar** no rodapé. Itens de 1 texto ainda
   podem ir só para a caixa ("Colocar na caixa").
-- Diagnóstico: "Itens com várias partes" (ok / falta atualizar o banco).
-- Precisa da migration `20261031130000_wa_item_parts.sql` para várias partes.
+- **Agendamento** na seção ⏰ Agendados (texto ou mensagem salva, atalhos de
+  data, pendentes e últimos 3 dias). Sai com o WhatsApp Web aberto, até 24 h
+  de atraso; reserva no banco para não enviar em dobro.
+- Diagnóstico: "Itens com várias partes" e "Agendamentos" (ok / falta
+  atualizar o banco).
+- Precisa das migrations `20261031130000_wa_item_parts.sql` (várias partes) e
+  `20261031140000_wa_schedules.sql` (agendamento).
 
 ### 1.8.1
 - O menu saiu da barra do topo e foi para o **topo do painel**: Mensagens,
@@ -561,9 +593,12 @@ Service worker
 - `config.js`: URL e anon key do Supabase (os mesmos valores do `.env` do ERP;
   a anon key é pública por design).
 - `background.js` e `supabase-api.js`: buscam os dados e os arquivos no
-  Supabase (o único lugar com acesso à rede). Escrevem só `wa_items.usage_count`
-  e as etiquetas CRM (`wa_labels`, `wa_contacts`, `wa_contact_labels`), sempre
-  a pedido de um clique. O background só atende os tipos da lista `HANDLERS`;
+  Supabase (o único lugar com acesso à rede). Escrevem só `wa_items.usage_count`,
+  as etiquetas CRM (`wa_labels`, `wa_contacts`, `wa_contact_labels`), a
+  biblioteca pelo editor (`wa_categories`, `wa_items`, `wa_item_parts` e
+  arquivos novos no bucket `wa-media`) e os agendamentos (`wa_schedules`),
+  sempre a pedido de um clique (ou, no caso do executor, para marcar o
+  resultado de um agendamento feito pelo usuário). O background só atende os tipos da lista `HANDLERS`;
   cada função valida a entrada (UUID, tamanhos, cores da paleta). Excluir uma
   etiqueta CRM apaga as marcações e a etiqueta, nunca contatos. Colunas novas
   (`hidden`, `notes`): tenta com a coluna e, se o banco responder 400 citando
