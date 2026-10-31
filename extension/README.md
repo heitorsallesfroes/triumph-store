@@ -8,8 +8,9 @@ Ela **nunca envia nada sozinha**: só coloca o texto na caixa de mensagem ou
 abre a prévia do anexo. Quem confere e aperta Enter (ou o botão de enviar) é
 sempre você.
 
-No topo do WhatsApp Web fica uma **barra-menu** com o **Quadro** e as
-**Etiquetas CRM**. Existem dois tipos de etiqueta, sempre com o nome junto:
+No topo do painel fica um **menu de seções** (Mensagens, Etiquetas, Quadro…).
+No topo do WhatsApp Web fica uma **barra** com as etiquetas. Existem dois tipos
+de etiqueta, sempre com o nome junto:
 
 - **Etiquetas do WhatsApp**: as nativas do WhatsApp Business. Ficam no
   WhatsApp (aparecem também no celular).
@@ -17,7 +18,7 @@ No topo do WhatsApp Web fica uma **barra-menu** com o **Quadro** e as
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e vão ser a base de follows e disparos no futuro.
 
-Versão atual: **1.8.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **1.8.1** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -160,14 +161,24 @@ Se não gravar:
   microfone de verdade, mas o WhatsApp só grava com a permissão dada).
 - Você sempre pode usar **Como arquivo**.
 
-### Barra-menu do topo
+### Menu do painel
 
-Aparece sempre no topo do WhatsApp Web:
+Logo abaixo do cabeçalho do painel há uma fileira de botões, com ícone e nome:
 
-- **Quadro**: abre o Quadro (veja abaixo).
-- **Etiquetas CRM**: abre a janela das etiquetas do CRM (veja abaixo).
-- **Agendar**, **Disparos** e **Follows**: aparecem com o selo "em breve" e
-  ainda não fazem nada.
+- **Mensagens**: a biblioteca de mensagens (como antes).
+- **Etiquetas**: as etiquetas do CRM, dentro do próprio painel (veja abaixo).
+- **Quadro**: abre o Quadro grande. O painel continua na seção em que estava.
+- **Agendados**, **Disparos** e **Follows**: desativados, com o selo "em
+  breve" (passe o mouse: "Chega nas próximas versões").
+
+A seção ativa fica destacada em laranja e o título do cabeçalho muda
+("Mensagens" ou "Etiquetas CRM"). O painel lembra a última seção escolhida.
+O **Diagnóstico** sempre abre na seção Mensagens.
+
+### Barra do topo
+
+Aparece sempre no topo do WhatsApp Web, só com as etiquetas:
+
 - **WhatsApp | CRM**: escolhe quais etiquetas a barra e o Quadro mostram. A
   escolha fica salva.
 - Depois vêm as etiquetas da família escolhida, com a cor, o nome e o número.
@@ -180,14 +191,15 @@ Aparece sempre no topo do WhatsApp Web:
 - **Ocultar a barra:** clique no **×** ou no botão de etiqueta (🏷) no
   cabeçalho do painel. O mesmo botão mostra de novo. A escolha fica salva.
 
-O painel da direita agora é **só a biblioteca de mensagens** (não tem mais
-abas). A linha **Etiquetas CRM** abaixo de "Conversa: …" continua lá: clique
-no **+** para marcar ou desmarcar as etiquetas do CRM na conversa aberta.
+Na seção Mensagens, a linha **Etiquetas CRM** abaixo de "Conversa: …"
+continua lá: clique no **+** para marcar ou desmarcar as etiquetas do CRM na
+conversa aberta.
 
-### Janela "Etiquetas CRM"
+### Seção "Etiquetas" do painel (Etiquetas CRM)
 
-Abre pela barra, no mesmo lugar do Quadro. **Esc** (ou **Fechar**) fecha.
-Tem três partes:
+Abra o painel e clique em **Etiquetas** no menu. **Esc** fecha primeiro a
+edição ou o formulário que estiver aberto; depois, fecha o painel. Tem três
+partes:
 
 **ESTA CONVERSA** (a conversa aberta no WhatsApp)
 - **Etiquetas CRM:** clique numa etiqueta para marcar ou desmarcar. A marcada
@@ -206,8 +218,8 @@ Tem três partes:
 - A lista com cor, nome e número de contatos. Clique numa etiqueta para ver os
   contatos dela (os mais recentes primeiro; "Ver mais" mostra mais 50) e use
   "Buscar cliente" para achar por nome ou telefone. Clicar num cliente coloca o
-  telefone (ou o nome) na busca do WhatsApp e fecha a janela para você ver o
-  resultado. A extensão **não abre** a conversa.
+  telefone (ou o nome) na busca do WhatsApp; clique você no resultado. A
+  extensão **não abre** a conversa.
 - **Exportar CSV** (com a etiqueta aberta): prepara o arquivo com todos os
   contatos da etiqueta (colunas nome e telefone, separadas por ";", em UTF-8,
   para abrir direto no Excel). Clique em **Baixar crm-<etiqueta>-<data>.csv**
@@ -324,6 +336,14 @@ guardada.
 ---
 
 ## O que mudou
+
+### 1.8.1
+- O menu saiu da barra do topo e foi para o **topo do painel**: Mensagens,
+  Etiquetas, Quadro e (em breve) Agendados, Disparos e Follows.
+- As Etiquetas CRM agora ficam **dentro do painel** (seção Etiquetas), com as
+  mesmas funções. A janela flutuante "Etiquetas CRM" deixou de existir.
+- A barra do topo ficou só com o seletor WhatsApp | CRM, as etiquetas e o ×.
+- O painel lembra a seção escolhida.
 
 ### 1.8.0
 - **Barra-menu** no topo: Quadro, Etiquetas CRM e (em breve) Agendar,
@@ -504,7 +524,7 @@ Service worker
   Não faz conexões de rede.
 - `content.js`: o painel (em Shadow DOM), o cache em `chrome.storage.local`
   (`library`, `labels`, `collapsed`, `lastUsed`, `themePref`, `labelsBarHidden`,
-  `labelsFamily`, `boardLabelIds`, `boardCrmLabelIds`; nada de contatos, telefones ou notas) e a integração
+  `labelsFamily`, `boardLabelIds`, `boardCrmLabelIds`, `panelSection`; nada de contatos, telefones ou notas) e a integração
   com o WhatsApp Web (seletores com alternativas na constante `SEL`; a
   identificação da conversa fica em `identifyConversation`).
 - Não precisa de build: o Chrome carrega os arquivos como estão.

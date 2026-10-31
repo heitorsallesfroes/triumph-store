@@ -33,7 +33,8 @@
     mic:       '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
     chat:      '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     board:     '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>',
-    calendar:  '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
+    clock:     '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/>',
+    megaphone: '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
     repeat:    '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
     inbox:     '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
     texto:     '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/>',
@@ -141,7 +142,7 @@
   // ── Estado ─────────────────────────────────────────────────────────────────
 
   const state = {
-    open: false, view: 'list', themePref: 'auto', bridgeOk: null, waStatus: null, waStatusAt: 0,
+    open: false, view: 'list', section: 'mensagens', themePref: 'auto', bridgeOk: null, waStatus: null, waStatusAt: 0,
     // Barra-menu do topo: waLabels = etiquetas do WhatsApp (null enquanto indisponíveis; só ids, nomes, cores e números)
     // family = qual família a barra e o Quadro mostram: 'whatsapp' ou 'crm'
     barHiddenByUser: false, waLabels: null, family: 'whatsapp',
@@ -161,11 +162,11 @@
     openId: null, clients: [], hasMore: false, loading: false, error: null, search: '',
     reqId: 0, rowsSig: '', timer: null, searchTimer: null, hintTimer: null,
   };
-  // Janela Etiquetas CRM, parte do WhatsApp: id da conversa aberta e etiquetas nativas dela (só na memória)
+  // Seção Etiquetas do painel, parte do WhatsApp: id da conversa aberta e etiquetas nativas dela (só na memória)
   const wt = { chatId: null, kind: null, labelIds: [], loading: false, error: false, busy: false, req: 0, timer: null };
-  // Janela Etiquetas CRM: nota da conversa aberta, edição de etiqueta, cópia do WhatsApp
+  // Seção Etiquetas do painel: nota da conversa aberta, edição de etiqueta, cópia do WhatsApp
   const crm = {
-    open: false, ctxTimer: null, edit: null, busy: false, dragId: null, toastTimer: null, showNew: false, newColor: null,
+    open: false, edit: null, busy: false, dragId: null, showNew: false, newColor: null, // open = seção Etiquetas visível
     note: { key: null, text: '', saved: '', available: null, loading: false, saving: false, error: false, msg: '', req: 0 },
     copy: { waId: '', dest: '__new', preview: null, previewReq: 0, running: false, stop: false, phase: '', done: 0, total: 0, result: '' },
     exportUrl: null,
@@ -644,12 +645,6 @@
       .wabar[hidden] { display: none; }
       .root.open .wabar { right: ${PANEL_W}px; }
       .root.bar-on .toggle { top: ${BAR_H}px; }
-      .wmenu { flex-shrink: 0; display: flex; align-items: center; gap: 2px; padding-right: 6px; border-right: 1px solid var(--border); }
-      .wnav { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; border: none; border-radius: 7px; background: transparent; color: var(--fg); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
-      .wnav svg { width: 14px; height: 14px; }
-      .wnav:hover:not(:disabled), .wnav.on { background: var(--accent-soft); color: var(--accent); }
-      .wnav:disabled { color: var(--muted); cursor: default; }
-      .wsoon { padding: 0 5px; border-radius: 999px; background: var(--bg2); color: var(--muted); font-size: 9.5px; font-weight: 700; letter-spacing: .02em; }
       .wempty { color: var(--muted); font-size: 11.5px; }
       .wchips { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 6px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scrollbar-width: thin; }
       .wchip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); font-size: 11px; font-weight: 700; letter-spacing: .02em; transition: border-color .15s, opacity .15s; }
@@ -662,17 +657,32 @@
       .wclose:hover { background: var(--bg2); color: var(--fg); }
 
       /* Quadro de etiquetas */
-      .board, .crmwin { position: fixed; top: 0; left: 64px; right: 0; bottom: 0; z-index: 2; display: flex; flex-direction: column; background: var(--bg2); color: var(--fg); border-left: 1px solid var(--border); box-shadow: 0 0 20px var(--shadow); outline: none; animation: fadeIn .15s ease both; }
-      .board[hidden], .crmwin[hidden] { display: none; }
-      .root.bar-on .board, .root.bar-on .crmwin { top: ${BAR_H}px; }
-      .root.open .board, .root.open .crmwin { right: ${PANEL_W}px; }
+      .board { position: fixed; top: 0; left: 64px; right: 0; bottom: 0; z-index: 2; display: flex; flex-direction: column; background: var(--bg2); color: var(--fg); border-left: 1px solid var(--border); box-shadow: 0 0 20px var(--shadow); outline: none; animation: fadeIn .15s ease both; }
+      .board[hidden] { display: none; }
+      .root.bar-on .board { top: ${BAR_H}px; }
+      .root.open .board { right: ${PANEL_W}px; }
+      /* Menu de seções do painel */
+      .pnav { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px; margin: 0 8px 10px; padding: 3px; border-radius: 10px; background: var(--bg2); }
+      .pnav button { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 5px 1px 4px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 9.5px; font-weight: 600; line-height: 1.15; transition: background .15s, color .15s; }
+      .pnav button svg { width: 16px; height: 16px; flex-shrink: 0; }
+      .pnav button > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pnav button:hover:not([aria-disabled="true"]) { color: var(--fg); }
+      .pnav button.on { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px var(--shadow); }
+      .pnav button[aria-disabled="true"] { opacity: .55; cursor: default; }
+      .pnav .psoon { padding: 0 4px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 7.5px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
+      /* Seção Etiquetas (CRM) do painel */
+      .ltab { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 10px; flex-direction: column; gap: 10px; scrollbar-width: thin; }
+      .ltab > * { flex-shrink: 0; }
+      .panel.sec-labels .ltab { display: flex; }
+      .panel.sec-labels .status, .panel.sec-labels .labels, .panel.sec-labels .name-note,
+      .panel.sec-labels .tools, .panel.sec-labels .banner, .panel.sec-labels .list { display: none; }
+      .crm-intro { padding: 0 2px; font-size: 11px; color: var(--muted); line-height: 1.4; }
       /* Seletor WhatsApp | CRM (barra e Quadro) */
       .wfam { flex-shrink: 0; display: inline-flex; padding: 2px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--border); }
       .wfam button { height: 22px; padding: 0 9px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; }
       .wfam button.on { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px var(--shadow); }
-      /* Janela Etiquetas CRM */
-      .crmbody { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; scrollbar-width: thin; }
-      .crmsec { min-width: 0; padding: 12px; border-radius: 12px; background: var(--bg); border: 1px solid var(--border); }
+      /* Seção Etiquetas (CRM) do painel: blocos */
+      .crmsec { min-width: 0; padding: 10px; border-radius: 12px; background: var(--bg); border: 1px solid var(--border); }
       .crm-sub { margin: 10px 2px 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--muted); }
       .crm-sub:first-of-type { margin-top: 2px; }
       .crm-note { width: 100%; min-height: 76px; resize: vertical; padding: 8px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; outline: none; }
@@ -802,7 +812,7 @@
       .voice.prep .vbar { display: none; }
       @keyframes pulse { 50% { transform: scale(1.12); opacity: .75; } }
 
-      /* Etiquetas CRM (conteúdo da antiga aba Etiquetas, agora na janela Etiquetas CRM) */
+      /* Etiquetas CRM (seção Etiquetas do painel) */
       .lt-sec { margin-bottom: 14px; }
       .lt-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 2px 2px 8px; }
       .lt-conv { padding: 10px; border-radius: 10px; background: var(--bg2); }
@@ -902,14 +912,7 @@
     </style>
     <div class="root light">
       <button class="toggle" type="button" title="Mensagens (Triumph Store)" aria-label="Abrir ou fechar mensagens">${svg('zap', 'fill')}</button>
-      <div class="wabar" role="toolbar" aria-label="Menu Triumph Store: Quadro e etiquetas do WhatsApp e do CRM" hidden>
-        <nav class="wmenu" aria-label="Menu">
-          <button class="wnav wboard" type="button" title="Abrir o Quadro">${svg('board')}Quadro</button>
-          <button class="wnav wcrm" type="button" title="Abrir Etiquetas CRM">${svg('tag')}Etiquetas CRM</button>
-          <button class="wnav" type="button" disabled title="Em breve">${svg('calendar')}Agendar<span class="wsoon">em breve</span></button>
-          <button class="wnav" type="button" disabled title="Em breve">${svg('send')}Disparos<span class="wsoon">em breve</span></button>
-          <button class="wnav" type="button" disabled title="Em breve">${svg('repeat')}Follows<span class="wsoon">em breve</span></button>
-        </nav>
+      <div class="wabar" role="toolbar" aria-label="Etiquetas do WhatsApp e do CRM" hidden>
         <div class="wfam" role="group" aria-label="Etiquetas do WhatsApp ou do CRM">
           <button type="button" data-fam="whatsapp" aria-pressed="false">WhatsApp</button><button type="button" data-fam="crm" aria-pressed="false">CRM</button>
         </div>
@@ -933,13 +936,35 @@
         <div class="bcols"></div>
         <div class="btoast" role="status" aria-live="polite" hidden></div>
       </div>
-      <div class="crmwin" role="dialog" aria-label="Etiquetas CRM" tabindex="-1" hidden>
-        <div class="bheader">
-          <div class="btitle"><b>Etiquetas CRM</b><span>Ficam só no nosso sistema (CRM). As etiquetas do WhatsApp continuam no WhatsApp.</span></div>
-          <span class="bstatus" role="status" aria-live="polite"></span>
-          <div class="bactions"><button class="bbtn crmclose" type="button" title="Fechar (Esc)">Fechar</button></div>
+      <aside class="panel" aria-label="Mensagens">
+        <header class="head">
+          <div class="brand"><span class="logo">${svg('zap', 'fill')}</span><span class="brand-txt">Mensagens</span></div>
+          <div class="actions"></div>
+        </header>
+        <nav class="pnav" aria-label="Seções do painel">
+          <button type="button" data-sec="mensagens" title="Mensagens" aria-pressed="false">${svg('zap')}<span>Mensagens</span></button>
+          <button type="button" data-sec="etiquetas" title="Etiquetas CRM" aria-pressed="false">${svg('tag')}<span>Etiquetas</span></button>
+          <button type="button" class="pboard" title="Abrir o Quadro" aria-pressed="false">${svg('board')}<span>Quadro</span></button>
+          <button type="button" aria-disabled="true" title="Chega nas próximas versões">${svg('clock')}<span>Agendados</span><span class="psoon">em breve</span></button>
+          <button type="button" aria-disabled="true" title="Chega nas próximas versões">${svg('megaphone')}<span>Disparos</span><span class="psoon">em breve</span></button>
+          <button type="button" aria-disabled="true" title="Chega nas próximas versões">${svg('repeat')}<span>Follows</span><span class="psoon">em breve</span></button>
+        </nav>
+        <div class="status warn"><span class="dot"></span><span class="txt"></span></div>
+        <div class="labels">
+          <span class="lbl">Etiquetas CRM</span>
+          <div class="chips"></div>
+          <button class="add" type="button" title="Marcar etiquetas CRM" aria-label="Marcar etiquetas CRM" aria-haspopup="true" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
+          <div class="lmenu" role="menu" hidden></div>
         </div>
-        <div class="crmbody">
+        <div class="name-note" hidden title="Sem telefone visível nesta conversa: a etiqueta fica ligada ao nome do contato. Se o nome mudar, ela não acompanha.">identificado só pelo nome</div>
+        <div class="tools">
+          <label class="search">${svg('search')}<input type="text" placeholder="Pesquisar resposta rápida" aria-label="Pesquisar resposta rápida" /></label>
+          <div class="filters" role="group" aria-label="Filtros"></div>
+        </div>
+        <div class="banner" hidden>${svg('wifiOff')}<span>Sem conexão: mostrando a última versão</span><button type="button">Tentar de novo</button></div>
+        <div class="list"></div>
+        <div class="ltab" role="region" aria-label="Etiquetas CRM">
+          <div class="crm-intro">Etiquetas do CRM ficam só no nosso sistema. As etiquetas do WhatsApp continuam no WhatsApp.</div>
           <section class="crmsec">
             <div class="wt-head">ESTA CONVERSA</div>
             <div class="lt-conv">
@@ -974,27 +999,6 @@
             <div class="crm-copy"></div>
           </section>
         </div>
-        <div class="btoast" role="status" aria-live="polite" hidden></div>
-      </div>
-      <aside class="panel" aria-label="Mensagens">
-        <header class="head">
-          <div class="brand"><span class="logo">${svg('zap', 'fill')}</span>Mensagens</div>
-          <div class="actions"></div>
-        </header>
-        <div class="status warn"><span class="dot"></span><span class="txt"></span></div>
-        <div class="labels">
-          <span class="lbl">Etiquetas CRM</span>
-          <div class="chips"></div>
-          <button class="add" type="button" title="Marcar etiquetas CRM" aria-label="Marcar etiquetas CRM" aria-haspopup="true" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
-          <div class="lmenu" role="menu" hidden></div>
-        </div>
-        <div class="name-note" hidden title="Sem telefone visível nesta conversa: a etiqueta fica ligada ao nome do contato. Se o nome mudar, ela não acompanha.">identificado só pelo nome</div>
-        <div class="tools">
-          <label class="search">${svg('search')}<input type="text" placeholder="Pesquisar resposta rápida" aria-label="Pesquisar resposta rápida" /></label>
-          <div class="filters" role="group" aria-label="Filtros"></div>
-        </div>
-        <div class="banner" hidden>${svg('wifiOff')}<span>Sem conexão: mostrando a última versão</span><button type="button">Tentar de novo</button></div>
-        <div class="list"></div>
         <div class="voice prep" role="status" aria-live="polite" hidden>
           <div class="vrow">
             <span class="vmic">${svg('mic')}</span>
@@ -1041,9 +1045,7 @@
   const wtWho     = shadow.querySelector('.wt-who span');
   const wtChips   = shadow.querySelector('.wt-chips');
   const crmEls = {
-    root: shadow.querySelector('.crmwin'),
-    status: shadow.querySelector('.crmwin .bstatus'),
-    toast: shadow.querySelector('.crmwin .btoast'),
+    root: shadow.querySelector('.ltab'),
     note: shadow.querySelector('.crm-note'),
     noteMsg: shadow.querySelector('.crm-notemsg'),
     noteCount: shadow.querySelector('.crm-count'),
@@ -1172,19 +1174,67 @@
       pingBridge();
       refreshWaStatus();
     } else {
-      if (!crm.open) clearTimeout(convTimer);
+      clearTimeout(convTimer);
       setMenuOpen(false);
       if (state.view === 'diag') showList();
     }
+    syncCrmActive();
   }
 
   toggleBtn.addEventListener('click', () => setOpen(!state.open));
+
+  // ── Seções do painel: Mensagens e Etiquetas (o Quadro abre por cima, sem trocar a seção) ──
+
+  const brandTxt = shadow.querySelector('.brand-txt');
+  const navBtns = [...shadow.querySelectorAll('.pnav button')];
+
+  function renderPanelNav() {
+    navBtns.forEach((b) => {
+      const on = b.dataset.sec ? b.dataset.sec === state.section : b.classList.contains('pboard') && board.open;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  }
+
+  function setSection(section, { persist = true } = {}) {
+    state.section = section === 'etiquetas' ? 'etiquetas' : 'mensagens';
+    const labels = state.section === 'etiquetas';
+    panel.classList.toggle('sec-labels', labels);
+    brandTxt.textContent = labels ? 'Etiquetas CRM' : 'Mensagens';
+    panel.setAttribute('aria-label', brandTxt.textContent);
+    if (persist) storageSet({ panelSection: state.section }); // só o nome da seção
+    setMenuOpen(false);
+    if (labels && state.view === 'diag') showList();
+    renderPanelNav();
+    syncCrmActive();
+  }
+
+  // A seção Etiquetas só trabalha (lê dados, atualiza a cada minuto) com o painel aberto e ela visível
+  function syncCrmActive() {
+    const want = state.open && state.section === 'etiquetas';
+    if (want && !crm.open) openCrm();
+    else if (!want && crm.open) closeCrm();
+  }
+
+  navBtns.forEach((b) => b.addEventListener('click', () => {
+    if (b.getAttribute('aria-disabled') === 'true') return; // "em breve"
+    if (b.classList.contains('pboard')) {
+      if (board.open) closeBoard();
+      else openBoard();
+      return;
+    }
+    if (state.view === 'diag') showList();
+    setSection(b.dataset.sec);
+  }));
 
   // Teclas dentro do painel não vão para os atalhos do WhatsApp; Esc fecha
   ['keydown', 'keypress', 'keyup'].forEach((type) => panel.addEventListener(type, (e) => {
     if (type === 'keydown' && e.key === 'Escape') {
       e.preventDefault();
-      if (state.menuOpen) {
+      // Na seção Etiquetas, Esc fecha primeiro a edição ou o formulário de nova etiqueta CRM
+      if (crm.open && crm.edit) setEdit(null);
+      else if (crm.open && crm.showNew) { crm.showNew = false; renderNewForm(); }
+      else if (state.menuOpen) {
         setMenuOpen(false);
         laddBtn.focus();
       } else {
@@ -1305,7 +1355,7 @@
     lmenuEl.textContent = '';
     if (!visibleCrmLabels().length) {
       lmenuEl.append(el('div', 'lempty', state.labelsLoaded
-        ? 'Nenhuma etiqueta CRM. Crie em "Etiquetas CRM", na barra do topo.'
+        ? 'Nenhuma etiqueta CRM. Crie na seção Etiquetas do painel.'
         : 'Carregando etiquetas CRM...'));
       return;
     }
@@ -1366,7 +1416,7 @@
     }
   }
 
-  // ── Etiquetas CRM (dados da antiga aba Etiquetas, agora na janela Etiquetas CRM) ──
+  // ── Etiquetas CRM (dados da seção Etiquetas do painel) ──
 
   const labelsTabActive = () => crm.open;
 
@@ -1382,7 +1432,7 @@
     if (lt.openId) loadClients({ reset: true });
   }
 
-  // Depois de qualquer mudança feita pela extensão: números da barra/janela/Quadro
+  // Depois de qualquer mudança feita pela extensão: números da barra/painel/Quadro
   function afterLabelChange() {
     loadCounts();
     if (labelsTabActive() && lt.openId) loadClients({ reset: true });
@@ -1668,8 +1718,6 @@
       try { ok = await fillSearchBox(box, term); } catch { ok = false; }
     }
     showHint(ok, client);
-    // A janela cobre a lista de conversas: fecha para a pessoa ver o resultado da busca
-    if (ok && crm.open) closeCrm();
   }
 
   // ── Busca e filtros ────────────────────────────────────────────────────────
@@ -2667,6 +2715,7 @@
   }
 
   function showDiag() {
+    if (state.section !== 'mensagens') setSection('mensagens', { persist: false });
     state.view = 'diag';
     panel.classList.add('diag');
     diagBtn.classList.add('on');
@@ -2747,8 +2796,7 @@
       bar.btn.setAttribute('aria-label', state.barHiddenByUser ? 'Mostrar a barra do topo' : 'Ocultar a barra do topo');
       bar.btn.setAttribute('aria-pressed', String(active));
     }
-    shadow.querySelector('.wabar .wboard').classList.toggle('on', board.open);
-    shadow.querySelector('.wabar .wcrm').classList.toggle('on', crm.open);
+    renderPanelNav();
     if (!active) return;
     const scroll = bar.chips.scrollLeft;
     bar.chips.textContent = '';
@@ -2800,7 +2848,7 @@
     }
   }
 
-  // Números novos do CRM: barra, Quadro (modo CRM) e janela
+  // Números novos do CRM: barra, Quadro (modo CRM) e painel
   function onCrmCountsChanged() {
     renderBar();
     if (board.open && isCrm()) updateBoardCounts();
@@ -2865,7 +2913,6 @@
 
   function openBoard(firstId) {
     if (!boardEls) return;
-    if (crm.open) closeCrm();
     board.open = true;
     board.columns = boardColumnIds(firstId);
     board.data = new Map();
@@ -2904,7 +2951,7 @@
     if (!ids.length) {
       let msg = 'Nenhuma coluna escolhida. Use "Colunas" para escolher as etiquetas.';
       if (!familyLabels(state.family).length) {
-        msg = isCrm() ? 'Nenhuma etiqueta do CRM. Crie em "Etiquetas CRM", na barra do topo.'
+        msg = isCrm() ? 'Nenhuma etiqueta do CRM. Crie na seção Etiquetas do painel.'
           : Array.isArray(state.waLabels) ? 'Nenhuma etiqueta do WhatsApp nesta conta.'
             : 'As etiquetas do WhatsApp ainda não estão prontas (só no WhatsApp Business).';
       }
@@ -3334,7 +3381,7 @@
     board.columns.forEach((id) => { if (boardLabelById(id)) loadColumn(id, true); });
   }
 
-  // ── Janela Etiquetas CRM: etiquetas do WhatsApp nesta conversa (v1.7.0, só mudaram de lugar) ──
+  // ── Seção Etiquetas do painel: etiquetas do WhatsApp nesta conversa (v1.7.0, só mudaram de lugar) ──
   // Só aparecem com as etiquetas do WhatsApp disponíveis.
 
   const waTabOn = () => Array.isArray(state.waLabels) && state.waLabels.length > 0;
@@ -3343,7 +3390,7 @@
     const on = waTabOn();
     wtEl.hidden = !on;
     if (!on) return;
-    if (wt.req === 0 && labelsTabActive()) scheduleWaConv(); // etiquetas chegaram com a janela já aberta
+    if (wt.req === 0 && labelsTabActive()) scheduleWaConv(); // etiquetas chegaram com a seção já aberta
 
     let warning = null;
     if (wt.kind === 'grupo') warning = 'Grupos: troque a etiqueta pelo Quadro';
@@ -3440,24 +3487,15 @@
       { label: 'Desfazer', onClick: () => toggleWaLabel(chatId, labelId, !on, { undo: true }) });
   }
 
-  // ── Janela Etiquetas CRM ──
+  // ── Seção Etiquetas do painel (etiquetas CRM; era a janela "Etiquetas CRM" na 1.8.0) ──
 
   const PALETTE = ['#f97316', '#ef4444', '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#6366f1', '#a855f7', '#ec4899', '#6b7280'];
   const NOTE_MAX = 2000;
   const NOTES_MISSING = 'Nota disponível após atualizar o banco';
 
-  function hideCrmToast() {
-    clearTimeout(crm.toastTimer);
-    crmEls.toast.hidden = true;
-    crmEls.toast.textContent = '';
-  }
-
+  // Avisos da seção Etiquetas: no aviso do próprio painel
   function crmToast(text, kind, ms, action = null) {
-    clearTimeout(crm.toastTimer);
-    fillToast(crmEls.toast, text, action);
-    crmEls.toast.className = `btoast ${kind}`;
-    crmEls.toast.hidden = false;
-    crm.toastTimer = setTimeout(hideCrmToast, ms);
+    toast(text, kind, ms, action);
   }
 
   async function loadSchema() {
@@ -3468,14 +3506,11 @@
     if (crm.open) { renderAllLabels(); renderNote(); }
   }
 
+  // Chamadas por syncCrmActive (painel aberto + seção Etiquetas); a conversa aberta vem do updateContext do painel
   function openCrm() {
-    if (board.open) closeBoard();
     crm.open = true;
-    crmEls.root.hidden = false;
     state.convKey = undefined; // relê a conversa aberta
-    clearInterval(crm.ctxTimer);
     updateContext();
-    crm.ctxTimer = setInterval(updateContext, 1000);
     restartLabelsTabTimer();
     refreshLabelsTab();
     loadSchema();
@@ -3483,22 +3518,17 @@
     if (crm.copy.preview && crm.copy.preview.failed) crm.copy.preview = null; // tenta contar de novo
     renderNewForm();
     renderCopy();
-    renderBar();
-    crmEls.root.focus();
   }
 
   function closeCrm() {
     crm.open = false;
-    crmEls.root.hidden = true;
-    clearInterval(crm.ctxTimer);
-    if (!state.open) clearTimeout(convTimer);
     restartLabelsTabTimer();
     clearTimeout(wt.timer);
     crm.edit = null;
     crm.showNew = false;
     crm.copy.stop = true;
-    hideCrmToast();
-    renderBar();
+    renderNewForm();
+    renderAllLabels();
   }
 
   // ── Nota do contato (CRM): lida ao trocar de conversa; gravada só no clique em "Salvar nota" ──
@@ -3885,7 +3915,7 @@
     if (ready) {
       warn.textContent = `Só entram as conversas carregadas no WhatsApp Web agora (${cp.preview.total} de ${waLabel.count}).`;
     } else if (cp.preview && cp.preview.waId === cp.waId) {
-      warn.textContent = 'Não consegui contar as conversas do WhatsApp agora. Feche e abra a janela para tentar de novo.';
+      warn.textContent = 'Não consegui contar as conversas do WhatsApp agora. Volte para Mensagens e abra Etiquetas de novo para tentar.';
     } else {
       warn.textContent = 'Contando as conversas carregadas no WhatsApp Web…';
       if (!cp.running && crm.open) previewCopy(cp.waId);
@@ -3991,7 +4021,6 @@
   }
 
   function initCrmWindow() {
-    crmEls.root.querySelector('.crmclose').addEventListener('click', () => closeCrm());
     crmEls.note.addEventListener('input', () => { crm.note.msg = ''; crm.note.error = false; renderNote(); });
     crmEls.noteSave.addEventListener('click', () => saveNote());
     crmEls.newBtn.addEventListener('click', () => {
@@ -4002,16 +4031,7 @@
     crmEls.root.querySelector('.crm-create').addEventListener('click', () => createCrmLabel());
     crmEls.root.querySelector('.crm-cancelnew').addEventListener('click', () => { crm.showNew = false; renderNewForm(); });
     crmEls.newName.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); createCrmLabel(); } });
-    // Esc fecha primeiro o que estiver aberto dentro da janela; teclas não vão para os atalhos do WhatsApp
-    ['keydown', 'keypress', 'keyup'].forEach((type) => crmEls.root.addEventListener(type, (e) => {
-      if (type === 'keydown' && e.key === 'Escape') {
-        e.preventDefault();
-        if (crm.edit) setEdit(null);
-        else if (crm.showNew) { crm.showNew = false; renderNewForm(); }
-        else closeCrm();
-      }
-      e.stopPropagation();
-    }));
+    // (Esc e as teclas ficam com o painel: veja o listener de teclado do painel)
     ['dragstart', 'drag', 'dragenter', 'dragover', 'dragleave', 'drop', 'dragend'].forEach((type) => crmEls.root.addEventListener(type, (e) => {
       if (crm.dragId) {
         e.stopPropagation();
@@ -4034,8 +4054,6 @@
       hint: shadow.querySelector('.board .bhint'),
     };
 
-    shadow.querySelector('.wabar .wboard').addEventListener('click', () => (board.open ? closeBoard() : openBoard()));
-    shadow.querySelector('.wabar .wcrm').addEventListener('click', () => (crm.open ? closeCrm() : openCrm()));
     shadow.querySelector('.wabar .wclose').addEventListener('click', () => setBarHidden(true));
     shadow.querySelectorAll('.wfam button').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); setFamily(b.dataset.fam); }));
     boardEls.colsBtn.addEventListener('click', (e) => { e.stopPropagation(); setColsMenu(!board.menuOpen); });
@@ -4089,7 +4107,7 @@
     document.addEventListener('visibilitychange', () => { try { barTick(); } catch { /* ok */ } });
   }
 
-  // Se a barra, o Quadro ou a janela falhar, o resto da extensão continua funcionando
+  // Se a barra, o Quadro ou a seção Etiquetas falhar, o resto da extensão continua funcionando
   try {
     initLabelsBar();
   } catch {
@@ -4107,8 +4125,9 @@
   renderLabelsRow();
   renderAllLabels();
   renderList();
+  setSection('mensagens', { persist: false });
   try {
-    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref'], (saved) => {
+    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref', 'panelSection'], (saved) => {
       saved = saved || {};
       state.collapsed = saved.collapsed || {};
       state.lastUsed  = saved.lastUsed || '';
@@ -4122,6 +4141,7 @@
       }
       renderLabelsRow();
       renderAllLabels();
+      setSection(saved.panelSection, { persist: false });
       renderThemeButton();
       applyTheme();
       renderLastUsed();
