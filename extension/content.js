@@ -156,6 +156,8 @@
     openId: null, clients: [], hasMore: false, loading: false, error: null, search: '',
     reqId: 0, rowsSig: '', timer: null, searchTimer: null, hintTimer: null,
   };
+  // Aba Etiquetas, seção do WhatsApp: id da conversa aberta e etiquetas nativas dela (só na memória)
+  const wt = { chatId: null, kind: null, labelIds: [], loading: false, error: false, busy: false, req: 0, timer: null };
   const convCache   = new Map(); // key do contato -> ids das etiquetas
   let convTimer     = null;
   let pendingLabelOps = 0;
@@ -685,6 +687,23 @@
       .bmore:disabled { color: var(--muted); cursor: default; }
       .bnote { flex-shrink: 0; padding: 6px 4px 2px; text-align: center; font-size: 11px; color: var(--muted); }
       .bempty { padding: 30px; font-size: 13px; color: var(--muted); }
+      /* Quadro: trocar etiqueta (arrastar ou "Mover para…") */
+      .bcard.busy { opacity: .45; pointer-events: none; }
+      .bcard.dragging { opacity: .6; }
+      .bcol.drop { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+      .bmove { padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+      .bmove:hover, .bmove:focus-visible { color: var(--accent); border-color: var(--accent); }
+      .bmovemenu { flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; margin-top: -2px; padding: 4px; border-radius: 9px; background: var(--card); border: 1px solid var(--accent); box-shadow: 0 4px 14px var(--shadow); }
+      .bmovemenu .bmovehint { padding: 3px 6px; font-size: 10.5px; color: var(--muted); }
+      .bmovemenu button { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: none; border-radius: 6px; background: transparent; text-align: left; font-size: 12px; font-weight: 600; }
+      .bmovemenu button:hover, .bmovemenu button:focus-visible { background: var(--bg2); }
+      .btoast { position: absolute; left: 50%; bottom: 16px; z-index: 4; max-width: calc(100% - 32px); transform: translateX(-50%); padding: 9px 12px; border-radius: 9px; font-size: 12.5px; box-shadow: 0 4px 16px var(--shadow); }
+      .btoast[hidden] { display: none; }
+      .btoast.ok { background: var(--card); color: var(--fg); border: 1px solid var(--ok); }
+      .btoast.error { background: var(--err-soft); color: var(--err); border: 1px solid var(--err); }
+      .tundo { margin-left: 8px; padding: 2px 9px; border-radius: 6px; border: 1px solid currentColor; background: transparent; color: inherit; font-size: 11.5px; font-weight: 700; }
+      .tundo:hover:not(:disabled) { background: var(--accent-soft); }
+      .tundo:disabled { opacity: .5; cursor: default; }
 
       /* Áudio como mensagem de voz */
       .asfile { padding: 0 6px; height: 22px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 600; white-space: nowrap; align-self: center; }
@@ -776,6 +795,26 @@
       .lt-hint b { color: var(--accent); }
       .lt-hint.warn b { color: var(--warn); }
       .lt-hint .manual { margin-top: 4px; font-weight: 600; word-break: break-word; }
+      /* Aba Etiquetas: seção das etiquetas nativas do WhatsApp */
+      .wt-head { font-size: 11.5px; font-weight: 800; letter-spacing: .08em; color: var(--fg); margin: 4px 2px 8px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+      .wt-head[hidden], .wt[hidden] { display: none; }
+      .wt-who { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; margin-bottom: 8px; min-width: 0; }
+      .wt-who.warn { color: var(--warn); }
+      .wt-who span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wt-chips { display: flex; flex-wrap: wrap; gap: 5px; transition: opacity .15s; }
+      .wt-chips.loading { opacity: .6; }
+      .wtchip { --c: var(--accent); --on: #fff; display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: transparent; color: var(--fg); border: 1.5px solid var(--c); transition: background .15s, color .15s; }
+      .wtchip:hover:not(:disabled) { background: color-mix(in srgb, var(--c) 15%, transparent); }
+      .wtchip.on, .wtchip.on:hover { background: var(--c); color: var(--on); }
+      .wtchip svg { width: 12px; height: 12px; stroke-width: 3; }
+      .wtchip .wdot { width: 8px; height: 8px; }
+      .wtchip:disabled { opacity: .45; cursor: default; }
+      .wt-none { font-size: 12px; color: var(--muted); }
+      .wt-rows { display: flex; flex-direction: column; gap: 5px; }
+      .wt-row { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--border); background: var(--card); text-align: left; font-size: 12.5px; transition: border-color .15s; }
+      .wt-row:hover { border-color: var(--accent); }
+      .wt-row .wdot { width: 11px; height: 11px; }
+      .wt-row .wtname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 
       /* Aviso e rodapé */
       .toast { margin: 0 12px; max-height: 0; padding: 0 10px; border-radius: 8px; font-size: 12px; opacity: 0; overflow: hidden; transition: all .2s ease; }
@@ -807,7 +846,7 @@
       </div>
       <div class="board" role="dialog" aria-label="Quadro de etiquetas" tabindex="-1" hidden>
         <div class="bheader">
-          <div class="btitle"><b>Quadro de etiquetas</b><span>Clique num cartão para abrir a conversa</span></div>
+          <div class="btitle"><b>Quadro de etiquetas</b><span>Clique num cartão para abrir a conversa · arraste para outra coluna para trocar a etiqueta</span></div>
           <span class="bstatus" role="status" aria-live="polite"></span>
           <div class="bactions">
             <button class="bbtn bcolsbtn" type="button" aria-haspopup="true" aria-expanded="false">Colunas</button>
@@ -817,6 +856,7 @@
           <div class="bcolsmenu" hidden></div>
         </div>
         <div class="bcols"></div>
+        <div class="btoast" role="status" aria-live="polite" hidden></div>
       </div>
       <aside class="panel" aria-label="Mensagens">
         <header class="head">
@@ -842,6 +882,21 @@
         <div class="banner" hidden>${svg('wifiOff')}<span>Sem conexão: mostrando a última versão</span><button type="button">Tentar de novo</button></div>
         <div class="list"></div>
         <div class="ltab" role="tabpanel" aria-label="Etiquetas">
+          <div class="wt" hidden>
+            <div class="wt-head">ETIQUETAS DO WHATSAPP</div>
+            <section class="lt-sec">
+              <div class="lt-title">Esta conversa</div>
+              <div class="lt-conv">
+                <div class="wt-who warn"><span></span></div>
+                <div class="wt-chips"></div>
+              </div>
+            </section>
+            <section class="lt-sec">
+              <div class="lt-title">Abrir no Quadro</div>
+              <div class="wt-rows"></div>
+            </section>
+          </div>
+          <div class="wt-head wt-sys" hidden>ETIQUETAS DO SISTEMA</div>
           <section class="lt-sec">
             <div class="lt-title">Esta conversa</div>
             <div class="lt-conv">
@@ -900,6 +955,11 @@
   const ltChips   = shadow.querySelector('.tchips');
   const ltRowsEl  = shadow.querySelector('.lt-rows');
   const ltHint    = shadow.querySelector('.lt-hint');
+  const wtEl      = shadow.querySelector('.wt');
+  const wtSysHead = shadow.querySelector('.wt-sys');
+  const wtWho     = shadow.querySelector('.wt-who span');
+  const wtChips   = shadow.querySelector('.wt-chips');
+  const wtRows    = shadow.querySelector('.wt-rows');
 
   // Busca de clientes e lista da etiqueta aberta: elementos fixos, movidos para a etiqueta aberta
   const ltSearchWrap = el('label', 'lt-search');
@@ -1082,6 +1142,7 @@
     }
     if (!key) setMenuOpen(false);
     renderLabelsRow();
+    scheduleWaConv();
   }
 
   async function loadConvLabels(key) {
@@ -1240,6 +1301,7 @@
   }
 
   async function refreshLabelsTab() {
+    refreshWaTab();
     await Promise.all([syncLabels(), loadCounts()]);
     renderAllLabels();
     if (lt.openId) loadClients({ reset: true });
@@ -1536,12 +1598,30 @@
 
   // ── Aviso, faixa offline e rodapé ──────────────────────────────────────────
 
+  // action (opcional): { label, onClick } vira um botão no aviso, que vale uma vez só
+  function fillToast(target, text, action) {
+    target.textContent = text;
+    if (!action) return;
+    const b = el('button', 'tundo', action.label);
+    b.type = 'button';
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (b.disabled) return;
+      b.disabled = true;
+      action.onClick();
+    });
+    target.append(b);
+  }
+
   let toastTimer = null;
-  function toast(text, kind = 'info', ms = 4000) {
+  function toast(text, kind = 'info', ms = 4000, action = null) {
     clearTimeout(toastTimer);
-    toastEl.textContent = text;
+    fillToast(toastEl, text, action);
     toastEl.className = `toast show ${kind}`;
-    if (ms) toastTimer = setTimeout(() => { toastEl.className = `toast ${kind}`; }, ms);
+    if (ms) toastTimer = setTimeout(() => {
+      toastEl.className = `toast ${kind}`;
+      toastEl.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    }, ms);
   }
 
   function renderBanner() {
@@ -2370,6 +2450,7 @@
         { label: 'Telemetria e servidores de terceiros da biblioteca desligados', status: 'warn', screen: 'biblioteca não carregada' },
         { label: 'Conversa aberta', status: 'warn', screen: 'não disponível' },
         { label: 'Etiquetas do WhatsApp Business', status: 'warn', screen: 'não disponível' },
+        labelWriteDiagRow(null),
         barDiagRow(),
       ];
     }
@@ -2389,8 +2470,16 @@
         status: labels.available ? 'ok' : 'warn',
         screen: labels.available && Number.isFinite(labels.count) ? `${labels.count} etiqueta${labels.count === 1 ? '' : 's'}` : 'não disponível',
       },
+      labelWriteDiagRow(st.labelWrite),
       barDiagRow(),
     ];
+  }
+
+  // Trocar etiquetas nativas: só disponível/indisponível e o motivo (sem nomes)
+  function labelWriteDiagRow(info) {
+    if (info && info.available) return { label: 'Trocar etiquetas', status: 'ok', screen: 'disponível' };
+    const why = info && info.reason === 'not_business' ? 'conta não Business' : 'biblioteca não pronta';
+    return { label: 'Trocar etiquetas', status: 'warn', screen: `indisponível: ${why}` };
   }
 
   // Barra de etiquetas: só o estado (nunca nomes de etiquetas ou de clientes)
@@ -2485,8 +2574,10 @@
     renderList();
   }
 
-  // ── Barra de etiquetas do WhatsApp Business + Quadro (SÓ LEITURA) ─────────
+  // ── Barra de etiquetas do WhatsApp Business + Quadro ──────────────────────
   // Lê as etiquetas nativas pelo wa-bridge.js (pedidos labels, labelChats e openChat).
+  // Trocar etiqueta (setChatLabels) só acontece no clique/arraste/"Desfazer" do usuário,
+  // uma conversa por vez; nada em lote nem em timer.
   // Nomes, telefones e prévias ficam só na memória enquanto o Quadro está aberto:
   // nunca vão para o Supabase, chrome.storage, console ou Diagnóstico.
 
@@ -2497,7 +2588,12 @@
   const PREVIEW_LABEL = { audio: 'Áudio', foto: 'Foto', video: 'Vídeo', documento: 'Documento', figurinha: 'Figurinha', localizacao: 'Localização', outro: 'Mensagem' };
 
   const bar = { el: null, chips: null, btn: null, busy: false, lastAt: 0 };
-  const board = { open: false, columns: [], data: new Map(), savedIds: null, menuOpen: false, opening: false };
+  const board = {
+    open: false, columns: [], data: new Map(), savedIds: null, menuOpen: false, opening: false,
+    moving: new Set(), drag: null, moveMenu: null, toastTimer: null, // ids das conversas sendo trocadas agora
+  };
+  const LABEL_FAIL_MSG = 'Não consegui trocar a etiqueta. Confira no WhatsApp.';
+  const UNDO_MS = 8000;
   let boardEls = null;
 
   const waLabelById = (id) => (state.waLabels || []).find((l) => l.id === id) || null;
@@ -2544,6 +2640,7 @@
       bar.lastAt = Date.now();
       renderBar();
       if (board.open) updateBoardCounts();
+      renderWaTab();
     }
   }
 
@@ -2595,7 +2692,10 @@
     if (!boardEls) return;
     board.open = false;
     board.data = new Map();
+    board.drag = null;
+    board.moveMenu = null;
     setColsMenu(false);
+    hideBoardToast();
     boardEls.cols.textContent = '';
     boardEls.root.hidden = true;
   }
@@ -2624,6 +2724,7 @@
       name.title = label.name;
       head.append(dot, name, el('span', 'wcount', String(label.count)));
       col.append(head, el('div', 'bbody'));
+      addDropTarget(col, id);
       boardEls.cols.append(col);
       renderColumn(id);
     });
@@ -2680,10 +2781,12 @@
   }
 
   function boardCard(c, label) {
-    const card = el('div', 'bcard');
+    const busy = board.moving.has(c.id);
+    const card = el('div', `bcard${busy ? ' busy' : ''}`);
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
     card.style.setProperty('--c', label.hexColor);
+    if (busy) card.setAttribute('aria-busy', 'true');
     const main = el('div', 'bmain');
     const name = el('div', 'bcname', c.name || '—');
     name.title = c.name || '';
@@ -2691,13 +2794,172 @@
     const side = el('div', 'bside');
     side.append(el('span', 'bdate', formatChatDate(c.t)));
     if (c.unread > 0) side.append(el('span', 'bunread', c.unread > 99 ? '99+' : String(c.unread)));
+    if (boardTargets(label.id).length) {
+      const move = el('button', 'bmove', 'Mover para…');
+      move.type = 'button';
+      move.disabled = busy;
+      move.title = 'Trocar a etiqueta desta conversa';
+      move.setAttribute('aria-haspopup', 'true');
+      move.addEventListener('click', (e) => { e.stopPropagation(); toggleMoveMenu(card, c.id, label.id); });
+      side.append(move);
+    }
     card.append(main, side);
     const open = () => openBoardChat(c.id);
     card.addEventListener('click', open);
     card.addEventListener('keydown', (e) => {
+      if (e.target !== card) return;
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
     });
+    // Arrastar para outra coluna = trocar a etiqueta (dados do arraste só na memória, nunca no dataTransfer)
+    card.draggable = !busy;
+    card.addEventListener('dragstart', (e) => {
+      if (board.moving.has(c.id)) { e.preventDefault(); return; }
+      board.drag = { chatId: c.id, from: label.id };
+      closeMoveMenu();
+      card.classList.add('dragging');
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('application/x-tsp-board', ''); } catch { /* ok */ }
+      }
+    });
+    card.addEventListener('dragend', () => {
+      board.drag = null;
+      card.classList.remove('dragging');
+      boardEls.cols.querySelectorAll('.bcol.drop').forEach((col) => col.classList.remove('drop'));
+    });
     return card;
+  }
+
+  // Colunas visíveis para onde o cartão pode ir (todas menos a dele)
+  function boardTargets(fromId) {
+    return board.columns.filter((id) => id !== fromId && waLabelById(id));
+  }
+
+  function addDropTarget(col, id) {
+    const accepts = () => !!board.drag && board.drag.from !== id;
+    ['dragenter', 'dragover'].forEach((type) => col.addEventListener(type, (e) => {
+      if (!board.drag) return;
+      e.stopPropagation();
+      if (!accepts()) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      col.classList.add('drop');
+    }));
+    col.addEventListener('dragleave', (e) => {
+      if (!e.relatedTarget || !col.contains(e.relatedTarget)) col.classList.remove('drop');
+    });
+    col.addEventListener('drop', (e) => {
+      if (!board.drag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      col.classList.remove('drop');
+      const { chatId, from } = board.drag;
+      board.drag = null;
+      if (from !== id) moveBoardCard(chatId, from, id);
+    });
+  }
+
+  function closeMoveMenu() {
+    if (board.moveMenu) board.moveMenu.menu.remove();
+    board.moveMenu = null;
+  }
+
+  // "Mover para…": lista das colunas visíveis, logo abaixo do cartão
+  function toggleMoveMenu(card, chatId, fromId) {
+    const same = board.moveMenu && board.moveMenu.menu.isConnected && board.moveMenu.chatId === chatId && board.moveMenu.from === fromId;
+    closeMoveMenu();
+    if (same || board.moving.has(chatId)) return;
+    const menu = el('div', 'bmovemenu');
+    menu.setAttribute('role', 'menu');
+    menu.append(el('div', 'bmovehint', 'Mover para…'));
+    boardTargets(fromId).forEach((id) => {
+      const l = waLabelById(id);
+      const opt = el('button');
+      opt.type = 'button';
+      opt.setAttribute('role', 'menuitem');
+      const dot = el('span', 'wdot');
+      dot.style.background = l.hexColor;
+      opt.append(dot, l.name);
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeMoveMenu();
+        moveBoardCard(chatId, fromId, id);
+      });
+      menu.append(opt);
+    });
+    card.after(menu);
+    board.moveMenu = { chatId, from: fromId, menu, card };
+    const firstOpt = menu.querySelector('button');
+    if (firstOpt) firstOpt.focus();
+  }
+
+  function hideBoardToast() {
+    clearTimeout(board.toastTimer);
+    if (!boardEls || !boardEls.toast) return;
+    boardEls.toast.hidden = true;
+    boardEls.toast.textContent = '';
+  }
+
+  function boardToast(text, kind, ms, action = null) {
+    if (!boardEls || !boardEls.toast) return;
+    clearTimeout(board.toastTimer);
+    fillToast(boardEls.toast, text, action);
+    boardEls.toast.className = `btoast ${kind}`;
+    boardEls.toast.hidden = false;
+    board.toastTimer = setTimeout(hideBoardToast, ms);
+  }
+
+  // Ajusta o número de uma etiqueta na barra/Quadro depois de uma troca confirmada
+  function bumpWaCount(labelId, delta) {
+    const l = waLabelById(labelId);
+    if (l) l.count = Math.max(0, l.count + delta);
+  }
+
+  async function requestLabelChange(chatId, add, remove) {
+    try {
+      const res = await waRequest('setChatLabels', { chatId, add, remove }, { timeout: 15000 });
+      return res && res.confirmed === true && Array.isArray(res.labelIds) ? res : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Troca a etiqueta de um cartão: tira a da coluna de origem e põe a da coluna de destino
+  async function moveBoardCard(chatId, from, to, { undo = false } = {}) {
+    if (from === to || board.moving.has(chatId) || !waLabelById(to)) return;
+    const fromData = board.data.get(from);
+    const card = fromData && fromData.cards.find((c) => c.id === chatId);
+    if (!card) return;
+    board.moving.add(chatId);
+    renderColumn(from);
+    renderColumn(to);
+    const res = await requestLabelChange(chatId, [to], [from]);
+    board.moving.delete(chatId);
+    const live = board.open && board.data.get(from) === fromData;
+    if (!res) {
+      if (live) { renderColumn(from); renderColumn(to); }
+      boardToast(LABEL_FAIL_MSG, 'error', 6000);
+      return;
+    }
+    const toData = board.data.get(to);
+    const wasInTo = !!(toData && toData.cards.some((c) => c.id === chatId));
+    bumpWaCount(from, -1);
+    if (!wasInTo) bumpWaCount(to, 1);
+    fromData.cards = fromData.cards.filter((c) => c.id !== chatId);
+    fromData.total = Math.max(0, fromData.total - 1);
+    if (toData) {
+      toData.cards = [card, ...toData.cards.filter((c) => c.id !== chatId)];
+      if (!wasInTo) toData.total += 1;
+    }
+    renderBar();
+    renderWaTab();
+    if (!live) return;
+    updateBoardCounts();
+    renderColumn(from);
+    renderColumn(to);
+    const name = waLabelById(to).name;
+    if (undo) boardToast(`Troca desfeita: etiqueta de volta para ${name}.`, 'ok', 4000);
+    else boardToast(`Etiqueta trocada para ${name}`, 'ok', UNDO_MS, { label: 'Desfazer', onClick: () => { hideBoardToast(); moveBoardCard(chatId, to, from, { undo: true }); } });
   }
 
   function renderColumn(id) {
@@ -2807,6 +3069,130 @@
     board.columns.forEach((id) => { if (waLabelById(id)) loadColumn(id, true); });
   }
 
+  // ── Aba Etiquetas: seção "ETIQUETAS DO WHATSAPP" (nativas) ──
+  // Só aparece com as etiquetas nativas disponíveis; sem elas a aba fica igual à v1.6.0.
+
+  const waTabOn = () => Array.isArray(state.waLabels) && state.waLabels.length > 0;
+  let wtRowsSig = '';
+
+  function renderWaTab() {
+    const on = waTabOn();
+    wtEl.hidden = !on;
+    wtSysHead.hidden = !on;
+    if (!on) return;
+    if (wt.req === 0 && labelsTabActive()) scheduleWaConv(); // etiquetas chegaram com a aba já aberta
+
+    let warning = null;
+    if (wt.kind === 'grupo') warning = 'Grupos: troque a etiqueta pelo Quadro';
+    else if (!wt.chatId) warning = 'Abra uma conversa para etiquetar';
+    wtWho.parentElement.classList.toggle('warn', !!warning);
+    wtWho.textContent = warning || (state.ctx && state.ctx.fullName) || 'Conversa aberta';
+    wtWho.title = wtWho.textContent;
+    wtChips.classList.toggle('loading', !warning && (wt.loading || wt.busy));
+    wtChips.textContent = '';
+    state.waLabels.forEach((l) => {
+      const applied = !warning && wt.labelIds.includes(l.id);
+      const chip = el('button', `wtchip${applied ? ' on' : ''}`);
+      chip.type = 'button';
+      chip.disabled = !!warning || wt.loading || wt.busy || wt.error;
+      chip.style.setProperty('--c', l.hexColor);
+      chip.style.setProperty('--on', textOn(l.hexColor));
+      chip.setAttribute('aria-pressed', String(applied));
+      chip.title = warning || (applied ? `Desmarcar "${l.name}" no WhatsApp` : `Marcar "${l.name}" no WhatsApp`);
+      if (applied) chip.innerHTML = svg('check');
+      else chip.append(el('span', 'wdot'));
+      if (!applied) chip.querySelector('.wdot').style.background = l.hexColor;
+      chip.append(l.name);
+      chip.addEventListener('click', () => toggleWaLabel(wt.chatId, l.id, !applied));
+      wtChips.append(chip);
+    });
+    if (!warning && wt.error) wtChips.append(el('span', 'wt-none', 'Não consegui ler as etiquetas desta conversa.'));
+
+    // Lista das nativas: só reconstrói quando muda (não tira o foco)
+    const sig = JSON.stringify(state.waLabels.map((l) => [l.id, l.name, l.hexColor, l.count]));
+    if (sig === wtRowsSig) return;
+    wtRowsSig = sig;
+    wtRows.textContent = '';
+    state.waLabels.forEach((l) => {
+      const row = el('button', 'wt-row');
+      row.type = 'button';
+      row.title = `Abrir o Quadro com "${l.name}"`;
+      const dot = el('span', 'wdot');
+      dot.style.background = l.hexColor;
+      row.append(dot, el('span', 'wtname', l.name), el('span', 'wcount', String(l.count)));
+      row.addEventListener('click', () => openBoard(l.id));
+      wtRows.append(row);
+    });
+  }
+
+  async function refreshWaTab() {
+    if (!Array.isArray(state.waLabels)) await refreshBar();
+    loadWaConv();
+  }
+
+  // Ao trocar de conversa (mesmo gatilho da aba): relê as etiquetas nativas da conversa aberta
+  function scheduleWaConv() {
+    clearTimeout(wt.timer);
+    if (labelsTabActive()) wt.timer = setTimeout(loadWaConv, 300);
+  }
+
+  async function loadWaConv() {
+    if (!labelsTabActive() || !waTabOn()) { renderWaTab(); return; }
+    const req = ++wt.req;
+    let active;
+    try { active = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { active = null; }
+    if (req !== wt.req) return;
+    const kind = (active && active.kind) || 'nenhuma';
+    const chatId = kind === 'individual' && typeof active.chatId === 'string' ? active.chatId : null;
+    if (chatId !== wt.chatId) wt.labelIds = [];
+    wt.chatId = chatId;
+    wt.kind = kind;
+    wt.error = false;
+    wt.loading = !!chatId;
+    renderWaTab();
+    if (!chatId) return;
+    try {
+      const res = await waRequest('chatLabels', { chatId }, { timeout: 7000 });
+      if (req !== wt.req) return;
+      wt.labelIds = Array.isArray(res && res.labelIds) ? res.labelIds.filter((x) => typeof x === 'string') : [];
+    } catch {
+      if (req !== wt.req) return;
+      wt.error = true;
+    }
+    wt.loading = false;
+    renderWaTab();
+  }
+
+  // Marca (on) ou desmarca uma etiqueta nativa na conversa: só pelo clique ou pelo "Desfazer"
+  async function toggleWaLabel(chatId, labelId, on, { undo = false } = {}) {
+    if (!chatId || wt.busy || board.moving.has(chatId) || !waLabelById(labelId)) return;
+    wt.busy = true;
+    board.moving.add(chatId);
+    wt.req++; // descarta leituras em andamento
+    renderWaTab();
+    const res = await requestLabelChange(chatId, on ? [labelId] : [], on ? [] : [labelId]);
+    wt.busy = false;
+    board.moving.delete(chatId);
+    wt.loading = false;
+    if (!res) {
+      renderWaTab();
+      toast(LABEL_FAIL_MSG, 'error', 6000);
+      return;
+    }
+    bumpWaCount(labelId, on ? 1 : -1);
+    if (wt.chatId === chatId) { wt.labelIds = res.labelIds.slice(); wt.error = false; }
+    renderBar();
+    renderWaTab();
+    if (board.open) {
+      updateBoardCounts();
+      if (board.columns.includes(labelId)) loadColumn(labelId, true);
+    }
+    const name = waLabelById(labelId).name;
+    if (undo) toast('Troca desfeita.', 'ok', 4000);
+    else toast(`Etiqueta "${name}" ${on ? 'marcada' : 'desmarcada'} nesta conversa.`, 'ok', UNDO_MS,
+      { label: 'Desfazer', onClick: () => toggleWaLabel(chatId, labelId, !on, { undo: true }) });
+  }
+
   function initLabelsBar() {
     bar.el = shadow.querySelector('.wabar');
     bar.chips = shadow.querySelector('.wabar .wchips');
@@ -2816,6 +3202,7 @@
       menu: shadow.querySelector('.board .bcolsmenu'),
       colsBtn: shadow.querySelector('.board .bcolsbtn'),
       status: shadow.querySelector('.board .bstatus'),
+      toast: shadow.querySelector('.board .btoast'),
     };
 
     shadow.querySelector('.wabar .wboard').addEventListener('click', () => openBoard());
@@ -2825,12 +3212,24 @@
     shadow.querySelector('.board .bclose').addEventListener('click', () => closeBoard());
     boardEls.root.addEventListener('click', (e) => {
       if (board.menuOpen && !e.composedPath().includes(boardEls.menu) && !e.composedPath().includes(boardEls.colsBtn)) setColsMenu(false);
+      if (board.moveMenu && !e.composedPath().includes(board.moveMenu.menu)) closeMoveMenu();
     });
-    // Esc fecha só o Quadro (ou o menu de colunas); teclas não vão para os atalhos do WhatsApp
+    // Arraste de cartão não vai para o WhatsApp (nada de "soltar arquivo" na página)
+    ['dragstart', 'drag', 'dragenter', 'dragover', 'dragleave', 'drop', 'dragend'].forEach((type) => boardEls.root.addEventListener(type, (e) => {
+      if (board.drag) {
+        e.stopPropagation();
+        if (type === 'drop') { e.preventDefault(); board.drag = null; }
+      }
+    }));
+    // Esc fecha só o Quadro (ou o menu aberto); teclas não vão para os atalhos do WhatsApp
     ['keydown', 'keypress', 'keyup'].forEach((type) => boardEls.root.addEventListener(type, (e) => {
       if (type === 'keydown' && e.key === 'Escape') {
         e.preventDefault();
-        if (board.menuOpen) setColsMenu(false);
+        if (board.moveMenu && board.moveMenu.menu.isConnected) {
+          const card = board.moveMenu.card;
+          closeMoveMenu();
+          if (card.isConnected) card.focus();
+        } else if (board.menuOpen) setColsMenu(false);
         else closeBoard();
       }
       e.stopPropagation();

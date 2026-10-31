@@ -10,7 +10,7 @@ sempre você.
 
 Também permite marcar **etiquetas** (criadas no ERP) na conversa aberta.
 
-Versão atual: **1.6.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **1.7.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -187,6 +187,21 @@ Na aba **Etiquetas**:
 - Os números se atualizam ao abrir a aba, depois de marcar ou desmarcar e a
   cada minuto enquanto a aba estiver aberta.
 
+Se a conta é **WhatsApp Business** com etiquetas, a aba tem duas partes, nesta
+ordem:
+- **ETIQUETAS DO WHATSAPP** (as nativas do WhatsApp):
+  - **Esta conversa:** todas as etiquetas do WhatsApp; as que estão na conversa
+    aberta ficam com a cor cheia e um ✓. Clique para marcar ou desmarcar no
+    WhatsApp. Aparece o aviso com **Desfazer** (vale por 8 segundos). Só
+    conversas individuais; para grupos, use o Quadro.
+  - **Abrir no Quadro:** cada etiqueta com a cor e o número de conversas.
+    Clique para abrir o Quadro com ela na primeira coluna.
+- **ETIQUETAS DO SISTEMA**: as etiquetas do ERP, exatamente como descrito
+  acima (nada mudou nelas).
+
+Sem WhatsApp Business (ou com a biblioteca WA-JS ainda carregando), a parte do
+WhatsApp não aparece e a aba fica como antes.
+
 Como a extensão reconhece o cliente:
 - Pelo **telefone** da conversa, sempre que o WhatsApp Web mostra o número.
 - Se o número não aparece, pelo **nome** do contato. Nesse caso o painel
@@ -212,9 +227,18 @@ Se a sua conta é **WhatsApp Business** e tem etiquetas (por exemplo
   data e não lidas). **Clique num cartão** (ou aperte Enter) para abrir a
   conversa no WhatsApp. **Colunas** escolhe até 6 etiquetas; **Esc** ou
   **Fechar** fecha o Quadro.
-- **Só leitura:** a barra e o Quadro **não mudam etiquetas, não enviam nada e
-  não gravam nada** no ERP. Nomes, números e prévias ficam só na memória
-  enquanto o Quadro está aberto.
+- **Trocar a etiqueta:** arraste o cartão para outra coluna. A extensão tira a
+  etiqueta da coluna de origem e põe a da coluna de destino, no próprio
+  WhatsApp. Enquanto salva, o cartão fica apagado; deu certo, ele vai para o
+  topo da outra coluna, os números mudam e aparece "Etiqueta trocada para X"
+  com **Desfazer** (8 segundos). Se não der certo, o cartão fica onde estava e
+  aparece "Não consegui trocar a etiqueta. Confira no WhatsApp."
+- Pelo teclado (ou sem arrastar): botão **Mover para…** no cartão, com a lista
+  das colunas visíveis.
+- A extensão **só troca etiquetas quando você arrasta, clica ou aperta
+  Desfazer**, uma conversa por vez. Nunca cria, apaga, renomeia ou muda a cor
+  de etiquetas, não envia nada e não grava nada no ERP. Nomes, números e
+  prévias ficam só na memória enquanto o Quadro está aberto.
 - **O número da etiqueta** é o do WhatsApp e pode incluir conversas que o
   WhatsApp Web ainda não carregou. Por isso o Quadro pode mostrar menos
   cartões que o número; nesse caso aparece "Mostrando N conversas carregadas
@@ -253,6 +277,16 @@ guardada.
 ---
 
 ## O que mudou
+
+### 1.7.0
+- **Trocar etiquetas do WhatsApp Business** pela extensão, sempre por ação
+  sua: arrastar o cartão para outra coluna do Quadro (ou o botão "Mover
+  para…"), com **Desfazer**.
+- Aba **Etiquetas** com duas partes: "ETIQUETAS DO WHATSAPP" (marcar/desmarcar
+  na conversa aberta e abrir o Quadro) e "ETIQUETAS DO SISTEMA" (as do ERP,
+  iguais a antes).
+- Diagnóstico: nova linha "Trocar etiquetas" (disponível / indisponível: conta
+  não Business / biblioteca não pronta).
 
 ### 1.6.0
 - **Barra de etiquetas** no topo do WhatsApp Web, com as etiquetas nativas do
@@ -373,7 +407,14 @@ Service worker
   `labels` (getAllLabels), `labelChats { labelId, offset, limit }`
   (chat.list com `withLabels`, sem arquivadas, ordenado por data, prévia só da
   mensagem já carregada) e `openChat { chatId }` (openChatBottom, só para
-  conversas já carregadas). `stage: 'before-send'` = nada
+  conversas já carregadas). Etiquetas (1.7.0): `chatLabels { chatId }`
+  (lê `chat.labels`) e `setChatLabels { chatId, add: [id], remove: [id] }`
+  (no máx. 1 add e 1 remove, ids existentes, conversa já carregada; chama
+  `labels.addOrRemoveLabels` uma vez, relê a conversa por até 1,5 s e devolve
+  `{ labelIds, confirmed }`; erros `not_business`, `invalid_*` em
+  `before-send` e `label_failed` em `sending`). É a única escrita em
+  etiquetas, e o painel só a pede em clique, arraste ou "Desfazer".
+  `stage: 'before-send'` = nada
   foi enviado (pode ir para o plano B); `'sending'` = o envio começou (não
   tentar de novo).
 - Atualizar a WA-JS: ver `vendor/README.md` (npm pack fora do repositório,

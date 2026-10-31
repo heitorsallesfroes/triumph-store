@@ -68,6 +68,21 @@
     }
   }
 
+  // true/false quando a biblioteca sabe; undefined quando não dá para saber (só leitura)
+  function businessAccount() {
+    try {
+      return wpp.profile && typeof wpp.profile.isBusiness === 'function' ? wpp.profile.isBusiness() : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function labelWriteInfo() {
+    if (!isReady() || !wpp.labels || typeof wpp.labels.addOrRemoveLabels !== 'function') return { available: false, reason: 'not_ready' };
+    if (businessAccount() === false) return { available: false, reason: 'not_business' };
+    return { available: true, reason: null };
+  }
+
   async function status() {
     const config = (wpp && wpp.config) || {};
     const servers = config.linkPreviewApiServers;
@@ -78,6 +93,7 @@
       linkServersOff: Array.isArray(servers) && servers.length === 0,
       chat: activeChat().kind,
       labels: await labelsInfo(),
+      labelWrite: labelWriteInfo(),
     };
   }
 
@@ -271,26 +287,88 @@
     };
   }
 
-  async function openChat(payload) {
-    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
-    const chatId = payload && payload.chatId;
+  // Só conversas que já estão carregadas no WhatsApp Web (nunca cria conversa)
+  async function loadedChat(chatId) {
     if (typeof chatId !== 'string' || !CHAT_ID_RE.test(chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida', 'before-send');
-    // openChatBottom pode CRIAR conversa: só abre conversas que já estão carregadas no WhatsApp Web
     let loaded;
     try {
       loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS);
     } catch {
       loaded = null;
     }
-    if (!Array.isArray(loaded) || !loaded.some((c) => chatIdOf(c) === chatId)) {
-      throw new BridgeError('invalid_chat', 'Conversa não encontrada', 'before-send');
-    }
+    const chat = Array.isArray(loaded) ? loaded.find((c) => chatIdOf(c) === chatId) : null;
+    if (!chat) throw new BridgeError('invalid_chat', 'Conversa não encontrada', 'before-send');
+    return chat;
+  }
+
+  async function openChat(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const chatId = payload && payload.chatId;
+    // openChatBottom pode CRIAR conversa: só abre conversas que já estão carregadas no WhatsApp Web
+    await loadedChat(chatId);
     try {
       await wpp.chat.openChatBottom(chatId);
     } catch {
       throw new BridgeError('open_failed', 'Não consegui abrir a conversa', 'before-send');
     }
     return { opened: true };
+  }
+
+  // ── Etiquetas nativas: trocar (SÓ a pedido do usuário, uma conversa por vez) ──
+  // A única escrita é labels.addOrRemoveLabels, chamada uma vez por pedido. Nunca cria, apaga,
+  // renomeia ou muda a cor de etiquetas.
+
+  const LABEL_CONFIRM_MS = 1500;
+
+  const labelIdsOf = (chat) => {
+    const ids = safe(() => chat.labels, null);
+    return Array.isArray(ids) ? ids.map(String) : [];
+  };
+
+  async function chatLabels(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const chat = await loadedChat(payload && payload.chatId);
+    return { labelIds: labelIdsOf(chat) };
+  }
+
+  async function setChatLabels(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const p = payload || {};
+    const list = (v) => (v === undefined ? [] : Array.isArray(v) ? v : null);
+    const add = list(p.add);
+    const remove = list(p.remove);
+    if (!add || !remove || add.length > 1 || remove.length > 1 || add.length + remove.length === 0) {
+      throw new BridgeError('invalid_request', 'Pedido inválido', 'before-send');
+    }
+    const ids = [...add, ...remove];
+    if (ids.some((id) => typeof id !== 'string' || !id || id.length > 40)) throw new BridgeError('invalid_label', 'Etiqueta inválida', 'before-send');
+    if (add.length && remove.length && add[0] === remove[0]) throw new BridgeError('invalid_request', 'Pedido inválido', 'before-send');
+    if (typeof p.chatId !== 'string' || !CHAT_ID_RE.test(p.chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida', 'before-send');
+    if (labelWriteInfo().reason === 'not_business') throw new BridgeError('not_business', 'A conta não é do WhatsApp Business', 'before-send');
+    const known = await labels();
+    if (!ids.every((id) => known.some((l) => l.id === id))) throw new BridgeError('invalid_label', 'Etiqueta inválida', 'before-send');
+    const chat = await loadedChat(p.chatId);
+
+    try {
+      await wpp.labels.addOrRemoveLabels(p.chatId, [
+        ...add.map((labelId) => ({ labelId, type: 'add' })),
+        ...remove.map((labelId) => ({ labelId, type: 'remove' })),
+      ]);
+    } catch (err) {
+      if (err && err.code === 'is_not_business') throw new BridgeError('not_business', 'A conta não é do WhatsApp Business', 'before-send');
+      throw new BridgeError('label_failed', 'O WhatsApp não confirmou a troca de etiqueta', 'sending');
+    }
+
+    // Relê a conversa até a mudança aparecer (no máx. 1,5 s)
+    const done = (now) => add.every((id) => now.includes(id)) && remove.every((id) => !now.includes(id));
+    const read = () => labelIdsOf(safe(() => wpp.chat.get(p.chatId), null) || chat);
+    let now = read();
+    const until = Date.now() + LABEL_CONFIRM_MS;
+    while (!done(now) && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      now = read();
+    }
+    return { labelIds: now, confirmed: done(now) };
   }
 
   function cancel(payload) {
@@ -309,6 +387,8 @@
     labels: () => labels(),
     labelChats: (payload) => labelChats(payload),
     openChat: (payload) => openChat(payload),
+    chatLabels: (payload) => chatLabels(payload),
+    setChatLabels: (payload) => setChatLabels(payload),
   };
 
   function reply(request, ok, data, error) {
