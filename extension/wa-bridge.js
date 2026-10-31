@@ -31,7 +31,7 @@
     else if (wpp.loader && typeof wpp.loader.onReady === 'function') wpp.loader.onReady(restore);
   }
 
-  const jobs = new Map(); // id do pedido sendVoice -> { cancelled, stage, wake }
+  const jobs = new Map(); // id do pedido sendVoice/sendText/sendMedia -> { cancelled, stage, wake }
 
   class BridgeError extends Error {
     constructor(code, message, stage) {
@@ -103,6 +103,8 @@
     if (typeof chatId !== 'string' || !/^[^@\s]+@(c\.us|lid)$/.test(chatId)) {
       throw new BridgeError('invalid_chat', 'Conversa inválida (só conversas individuais)', 'before-send');
     }
+    // Sequências (1.9.0) pedem a checagem de conversa carregada; o envio de sempre continua igual
+    if (payload.requireLoaded === true) await individualLoadedChat(chatId);
     if (!(audio instanceof ArrayBuffer) || audio.byteLength === 0) throw new BridgeError('invalid_audio', 'Áudio inválido', 'before-send');
     // recordMs: inteiro >= 0 (0 = na hora, sem "gravando…"); qualquer outra coisa é erro (nunca vira 0)
     if (!Number.isInteger(recordMs) || recordMs < 0) throw new BridgeError('invalid_record_ms', 'Tempo de gravação inválido', 'before-send');
@@ -371,6 +373,102 @@
     return { labelIds: now, confirmed: done(now) };
   }
 
+  // ── Texto e arquivo (1.9.0): só a pedido do painel (clique ou agendamento do usuário) ──
+  // Só conversas individuais já carregadas; nunca cria conversa (createChat: false).
+  // "digitando…" (markIsComposing) pode ser cancelado; markIsPaused sempre no fim.
+
+  const SEND_MAX_BYTES = 40 * 1024 * 1024;
+  const TYPING_MAX_MS = 60000;
+  const TEXT_MAX = 4096;
+  const MEDIA_TYPE = { imagem: 'image', video: 'video', documento: 'document', 'audio-arquivo': 'audio' };
+
+  async function individualLoadedChat(chatId) {
+    if (typeof chatId !== 'string' || !/^[^@\s]+@(c\.us|lid)$/.test(chatId)) {
+      throw new BridgeError('invalid_chat', 'Conversa inválida (só conversas individuais)', 'before-send');
+    }
+    const chat = await loadedChat(chatId);
+    if (safe(() => !!chat.isGroup, false)) throw new BridgeError('invalid_chat', 'Conversa inválida (só conversas individuais)', 'before-send');
+    return chat;
+  }
+
+  function typingMsOf(typingMs) {
+    if (typingMs === undefined || typingMs === null) return 0;
+    if (!Number.isInteger(typingMs) || typingMs < 0 || typingMs > TYPING_MAX_MS) {
+      throw new BridgeError('invalid_typing', 'Tempo de "digitando" inválido', 'before-send');
+    }
+    return typingMs;
+  }
+
+  async function typingPhase(job, chatId, ms) {
+    if (!ms) return;
+    try {
+      await wpp.chat.markIsComposing(chatId);
+      if (!job.cancelled) {
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, ms);
+          job.wake = () => { clearTimeout(timer); resolve(); };
+        });
+      }
+    } catch {
+      throw new BridgeError('typing_failed', 'Não consegui mostrar "digitando…"', 'before-send');
+    } finally {
+      try { await wpp.chat.markIsPaused(chatId); } catch { /* ok */ }
+    }
+  }
+
+  // Valida, mostra "digitando…" e chama send() uma vez; stage vira 'sending' só na hora de enviar
+  async function sendJob(requestId, chatId, typingMs, send) {
+    if (jobs.has(requestId)) throw new BridgeError('duplicate', 'Pedido repetido', 'before-send');
+    const job = { cancelled: false, stage: 'before-send', wake: null };
+    jobs.set(requestId, job);
+    try {
+      await individualLoadedChat(chatId);
+      if (job.cancelled) throw new BridgeError('cancelled', 'Envio cancelado', 'before-send');
+      await typingPhase(job, chatId, typingMs);
+      if (job.cancelled) throw new BridgeError('cancelled', 'Envio cancelado', 'before-send');
+      job.stage = 'sending';
+      try {
+        await send();
+      } catch {
+        throw new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
+      }
+      return { sent: true };
+    } finally {
+      jobs.delete(requestId);
+    }
+  }
+
+  async function sendText(requestId, payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const { chatId, text, typingMs } = payload || {};
+    if (typeof text !== 'string' || !text.trim() || text.length > TEXT_MAX) {
+      throw new BridgeError('invalid_text', 'Texto inválido (1 a 4096 caracteres)', 'before-send');
+    }
+    const ms = typingMsOf(typingMs);
+    return sendJob(requestId, chatId, ms, () => wpp.chat.sendTextMessage(chatId, text, { createChat: false, markIsRead: false }));
+  }
+
+  async function sendMedia(requestId, payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const { chatId, kind, data, mime, fileName, caption, typingMs } = payload || {};
+    const type = Object.prototype.hasOwnProperty.call(MEDIA_TYPE, kind) ? MEDIA_TYPE[kind] : null;
+    if (!type) throw new BridgeError('invalid_kind', 'Tipo de arquivo inválido', 'before-send');
+    if (!(data instanceof ArrayBuffer) || data.byteLength === 0) throw new BridgeError('invalid_file', 'Arquivo inválido', 'before-send');
+    if (data.byteLength > SEND_MAX_BYTES) throw new BridgeError('file_too_big', 'Arquivo acima de 40 MB', 'before-send');
+    if (typeof mime !== 'string' || !/^[\w.+-]+\/[\w.+-]+$/.test(mime) || mime.length > 100) {
+      throw new BridgeError('invalid_file', 'Tipo do arquivo inválido', 'before-send');
+    }
+    if (fileName != null && (typeof fileName !== 'string' || fileName.length > 200)) throw new BridgeError('invalid_file', 'Nome do arquivo inválido', 'before-send');
+    if (caption != null && (typeof caption !== 'string' || caption.length > TEXT_MAX)) throw new BridgeError('invalid_text', 'Legenda inválida', 'before-send');
+    const ms = typingMsOf(typingMs);
+    const blob = new Blob([data], { type: mime }); // só Blob, nunca URL
+    const options = { type, createChat: false, markIsRead: false };
+    if (fileName) options.filename = fileName;
+    if (type !== 'audio' && caption && caption.trim()) options.caption = caption;
+    if (type === 'audio') options.isPtt = false;
+    return sendJob(requestId, chatId, ms, () => wpp.chat.sendFileMessage(chatId, blob, options));
+  }
+
   function cancel(payload) {
     const job = payload && typeof payload.id === 'string' ? jobs.get(payload.id) : null;
     if (!job || job.stage !== 'before-send') return { cancelled: false };
@@ -383,6 +481,8 @@
     status: () => status(),
     activeChat: () => activeChat(),
     sendVoice: (payload, requestId) => sendVoice(requestId, payload),
+    sendText: (payload, requestId) => sendText(requestId, payload),
+    sendMedia: (payload, requestId) => sendMedia(requestId, payload),
     cancel: (payload) => cancel(payload),
     labels: () => labels(),
     labelChats: (payload) => labelChats(payload),

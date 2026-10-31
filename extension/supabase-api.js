@@ -1,6 +1,7 @@
 // Acesso ao Supabase (REST + Storage) usado pelo background.
-// Escreve só: wa_items.usage_count (+1) e as etiquetas CRM (wa_labels, wa_contacts, wa_contact_labels),
-// sempre a pedido de um clique no painel.
+// Escreve só a pedido de um clique no painel: wa_items.usage_count (+1), as etiquetas CRM
+// (wa_labels, wa_contacts, wa_contact_labels) e a biblioteca pelo editor (wa_categories, wa_items,
+// wa_item_parts e arquivos novos no bucket wa-media).
 (function (root) {
   // Mensagens entre background e página têm limite (~64 MB); o arquivo vai em base64 (+33%).
   const MAX_FILE_BYTES = 40 * 1024 * 1024;
@@ -43,12 +44,40 @@
     }
   }
 
+  // Tabela nova ainda não criada no banco (migration não aplicada)
+  const missingTable = (err, table) => /^Supabase (400|404):/.test(err.message)
+    && new RegExp(`\\b${table}\\b`).test(err.message) && /PGRST205|42P01|does not exist|Could not find the table/.test(err.message);
+
+  const PART_COLUMNS = 'id,item_id,position,type,body,file_url,file_name,file_size,wait_seconds,typing_seconds';
+
+  // Partes de todos os itens; null = tabela wa_item_parts ainda não existe
+  async function fetchParts() {
+    try {
+      return await rest(`wa_item_parts?select=${PART_COLUMNS}&order=item_id.asc,position.asc&limit=10000`);
+    } catch (err) {
+      if (missingTable(err, 'wa_item_parts')) return null;
+      throw err;
+    }
+  }
+
   async function fetchLibrary() {
-    const [categories, items] = await Promise.all([
+    const [categories, items, parts] = await Promise.all([
       rest('wa_categories?select=id,name,position,created_at&order=position.asc,created_at.asc'),
       fetchItems(),
+      fetchParts(),
     ]);
-    return { categories, items };
+    if (parts) {
+      const byItem = new Map();
+      parts.forEach((p) => {
+        if (!byItem.has(p.item_id)) byItem.set(p.item_id, []);
+        byItem.get(p.item_id).push(p);
+      });
+      items.forEach((i) => {
+        const list = (byItem.get(i.id) || []).sort((a, b) => a.position - b.position);
+        if (list.length) i.parts = list;
+      });
+    }
+    return { categories, items, partsAvailable: parts !== null };
   }
 
   async function incrementUsage(id) {
@@ -430,7 +459,166 @@
     return all;
   }
 
+  // ── Biblioteca: editor do painel (1.9.0). Só a pedido de um clique; tudo validado aqui ──
+
+  const ITEM_TYPES = ['texto', 'audio', 'imagem', 'video', 'documento'];
+  const MAX_PARTS = 10;
+  const TEXT_MAX = 4096;
+  const TITLE_MAX = 80;
+  const CATEGORY_MAX = 60;
+  const PARTS_MISSING = 'Atualize o banco para usar este recurso';
+  // Tipos de arquivo aceitos no upload, por tipo de parte
+  const UPLOAD_MIME = {
+    imagem: ['image/jpeg', 'image/png', 'image/webp'],
+    video: ['video/mp4'],
+    audio: ['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/webm'],
+    documento: ['application/pdf'],
+  };
+
+  const cleanText = (v, max, what) => {
+    const t = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '';
+    if (!t || t.length > max) throw new Error(`${what}: 1 a ${max} caracteres`);
+    return t;
+  };
+  const intIn = (v, min, max, what) => {
+    if (!Number.isInteger(v) || v < min || v > max) throw new Error(`${what}: ${min} a ${max}`);
+    return v;
+  };
+
+  function checkPart(p, index) {
+    const n = index + 1;
+    if (!p || typeof p !== 'object' || !ITEM_TYPES.includes(p.type)) throw new Error(`Parte ${n}: tipo inválido`);
+    const wait_seconds = intIn(p.wait_seconds ?? 0, 0, 600, `Parte ${n}: esperar`);
+    const typing_seconds = intIn(p.typing_seconds ?? 0, 0, 60, `Parte ${n}: digitando`);
+    if (p.type === 'texto') {
+      if (typeof p.body !== 'string' || !p.body.trim() || p.body.length > TEXT_MAX) throw new Error(`Parte ${n}: texto de 1 a ${TEXT_MAX} caracteres`);
+      return { type: 'texto', body: p.body, file_url: null, file_name: null, file_size: null, wait_seconds, typing_seconds };
+    }
+    if (!isAllowedFileUrl(p.file_url)) throw new Error(`Parte ${n}: arquivo inválido`);
+    const file_name = typeof p.file_name === 'string' && p.file_name.trim() ? p.file_name.trim().slice(0, 200) : 'arquivo';
+    const size = p.file_size == null ? null : Number(p.file_size);
+    if (size != null && (!Number.isFinite(size) || size < 0 || size > MAX_FILE_BYTES)) throw new Error(`Parte ${n}: arquivo acima de 40 MB`);
+    let body = null;
+    if (p.type !== 'audio' && typeof p.body === 'string' && p.body.trim()) {
+      if (p.body.length > TEXT_MAX) throw new Error(`Parte ${n}: legenda até ${TEXT_MAX} caracteres`);
+      body = p.body;
+    }
+    return { type: p.type, body, file_url: p.file_url, file_name, file_size: size, wait_seconds, typing_seconds };
+  }
+
+  async function partsTableExists() {
+    try {
+      await rest('wa_item_parts?select=id&limit=1');
+      return true;
+    } catch (err) {
+      if (missingTable(err, 'wa_item_parts')) return false;
+      throw err;
+    }
+  }
+
+  // Cria ou edita um item. A parte 1 é espelhada nos campos do wa_items (para o ERP continuar mostrando algo).
+  // Sem a tabela de partes: só item de 1 parte (campos do wa_items, como antes).
+  async function saveItem({ id, category_id, title, parts }) {
+    if (id !== undefined && id !== null) checkUuid(id, 'Item inválido');
+    checkUuid(category_id, 'Categoria inválida');
+    const cleanTitle = cleanText(title, TITLE_MAX, 'Título');
+    if (!Array.isArray(parts) || !parts.length || parts.length > MAX_PARTS) throw new Error(`De 1 a ${MAX_PARTS} partes`);
+    const list = parts.map(checkPart);
+    const hasTable = await partsTableExists();
+    if (!hasTable && list.length > 1) throw new Error(PARTS_MISSING);
+    const first = list[0];
+    const fields = {
+      category_id, title: cleanTitle, type: first.type, body: first.body,
+      file_url: first.file_url, file_name: first.file_name, file_size: first.file_size,
+    };
+    let itemId = id;
+    if (itemId) {
+      const rows = await rest(`wa_items?id=eq.${itemId}`, json('PATCH', 'return=representation', fields));
+      if (!rows.length) throw new Error('Item não encontrado');
+    } else {
+      const last = await rest(`wa_items?select=position&category_id=eq.${category_id}&order=position.desc&limit=1`);
+      const position = last.length ? (Number(last[0].position) || 0) + 1 : 0;
+      const rows = await rest('wa_items', json('POST', 'return=representation', { ...fields, position }));
+      itemId = rows[0].id;
+    }
+    if (hasTable) {
+      await rest(`wa_item_parts?item_id=eq.${itemId}`, { method: 'DELETE' });
+      await rest('wa_item_parts', json('POST', 'return=minimal', list.map((p, i) => ({ ...p, item_id: itemId, position: i }))));
+    }
+    return { id: itemId };
+  }
+
+  // Apaga o item; as partes vão junto (on delete cascade). Arquivos no Storage ficam.
+  async function deleteItem({ id }) {
+    checkUuid(id, 'Item inválido');
+    await rest(`wa_items?id=eq.${id}`, { method: 'DELETE' });
+    return true;
+  }
+
+  async function createCategory({ name }) {
+    const clean = cleanText(name, CATEGORY_MAX, 'Nome da categoria');
+    const last = await rest('wa_categories?select=position&order=position.desc&limit=1');
+    const position = last.length ? (Number(last[0].position) || 0) + 1 : 0;
+    const rows = await rest('wa_categories', json('POST', 'return=representation', { name: clean, position }));
+    return { id: rows[0].id, name: rows[0].name, position: rows[0].position };
+  }
+
+  async function renameCategory({ id, name }) {
+    checkUuid(id, 'Categoria inválida');
+    const clean = cleanText(name, CATEGORY_MAX, 'Nome da categoria');
+    await rest(`wa_categories?id=eq.${id}`, json('PATCH', 'return=minimal', { name: clean }));
+    return true;
+  }
+
+  // Só apaga categoria vazia (no banco, apagar a categoria apagaria as mensagens dela)
+  async function deleteCategory({ id }) {
+    checkUuid(id, 'Categoria inválida');
+    const items = await rest(`wa_items?select=id&category_id=eq.${id}&limit=1`);
+    if (items.length) throw new Error('A categoria tem mensagens: mova ou exclua as mensagens antes');
+    await rest(`wa_categories?id=eq.${id}`, { method: 'DELETE' });
+    return true;
+  }
+
+  const sanitizeFileName = (name) => String(name || 'arquivo').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120) || 'arquivo';
+
+  function fromBase64(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  // Grava no bucket público wa-media (caminho <uuid>/<nome-sanitizado>), como o ERP
+  async function uploadFile({ partType, base64, mime, fileName }) {
+    const allowed = UPLOAD_MIME[partType];
+    if (!allowed) throw new Error('Tipo de parte inválido');
+    const m = typeof mime === 'string' ? mime.toLowerCase().split(';')[0].trim() : '';
+    if (!allowed.includes(m)) throw new Error('Tipo de arquivo não aceito');
+    if (typeof base64 !== 'string' || !base64) throw new Error('Arquivo vazio');
+    if (base64.length > Math.ceil(MAX_FILE_BYTES / 3) * 4 + 4) throw new Error('Arquivo acima de 40 MB');
+    const bytes = fromBase64(base64);
+    if (!bytes.length || bytes.length > MAX_FILE_BYTES) throw new Error('Arquivo acima de 40 MB');
+    const { SUPABASE_URL, SUPABASE_ANON_KEY } = cfg();
+    const path = `${crypto.randomUUID()}/${sanitizeFileName(fileName)}`;
+    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': m, 'x-upsert': 'false' },
+      body: bytes,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Upload falhou (${res.status}): ${text.slice(0, 120)}`);
+    }
+    return {
+      file_url: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`,
+      file_name: typeof fileName === 'string' && fileName.trim() ? fileName.trim().slice(0, 200) : 'arquivo',
+      file_size: bytes.length,
+    };
+  }
+
   root.WaApi = {
+    saveItem, deleteItem, createCategory, renameCategory, deleteCategory, uploadFile, partsTableExists,
     fetchLibrary, incrementUsage, fetchFile, isAllowedFileUrl, MAX_FILE_BYTES,
     fetchLabels, getContactLabels, setContactLabel,
     fetchLabelCounts, fetchLabelClients,

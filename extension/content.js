@@ -33,6 +33,7 @@
     mic:       '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
     chat:      '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     board:     '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>',
+    more:      '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
     clock:     '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/>',
     megaphone: '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
     repeat:    '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
@@ -149,6 +150,7 @@
     // Colunas novas do banco (migration 20261031120000): true/false, null = ainda não testado
     schema: { hidden: null, notes: null },
     categories: [], items: [], loaded: false, source: null, syncedAt: null,
+    partsAvailable: null, // tabela wa_item_parts existe? (null = ainda não sabemos)
     syncing: false, offline: false, error: null, lastSyncError: null,
     search: '', filter: 'tudo', collapsed: {}, previewId: null, busyId: null, lastUsed: '',
     ctx: null,
@@ -568,6 +570,63 @@
       .btns { display: flex; gap: 2px; opacity: .5; transition: opacity .15s; }
       .card:hover .btns, .card:focus-within .btns, .card.pv-open .btns, .card.busy .btns { opacity: 1; }
       .btns .send { color: var(--accent); }
+      /* Editor, menus e sequência (1.9.0) */
+      .trow { display: flex; align-items: center; gap: 6px; margin: 0 12px 8px; }
+      .trow .search { flex: 1; margin: 0; }
+      .newitem { flex-shrink: 0; height: 36px; padding: 0 11px; border-radius: 9px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
+      .newitem:hover { background: var(--accent); color: #fff; }
+      .panel.editing .tools, .panel.editing .banner { display: none; }
+      .cat-top { display: flex; align-items: center; }
+      .cat-top .cat-head { flex: 1; min-width: 0; }
+      .cat-opts, .iopts { flex-shrink: 0; }
+      .cat-opts { width: 26px; height: 26px; margin-right: 4px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 14px; line-height: 1; }
+      .cat-opts:hover { background: var(--card); color: var(--fg); }
+      .imenu { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 0 6px 6px; padding: 7px; border-radius: 8px; background: var(--bg2); font-size: 12px; }
+      .cat > .imenu { margin: 0 6px 6px; background: var(--card); }
+      .imenu button { padding: 4px 9px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); font-size: 11.5px; font-weight: 600; }
+      .imenu button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+      .imenu button:disabled { opacity: .5; cursor: default; }
+      .imenu button.danger { color: var(--err); }
+      .imenu button.danger:hover:not(:disabled) { border-color: var(--err); color: var(--err); }
+      .imenu .q { flex-basis: 100%; line-height: 1.4; }
+      .imenu input { flex: 1; min-width: 120px; height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; font-size: 12px; outline: none; }
+      .imenu input:focus { border-color: var(--accent); }
+      .seqbar { display: flex; align-items: center; gap: 8px; margin: 0 12px 8px; padding: 8px 10px; border-radius: 9px; background: var(--accent-soft); color: var(--fg); font-size: 12px; font-weight: 600; }
+      .seqbar[hidden] { display: none; }
+      .seqbar .seqtxt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .seqbar button { flex-shrink: 0; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--err); background: var(--card); color: var(--err); font-size: 11.5px; font-weight: 700; }
+      .seqbar button:disabled { opacity: .5; cursor: default; }
+      .editor { display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }
+      .ed-field { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+      .ed-title, .ed-newcat, .ed-cat, .ed-part select { height: 32px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; outline: none; }
+      .ed-title:focus, .ed-newcat:focus { border-color: var(--accent); }
+      .ed-sub { margin-top: 4px; font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--muted); text-transform: uppercase; }
+      .ed-part { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 9px; border: 1px solid var(--border); background: var(--card); }
+      .ed-phead { display: flex; align-items: center; gap: 5px; }
+      .ed-phead b { flex: 1; font-size: 12px; }
+      .ed-part select { height: 28px; font-size: 12px; }
+      .ed-mini { padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); font-size: 11.5px; font-weight: 600; }
+      .ed-mini:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+      .ed-mini:disabled { opacity: .4; cursor: default; }
+      .ed-text, .ed-caption { width: 100%; resize: vertical; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 12.5px; outline: none; }
+      .ed-text:focus, .ed-caption:focus { border-color: var(--accent); }
+      .ed-count { align-self: flex-end; margin-top: -3px; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .ed-file { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .ed-pick { position: relative; overflow: hidden; padding: 4px 10px; border-radius: 7px; border: 1px dashed var(--accent); color: var(--accent); font-size: 11.5px; font-weight: 700; cursor: pointer; }
+      .ed-pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+      .ed-fname { min-width: 0; font-size: 11.5px; color: var(--muted); word-break: break-all; }
+      .ed-preview img, .ed-preview video { display: block; max-width: 100%; max-height: 160px; border-radius: 7px; }
+      .ed-preview audio { width: 100%; }
+      .ed-times { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; color: var(--muted); }
+      .ed-num input { width: 56px; height: 26px; margin: 0 2px; padding: 0 5px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 12px; }
+      .ed-add { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); }
+      .ed-note { font-size: 11px; color: var(--warn); }
+      .ed-total { font-size: 11.5px; color: var(--muted); }
+      .ed-msg { min-height: 1em; font-size: 11.5px; color: var(--muted); }
+      .ed-msg.err { color: var(--err); }
+      .ed-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+      .ed-actions .btn { margin-top: 0; }
+      .btn:disabled { opacity: .5; cursor: default; }
       .btns .send:hover { background: var(--accent-soft); color: var(--accent); }
 
       /* Prévia */
@@ -958,7 +1017,10 @@
         </div>
         <div class="name-note" hidden title="Sem telefone visível nesta conversa: a etiqueta fica ligada ao nome do contato. Se o nome mudar, ela não acompanha.">identificado só pelo nome</div>
         <div class="tools">
-          <label class="search">${svg('search')}<input type="text" placeholder="Pesquisar resposta rápida" aria-label="Pesquisar resposta rápida" /></label>
+          <div class="trow">
+            <label class="search">${svg('search')}<input type="text" placeholder="Pesquisar resposta rápida" aria-label="Pesquisar resposta rápida" /></label>
+            <button class="newitem" type="button" title="Criar uma mensagem nova">+ Nova</button>
+          </div>
           <div class="filters" role="group" aria-label="Filtros"></div>
         </div>
         <div class="banner" hidden>${svg('wifiOff')}<span>Sem conexão: mostrando a última versão</span><button type="button">Tentar de novo</button></div>
@@ -1007,6 +1069,7 @@
           </div>
           <div class="vbar"><div class="vfill"></div></div>
         </div>
+        <div class="seqbar" role="status" aria-live="polite" hidden><span class="seqtxt"></span><button class="seqstop" type="button">Parar</button></div>
         <div class="toast" role="status" aria-live="polite"></div>
         <footer class="foot"><span class="last">Último usado: <b>—</b></span><span class="ver"></span></footer>
       </aside>
@@ -1024,6 +1087,11 @@
   const bannerEl  = shadow.querySelector('.banner');
   const listEl    = shadow.querySelector('.list');
   const toastEl   = shadow.querySelector('.toast');
+  const seqEl     = shadow.querySelector('.seqbar');
+  const seqTxt    = shadow.querySelector('.seqbar .seqtxt');
+  const seqStop   = shadow.querySelector('.seqbar .seqstop');
+  seqStop.addEventListener('click', () => stopSequence());
+  shadow.querySelector('.newitem').addEventListener('click', () => openEditor());
   const lastEl    = shadow.querySelector('.foot b');
   const labelsEl  = shadow.querySelector('.labels');
   const lchipsEl  = shadow.querySelector('.labels .chips');
@@ -1787,6 +1855,7 @@
   function applyLibrary(lib, source, savedAt) {
     state.categories = lib.categories || [];
     state.items      = lib.items || [];
+    if (typeof lib.partsAvailable === 'boolean') state.partsAvailable = lib.partsAvailable;
     state.loaded     = true;
     state.source     = source;
     state.syncedAt   = savedAt || null;
@@ -1893,7 +1962,7 @@
   }
 
   function renderList() {
-    if (state.view === 'diag') return;
+    if (state.view !== 'list') return;
     const scroll = listEl.scrollTop;
     listEl.textContent = '';
     renderBanner();
@@ -1907,7 +1976,7 @@
       return;
     }
     if (!state.items.length) {
-      listEl.append(stateBox('inbox', 'Nenhuma mensagem cadastrada.', 'Cadastre na aba WhatsApp do ERP e depois tente de novo.', true));
+      listEl.append(stateBox('inbox', 'Nenhuma mensagem cadastrada.', 'Use "+ Nova" aqui no painel ou a aba WhatsApp do ERP.', true));
       return;
     }
 
@@ -1950,11 +2019,21 @@
       storageSet({ collapsed: state.collapsed });
     });
 
+    const top = el('div', 'cat-top');
+    const opts = el('button', 'cat-opts', '···');
+    opts.type = 'button';
+    opts.title = 'Renomear ou excluir a categoria';
+    opts.setAttribute('aria-label', `Opções da categoria "${cat.name}"`);
+    opts.addEventListener('click', () => { catMenu = catMenu && catMenu.id === cat.id ? null : { id: cat.id, mode: 'menu' }; renderList(); });
+    top.append(head, opts);
+
     const body  = el('div', 'cat-body');
     const inner = el('div', 'cat-inner');
     catItems.forEach((i) => inner.append(cardEl(i)));
     body.append(inner);
-    section.append(head, body);
+    section.append(top);
+    if (catMenu && catMenu.id === cat.id) section.append(catMenuEl(cat, catItems));
+    section.append(body);
     return section;
   }
 
@@ -1991,7 +2070,10 @@
     const isAudio = item.type === 'audio';
     const fixedSeconds = isAudio ? recordSecondsOf(item) : null;
     const voiceHint = fixedSeconds == null ? 'gravando automático' : fixedSeconds === 0 ? 'na hora' : `gravando ${fixedSeconds} s`;
-    const send = iconButton('send', isAudio ? `Enviar como mensagem de voz (${voiceHint})` : 'Colocar na conversa', () => sendItem(item, card, send), 'send');
+    const multi = isMultiPart(item);
+    const sendTitle = multi ? `Enviar as ${item.parts.length} partes nesta conversa`
+      : isAudio ? `Enviar como mensagem de voz (${voiceHint})` : 'Enviar nesta conversa';
+    const send = iconButton('send', sendTitle, () => sendItemSequence(item, card, send), 'send');
     btns.append(eye);
     if (isAudio) {
       // Jeito antigo, sempre disponível: anexar o áudio como arquivo
@@ -2002,12 +2084,20 @@
       btns.append(asFile);
     }
     btns.append(send);
+    const opts = iconButton('more', 'Editar, duplicar, excluir…', () => {
+      itemMenu = itemMenu && itemMenu.id === item.id ? null : { id: item.id, mode: 'menu' };
+      renderList();
+    }, 'iopts');
+    btns.append(opts);
     row.append(btns);
+    if (multi) info.querySelector('.sub').textContent = `${item.parts.length} partes · ${subtitle(item)}`;
 
     const wrap  = el('div', 'pv-wrap');
     const inner = el('div', 'pv-inner');
     wrap.append(inner);
-    card.append(row, wrap);
+    card.append(row);
+    if (itemMenu && itemMenu.id === item.id) card.append(itemMenuEl(item, card, send));
+    card.append(wrap);
 
     if (state.previewId === item.id) {
       fillPreview(inner, item);
@@ -2526,6 +2616,629 @@
     }
   }
 
+  // ── Sequência: enviar um item de várias partes (1.9.0) ─────────────────────
+  // Só por clique do usuário (ou agendamento criado por ele). Uma sequência por vez, sempre
+  // visível no rodapé com "Parar". Erro durante o envio de uma parte (ou sem resposta) = para tudo
+  // e nunca reenvia sozinho.
+
+  const SEQ_TEXT_MAX = 4096;
+  let seq = null; // { total, index, phase: 'wait' | 'typing' | 'send', until, stop, reqId, label }
+
+  // Partes do item; item antigo (sem linhas em wa_item_parts) = 1 parte com os campos do próprio item
+  function partsOf(item) {
+    if (Array.isArray(item.parts) && item.parts.length) return item.parts.map((p) => ({ ...p }));
+    return [{
+      id: item.id, type: item.type, body: item.body || null, file_url: item.file_url, file_name: item.file_name, file_size: item.file_size,
+      wait_seconds: 0, typing_seconds: item.type === 'audio' ? recordSecondsOf(item) : 0,
+    }];
+  }
+  const isMultiPart = (item) => Array.isArray(item.parts) && item.parts.length > 0;
+
+  function renderSeq() {
+    if (!seq) { seqEl.hidden = true; return; }
+    seqEl.hidden = false;
+    const left = Math.max(0, Math.ceil((seq.until - Date.now()) / 1000));
+    let txt = `${seq.label ? `${seq.label} · ` : ''}Enviando ${seq.index}/${seq.total}`;
+    if (seq.stop) txt += ' · parando…';
+    else if (seq.phase === 'wait' && left) txt += ` · aguardando ${left}s`;
+    else if (seq.phase === 'typing' && left) txt += ` · ${seq.typingLabel} ${left}s`;
+    seqTxt.textContent = txt;
+    seqStop.disabled = seq.stop;
+  }
+
+  function stopSequence() {
+    if (!seq || seq.stop) return;
+    seq.stop = true;
+    if (seq.reqId) waRequest('cancel', { id: seq.reqId }, { timeout: 2000 }).catch(() => {}); // só vale antes do envio
+    if (seq.onStop) seq.onStop();
+    renderSeq();
+  }
+
+  async function waitUnlessStopped(ms) {
+    const end = Date.now() + ms;
+    while (seq && !seq.stop && Date.now() < end) await sleep(Math.min(200, end - Date.now()));
+  }
+
+  const partAsItem = (p, i) => ({ id: p.id || `parte${i}`, file_url: p.file_url, file_name: p.file_name });
+
+  // Envia uma parte; erros vêm com stage ('before-send', 'sending' ou 'unknown' quando não houve resposta)
+  async function sendPart(part, i, chatId, firstName, reqId) {
+    const typingMs = Number.isInteger(part.typing_seconds) ? Math.min(60, Math.max(0, part.typing_seconds)) * 1000 : null;
+    if (part.type === 'texto') {
+      const text = fillVars(part.body || '', firstName);
+      if (!text.trim()) throw Object.assign(new Error('parte sem texto'), { code: 'empty', stage: 'before-send' });
+      await waRequest('sendText', { chatId, text: text.slice(0, SEQ_TEXT_MAX), typingMs: typingMs || 0 }, { id: reqId, timeout: (typingMs || 0) + 20000 });
+      return;
+    }
+    if (!part.file_url) throw Object.assign(new Error('parte sem arquivo'), { code: 'empty', stage: 'before-send' });
+    let blob;
+    try {
+      blob = await getFile(partAsItem(part, i));
+    } catch (e) {
+      throw Object.assign(new Error(`não consegui baixar o arquivo (${e.message})`), { code: 'download', stage: 'before-send' });
+    }
+    if (part.type === 'audio') {
+      const head = new Uint8Array(await blob.slice(0, 64).arrayBuffer());
+      if (isOggOpus(head)) {
+        // Mensagem de voz: "gravando…" = typing_seconds (0 = na hora; vazio = automático pela duração)
+        const recordMs = typingMs != null ? typingMs : Math.min(8000, Math.max(2000, await audioDurationMs(blob).catch(() => 4000)));
+        const audio = await blob.arrayBuffer();
+        await waRequest('sendVoice', { chatId, audio, recordMs, requireLoaded: true }, { id: reqId, timeout: recordMs + 30000, transfer: [audio] });
+        return;
+      }
+    }
+    const kind = part.type === 'audio' ? 'audio-arquivo' : part.type;
+    const data = await blob.arrayBuffer();
+    const mime = (blob.type || 'application/octet-stream').split(';')[0];
+    const caption = part.type === 'audio' ? null : fillVars(part.body || '', firstName).slice(0, SEQ_TEXT_MAX);
+    await waRequest('sendMedia', { chatId, kind, data, mime, fileName: (part.file_name || 'arquivo').slice(0, 200), caption, typingMs: typingMs || 0 },
+      { id: reqId, timeout: (typingMs || 0) + 120000, transfer: [data] });
+  }
+
+  // Resultado: { status: 'ok' | 'stopped' | 'failed', sent, failedAt, stage, message }
+  async function runSequence({ parts, chatId, firstName = '', label = '', onStop = null }) {
+    if (seq) return { status: 'failed', sent: 0, stage: 'before-send', message: 'já existe um envio em andamento' };
+    seq = { total: parts.length, index: 0, phase: 'wait', until: 0, stop: false, reqId: null, label, typingLabel: 'digitando', onStop };
+    const ticker = setInterval(renderSeq, 250);
+    renderSeq();
+    let sent = 0;
+    try {
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        seq.index = i + 1;
+        seq.reqId = null;
+        const waitMs = Math.min(600, Math.max(0, Number(part.wait_seconds) || 0)) * 1000;
+        if (waitMs) {
+          seq.phase = 'wait';
+          seq.until = Date.now() + waitMs;
+          renderSeq();
+          await waitUnlessStopped(waitMs);
+        }
+        if (seq.stop) return { status: 'stopped', sent };
+        const typing = Number.isInteger(part.typing_seconds) ? part.typing_seconds : 0;
+        seq.phase = typing ? 'typing' : 'send';
+        seq.typingLabel = part.type === 'audio' ? 'gravando' : 'digitando';
+        seq.until = Date.now() + typing * 1000;
+        seq.reqId = newRequestId('q');
+        renderSeq();
+        try {
+          await sendPart(part, i, chatId, firstName, seq.reqId);
+        } catch (e) {
+          if (e.code === 'cancelled') return { status: 'stopped', sent };
+          return { status: 'failed', sent, failedAt: i + 1, stage: e.stage === 'before-send' ? 'before-send' : 'sending', message: e.message, code: e.code };
+        }
+        sent++;
+        if (seq.stop && i < parts.length - 1) return { status: 'stopped', sent };
+      }
+      return { status: 'ok', sent };
+    } finally {
+      clearInterval(ticker);
+      seq = null;
+      renderSeq();
+    }
+  }
+
+  function sequenceToast(res, total) {
+    if (res.status === 'ok') { toast(total > 1 ? `Enviado: ${total} partes.` : 'Enviado.', 'ok', 4000); return; }
+    if (res.status === 'stopped') { toast(`Parado: ${res.sent} de ${total} enviada${res.sent === 1 ? '' : 's'}.`, 'warn', 6000); return; }
+    if (res.stage === 'sending') {
+      toast(`Não consegui confirmar o envio da parte ${res.failedAt}. Confira a conversa antes de tentar de novo.`, 'error', 12000);
+    } else {
+      toast(`Parei antes da parte ${res.failedAt || 1}: ${res.message || 'erro'}.`, 'error', 8000);
+    }
+  }
+
+  // Conversa individual aberta no WhatsApp (via WA-JS); null com aviso se não der
+  async function openIndividualChat() {
+    let chat = null;
+    try { chat = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { chat = null; }
+    if (!chat || chat.kind !== 'individual' || typeof chat.chatId !== 'string') {
+      toast(chat && chat.kind === 'grupo' ? 'Grupos não recebem envios da extensão.' : 'Abra uma conversa individual', 'warn', 6000);
+      return null;
+    }
+    return chat.chatId;
+  }
+
+  // Seta do item: envia a sequência na conversa aberta
+  async function sendItemSequence(item, card = null, send = null) {
+    if (state.busyId || seq) { toast('Já tem um envio em andamento. Espere terminar ou clique em Parar.', 'warn', 5000); return; }
+    if (!getContext().conv) { toast('Abra uma conversa', 'warn'); return; }
+    const multi = isMultiPart(item);
+    if (!multi && item.type === 'audio') { if (card && send) sendItem(item, card, send); return; } // voz: fluxo de sempre
+    const st = await waStatusForSend();
+    if (!st || !st.ready) {
+      if (!multi && card && send) { sendItem(item, card, send); return; } // sem WA-JS: jeito antigo (preenche/anexa)
+      toast('O WhatsApp ainda não está pronto para enviar. Tente de novo em instantes.', 'warn', 6000);
+      return;
+    }
+    const chatId = await openIndividualChat();
+    if (!chatId) return;
+    const ctx = getContext();
+    state.ctx = ctx;
+    const parts = partsOf(item);
+    state.busyId = item.id;
+    if (card && send) setBusy(card, send, true);
+    else setSendButtonsDisabled(true);
+    try {
+      const res = await runSequence({ parts, chatId, firstName: ctx.firstName });
+      sequenceToast(res, parts.length);
+      if (res.status === 'ok') registerUse(item);
+    } finally {
+      state.busyId = null;
+      if (card && send && card.isConnected) setBusy(card, send, false);
+      else setSendButtonsDisabled(false);
+      if (state.filter === 'mais_usadas') renderList();
+    }
+  }
+
+  // ── Menu "···" do item e da categoria (confirmações dentro do painel) ──
+
+  let itemMenu = null; // { id, mode: 'menu' | 'delete' }
+  let catMenu = null;  // { id, mode: 'menu' | 'rename' | 'delete' }
+  let libBusy = false;
+
+  function itemMenuEl(item, card, send) {
+    const box = el('div', 'imenu');
+    const btn = (text, onClick, cls = '') => {
+      const b = el('button', cls || null, text);
+      b.type = 'button';
+      b.disabled = libBusy;
+      b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+      return b;
+    };
+    if (itemMenu.mode === 'delete') {
+      box.append(el('div', 'q', `Excluir "${item.title}"? ${isMultiPart(item) ? 'As partes somem junto. ' : ''}Os arquivos continuam guardados.`),
+        btn('Excluir', () => deleteLibraryItem(item), 'danger'), btn('Cancelar', () => { itemMenu = null; renderList(); }));
+      return box;
+    }
+    box.append(btn('Editar', () => { itemMenu = null; openEditor(item); }));
+    box.append(btn('Duplicar', () => { itemMenu = null; openEditor(item, { duplicate: true }); }));
+    if (!isMultiPart(item) && item.type === 'texto') box.append(btn('Colocar na caixa', () => { itemMenu = null; renderList(); sendItem(item, card, send); }));
+    const sched = btn('Agendar nesta conversa', () => {}, 'soon');
+    sched.disabled = true;
+    sched.title = 'Chega na próxima parte desta versão';
+    box.append(sched);
+    box.append(btn('Excluir', () => { itemMenu = { id: item.id, mode: 'delete' }; renderList(); }, 'danger'));
+    return box;
+  }
+
+  async function reloadLibrary() {
+    const lib = await call('fetchLibrary');
+    applyLibrary(lib, 'servidor', Date.now());
+    state.offline = false;
+    saveCache();
+    renderList();
+  }
+
+  async function deleteLibraryItem(item) {
+    if (libBusy) return;
+    libBusy = true;
+    renderList();
+    try {
+      await call('deleteItem', { id: item.id });
+      itemMenu = null;
+      toast('Mensagem excluída.', 'ok', 3000);
+      await reloadLibrary();
+    } catch (e) {
+      toast(`Não consegui excluir: ${e.message}`, 'error', 6000);
+    } finally {
+      libBusy = false;
+      renderList();
+    }
+  }
+
+  function catMenuEl(cat, catItems) {
+    const box = el('div', 'imenu');
+    const btn = (text, onClick, cls = '') => {
+      const b = el('button', cls || null, text);
+      b.type = 'button';
+      b.disabled = libBusy;
+      b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+      return b;
+    };
+    const total = state.items.filter((i) => i.category_id === cat.id).length;
+    if (catMenu.mode === 'rename') {
+      const input = el('input');
+      input.type = 'text';
+      input.maxLength = 60;
+      input.value = cat.name;
+      input.setAttribute('aria-label', 'Novo nome da categoria');
+      const save = () => categoryOp('renameCategory', { id: cat.id, name: input.value }, 'Categoria renomeada.');
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+      box.append(input, btn('Salvar', save), btn('Cancelar', () => { catMenu = null; renderList(); }));
+      setTimeout(() => input.focus(), 0);
+    } else if (catMenu.mode === 'delete') {
+      box.append(el('div', 'q', `Excluir a categoria "${cat.name}"?`),
+        btn('Excluir', () => categoryOp('deleteCategory', { id: cat.id }, 'Categoria excluída.'), 'danger'),
+        btn('Cancelar', () => { catMenu = null; renderList(); }));
+    } else {
+      box.append(btn('Renomear', () => { catMenu = { id: cat.id, mode: 'rename' }; renderList(); }));
+      box.append(btn('Excluir', () => {
+        if (total) { toast('A categoria tem mensagens: mova ou exclua as mensagens antes.', 'warn', 6000); return; }
+        catMenu = { id: cat.id, mode: 'delete' };
+        renderList();
+      }, 'danger'));
+    }
+    return box;
+  }
+
+  async function categoryOp(type, payload, okText) {
+    if (libBusy) return;
+    libBusy = true;
+    renderList();
+    try {
+      await call(type, payload);
+      catMenu = null;
+      toast(okText, 'ok', 3000);
+      await reloadLibrary();
+    } catch (e) {
+      toast(e.message, 'error', 6000);
+    } finally {
+      libBusy = false;
+      renderList();
+    }
+  }
+
+  // ── Editor de mensagens (dentro do painel) ──
+
+  const ED_TYPES = [['texto', 'Texto'], ['imagem', 'Imagem'], ['video', 'Vídeo'], ['audio', 'Áudio'], ['documento', 'PDF']];
+  const ED_ACCEPT = {
+    imagem: 'image/jpeg,image/png,image/webp',
+    video: 'video/mp4',
+    audio: 'audio/ogg,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-wav,audio/webm,.ogg,.opus,.mp3,.m4a,.wav,.webm',
+    documento: 'application/pdf,.pdf',
+  };
+  const ED_MIME = {
+    imagem: ['image/jpeg', 'image/png', 'image/webp'],
+    video: ['video/mp4'],
+    audio: ['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/webm'],
+    documento: ['application/pdf'],
+  };
+  const ED_EXT_MIME = { ogg: 'audio/ogg', opus: 'audio/ogg', mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', webm: 'audio/webm' };
+  const ED_MAX_PARTS = 10;
+  const ED_MAX_BYTES = 40 * 1024 * 1024;
+  const DB_MISSING = 'Atualize o banco para usar este recurso';
+  let ed = null;
+  let edKey = 0;
+
+  function edPart(p) {
+    return {
+      key: ++edKey, type: p.type, body: p.body || '', file_url: p.file_url || null, file_name: p.file_name || null,
+      file_size: p.file_size ?? null, wait_seconds: Number(p.wait_seconds) || 0,
+      typing_seconds: Number.isInteger(p.typing_seconds) ? p.typing_seconds : p.type === 'audio' ? 3 : 0,
+      file: null, localUrl: null,
+    };
+  }
+
+  function edFileMime(type, file) {
+    let m = (file.type || '').toLowerCase();
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (!m || m === 'application/octet-stream') m = type === 'audio' ? ED_EXT_MIME[ext] || '' : MIME_BY_EXT[ext] || '';
+    if (type === 'audio' && m === 'video/webm') m = 'audio/webm';
+    return m;
+  }
+
+  function openEditor(item = null, { duplicate = false } = {}) {
+    closeEditorState();
+    const cats = state.categories;
+    ed = {
+      id: item && !duplicate ? item.id : null,
+      title: item ? (duplicate ? `${item.title} (cópia)` : item.title).slice(0, 80) : '',
+      category_id: item ? item.category_id : cats.length ? cats[0].id : '__new',
+      newCategory: '',
+      parts: item ? partsOf(item).map(edPart) : [edPart({ type: 'texto' })],
+      saving: false, msg: '', error: false, duplicate,
+    };
+    state.view = 'editor';
+    panel.classList.add('editing');
+    renderBanner();
+    listEl.scrollTop = 0;
+    renderEditor();
+  }
+
+  function closeEditorState() {
+    if (ed) ed.parts.forEach((p) => { if (p.localUrl) URL.revokeObjectURL(p.localUrl); });
+    ed = null;
+    panel.classList.remove('editing');
+  }
+
+  function closeEditor() {
+    closeEditorState();
+    showList();
+  }
+
+  const edTotalSeconds = () => (ed ? ed.parts.reduce((s, p) => s + (Number(p.wait_seconds) || 0) + (Number(p.typing_seconds) || 0), 0) : 0);
+
+  function edMsg(text, error = false) {
+    if (!ed) return;
+    ed.msg = text;
+    ed.error = error;
+    const box = listEl.querySelector('.ed-msg');
+    if (box) { box.textContent = text; box.className = `ed-msg${error ? ' err' : ''}`; }
+  }
+
+  function edUpdateTotals() {
+    const total = listEl.querySelector('.ed-total');
+    if (total) total.textContent = `Tempo total ~${edTotalSeconds()}s`;
+  }
+
+  function numField(label, value, max, onInput) {
+    const wrap = el('label', 'ed-num');
+    const input = el('input');
+    input.type = 'number';
+    input.min = '0';
+    input.max = String(max);
+    input.step = '1';
+    input.value = String(value);
+    input.addEventListener('input', () => {
+      const n = Math.floor(Number(input.value));
+      onInput(Number.isFinite(n) ? Math.min(max, Math.max(0, n)) : 0);
+      edUpdateTotals();
+    });
+    wrap.append(label, input, ' s');
+    return wrap;
+  }
+
+  function edPartEl(p, i) {
+    const box = el('div', 'ed-part');
+    const head = el('div', 'ed-phead');
+    head.append(el('b', null, `Parte ${i + 1}`));
+    const typeSel = el('select');
+    typeSel.setAttribute('aria-label', `Tipo da parte ${i + 1}`);
+    ED_TYPES.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === p.type; typeSel.append(o); });
+    typeSel.addEventListener('change', () => {
+      if (p.localUrl) URL.revokeObjectURL(p.localUrl);
+      Object.assign(p, { type: typeSel.value, file: null, localUrl: null, file_url: null, file_name: null, file_size: null });
+      if (p.type === 'audio' && !p.typing_seconds) p.typing_seconds = 3;
+      renderEditor();
+    });
+    const mini = (text, title, disabled, onClick) => {
+      const b = el('button', 'ed-mini', text);
+      b.type = 'button';
+      b.title = title;
+      b.setAttribute('aria-label', `${title} (parte ${i + 1})`);
+      b.disabled = disabled || ed.saving;
+      b.addEventListener('click', onClick);
+      return b;
+    };
+    head.append(typeSel,
+      mini('↑', 'Subir', i === 0, () => { ed.parts.splice(i - 1, 0, ed.parts.splice(i, 1)[0]); renderEditor(); }),
+      mini('↓', 'Descer', i === ed.parts.length - 1, () => { ed.parts.splice(i + 1, 0, ed.parts.splice(i, 1)[0]); renderEditor(); }),
+      mini('×', 'Remover', ed.parts.length === 1, () => { if (p.localUrl) URL.revokeObjectURL(p.localUrl); ed.parts.splice(i, 1); renderEditor(); }));
+    box.append(head);
+
+    if (p.type === 'texto') {
+      const ta = el('textarea', 'ed-text');
+      ta.maxLength = 4096;
+      ta.rows = 4;
+      ta.value = p.body;
+      ta.placeholder = 'Texto da mensagem ({nome} vira o primeiro nome do contato)';
+      ta.setAttribute('aria-label', `Texto da parte ${i + 1}`);
+      const count = el('div', 'ed-count', `${p.body.length}/4096`);
+      ta.addEventListener('input', () => { p.body = ta.value; count.textContent = `${ta.value.length}/4096`; });
+      box.append(ta, count);
+    } else {
+      const fileRow = el('div', 'ed-file');
+      // <label> abre o seletor de arquivo do próprio navegador (sem clique simulado)
+      const pick = el('label', 'ed-pick', p.file || p.file_url ? 'Trocar arquivo' : 'Escolher arquivo');
+      const input = el('input');
+      input.type = 'file';
+      input.accept = ED_ACCEPT[p.type];
+      input.addEventListener('change', () => {
+        const f = input.files && input.files[0];
+        if (!f) return;
+        const mime = edFileMime(p.type, f);
+        if (!ED_MIME[p.type].includes(mime)) { edMsg(`Parte ${i + 1}: tipo de arquivo não aceito.`, true); return; }
+        if (f.size > ED_MAX_BYTES) { edMsg(`Parte ${i + 1}: arquivo acima de 40 MB.`, true); return; }
+        if (p.localUrl) URL.revokeObjectURL(p.localUrl);
+        p.file = f;
+        p.localUrl = ['imagem', 'video', 'audio'].includes(p.type) ? URL.createObjectURL(f) : null;
+        p.file_name = f.name;
+        p.file_size = f.size;
+        edMsg('');
+        renderEditor();
+      });
+      pick.append(input);
+      fileRow.append(pick);
+      if (p.file_name) fileRow.append(el('span', 'ed-fname', `${p.file_name}${p.file_size != null ? ` · ${formatSize(p.file_size)}` : ''}${p.file ? ' (novo)' : ''}`));
+      else fileRow.append(el('span', 'ed-fname', 'Nenhum arquivo'));
+      box.append(fileRow);
+      if (p.localUrl) {
+        const tag = p.type === 'imagem' ? 'img' : p.type;
+        const m = document.createElement(tag);
+        m.src = p.localUrl;
+        if (tag !== 'img') { m.controls = true; m.preload = 'metadata'; }
+        const pv = el('div', 'ed-preview');
+        pv.append(m);
+        box.append(pv);
+      }
+      if (p.type !== 'audio') {
+        const cap = el('textarea', 'ed-caption');
+        cap.maxLength = 4096;
+        cap.rows = 2;
+        cap.value = p.body;
+        cap.placeholder = 'Legenda (opcional)';
+        cap.setAttribute('aria-label', `Legenda da parte ${i + 1}`);
+        cap.addEventListener('input', () => { p.body = cap.value; });
+        box.append(cap);
+      }
+    }
+
+    const times = el('div', 'ed-times');
+    if (state.partsAvailable === false) {
+      times.append(el('span', 'ed-note', `Esperar e digitando: ${DB_MISSING.toLowerCase()}`));
+    } else {
+      times.append(numField('esperar ', p.wait_seconds, 600, (n) => { p.wait_seconds = n; }),
+        numField(p.type === 'audio' ? 'gravando ' : 'digitando ', p.typing_seconds, 60, (n) => { p.typing_seconds = n; }));
+    }
+    box.append(times);
+    return box;
+  }
+
+  function renderEditor() {
+    if (state.view !== 'editor' || !ed) return;
+    const scroll = listEl.scrollTop;
+    listEl.textContent = '';
+    const wrap = el('div', 'editor');
+
+    const head = el('div', 'diag-head');
+    head.append(iconButton('back', 'Voltar sem salvar', () => closeEditor()), ed.id ? 'Editar mensagem' : 'Nova mensagem');
+    wrap.append(head);
+
+    const title = el('input', 'ed-title');
+    title.type = 'text';
+    title.maxLength = 80;
+    title.value = ed.title;
+    title.placeholder = 'Título (até 80 caracteres)';
+    title.setAttribute('aria-label', 'Título');
+    title.addEventListener('input', () => { ed.title = title.value; });
+    const tl = el('label', 'ed-field', 'Título');
+    tl.append(title);
+    wrap.append(tl);
+
+    const cat = el('select', 'ed-cat');
+    cat.setAttribute('aria-label', 'Categoria');
+    state.categories.forEach((c) => { const o = el('option', null, c.name); o.value = c.id; o.selected = c.id === ed.category_id; cat.append(o); });
+    const optNew = el('option', null, 'Nova categoria…');
+    optNew.value = '__new';
+    optNew.selected = ed.category_id === '__new';
+    cat.append(optNew);
+    cat.addEventListener('change', () => { ed.category_id = cat.value; renderEditor(); });
+    const cl = el('label', 'ed-field', 'Categoria');
+    cl.append(cat);
+    wrap.append(cl);
+    if (ed.category_id === '__new') {
+      const nc = el('input', 'ed-newcat');
+      nc.type = 'text';
+      nc.maxLength = 60;
+      nc.value = ed.newCategory;
+      nc.placeholder = 'Nome da nova categoria';
+      nc.setAttribute('aria-label', 'Nome da nova categoria');
+      nc.addEventListener('input', () => { ed.newCategory = nc.value; });
+      wrap.append(nc);
+    }
+
+    wrap.append(el('div', 'ed-sub', `Partes (${ed.parts.length}/${ED_MAX_PARTS})`));
+    ed.parts.forEach((p, i) => wrap.append(edPartEl(p, i)));
+
+    const add = el('div', 'ed-add');
+    add.append(el('span', null, '+ Adicionar:'));
+    const multiOff = state.partsAvailable === false;
+    ED_TYPES.forEach(([v, t]) => {
+      const b = el('button', 'ed-mini', t);
+      b.type = 'button';
+      b.disabled = ed.saving || ed.parts.length >= ED_MAX_PARTS || multiOff;
+      b.addEventListener('click', () => { ed.parts.push(edPart({ type: v })); renderEditor(); });
+      add.append(b);
+    });
+    wrap.append(add);
+    if (multiOff) wrap.append(el('div', 'ed-note', `Várias partes: ${DB_MISSING.toLowerCase()}.`));
+    wrap.append(el('div', 'ed-total', `Tempo total ~${edTotalSeconds()}s`));
+    wrap.append(el('div', `ed-msg${ed.error ? ' err' : ''}`, ed.msg));
+
+    const actionsRow = el('div', 'ed-actions');
+    const mk = (text, cls, onClick) => {
+      const b = el('button', `btn${cls ? ` ${cls}` : ''}`, text);
+      b.type = 'button';
+      b.disabled = ed.saving;
+      b.addEventListener('click', onClick);
+      return b;
+    };
+    actionsRow.append(mk(ed.saving ? 'Salvando…' : 'Salvar', 'primary', () => saveEditor(false)),
+      mk('Salvar e enviar', '', () => saveEditor(true)), mk('Cancelar', '', () => closeEditor()));
+    wrap.append(actionsRow);
+    listEl.append(wrap);
+    listEl.scrollTop = scroll;
+  }
+
+  function edValidate() {
+    if (!ed.title.trim()) return 'Escreva o título.';
+    if (ed.category_id === '__new' && !ed.newCategory.trim()) return 'Escreva o nome da nova categoria.';
+    if (ed.parts.length > 1 && state.partsAvailable === false) return `Várias partes: ${DB_MISSING.toLowerCase()}.`;
+    for (let i = 0; i < ed.parts.length; i++) {
+      const p = ed.parts[i];
+      if (p.type === 'texto' && !p.body.trim()) return `Parte ${i + 1}: escreva o texto.`;
+      if (p.type !== 'texto' && !p.file && !p.file_url) return `Parte ${i + 1}: escolha o arquivo.`;
+    }
+    return null;
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));
+      reader.onerror = () => reject(new Error('Não consegui ler o arquivo'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function saveEditor(andSend) {
+    if (!ed || ed.saving) return;
+    const problem = edValidate();
+    if (problem) { edMsg(problem, true); return; }
+    ed.saving = true;
+    edMsg('Salvando…');
+    renderEditor();
+    const current = ed;
+    try {
+      let categoryId = current.category_id;
+      if (categoryId === '__new') {
+        const c = await call('createCategory', { name: current.newCategory });
+        categoryId = c.id;
+        current.category_id = c.id;
+        current.newCategory = '';
+      }
+      const parts = [];
+      for (let i = 0; i < current.parts.length; i++) {
+        const p = current.parts[i];
+        let file = { file_url: p.file_url, file_name: p.file_name, file_size: p.file_size };
+        if (p.type !== 'texto' && p.file) {
+          edMsg(`Enviando o arquivo da parte ${i + 1}…`);
+          file = await call('uploadFile', { partType: p.type, base64: await fileToBase64(p.file), mime: edFileMime(p.type, p.file), fileName: p.file.name });
+          Object.assign(p, file, { file: null });
+        }
+        parts.push({
+          type: p.type, body: p.type === 'audio' ? null : p.body, ...(p.type === 'texto' ? {} : file),
+          wait_seconds: p.wait_seconds, typing_seconds: p.typing_seconds,
+        });
+      }
+      const res = await call('saveItem', { id: current.id || undefined, category_id: categoryId, title: current.title, parts });
+      await reloadLibrary().catch(() => {});
+      if (ed !== current) return;
+      closeEditor();
+      toast('Mensagem salva.', 'ok', 3000);
+      const item = state.items.find((x) => x.id === res.id);
+      if (andSend && item) sendItemSequence(item);
+      else if (andSend) toast('Salva, mas não consegui recarregar para enviar. Use a seta da mensagem.', 'warn', 6000);
+    } catch (e) {
+      if (ed !== current) return;
+      current.saving = false;
+      current.msg = e.message === DB_MISSING ? DB_MISSING : `Não consegui salvar: ${e.message}`;
+      current.error = true;
+      renderEditor();
+    }
+  }
+
   // ── Diagnóstico (nunca inclui conteúdo de conversa) ────────────────────────
 
   function diagnostics() {
@@ -2563,6 +3276,7 @@
           : `não carregadas${state.labelsError ? `: ${state.labelsError}` : ''}`,
       },
       schemaDiagRow(),
+      partsDiagRow(),
       ...waDiagRows(),
       {
         label: 'Ponte do microfone carregada',
@@ -2582,6 +3296,13 @@
       { label: 'Painel na página', status: host.isConnected && layoutStyle.isConnected ? 'ok' : 'fail', screen: host.isConnected && layoutStyle.isConnected ? 'injetado' : 'faltando (será re-injetado)' },
     ];
     return rows;
+  }
+
+  // Itens com várias partes (migration 20261031130000): só ok / falta atualizar
+  function partsDiagRow() {
+    if (state.partsAvailable === true) return { label: 'Itens com várias partes', status: 'ok', screen: 'ok' };
+    if (state.partsAvailable === false) return { label: 'Itens com várias partes', status: 'warn', screen: 'falta atualizar o banco (migration 20261031130000)' };
+    return { label: 'Itens com várias partes', status: 'warn', screen: 'testando...' };
   }
 
   // Etiquetas CRM: só quantidades (sem nomes)
@@ -2715,6 +3436,7 @@
   }
 
   function showDiag() {
+    closeEditorState();
     if (state.section !== 'mensagens') setSection('mensagens', { persist: false });
     state.view = 'diag';
     panel.classList.add('diag');

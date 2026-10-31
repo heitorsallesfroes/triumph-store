@@ -22,6 +22,13 @@ const HANDLERS = {
   bulkAddContactsToLabel: (m) => WaApi.bulkAddContactsToLabel({ labelId: m.labelId, contacts: m.contacts }),
   moveContactLabel:       (m) => WaApi.moveContactLabel({ contactId: m.contactId, from: m.from, to: m.to }),
   fetchAllLabelClients:   (m) => WaApi.fetchAllLabelClients({ labelId: m.labelId }),
+  // Editor de mensagens (1.9.0): cada uma valida a entrada em supabase-api.js
+  saveItem:        (m) => WaApi.saveItem({ id: m.id, category_id: m.category_id, title: m.title, parts: m.parts }),
+  deleteItem:      (m) => WaApi.deleteItem({ id: m.id }),
+  createCategory:  (m) => WaApi.createCategory({ name: m.name }),
+  renameCategory:  (m) => WaApi.renameCategory({ id: m.id, name: m.name }),
+  deleteCategory:  (m) => WaApi.deleteCategory({ id: m.id }),
+  uploadFile:      (m) => WaApi.uploadFile({ partType: m.partType, base64: m.base64, mime: m.mime, fileName: m.fileName }),
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

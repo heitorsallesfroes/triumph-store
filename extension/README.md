@@ -18,7 +18,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e vão ser a base de follows e disparos no futuro.
 
-Versão atual: **1.8.1** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **1.9.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -75,19 +75,56 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
 - **Olho:** mostra a prévia. Para texto, mostra como a mensagem vai ficar, já
   com `{nome}` trocado pelo nome do contato aberto. Variáveis que não são
   trocadas sozinhas (como `{produto}` e `{rastreio}`) aparecem em laranja.
-- **Seta:** coloca o item na conversa que está aberta:
-  - **Texto:** vai para a caixa de mensagem. `{nome}` vira o primeiro nome do
-    contato (se o contato estiver salvo só como número, `{nome}` fica como
-    está). `{produto}` e `{rastreio}` ficam como estão, então troque à mão
-    antes de enviar.
-  - **Imagem, vídeo e documento:** o arquivo é anexado e a legenda já vem
-    preenchida. Confira e envie.
-  - **Áudio:** vai como **mensagem de voz gravada na hora** (veja abaixo).
-    O botão **Como arquivo**, no cartão do áudio, anexa como arquivo de
-    áudio, do jeito antigo.
+- **Seta:** **envia** o item na conversa individual que está aberta (1.9.0):
+  - Cada parte sai na ordem, com a espera e o "digitando…" configurados (veja
+    "Editor de mensagens" abaixo). `{nome}` vira o primeiro nome do contato
+    (se o contato estiver salvo só como número, `{nome}` fica como está).
+    `{produto}` e `{rastreio}` ficam como estão: para trocar à mão, use
+    **Colocar na caixa** no menu **···** (só itens de 1 texto).
+  - **Áudio de 1 parte** (cadastro antigo): continua indo como **mensagem de
+    voz gravada na hora** (veja abaixo). O botão **Como arquivo**, no cartão do
+    áudio, anexa como arquivo de áudio, do jeito antigo.
+  - Enquanto envia, o rodapé do painel mostra, por exemplo, **"Enviando 2/5 ·
+    aguardando 3s"** com o botão **Parar**. Parar interrompe antes da próxima
+    parte.
+  - Nunca envia para grupo nem para conversa que não esteja carregada no
+    WhatsApp Web. Um envio por vez.
+  - Se o WhatsApp não confirmar o envio de uma parte, a sequência **para** e
+    aparece "Confira a conversa antes de tentar de novo". A extensão nunca
+    reenvia sozinha.
+  - Sem a biblioteca WA-JS pronta, itens de 1 parte voltam ao jeito antigo
+    (texto na caixa, arquivo anexado para você conferir e enviar).
   - Se nenhuma conversa estiver aberta, aparece o aviso **"Abra uma conversa"**.
-- Cada uso soma 1 no contador "Mais usadas" do ERP.
+- Cada envio completo soma 1 no contador "Mais usadas" do ERP.
 - No rodapé aparecem o último item usado e a versão da extensão.
+
+### Editor de mensagens (no painel)
+
+- **+ Nova** (ao lado da busca) abre o editor dentro do painel. No menu **···**
+  de cada mensagem: **Editar**, **Duplicar**, **Colocar na caixa** (só texto),
+  **Agendar nesta conversa** e **Excluir** (confirmação ali mesmo).
+- No editor: **Título** (até 80 caracteres), **Categoria** (ou "Nova
+  categoria…") e as **partes** (até 10). Cada parte tem:
+  - tipo: Texto, Imagem, Vídeo, Áudio ou PDF;
+  - texto (até 4096 caracteres, com contador) ou arquivo (Escolher/Trocar, com
+    prévia e tamanho; imagem jpg/png/webp, vídeo mp4, áudio
+    ogg/mp3/m4a/wav/webm, PDF; até 40 MB);
+  - legenda (imagem, vídeo e PDF);
+  - **esperar** (0 a 600 s antes desta parte) e **digitando** (0 a 60 s de
+    "digitando…" antes de enviar; no áudio vira **gravando**);
+  - ↑ ↓ para mudar a ordem e × para remover.
+- Embaixo: **+ Adicionar** (Texto, Imagem, Vídeo, Áudio, PDF), o **tempo
+  total**, e os botões **Salvar**, **Salvar e enviar** e **Cancelar**.
+- Os arquivos vão para o mesmo lugar do ERP (bucket `wa-media` do Supabase).
+- **Categorias:** no **···** do nome da categoria, **Renomear** ou **Excluir**
+  (só categoria vazia; se tiver mensagens, aparece um aviso).
+- Excluir uma mensagem apaga as partes dela. Os arquivos continuam guardados.
+- No ERP, uma mensagem com várias partes aparece como a **parte 1** (o ERP ainda
+  não mostra as outras). Se você editar essa mensagem no ERP, só a parte 1 muda
+  lá; as outras partes continuam como estavam.
+- Sem a migration `20261031130000_wa_item_parts.sql` aplicada, o editor
+  funciona só com **1 parte** e mostra "Atualize o banco para usar este
+  recurso" nas opções de várias partes, esperar e digitando.
 
 ### Áudio como mensagem de voz
 
@@ -337,6 +374,17 @@ guardada.
 
 ## O que mudou
 
+### 1.9.0
+- **Editor de mensagens no painel**: criar, editar, duplicar e excluir
+  mensagens, e criar/renomear/excluir categorias, sem sair do WhatsApp.
+- **Mensagens com várias partes** (até 10: texto, imagem, vídeo, áudio, PDF),
+  com espera e "digitando…"/"gravando…" em cada parte.
+- A **seta envia** a mensagem na conversa aberta, parte por parte, com
+  "Enviando 2/5 · aguardando 3s" e **Parar** no rodapé. Itens de 1 texto ainda
+  podem ir só para a caixa ("Colocar na caixa").
+- Diagnóstico: "Itens com várias partes" (ok / falta atualizar o banco).
+- Precisa da migration `20261031130000_wa_item_parts.sql` para várias partes.
+
 ### 1.8.1
 - O menu saiu da barra do topo e foi para o **topo do painel**: Mensagens,
   Etiquetas, Quadro e (em breve) Agendados, Disparos e Follows.
@@ -484,7 +532,12 @@ Service worker
   | error: { code, message, stage } }`. Tipos: `status`, `activeChat`,
   `sendVoice { chatId, audio, recordMs }` (só `@c.us`/`@lid`;
   markIsRecording → espera → markIsPaused sempre → sendFileMessage com Blob
-  `audio/ogg; codecs=opus`) e `cancel { id }`. Só leitura (1.6.0):
+  `audio/ogg; codecs=opus`; `requireLoaded: true` exige conversa carregada),
+  `sendText { chatId, text, typingMs }` e `sendMedia { chatId, kind, data,
+  mime, fileName, caption, typingMs }` (1.9.0: só `@c.us`/`@lid` já
+  carregadas; markIsComposing → espera cancelável → markIsPaused sempre →
+  sendTextMessage/sendFileMessage com `createChat: false`) e `cancel { id }`
+  (vale para os três antes do envio). Só leitura (1.6.0):
   `labels` (getAllLabels), `labelChats { labelId, offset, limit, noPreview }`
   (chat.list com `withLabels`, sem arquivadas, ordenado por data, prévia só da
   mensagem já carregada) e `openChat { chatId }` (openChatBottom, só para
