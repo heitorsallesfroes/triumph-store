@@ -33,6 +33,8 @@
     mic:       '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
     chat:      '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     board:     '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>',
+    calendar:  '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
+    repeat:    '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
     inbox:     '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
     texto:     '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/>',
     audio:     '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
@@ -139,9 +141,12 @@
   // ── Estado ─────────────────────────────────────────────────────────────────
 
   const state = {
-    open: false, view: 'list', themePref: 'auto', tab: 'mensagens', bridgeOk: null, waStatus: null, waStatusAt: 0,
-    // Barra de etiquetas do WhatsApp Business: waLabels = null enquanto indisponível (só ids, nomes, cores e números)
-    barHiddenByUser: false, waLabels: null,
+    open: false, view: 'list', themePref: 'auto', bridgeOk: null, waStatus: null, waStatusAt: 0,
+    // Barra-menu do topo: waLabels = etiquetas do WhatsApp (null enquanto indisponíveis; só ids, nomes, cores e números)
+    // family = qual família a barra e o Quadro mostram: 'whatsapp' ou 'crm'
+    barHiddenByUser: false, waLabels: null, family: 'whatsapp',
+    // Colunas novas do banco (migration 20261031120000): true/false, null = ainda não testado
+    schema: { hidden: null, notes: null },
     categories: [], items: [], loaded: false, source: null, syncedAt: null,
     syncing: false, offline: false, error: null, lastSyncError: null,
     search: '', filter: 'tudo', collapsed: {}, previewId: null, busyId: null, lastUsed: '',
@@ -156,8 +161,15 @@
     openId: null, clients: [], hasMore: false, loading: false, error: null, search: '',
     reqId: 0, rowsSig: '', timer: null, searchTimer: null, hintTimer: null,
   };
-  // Aba Etiquetas, seção do WhatsApp: id da conversa aberta e etiquetas nativas dela (só na memória)
+  // Janela Etiquetas CRM, parte do WhatsApp: id da conversa aberta e etiquetas nativas dela (só na memória)
   const wt = { chatId: null, kind: null, labelIds: [], loading: false, error: false, busy: false, req: 0, timer: null };
+  // Janela Etiquetas CRM: nota da conversa aberta, edição de etiqueta, cópia do WhatsApp
+  const crm = {
+    open: false, ctxTimer: null, edit: null, busy: false, dragId: null, toastTimer: null, showNew: false, newColor: null,
+    note: { key: null, text: '', saved: '', available: null, loading: false, saving: false, error: false, msg: '', req: 0 },
+    copy: { waId: '', dest: '__new', preview: null, previewReq: 0, running: false, stop: false, phase: '', done: 0, total: 0, result: '' },
+    exportUrl: null,
+  };
   const convCache   = new Map(); // key do contato -> ids das etiquetas
   let convTimer     = null;
   let pendingLabelOps = 0;
@@ -632,7 +644,13 @@
       .wabar[hidden] { display: none; }
       .root.open .wabar { right: ${PANEL_W}px; }
       .root.bar-on .toggle { top: ${BAR_H}px; }
-      .wlabel { flex-shrink: 0; font-size: 10.5px; font-weight: 800; letter-spacing: .08em; color: var(--muted); }
+      .wmenu { flex-shrink: 0; display: flex; align-items: center; gap: 2px; padding-right: 6px; border-right: 1px solid var(--border); }
+      .wnav { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; border: none; border-radius: 7px; background: transparent; color: var(--fg); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+      .wnav svg { width: 14px; height: 14px; }
+      .wnav:hover:not(:disabled), .wnav.on { background: var(--accent-soft); color: var(--accent); }
+      .wnav:disabled { color: var(--muted); cursor: default; }
+      .wsoon { padding: 0 5px; border-radius: 999px; background: var(--bg2); color: var(--muted); font-size: 9.5px; font-weight: 700; letter-spacing: .02em; }
+      .wempty { color: var(--muted); font-size: 11.5px; }
       .wchips { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 6px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scrollbar-width: thin; }
       .wchip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); font-size: 11px; font-weight: 700; letter-spacing: .02em; transition: border-color .15s, opacity .15s; }
       .wchip:hover { border-color: var(--accent); }
@@ -640,16 +658,73 @@
       .wchip.zero:hover { opacity: .8; }
       .wdot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
       .wcount { min-width: 18px; padding: 1px 6px; border-radius: 999px; background: var(--bg2); color: var(--muted); font-size: 10.5px; font-weight: 700; text-align: center; }
-      .wboard { flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 700; }
-      .wboard svg { width: 13px; height: 13px; }
       .wclose { flex-shrink: 0; width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; }
       .wclose:hover { background: var(--bg2); color: var(--fg); }
 
       /* Quadro de etiquetas */
-      .board { position: fixed; top: 0; left: 64px; right: 0; bottom: 0; z-index: 2; display: flex; flex-direction: column; background: var(--bg2); color: var(--fg); border-left: 1px solid var(--border); box-shadow: 0 0 20px var(--shadow); outline: none; animation: fadeIn .15s ease both; }
-      .board[hidden] { display: none; }
-      .root.bar-on .board { top: ${BAR_H}px; }
-      .root.open .board { right: ${PANEL_W}px; }
+      .board, .crmwin { position: fixed; top: 0; left: 64px; right: 0; bottom: 0; z-index: 2; display: flex; flex-direction: column; background: var(--bg2); color: var(--fg); border-left: 1px solid var(--border); box-shadow: 0 0 20px var(--shadow); outline: none; animation: fadeIn .15s ease both; }
+      .board[hidden], .crmwin[hidden] { display: none; }
+      .root.bar-on .board, .root.bar-on .crmwin { top: ${BAR_H}px; }
+      .root.open .board, .root.open .crmwin { right: ${PANEL_W}px; }
+      /* Seletor WhatsApp | CRM (barra e Quadro) */
+      .wfam { flex-shrink: 0; display: inline-flex; padding: 2px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--border); }
+      .wfam button { height: 22px; padding: 0 9px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; }
+      .wfam button.on { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px var(--shadow); }
+      /* Janela Etiquetas CRM */
+      .crmbody { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; scrollbar-width: thin; }
+      .crmsec { min-width: 0; padding: 12px; border-radius: 12px; background: var(--bg); border: 1px solid var(--border); }
+      .crm-sub { margin: 10px 2px 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--muted); }
+      .crm-sub:first-of-type { margin-top: 2px; }
+      .crm-note { width: 100%; min-height: 76px; resize: vertical; padding: 8px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; outline: none; }
+      .crm-note:focus { border-color: var(--accent); }
+      .crm-note:disabled { opacity: .6; }
+      .crm-noterow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+      .crm-notemsg { flex: 1; min-width: 0; font-size: 11px; color: var(--muted); }
+      .crm-notemsg.warn { color: var(--warn); }
+      .crm-notemsg.err { color: var(--err); }
+      .crm-notemsg.ok { color: var(--ok); }
+      .crm-count { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .bbtn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .bbtn.primary:hover { color: #fff; filter: brightness(1.06); }
+      .bbtn:disabled { opacity: .5; cursor: default; }
+      .crm-wa { margin-top: 12px; padding-top: 4px; border-top: 1px dashed var(--border); }
+      .crm-wa[hidden] { display: none; }
+      .lt-head { display: flex; align-items: center; }
+      .lt-head .lt-row { flex: 1; min-width: 0; }
+      .lt-grip { flex-shrink: 0; width: 18px; padding-left: 6px; color: var(--muted); cursor: grab; user-select: none; font-size: 13px; }
+      .lt-opts { flex-shrink: 0; width: 28px; height: 28px; margin-right: 4px; border: none; border-radius: 7px; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; }
+      .lt-opts:hover, .lt-opts.on { background: var(--bg2); color: var(--fg); }
+      .lt-item.is-hidden .lt-row { opacity: .55; }
+      .lt-item.drop-before { box-shadow: 0 -2px 0 var(--accent); }
+      .lt-item.drop-after { box-shadow: 0 2px 0 var(--accent); }
+      .lt-tag { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; background: var(--bg2); color: var(--muted); font-size: 10px; font-weight: 700; }
+      .lt-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); background: var(--bg2); font-size: 12px; }
+      .lt-edit button { padding: 4px 9px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); font-size: 11.5px; font-weight: 600; }
+      .lt-edit button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+      .lt-edit button:disabled { opacity: .45; cursor: default; }
+      .lt-edit button.danger { color: var(--err); }
+      .lt-edit button.danger:hover:not(:disabled) { border-color: var(--err); color: var(--err); }
+      .lt-edit .q { flex-basis: 100%; line-height: 1.4; }
+      .lt-edit input { flex: 1; min-width: 120px; height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; font-size: 12px; outline: none; }
+      .lt-edit input:focus { border-color: var(--accent); }
+      .sw { width: 22px; height: 22px; padding: 0 !important; border-radius: 50% !important; border: 2px solid transparent !important; }
+      .sw.on { border-color: var(--fg) !important; box-shadow: inset 0 0 0 2px var(--card); }
+      .lt-export { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+      .lt-export a { color: var(--accent); font-weight: 700; }
+      .crm-newbtn { width: 100%; margin-top: 8px; padding: 7px; border: 1px dashed var(--accent); border-radius: 8px; background: transparent; color: var(--accent); font-size: 12px; font-weight: 700; }
+      .crm-new { margin-top: 8px; border-radius: 9px; border: 1px solid var(--border); overflow: hidden; }
+      .crm-new[hidden] { display: none; }
+      .crm-tip { margin-top: 10px; font-size: 11px; color: var(--muted); line-height: 1.45; }
+      .cp-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+      .cp-field select { height: 30px; padding: 0 6px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; }
+      .cp-warn { margin: 2px 0 8px; padding: 7px 9px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); font-size: 11.5px; }
+      .cp-warn[hidden], .cp-prog[hidden], .cp-result[hidden] { display: none; }
+      .cp-prog { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 11.5px; }
+      .cp-bar { flex: 1; height: 6px; border-radius: 999px; background: var(--bg2); overflow: hidden; }
+      .cp-fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+      .cp-result { margin-top: 8px; padding: 8px 9px; border-radius: 8px; background: var(--ok-soft); color: var(--fg); font-size: 12px; line-height: 1.45; }
+      .cp-result.err { background: var(--err-soft); color: var(--err); }
+      .cp-off { font-size: 12px; color: var(--muted); }
       .bheader { position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--border); }
       .btitle { display: flex; flex-direction: column; min-width: 0; }
       .btitle b { font-size: 14.5px; }
@@ -727,18 +802,7 @@
       .voice.prep .vbar { display: none; }
       @keyframes pulse { 50% { transform: scale(1.12); opacity: .75; } }
 
-      /* Abas do painel */
-      .tabs { display: flex; gap: 3px; margin: 0 12px 10px; padding: 3px; border-radius: 10px; background: var(--bg2); }
-      .tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 600; transition: background .15s, color .15s; }
-      .tab svg { width: 14px; height: 14px; }
-      .tab:hover { color: var(--fg); }
-      .tab.active { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px var(--shadow); }
-      .panel.tab-labels .status, .panel.tab-labels .labels, .panel.tab-labels .name-note,
-      .panel.tab-labels .tools, .panel.tab-labels .banner, .panel.tab-labels .list { display: none; }
-
-      /* Aba Etiquetas */
-      .ltab { display: none; flex: 1; overflow-y: auto; padding: 0 12px 12px; scrollbar-width: thin; }
-      .panel.tab-labels .ltab { display: block; }
+      /* Etiquetas CRM (conteúdo da antiga aba Etiquetas, agora na janela Etiquetas CRM) */
       .lt-sec { margin-bottom: 14px; }
       .lt-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 2px 2px 8px; }
       .lt-conv { padding: 10px; border-radius: 10px; background: var(--bg2); }
@@ -838,16 +902,27 @@
     </style>
     <div class="root light">
       <button class="toggle" type="button" title="Mensagens (Triumph Store)" aria-label="Abrir ou fechar mensagens">${svg('zap', 'fill')}</button>
-      <div class="wabar" role="toolbar" aria-label="Etiquetas do WhatsApp" hidden>
-        <span class="wlabel">ETIQUETAS</span>
+      <div class="wabar" role="toolbar" aria-label="Menu Triumph Store: Quadro e etiquetas do WhatsApp e do CRM" hidden>
+        <nav class="wmenu" aria-label="Menu">
+          <button class="wnav wboard" type="button" title="Abrir o Quadro">${svg('board')}Quadro</button>
+          <button class="wnav wcrm" type="button" title="Abrir Etiquetas CRM">${svg('tag')}Etiquetas CRM</button>
+          <button class="wnav" type="button" disabled title="Em breve">${svg('calendar')}Agendar<span class="wsoon">em breve</span></button>
+          <button class="wnav" type="button" disabled title="Em breve">${svg('send')}Disparos<span class="wsoon">em breve</span></button>
+          <button class="wnav" type="button" disabled title="Em breve">${svg('repeat')}Follows<span class="wsoon">em breve</span></button>
+        </nav>
+        <div class="wfam" role="group" aria-label="Etiquetas do WhatsApp ou do CRM">
+          <button type="button" data-fam="whatsapp" aria-pressed="false">WhatsApp</button><button type="button" data-fam="crm" aria-pressed="false">CRM</button>
+        </div>
         <div class="wchips"></div>
-        <button class="wboard" type="button" title="Abrir o quadro de etiquetas">${svg('board')}Quadro</button>
-        <button class="wclose" type="button" title="Ocultar a barra de etiquetas" aria-label="Ocultar a barra de etiquetas">×</button>
+        <button class="wclose" type="button" title="Ocultar a barra" aria-label="Ocultar a barra">×</button>
       </div>
-      <div class="board" role="dialog" aria-label="Quadro de etiquetas" tabindex="-1" hidden>
+      <div class="board" role="dialog" aria-label="Quadro" tabindex="-1" hidden>
         <div class="bheader">
-          <div class="btitle"><b>Quadro de etiquetas</b><span>Clique num cartão para abrir a conversa · arraste para outra coluna para trocar a etiqueta</span></div>
+          <div class="btitle"><b>Quadro</b><span class="bhint">Clique num cartão para abrir a conversa · arraste para outra coluna para trocar a etiqueta</span></div>
           <span class="bstatus" role="status" aria-live="polite"></span>
+          <div class="wfam" role="group" aria-label="Etiquetas do WhatsApp ou do CRM">
+            <button type="button" data-fam="whatsapp" aria-pressed="false">WhatsApp</button><button type="button" data-fam="crm" aria-pressed="false">CRM</button>
+          </div>
           <div class="bactions">
             <button class="bbtn bcolsbtn" type="button" aria-haspopup="true" aria-expanded="false">Colunas</button>
             <button class="bbtn icon brefresh" type="button" title="Atualizar" aria-label="Atualizar">${svg('refresh')}</button>
@@ -858,20 +933,59 @@
         <div class="bcols"></div>
         <div class="btoast" role="status" aria-live="polite" hidden></div>
       </div>
+      <div class="crmwin" role="dialog" aria-label="Etiquetas CRM" tabindex="-1" hidden>
+        <div class="bheader">
+          <div class="btitle"><b>Etiquetas CRM</b><span>Ficam só no nosso sistema (CRM). As etiquetas do WhatsApp continuam no WhatsApp.</span></div>
+          <span class="bstatus" role="status" aria-live="polite"></span>
+          <div class="bactions"><button class="bbtn crmclose" type="button" title="Fechar (Esc)">Fechar</button></div>
+        </div>
+        <div class="crmbody">
+          <section class="crmsec">
+            <div class="wt-head">ESTA CONVERSA</div>
+            <div class="lt-conv">
+              <div class="lt-who warn"><span class="dot"></span><span class="txt"></span></div>
+              <div class="lt-note" hidden>identificado só pelo nome</div>
+              <div class="crm-sub">Etiquetas CRM</div>
+              <div class="tchips"></div>
+              <div class="crm-sub">Nota do contato (CRM)</div>
+              <textarea class="crm-note" maxlength="2000" rows="4" aria-label="Nota do contato (CRM)" placeholder="Anotações sobre este cliente (só ficam no CRM)"></textarea>
+              <div class="crm-noterow"><span class="crm-notemsg" role="status" aria-live="polite"></span><span class="crm-count">0/2000</span><button class="bbtn crm-savenote" type="button" disabled>Salvar nota</button></div>
+            </div>
+            <div class="wt crm-wa" hidden>
+              <div class="crm-sub">Etiquetas do WhatsApp nesta conversa</div>
+              <div class="wt-who warn"><span></span></div>
+              <div class="wt-chips"></div>
+            </div>
+          </section>
+          <section class="crmsec">
+            <div class="wt-head">TODAS AS ETIQUETAS CRM</div>
+            <div class="lt-rows"></div>
+            <button class="crm-newbtn" type="button" aria-expanded="false">+ Nova etiqueta CRM</button>
+            <div class="crm-new" hidden><div class="lt-edit">
+              <input class="crm-newname" type="text" maxlength="40" placeholder="Nome (até 40 caracteres)" aria-label="Nome da nova etiqueta CRM" />
+              <div class="crm-newcolors" role="group" aria-label="Cor"></div>
+              <button class="crm-create" type="button">Criar</button><button class="crm-cancelnew" type="button">Cancelar</button>
+            </div></div>
+            <div class="crm-tip">Sugestão de funil: Novo lead → Qualificação → Negociação → Proposta → Pós-venda. Comece com 3 a 6 etiquetas.</div>
+            <div class="lt-hint" role="status" aria-live="polite" hidden></div>
+          </section>
+          <section class="crmsec">
+            <div class="wt-head">COPIAR DO WHATSAPP</div>
+            <div class="crm-copy"></div>
+          </section>
+        </div>
+        <div class="btoast" role="status" aria-live="polite" hidden></div>
+      </div>
       <aside class="panel" aria-label="Mensagens">
         <header class="head">
           <div class="brand"><span class="logo">${svg('zap', 'fill')}</span>Mensagens</div>
           <div class="actions"></div>
         </header>
-        <div class="tabs" role="tablist">
-          <button class="tab" type="button" role="tab" data-tab="mensagens">${svg('chat')}Mensagens</button>
-          <button class="tab" type="button" role="tab" data-tab="etiquetas">${svg('tag')}Etiquetas</button>
-        </div>
         <div class="status warn"><span class="dot"></span><span class="txt"></span></div>
         <div class="labels">
-          <span class="lbl">Etiquetas</span>
+          <span class="lbl">Etiquetas CRM</span>
           <div class="chips"></div>
-          <button class="add" type="button" title="Marcar etiquetas" aria-label="Marcar etiquetas" aria-haspopup="true" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
+          <button class="add" type="button" title="Marcar etiquetas CRM" aria-label="Marcar etiquetas CRM" aria-haspopup="true" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
           <div class="lmenu" role="menu" hidden></div>
         </div>
         <div class="name-note" hidden title="Sem telefone visível nesta conversa: a etiqueta fica ligada ao nome do contato. Se o nome mudar, ela não acompanha.">identificado só pelo nome</div>
@@ -881,36 +995,6 @@
         </div>
         <div class="banner" hidden>${svg('wifiOff')}<span>Sem conexão: mostrando a última versão</span><button type="button">Tentar de novo</button></div>
         <div class="list"></div>
-        <div class="ltab" role="tabpanel" aria-label="Etiquetas">
-          <div class="wt" hidden>
-            <div class="wt-head">ETIQUETAS DO WHATSAPP</div>
-            <section class="lt-sec">
-              <div class="lt-title">Esta conversa</div>
-              <div class="lt-conv">
-                <div class="wt-who warn"><span></span></div>
-                <div class="wt-chips"></div>
-              </div>
-            </section>
-            <section class="lt-sec">
-              <div class="lt-title">Abrir no Quadro</div>
-              <div class="wt-rows"></div>
-            </section>
-          </div>
-          <div class="wt-head wt-sys" hidden>ETIQUETAS DO SISTEMA</div>
-          <section class="lt-sec">
-            <div class="lt-title">Esta conversa</div>
-            <div class="lt-conv">
-              <div class="lt-who warn"><span class="dot"></span><span class="txt"></span></div>
-              <div class="lt-note" hidden>identificado só pelo nome</div>
-              <div class="tchips"></div>
-            </div>
-          </section>
-          <section class="lt-sec">
-            <div class="lt-title">Todas as etiquetas</div>
-            <div class="lt-rows"></div>
-          </section>
-          <div class="lt-hint" role="status" aria-live="polite" hidden></div>
-        </div>
         <div class="voice prep" role="status" aria-live="polite" hidden>
           <div class="vrow">
             <span class="vmic">${svg('mic')}</span>
@@ -947,8 +1031,6 @@
   const voiceTime = shadow.querySelector('.voice .vtime');
   const voiceFill = shadow.querySelector('.voice .vfill');
   shadow.querySelector('.voice .vcancel').addEventListener('click', () => cancelVoice('Gravação cancelada.'));
-  const tabBtns   = [...shadow.querySelectorAll('.tab')];
-  const ltabEl    = shadow.querySelector('.ltab');
   const ltWho     = shadow.querySelector('.lt-who');
   const ltWhoTxt  = shadow.querySelector('.lt-who .txt');
   const ltNote    = shadow.querySelector('.lt-note');
@@ -956,10 +1038,22 @@
   const ltRowsEl  = shadow.querySelector('.lt-rows');
   const ltHint    = shadow.querySelector('.lt-hint');
   const wtEl      = shadow.querySelector('.wt');
-  const wtSysHead = shadow.querySelector('.wt-sys');
   const wtWho     = shadow.querySelector('.wt-who span');
   const wtChips   = shadow.querySelector('.wt-chips');
-  const wtRows    = shadow.querySelector('.wt-rows');
+  const crmEls = {
+    root: shadow.querySelector('.crmwin'),
+    status: shadow.querySelector('.crmwin .bstatus'),
+    toast: shadow.querySelector('.crmwin .btoast'),
+    note: shadow.querySelector('.crm-note'),
+    noteMsg: shadow.querySelector('.crm-notemsg'),
+    noteCount: shadow.querySelector('.crm-count'),
+    noteSave: shadow.querySelector('.crm-savenote'),
+    newBtn: shadow.querySelector('.crm-newbtn'),
+    newBox: shadow.querySelector('.crm-new'),
+    newName: shadow.querySelector('.crm-newname'),
+    newColors: shadow.querySelector('.crm-newcolors'),
+    copy: shadow.querySelector('.crm-copy'),
+  };
 
   // Busca de clientes e lista da etiqueta aberta: elementos fixos, movidos para a etiqueta aberta
   const ltSearchWrap = el('label', 'lt-search');
@@ -993,7 +1087,7 @@
   }
 
   function barActive() {
-    return !state.barHiddenByUser && Array.isArray(state.waLabels) && state.waLabels.length > 0 && !!document.querySelector('#app');
+    return !state.barHiddenByUser && !!document.querySelector('#app');
   }
 
   let observedBody = null;
@@ -1077,11 +1171,8 @@
       sync();
       pingBridge();
       refreshWaStatus();
-      restartLabelsTabTimer();
-      if (state.tab === 'etiquetas') refreshLabelsTab();
     } else {
-      clearTimeout(convTimer);
-      restartLabelsTabTimer();
+      if (!crm.open) clearTimeout(convTimer);
       setMenuOpen(false);
       if (state.view === 'diag') showList();
     }
@@ -1143,6 +1234,7 @@
     if (!key) setMenuOpen(false);
     renderLabelsRow();
     scheduleWaConv();
+    if (keyChanged) scheduleNote();
   }
 
   async function loadConvLabels(key) {
@@ -1206,15 +1298,18 @@
     renderConvTab();
   }
 
+  // Etiquetas CRM ocultas só aparecem para a conversa que já as tem
+  const visibleCrmLabels = () => state.labels.filter((l) => !l.hidden || state.convLabelIds.includes(l.id));
+
   function renderMenu() {
     lmenuEl.textContent = '';
-    if (!state.labels.length) {
+    if (!visibleCrmLabels().length) {
       lmenuEl.append(el('div', 'lempty', state.labelsLoaded
-        ? 'Nenhuma etiqueta. Crie na aba WhatsApp do ERP (Etiquetas).'
-        : 'Carregando etiquetas...'));
+        ? 'Nenhuma etiqueta CRM. Crie em "Etiquetas CRM", na barra do topo.'
+        : 'Carregando etiquetas CRM...'));
       return;
     }
-    state.labels.forEach((l) => {
+    visibleCrmLabels().forEach((l) => {
       const on = state.convLabelIds.includes(l.id);
       const opt = el('button', 'lopt');
       opt.type = 'button';
@@ -1264,36 +1359,16 @@
       afterLabelChange();
     } catch {
       apply(on ? current().filter((id) => id !== labelId) : [...current(), labelId]);
-      toast('Não consegui salvar', 'error');
+      if (crm.open) crmToast('Não consegui salvar', 'error', 4000);
+      else toast('Não consegui salvar', 'error');
     } finally {
       pendingLabelOps--;
     }
   }
 
-  // ── Abas do painel ─────────────────────────────────────────────────────────
+  // ── Etiquetas CRM (dados da antiga aba Etiquetas, agora na janela Etiquetas CRM) ──
 
-  function setTab(tab, { persist = true } = {}) {
-    state.tab = tab === 'etiquetas' ? 'etiquetas' : 'mensagens';
-    panel.classList.toggle('tab-labels', state.tab === 'etiquetas');
-    tabBtns.forEach((b) => {
-      const active = b.dataset.tab === state.tab;
-      b.classList.toggle('active', active);
-      b.setAttribute('aria-selected', String(active));
-    });
-    if (persist) storageSet({ panelTab: state.tab });
-    setMenuOpen(false);
-    restartLabelsTabTimer();
-    if (state.tab === 'etiquetas' && state.open) refreshLabelsTab();
-  }
-
-  tabBtns.forEach((b) => b.addEventListener('click', () => {
-    if (state.view === 'diag') showList();
-    setTab(b.dataset.tab);
-  }));
-
-  // ── Aba Etiquetas ──────────────────────────────────────────────────────────
-
-  const labelsTabActive = () => state.open && state.tab === 'etiquetas';
+  const labelsTabActive = () => crm.open;
 
   function restartLabelsTabTimer() {
     clearInterval(lt.timer);
@@ -1307,10 +1382,10 @@
     if (lt.openId) loadClients({ reset: true });
   }
 
+  // Depois de qualquer mudança feita pela extensão: números da barra/janela/Quadro
   function afterLabelChange() {
-    if (!labelsTabActive()) return;
     loadCounts();
-    if (lt.openId) loadClients({ reset: true });
+    if (labelsTabActive() && lt.openId) loadClients({ reset: true });
   }
 
   function formatPhone(digits) {
@@ -1335,13 +1410,13 @@
     ltChips.classList.toggle('loading', !warning && state.convLoading);
     ltChips.textContent = '';
 
-    if (!state.labels.length) {
+    if (!visibleCrmLabels().length) {
       ltChips.append(el('span', 'lt-none', state.labelsLoaded
-        ? 'Nenhuma etiqueta. Crie na aba WhatsApp do ERP (Etiquetas).'
-        : 'Carregando etiquetas...'));
+        ? 'Nenhuma etiqueta CRM. Crie em "+ Nova etiqueta CRM".'
+        : 'Carregando etiquetas CRM...'));
       return;
     }
-    state.labels.forEach((l) => {
+    visibleCrmLabels().forEach((l) => {
       const on = !warning && state.convLabelIds.includes(l.id);
       const chip = el('button', `tchip${on ? ' on' : ''}`);
       chip.type = 'button';
@@ -1355,7 +1430,8 @@
       chip.addEventListener('click', () => toggleLabel(l.id));
       ltChips.append(chip);
     });
-    if (!warning && state.convError) ltChips.append(el('span', 'lt-none', 'Não consegui carregar as etiquetas desta conversa.'));
+    if (!warning && state.convError) ltChips.append(el('span', 'lt-none', 'Não consegui carregar as etiquetas CRM desta conversa.'));
+    renderNote();
   }
 
   async function loadCounts() {
@@ -1369,6 +1445,7 @@
       lt.countsError = e.message;
     }
     renderAllLabels();
+    onCrmCountsChanged();
   }
 
   function ltSkeleton(lines) {
@@ -1392,43 +1469,60 @@
     return box;
   }
 
-  // "Todas as etiquetas": só reconstrói quando a lista muda (não tira o foco da busca)
+  // "Todas as etiquetas CRM": só reconstrói quando a lista muda (não tira o foco da busca nem do campo de nome)
   function renderAllLabels() {
     const labelsFailed = !state.labelsLoaded && !!state.labelsError;
-    const sig = JSON.stringify([state.labelsLoaded, labelsFailed, state.labels.map((l) => [l.id, l.name, l.color]), lt.openId, !lt.counts && !!lt.countsError]);
+    const sig = JSON.stringify([state.labelsLoaded, labelsFailed, state.labels.map((l) => [l.id, l.name, l.color, !!l.hidden]), lt.openId,
+      !lt.counts && !!lt.countsError, crm.edit, crm.busy, state.schema.hidden]);
     if (sig !== lt.rowsSig) {
       lt.rowsSig = sig;
       ltRowsEl.textContent = '';
       if (lt.openId && !state.labels.some((l) => l.id === lt.openId)) lt.openId = null;
 
       if (labelsFailed) {
-        ltRowsEl.append(ltMessage('Não consegui carregar as etiquetas.', { error: true, retry: refreshLabelsTab }));
+        ltRowsEl.append(ltMessage('Não consegui carregar as etiquetas CRM.', { error: true, retry: refreshLabelsTab }));
       } else if (!state.labelsLoaded) {
         ltRowsEl.append(ltSkeleton(3));
       } else if (!state.labels.length) {
-        ltRowsEl.append(ltMessage('Nenhuma etiqueta. Crie na aba WhatsApp do ERP (Etiquetas).'));
+        ltRowsEl.append(ltMessage('Nenhuma etiqueta CRM ainda. Crie em "+ Nova etiqueta CRM".'));
       } else {
         if (!lt.counts && lt.countsError) {
           ltRowsEl.append(ltMessage('Não consegui carregar os contadores.', { error: true, retry: loadCounts }));
         }
         state.labels.forEach((l) => {
           const open = lt.openId === l.id;
-          const item = el('div', `lt-item${open ? ' open' : ''}`);
+          const item = el('div', `lt-item${open ? ' open' : ''}${l.hidden ? ' is-hidden' : ''}`);
           item.dataset.id = l.id;
+          const head = el('div', 'lt-head');
+          const grip = el('span', 'lt-grip', '⠿');
+          grip.title = 'Arraste para mudar a ordem';
+          grip.setAttribute('aria-hidden', 'true');
           const row = el('button', 'lt-row');
           row.type = 'button';
           row.setAttribute('aria-expanded', String(open));
           const dot = el('span', 'ldot');
           dot.style.background = l.color;
-          row.append(dot, el('span', 'lname', l.name), el('span', 'lt-count', '…'));
+          row.append(dot, el('span', 'lname', l.name));
+          if (l.hidden) row.append(el('span', 'lt-tag', 'oculta'));
+          row.append(el('span', 'lt-count', '…'));
           row.insertAdjacentHTML('beforeend', svg('chevron', 'chev'));
           row.addEventListener('click', () => toggleLabelOpen(l.id));
-          item.append(row);
+          const editing = crm.edit && crm.edit.id === l.id;
+          const opts = el('button', `lt-opts${editing ? ' on' : ''}`, '⋯');
+          opts.type = 'button';
+          opts.title = 'Renomear, cor, ocultar, ordem, excluir';
+          opts.setAttribute('aria-label', `Opções da etiqueta CRM "${l.name}"`);
+          opts.setAttribute('aria-expanded', String(!!editing));
+          opts.addEventListener('click', () => setEdit(editing ? null : l.id, 'menu'));
+          head.append(grip, row, opts);
+          item.append(head);
+          if (editing) item.append(labelEditor(l));
           if (open) {
             const body = el('div', 'lt-body');
-            body.append(ltSearchWrap, ltClientsEl);
+            body.append(ltSearchWrap, ltClientsEl, exportRow(l));
             item.append(body);
           }
+          addReorderDrag(item, l);
           ltRowsEl.append(item);
         });
       }
@@ -1574,6 +1668,8 @@
       try { ok = await fillSearchBox(box, term); } catch { ok = false; }
     }
     showHint(ok, client);
+    // A janela cobre a lista de conversas: fecha para a pessoa ver o resultado da busca
+    if (ok && crm.open) closeCrm();
   }
 
   // ── Busca e filtros ────────────────────────────────────────────────────────
@@ -2412,12 +2508,13 @@
       { label: 'Nome do contato', status: contact.status, screen: contact.screen, copy: contact.copy },
       { label: 'Identificação da conversa', ...identityDiag(ctx) },
       {
-        label: 'Etiquetas carregadas',
+        label: 'Etiquetas CRM',
         status: state.labelsLoaded ? (state.labelsError ? 'warn' : 'ok') : 'fail',
         screen: state.labelsLoaded
-          ? `${state.labels.length} (${state.labelsSource === 'servidor' ? 'do servidor' : 'do cache local'}, ${timeStr(state.labelsSyncedAt)})${state.labelsError ? ` · última atualização falhou: ${state.labelsError}` : ''}`
+          ? `${state.labels.length}${crmHiddenText()} (${state.labelsSource === 'servidor' ? 'do servidor' : 'do cache local'}, ${timeStr(state.labelsSyncedAt)})${state.labelsError ? ` · última atualização falhou: ${state.labelsError}` : ''}`
           : `não carregadas${state.labelsError ? `: ${state.labelsError}` : ''}`,
       },
+      schemaDiagRow(),
       ...waDiagRows(),
       {
         label: 'Ponte do microfone carregada',
@@ -2426,17 +2523,32 @@
       },
       { label: 'Botão de gravar encontrado', ...micDiag(ctx) },
       {
-        label: 'Aba Etiquetas: contadores carregados',
+        label: 'Etiquetas CRM: contadores carregados',
         status: lt.counts ? 'ok' : lt.countsError ? 'fail' : 'warn',
         screen: lt.counts
           ? `sim (${timeStr(lt.countsAt)})${lt.countsError ? ` · última atualização falhou: ${lt.countsError}` : ''}`
-          : lt.countsError ? `não: ${lt.countsError}` : 'não (abra a aba Etiquetas)',
+          : lt.countsError ? `não: ${lt.countsError}` : 'não (abra Etiquetas CRM)',
       },
       { label: 'Tema', status: 'ok', screen: `${THEME_PREFS[state.themePref].label} → ${appliedDark() ? 'escuro' : 'claro'} (WhatsApp ${whatsappIsDark() ? 'escuro' : 'claro'})` },
       { label: 'Página do WhatsApp', status: document.querySelector('#app') ? 'ok' : 'fail', screen: document.querySelector('#app') ? '#app encontrado' : '#app não encontrado' },
       { label: 'Painel na página', status: host.isConnected && layoutStyle.isConnected ? 'ok' : 'fail', screen: host.isConnected && layoutStyle.isConnected ? 'injetado' : 'faltando (será re-injetado)' },
     ];
     return rows;
+  }
+
+  // Etiquetas CRM: só quantidades (sem nomes)
+  function crmHiddenText() {
+    const n = state.labels.filter((l) => l.hidden).length;
+    return n ? `, ${n} oculta${n === 1 ? '' : 's'}` : '';
+  }
+
+  // Colunas da migration 20261031120000 (hidden e notes)
+  function schemaDiagRow() {
+    const { hidden, notes } = state.schema;
+    if (hidden === null || notes === null) return { label: 'Colunas novas do banco', status: 'warn', screen: 'testando...' };
+    if (hidden && notes) return { label: 'Colunas novas do banco', status: 'ok', screen: 'ok' };
+    const missing = [hidden ? null : 'hidden', notes ? null : 'notes'].filter(Boolean).join(' e ');
+    return { label: 'Colunas novas do banco', status: 'warn', screen: `falta atualizar (${missing}): aplique a migration 20261031120000 no Supabase` };
   }
 
   // Biblioteca WA-JS: sem ids nem telefones (só sim/não, tipo de conversa e quantidade)
@@ -2555,7 +2667,6 @@
   }
 
   function showDiag() {
-    if (state.tab !== 'mensagens') setTab('mensagens', { persist: false });
     state.view = 'diag';
     panel.classList.add('diag');
     diagBtn.classList.add('on');
@@ -2565,6 +2676,7 @@
     sync();
     pingBridge().then(renderDiag);
     refreshWaStatus().then(renderDiag);
+    loadSchema().then(renderDiag);
   }
 
   function showList() {
@@ -2574,58 +2686,88 @@
     renderList();
   }
 
-  // ── Barra de etiquetas do WhatsApp Business + Quadro ──────────────────────
-  // Lê as etiquetas nativas pelo wa-bridge.js (pedidos labels, labelChats e openChat).
-  // Trocar etiqueta (setChatLabels) só acontece no clique/arraste/"Desfazer" do usuário,
-  // uma conversa por vez; nada em lote nem em timer.
+  // ── Barra-menu do topo + Quadro (WhatsApp | CRM) ──────────────────────────
+  // Etiquetas do WhatsApp: lidas pelo wa-bridge.js (labels, labelChats, openChat). Trocar (setChatLabels)
+  // só no clique/arraste/"Desfazer" do usuário, uma conversa por vez; nada em lote nem em timer.
+  // Etiquetas do CRM: as nossas (Supabase), pelo background. Toda gravação vem de um clique.
   // Nomes, telefones e prévias ficam só na memória enquanto o Quadro está aberto:
-  // nunca vão para o Supabase, chrome.storage, console ou Diagnóstico.
+  // nunca vão para chrome.storage, console ou Diagnóstico (prévias nunca vão para o Supabase).
 
   const BOARD_MAX_COLS = 6;
   const BOARD_PAGE = 50;
   const BAR_REFRESH_MS = 30 * 1000;
+  const CRM_REFRESH_MS = 60 * 1000;
   const PREVIEW_ICON = { audio: '🎤', foto: '📷', video: '🎬', documento: '📄', figurinha: '😀', localizacao: '📍' };
   const PREVIEW_LABEL = { audio: 'Áudio', foto: 'Foto', video: 'Vídeo', documento: 'Documento', figurinha: 'Figurinha', localizacao: 'Localização', outro: 'Mensagem' };
+  const FAMILY_NAME = { whatsapp: 'WhatsApp', crm: 'CRM' };
 
-  const bar = { el: null, chips: null, btn: null, busy: false, lastAt: 0 };
+  const bar = { el: null, chips: null, btn: null, busy: false, lastAt: 0, crmAt: 0, crmBusy: false };
   const board = {
-    open: false, columns: [], data: new Map(), savedIds: null, menuOpen: false, opening: false,
-    moving: new Set(), drag: null, moveMenu: null, toastTimer: null, // ids das conversas sendo trocadas agora
+    open: false, columns: [], data: new Map(), saved: { whatsapp: null, crm: null }, menuOpen: false, opening: false,
+    moving: new Set(), drag: null, moveMenu: null, toastTimer: null, // ids das conversas/contatos sendo trocados agora
   };
   const LABEL_FAIL_MSG = 'Não consegui trocar a etiqueta. Confira no WhatsApp.';
+  const CRM_FAIL_MSG = 'Não consegui trocar a etiqueta CRM. Tente de novo.';
   const UNDO_MS = 8000;
   let boardEls = null;
 
   const waLabelById = (id) => (state.waLabels || []).find((l) => l.id === id) || null;
+  const isCrm = () => state.family === 'crm';
+
+  // Etiquetas da família, no formato do Quadro/barra: { id, name, hexColor, count }
+  function familyLabels(family) {
+    if (family === 'crm') {
+      return state.labels.filter((l) => !l.hidden).map((l) => ({
+        id: l.id, name: l.name, hexColor: l.color,
+        count: lt.counts && Number.isFinite(lt.counts[l.id]) ? lt.counts[l.id] : null,
+      }));
+    }
+    return state.waLabels || [];
+  }
+  const boardLabelById = (id) => familyLabels(state.family).find((l) => l.id === id) || null;
+  const countText = (n) => (n == null ? '…' : String(n));
+
+  function renderFamilyButtons() {
+    shadow.querySelectorAll('.wfam button').forEach((b) => {
+      const on = b.dataset.fam === state.family;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  }
 
   function renderBar() {
     if (!bar.el) return;
     const active = barActive();
     bar.el.hidden = !active;
     ensureInjected();
+    renderFamilyButtons();
     if (bar.btn) {
       bar.btn.classList.toggle('on', active);
-      const label = state.barHiddenByUser ? 'Mostrar a barra de etiquetas' : 'Ocultar a barra de etiquetas';
-      bar.btn.title = 'Mostrar ou ocultar a barra de etiquetas';
-      bar.btn.setAttribute('aria-label', label);
+      bar.btn.title = 'Mostrar ou ocultar a barra do topo';
+      bar.btn.setAttribute('aria-label', state.barHiddenByUser ? 'Mostrar a barra do topo' : 'Ocultar a barra do topo');
       bar.btn.setAttribute('aria-pressed', String(active));
     }
+    shadow.querySelector('.wabar .wboard').classList.toggle('on', board.open);
+    shadow.querySelector('.wabar .wcrm').classList.toggle('on', crm.open);
     if (!active) return;
     const scroll = bar.chips.scrollLeft;
     bar.chips.textContent = '';
-    state.waLabels.forEach((l) => {
-      const chip = el('button', `wchip${l.count ? '' : ' zero'}`);
+    const labels = familyLabels(state.family);
+    if (!labels.length) bar.chips.append(el('span', 'wempty', `Nenhuma etiqueta do ${FAMILY_NAME[state.family]}`));
+    labels.forEach((l) => {
+      const chip = el('button', `wchip${l.count === 0 ? ' zero' : ''}`);
       chip.type = 'button';
-      chip.title = `Abrir o quadro com "${l.name}"`;
+      chip.title = `Abrir o Quadro (${FAMILY_NAME[state.family]}) com "${l.name}"`;
       const dot = el('span', 'wdot');
       dot.style.background = l.hexColor;
-      chip.append(dot, el('span', null, l.name.toUpperCase()), el('span', 'wcount', String(l.count)));
+      chip.append(dot, el('span', null, l.name.toUpperCase()), el('span', 'wcount', countText(l.count)));
       chip.addEventListener('click', () => openBoard(l.id));
       bar.chips.append(chip);
     });
     bar.chips.scrollLeft = scroll;
   }
 
+  // Etiquetas do WhatsApp (leitura)
   async function refreshBar() {
     if (bar.busy) return;
     bar.busy = true;
@@ -2633,30 +2775,70 @@
       const labels = await waRequest('labels', {}, { timeout: 5000 });
       state.waLabels = Array.isArray(labels) ? labels : [];
     } catch (e) {
-      // Biblioteca ausente ou WhatsApp ainda não pronto: barra some (sem reservar espaço)
+      // Biblioteca ausente ou WhatsApp ainda não pronto: sem etiquetas do WhatsApp
       if (e.code === 'not_ready' || e.code === 'timeout' || !Array.isArray(state.waLabels)) state.waLabels = null;
     } finally {
       bar.busy = false;
       bar.lastAt = Date.now();
       renderBar();
-      if (board.open) updateBoardCounts();
+      if (board.open && !isCrm()) updateBoardCounts();
       renderWaTab();
+      renderCopy();
     }
   }
 
-  // Tenta a cada 5 s até ficar pronta; depois atualiza a cada 30 s, só com a aba visível
+  // Etiquetas do CRM e números (leitura)
+  async function refreshCrmLabels() {
+    if (bar.crmBusy) return;
+    bar.crmBusy = true;
+    bar.crmAt = Date.now();
+    try {
+      await syncLabels();
+      await loadCounts();
+    } finally {
+      bar.crmBusy = false;
+    }
+  }
+
+  // Números novos do CRM: barra, Quadro (modo CRM) e janela
+  function onCrmCountsChanged() {
+    renderBar();
+    if (board.open && isCrm()) updateBoardCounts();
+  }
+
+  // WhatsApp: tenta a cada 5 s até ficar pronto, depois a cada 30 s. CRM: a cada 60 s. Só com a aba visível.
   function barTick() {
     if (document.visibilityState !== 'visible') return;
-    if (state.barHiddenByUser && !board.open) return;
-    if (!Array.isArray(state.waLabels) || Date.now() - bar.lastAt >= BAR_REFRESH_MS) refreshBar();
+    if (state.barHiddenByUser && !board.open && !crm.open) return;
+    const now = Date.now();
+    if (!Array.isArray(state.waLabels) || now - bar.lastAt >= BAR_REFRESH_MS) refreshBar();
+    if (now - bar.crmAt >= CRM_REFRESH_MS) refreshCrmLabels();
   }
 
   function setBarHidden(hidden) {
     state.barHiddenByUser = hidden;
     storageSet({ labelsBarHidden: hidden });
     renderBar();
-    if (!hidden && !Array.isArray(state.waLabels)) refreshBar();
-    if (!hidden && !Array.isArray(state.waLabels)) toast('A barra aparece quando o WhatsApp Business estiver pronto.', 'info', 4000);
+    if (!hidden) barTick();
+  }
+
+  // Família da barra e do Quadro (lembrada no chrome.storage; só 'whatsapp' ou 'crm')
+  function setFamily(family) {
+    const f = family === 'crm' ? 'crm' : 'whatsapp';
+    if (f === state.family) return;
+    state.family = f;
+    storageSet({ labelsFamily: f });
+    renderBar();
+    if (board.open) {
+      closeMoveMenu();
+      hideBoardToast();
+      setColsMenu(false);
+      board.columns = boardColumnIds();
+      board.data = new Map();
+      renderBoardHeader();
+      renderBoardColumns();
+      board.columns.forEach((id) => loadColumn(id, true));
+    }
   }
 
   // ── Quadro ──
@@ -2665,25 +2847,35 @@
     if (boardEls) boardEls.status.textContent = text || '';
   }
 
+  function renderBoardHeader() {
+    boardEls.hint.textContent = isCrm()
+      ? 'Etiquetas do CRM · clique num cartão para abrir a conversa · arraste para outra coluna para trocar a etiqueta CRM'
+      : 'Clique num cartão para abrir a conversa · arraste para outra coluna para trocar a etiqueta';
+  }
+
   function boardColumnIds(firstId) {
-    const labels = state.waLabels || [];
+    const labels = familyLabels(state.family);
     const valid = new Set(labels.map((l) => l.id));
-    let ids = (board.savedIds || []).filter((id) => valid.has(id));
+    let ids = (board.saved[state.family] || []).filter((id) => valid.has(id));
     if (!ids.length) ids = labels.filter((l) => l.count > 0).slice(0, 3).map((l) => l.id);
+    if (!ids.length && isCrm()) ids = labels.slice(0, 3).map((l) => l.id);
     if (firstId && valid.has(firstId)) ids = [firstId, ...ids.filter((id) => id !== firstId)];
     return ids.slice(0, BOARD_MAX_COLS);
   }
 
   function openBoard(firstId) {
-    if (!boardEls || !Array.isArray(state.waLabels)) return;
+    if (!boardEls) return;
+    if (crm.open) closeCrm();
     board.open = true;
     board.columns = boardColumnIds(firstId);
     board.data = new Map();
     boardEls.root.hidden = false;
     boardStatus('');
     setColsMenu(false);
+    renderBoardHeader();
     renderBoardColumns();
     board.columns.forEach((id) => loadColumn(id, true));
+    renderBar();
     boardEls.root.focus();
   }
 
@@ -2698,6 +2890,7 @@
     hideBoardToast();
     boardEls.cols.textContent = '';
     boardEls.root.hidden = true;
+    renderBar();
   }
 
   function columnEls(id) {
@@ -2707,13 +2900,19 @@
 
   function renderBoardColumns() {
     boardEls.cols.textContent = '';
-    const ids = board.columns.filter((id) => waLabelById(id));
+    const ids = board.columns.filter((id) => boardLabelById(id));
     if (!ids.length) {
-      boardEls.cols.append(el('div', 'bempty', 'Nenhuma coluna escolhida. Use "Colunas" para escolher as etiquetas.'));
+      let msg = 'Nenhuma coluna escolhida. Use "Colunas" para escolher as etiquetas.';
+      if (!familyLabels(state.family).length) {
+        msg = isCrm() ? 'Nenhuma etiqueta do CRM. Crie em "Etiquetas CRM", na barra do topo.'
+          : Array.isArray(state.waLabels) ? 'Nenhuma etiqueta do WhatsApp nesta conta.'
+            : 'As etiquetas do WhatsApp ainda não estão prontas (só no WhatsApp Business).';
+      }
+      boardEls.cols.append(el('div', 'bempty', msg));
       return;
     }
     ids.forEach((id) => {
-      const label = waLabelById(id);
+      const label = boardLabelById(id);
       const col = el('section', 'bcol');
       col.dataset.id = id;
       col.style.setProperty('--c', label.hexColor);
@@ -2722,7 +2921,7 @@
       dot.style.background = label.hexColor;
       const name = el('span', 'bname', label.name.toUpperCase());
       name.title = label.name;
-      head.append(dot, name, el('span', 'wcount', String(label.count)));
+      head.append(dot, name, el('span', 'wcount', countText(label.count)));
       col.append(head, el('div', 'bbody'));
       addDropTarget(col, id);
       boardEls.cols.append(col);
@@ -2733,26 +2932,35 @@
   function updateBoardCounts() {
     if (!boardEls) return;
     boardEls.cols.querySelectorAll('.bcol').forEach((col) => {
-      const label = waLabelById(col.dataset.id);
-      if (label) col.querySelector('.wcount').textContent = String(label.count);
+      const label = boardLabelById(col.dataset.id);
+      if (label) col.querySelector('.wcount').textContent = countText(label.count);
     });
   }
 
   async function loadColumn(id, reset) {
     const prev = board.data.get(id);
-    const d = reset || !prev ? { cards: [], total: 0, loading: false, error: false, req: 0 } : prev;
+    const d = reset || !prev ? { cards: [], total: 0, loading: false, error: false, req: 0, family: state.family } : prev;
     const req = ++d.req;
     d.loading = true;
     d.error = false;
     board.data.set(id, d);
     renderColumn(id);
+    const stale = () => !board.open || board.data.get(id) !== d || d.req !== req;
     try {
-      const res = await waRequest('labelChats', { labelId: id, offset: d.cards.length, limit: BOARD_PAGE }, { timeout: 8000 });
-      if (!board.open || board.data.get(id) !== d || d.req !== req) return;
-      d.cards = d.cards.concat(Array.isArray(res && res.chats) ? res.chats : []);
-      d.total = Number(res && res.total) || 0;
+      if (d.family === 'crm') {
+        const res = await call('fetchLabelClients', { labelId: id, offset: d.cards.length, limit: BOARD_PAGE });
+        if (stale()) return;
+        const got = Array.isArray(res && res.clients) ? res.clients : [];
+        d.cards = d.cards.concat(got.filter((c) => !d.cards.some((x) => x.id === c.id)).map((c) => ({ ...c, crm: true })));
+        d.total = d.cards.length + (res && res.hasMore ? 1 : 0);
+      } else {
+        const res = await waRequest('labelChats', { labelId: id, offset: d.cards.length, limit: BOARD_PAGE }, { timeout: 8000 });
+        if (stale()) return;
+        d.cards = d.cards.concat(Array.isArray(res && res.chats) ? res.chats : []);
+        d.total = Number(res && res.total) || 0;
+      }
     } catch {
-      if (!board.open || board.data.get(id) !== d || d.req !== req) return;
+      if (stale()) return;
       d.error = true;
     }
     d.loading = false;
@@ -2771,6 +2979,11 @@
     return `${two(d.getDate())}/${two(d.getMonth() + 1)}/${String(d.getFullYear()).slice(-2)}`;
   }
 
+  const isoSeconds = (iso) => {
+    const ms = Date.parse(iso || '');
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+  };
+
   function previewLine(c) {
     const p = c.preview || {};
     if (p.kind === 'nenhum') return '';
@@ -2788,23 +3001,34 @@
     card.style.setProperty('--c', label.hexColor);
     if (busy) card.setAttribute('aria-busy', 'true');
     const main = el('div', 'bmain');
-    const name = el('div', 'bcname', c.name || '—');
-    name.title = c.name || '';
-    main.append(name, el('div', 'bprev', previewLine(c)));
     const side = el('div', 'bside');
-    side.append(el('span', 'bdate', formatChatDate(c.t)));
-    if (c.unread > 0) side.append(el('span', 'bunread', c.unread > 99 ? '99+' : String(c.unread)));
+    if (c.crm) {
+      // Contato do CRM: nome, telefone, data em que entrou na etiqueta e 📝 se tiver nota
+      const title = c.name || formatPhone(c.phone) || '—';
+      const name = el('div', 'bcname', `${c.hasNote ? '📝 ' : ''}${title}`);
+      name.title = c.hasNote ? `${title} (tem nota)` : title;
+      main.append(name, el('div', 'bprev', c.phone ? (c.name ? formatPhone(c.phone) : '') : 'só pelo nome'));
+      const date = el('span', 'bdate', formatChatDate(isoSeconds(c.addedAt)));
+      date.title = 'Entrou nesta etiqueta CRM';
+      side.append(date);
+    } else {
+      const name = el('div', 'bcname', c.name || '—');
+      name.title = c.name || '';
+      main.append(name, el('div', 'bprev', previewLine(c)));
+      side.append(el('span', 'bdate', formatChatDate(c.t)));
+      if (c.unread > 0) side.append(el('span', 'bunread', c.unread > 99 ? '99+' : String(c.unread)));
+    }
     if (boardTargets(label.id).length) {
       const move = el('button', 'bmove', 'Mover para…');
       move.type = 'button';
       move.disabled = busy;
-      move.title = 'Trocar a etiqueta desta conversa';
+      move.title = c.crm ? 'Trocar a etiqueta CRM deste contato' : 'Trocar a etiqueta desta conversa';
       move.setAttribute('aria-haspopup', 'true');
       move.addEventListener('click', (e) => { e.stopPropagation(); toggleMoveMenu(card, c.id, label.id); });
       side.append(move);
     }
     card.append(main, side);
-    const open = () => openBoardChat(c.id);
+    const open = () => (c.crm ? openCrmCard(c) : openBoardChat(c.id));
     card.addEventListener('click', open);
     card.addEventListener('keydown', (e) => {
       if (e.target !== card) return;
@@ -2832,7 +3056,7 @@
 
   // Colunas visíveis para onde o cartão pode ir (todas menos a dele)
   function boardTargets(fromId) {
-    return board.columns.filter((id) => id !== fromId && waLabelById(id));
+    return board.columns.filter((id) => id !== fromId && boardLabelById(id));
   }
 
   function addDropTarget(col, id) {
@@ -2873,7 +3097,7 @@
     menu.setAttribute('role', 'menu');
     menu.append(el('div', 'bmovehint', 'Mover para…'));
     boardTargets(fromId).forEach((id) => {
-      const l = waLabelById(id);
+      const l = boardLabelById(id);
       const opt = el('button');
       opt.type = 'button';
       opt.setAttribute('role', 'menuitem');
@@ -2915,6 +3139,10 @@
     if (l) l.count = Math.max(0, l.count + delta);
   }
 
+  function bumpCrmCount(labelId, delta) {
+    if (lt.counts && Number.isFinite(lt.counts[labelId])) lt.counts[labelId] = Math.max(0, lt.counts[labelId] + delta);
+  }
+
   async function requestLabelChange(chatId, add, remove) {
     try {
       const res = await waRequest('setChatLabels', { chatId, add, remove }, { timeout: 15000 });
@@ -2924,49 +3152,66 @@
     }
   }
 
+  async function requestCrmMove(contactId, from, to) {
+    try {
+      await call('moveContactLabel', { contactId, from, to });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // Troca a etiqueta de um cartão: tira a da coluna de origem e põe a da coluna de destino
+  // (WhatsApp: no próprio WhatsApp; CRM: no Supabase)
   async function moveBoardCard(chatId, from, to, { undo = false } = {}) {
-    if (from === to || board.moving.has(chatId) || !waLabelById(to)) return;
+    if (from === to || board.moving.has(chatId) || !boardLabelById(to)) return;
     const fromData = board.data.get(from);
     const card = fromData && fromData.cards.find((c) => c.id === chatId);
     if (!card) return;
+    const crmMode = fromData.family === 'crm';
     board.moving.add(chatId);
     renderColumn(from);
     renderColumn(to);
-    const res = await requestLabelChange(chatId, [to], [from]);
+    const ok = crmMode ? await requestCrmMove(chatId, from, to) : !!(await requestLabelChange(chatId, [to], [from]));
     board.moving.delete(chatId);
     const live = board.open && board.data.get(from) === fromData;
-    if (!res) {
+    if (!ok) {
       if (live) { renderColumn(from); renderColumn(to); }
-      boardToast(LABEL_FAIL_MSG, 'error', 6000);
+      boardToast(crmMode ? CRM_FAIL_MSG : LABEL_FAIL_MSG, 'error', 6000);
       return;
     }
     const toData = board.data.get(to);
     const wasInTo = !!(toData && toData.cards.some((c) => c.id === chatId));
-    bumpWaCount(from, -1);
-    if (!wasInTo) bumpWaCount(to, 1);
+    const bump = crmMode ? bumpCrmCount : bumpWaCount;
+    bump(from, -1);
+    if (!wasInTo) bump(to, 1);
     fromData.cards = fromData.cards.filter((c) => c.id !== chatId);
     fromData.total = Math.max(0, fromData.total - 1);
+    const moved = crmMode ? { ...card, addedAt: new Date().toISOString() } : card;
     if (toData) {
-      toData.cards = [card, ...toData.cards.filter((c) => c.id !== chatId)];
+      toData.cards = [moved, ...toData.cards.filter((c) => c.id !== chatId)];
       if (!wasInTo) toData.total += 1;
     }
     renderBar();
-    renderWaTab();
+    if (crmMode) { renderAllLabels(); afterLabelChange(); } else renderWaTab();
     if (!live) return;
     updateBoardCounts();
     renderColumn(from);
     renderColumn(to);
-    const name = waLabelById(to).name;
-    if (undo) boardToast(`Troca desfeita: etiqueta de volta para ${name}.`, 'ok', 4000);
-    else boardToast(`Etiqueta trocada para ${name}`, 'ok', UNDO_MS, { label: 'Desfazer', onClick: () => { hideBoardToast(); moveBoardCard(chatId, to, from, { undo: true }); } });
+    const label = boardLabelById(to);
+    const name = label ? label.name : '';
+    const what = crmMode ? 'Etiqueta CRM' : 'Etiqueta';
+    if (undo) boardToast(`Troca desfeita: ${what.toLowerCase()} de volta para ${name}.`, 'ok', 4000);
+    else boardToast(`${what} trocada para ${name}`, 'ok', UNDO_MS, { label: 'Desfazer', onClick: () => { hideBoardToast(); moveBoardCard(chatId, to, from, { undo: true }); } });
   }
 
   function renderColumn(id) {
     const els = columnEls(id);
-    const label = waLabelById(id);
+    const label = boardLabelById(id);
     if (!els || !label) return;
     const d = board.data.get(id);
+    const crmMode = !!d && d.family === 'crm';
+    const what = crmMode ? 'contatos' : 'conversas';
     const scroll = els.body.scrollTop;
     els.body.textContent = '';
     if (!d || (d.loading && !d.cards.length)) {
@@ -2974,7 +3219,7 @@
       return;
     }
     if (d.error && !d.cards.length) {
-      const box = el('div', 'bmsg', 'Não consegui carregar estas conversas agora.');
+      const box = el('div', 'bmsg', crmMode ? 'Não consegui carregar estes contatos agora.' : 'Não consegui carregar estas conversas agora.');
       const retry = el('button', null, 'Tentar de novo');
       retry.type = 'button';
       retry.addEventListener('click', () => loadColumn(id, true));
@@ -2983,7 +3228,7 @@
       return;
     }
     if (!d.cards.length) {
-      els.body.append(el('div', 'bmsg', 'Nenhuma conversa carregada com esta etiqueta.'));
+      els.body.append(el('div', 'bmsg', crmMode ? 'Nenhum contato com esta etiqueta CRM.' : 'Nenhuma conversa carregada com esta etiqueta.'));
       return;
     }
     d.cards.forEach((c) => els.body.append(boardCard(c, label)));
@@ -2995,14 +3240,14 @@
       els.body.append(more);
     }
     if (d.error) {
-      const box = el('div', 'bmsg', 'Não consegui carregar mais conversas. ');
+      const box = el('div', 'bmsg', `Não consegui carregar mais ${what}. `);
       const retry = el('button', null, 'Tentar de novo');
       retry.type = 'button';
       retry.addEventListener('click', () => loadColumn(id, false));
       box.append(retry);
       els.body.append(box);
     }
-    if (d.total < label.count) {
+    if (!crmMode && d.total < label.count) {
       els.body.append(el('div', 'bnote', `Mostrando ${d.total} conversas carregadas no WhatsApp Web agora.`));
     }
     els.body.scrollTop = scroll;
@@ -3022,6 +3267,24 @@
     }
   }
 
+  // Cartão do CRM: abre a conversa <telefone>@c.us se ela estiver carregada no WhatsApp Web
+  async function openCrmCard(c) {
+    if (board.opening) return;
+    const who = c.name || formatPhone(c.phone) || '—';
+    const notLoaded = () => boardToast(`Conversa não carregada no WhatsApp Web. Procure pelo nome: ${who}`, 'error', 6000);
+    if (!c.phone || !/^\d{8,15}$/.test(c.phone)) { notLoaded(); return; }
+    board.opening = true;
+    boardStatus('');
+    try {
+      await waRequest('openChat', { chatId: `${c.phone}@c.us` }, { timeout: 6000 });
+      closeBoard();
+    } catch {
+      notLoaded();
+    } finally {
+      board.opening = false;
+    }
+  }
+
   function setColsMenu(open) {
     if (!boardEls) return;
     board.menuOpen = open;
@@ -3033,7 +3296,7 @@
 
   function renderColsMenu() {
     boardEls.menu.textContent = '';
-    (state.waLabels || []).forEach((l) => {
+    familyLabels(state.family).forEach((l) => {
       const row = el('label', 'bopt');
       const cb = el('input');
       cb.type = 'checkbox';
@@ -3042,18 +3305,19 @@
       cb.addEventListener('change', () => toggleBoardColumn(l.id, cb.checked));
       const dot = el('span', 'wdot');
       dot.style.background = l.hexColor;
-      row.append(cb, dot, el('span', 'boptname', l.name), el('span', 'wcount', String(l.count)));
+      row.append(cb, dot, el('span', 'boptname', l.name), el('span', 'wcount', countText(l.count)));
       boardEls.menu.append(row);
     });
-    boardEls.menu.append(el('div', 'bopthint', `Escolha até ${BOARD_MAX_COLS} colunas.`));
+    boardEls.menu.append(el('div', 'bopthint', `Escolha até ${BOARD_MAX_COLS} colunas (${FAMILY_NAME[state.family]}).`));
   }
 
   function toggleBoardColumn(id, on) {
-    const order = (state.waLabels || []).map((l) => l.id);
+    const order = familyLabels(state.family).map((l) => l.id);
     const chosen = on ? [...board.columns, id] : board.columns.filter((x) => x !== id);
     board.columns = order.filter((x) => chosen.includes(x)).slice(0, BOARD_MAX_COLS); // na ordem da barra
-    board.savedIds = board.columns.slice();
-    storageSet({ boardLabelIds: board.savedIds }); // só ids de etiquetas
+    board.saved[state.family] = board.columns.slice();
+    // Só ids de etiquetas, separados por família
+    storageSet(isCrm() ? { boardCrmLabelIds: board.saved.crm } : { boardLabelIds: board.saved.whatsapp });
     renderBoardColumns();
     board.columns.forEach((x) => { if (!board.data.has(x)) loadColumn(x, true); });
     renderColsMenu();
@@ -3061,26 +3325,25 @@
 
   async function refreshBoard() {
     boardStatus('');
-    await refreshBar();
+    if (isCrm()) await refreshCrmLabels();
+    else await refreshBar();
     if (!board.open) return;
-    if (!Array.isArray(state.waLabels)) { boardStatus('O WhatsApp ainda não está pronto. Tente de novo em instantes.'); return; }
+    if (!isCrm() && !Array.isArray(state.waLabels)) { boardStatus('O WhatsApp ainda não está pronto. Tente de novo em instantes.'); return; }
     board.data = new Map();
     renderBoardColumns();
-    board.columns.forEach((id) => { if (waLabelById(id)) loadColumn(id, true); });
+    board.columns.forEach((id) => { if (boardLabelById(id)) loadColumn(id, true); });
   }
 
-  // ── Aba Etiquetas: seção "ETIQUETAS DO WHATSAPP" (nativas) ──
-  // Só aparece com as etiquetas nativas disponíveis; sem elas a aba fica igual à v1.6.0.
+  // ── Janela Etiquetas CRM: etiquetas do WhatsApp nesta conversa (v1.7.0, só mudaram de lugar) ──
+  // Só aparecem com as etiquetas do WhatsApp disponíveis.
 
   const waTabOn = () => Array.isArray(state.waLabels) && state.waLabels.length > 0;
-  let wtRowsSig = '';
 
   function renderWaTab() {
     const on = waTabOn();
     wtEl.hidden = !on;
-    wtSysHead.hidden = !on;
     if (!on) return;
-    if (wt.req === 0 && labelsTabActive()) scheduleWaConv(); // etiquetas chegaram com a aba já aberta
+    if (wt.req === 0 && labelsTabActive()) scheduleWaConv(); // etiquetas chegaram com a janela já aberta
 
     let warning = null;
     if (wt.kind === 'grupo') warning = 'Grupos: troque a etiqueta pelo Quadro';
@@ -3106,23 +3369,7 @@
       chip.addEventListener('click', () => toggleWaLabel(wt.chatId, l.id, !applied));
       wtChips.append(chip);
     });
-    if (!warning && wt.error) wtChips.append(el('span', 'wt-none', 'Não consegui ler as etiquetas desta conversa.'));
-
-    // Lista das nativas: só reconstrói quando muda (não tira o foco)
-    const sig = JSON.stringify(state.waLabels.map((l) => [l.id, l.name, l.hexColor, l.count]));
-    if (sig === wtRowsSig) return;
-    wtRowsSig = sig;
-    wtRows.textContent = '';
-    state.waLabels.forEach((l) => {
-      const row = el('button', 'wt-row');
-      row.type = 'button';
-      row.title = `Abrir o Quadro com "${l.name}"`;
-      const dot = el('span', 'wdot');
-      dot.style.background = l.hexColor;
-      row.append(dot, el('span', 'wtname', l.name), el('span', 'wcount', String(l.count)));
-      row.addEventListener('click', () => openBoard(l.id));
-      wtRows.append(row);
-    });
+    if (!warning && wt.error) wtChips.append(el('span', 'wt-none', 'Não consegui ler as etiquetas do WhatsApp desta conversa.'));
   }
 
   async function refreshWaTab() {
@@ -3130,7 +3377,7 @@
     loadWaConv();
   }
 
-  // Ao trocar de conversa (mesmo gatilho da aba): relê as etiquetas nativas da conversa aberta
+  // Ao trocar de conversa: relê as etiquetas do WhatsApp da conversa aberta
   function scheduleWaConv() {
     clearTimeout(wt.timer);
     if (labelsTabActive()) wt.timer = setTimeout(loadWaConv, 300);
@@ -3163,7 +3410,7 @@
     renderWaTab();
   }
 
-  // Marca (on) ou desmarca uma etiqueta nativa na conversa: só pelo clique ou pelo "Desfazer"
+  // Marca (on) ou desmarca uma etiqueta do WhatsApp na conversa: só pelo clique ou pelo "Desfazer"
   async function toggleWaLabel(chatId, labelId, on, { undo = false } = {}) {
     if (!chatId || wt.busy || board.moving.has(chatId) || !waLabelById(labelId)) return;
     wt.busy = true;
@@ -3176,21 +3423,602 @@
     wt.loading = false;
     if (!res) {
       renderWaTab();
-      toast(LABEL_FAIL_MSG, 'error', 6000);
+      crmToast(LABEL_FAIL_MSG, 'error', 6000);
       return;
     }
     bumpWaCount(labelId, on ? 1 : -1);
     if (wt.chatId === chatId) { wt.labelIds = res.labelIds.slice(); wt.error = false; }
     renderBar();
     renderWaTab();
-    if (board.open) {
+    if (board.open && !isCrm()) {
       updateBoardCounts();
       if (board.columns.includes(labelId)) loadColumn(labelId, true);
     }
     const name = waLabelById(labelId).name;
-    if (undo) toast('Troca desfeita.', 'ok', 4000);
-    else toast(`Etiqueta "${name}" ${on ? 'marcada' : 'desmarcada'} nesta conversa.`, 'ok', UNDO_MS,
+    if (undo) crmToast('Troca desfeita.', 'ok', 4000);
+    else crmToast(`Etiqueta do WhatsApp "${name}" ${on ? 'marcada' : 'desmarcada'} nesta conversa.`, 'ok', UNDO_MS,
       { label: 'Desfazer', onClick: () => toggleWaLabel(chatId, labelId, !on, { undo: true }) });
+  }
+
+  // ── Janela Etiquetas CRM ──
+
+  const PALETTE = ['#f97316', '#ef4444', '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#6366f1', '#a855f7', '#ec4899', '#6b7280'];
+  const NOTE_MAX = 2000;
+  const NOTES_MISSING = 'Nota disponível após atualizar o banco';
+
+  function hideCrmToast() {
+    clearTimeout(crm.toastTimer);
+    crmEls.toast.hidden = true;
+    crmEls.toast.textContent = '';
+  }
+
+  function crmToast(text, kind, ms, action = null) {
+    clearTimeout(crm.toastTimer);
+    fillToast(crmEls.toast, text, action);
+    crmEls.toast.className = `btoast ${kind}`;
+    crmEls.toast.hidden = false;
+    crm.toastTimer = setTimeout(hideCrmToast, ms);
+  }
+
+  async function loadSchema() {
+    try {
+      const s = await call('fetchSchema');
+      state.schema = { hidden: s && s.hidden === true, notes: s && s.notes === true };
+    } catch { /* fica como estava */ }
+    if (crm.open) { renderAllLabels(); renderNote(); }
+  }
+
+  function openCrm() {
+    if (board.open) closeBoard();
+    crm.open = true;
+    crmEls.root.hidden = false;
+    state.convKey = undefined; // relê a conversa aberta
+    clearInterval(crm.ctxTimer);
+    updateContext();
+    crm.ctxTimer = setInterval(updateContext, 1000);
+    restartLabelsTabTimer();
+    refreshLabelsTab();
+    loadSchema();
+    scheduleNote(true);
+    if (crm.copy.preview && crm.copy.preview.failed) crm.copy.preview = null; // tenta contar de novo
+    renderNewForm();
+    renderCopy();
+    renderBar();
+    crmEls.root.focus();
+  }
+
+  function closeCrm() {
+    crm.open = false;
+    crmEls.root.hidden = true;
+    clearInterval(crm.ctxTimer);
+    if (!state.open) clearTimeout(convTimer);
+    restartLabelsTabTimer();
+    clearTimeout(wt.timer);
+    crm.edit = null;
+    crm.showNew = false;
+    crm.copy.stop = true;
+    hideCrmToast();
+    renderBar();
+  }
+
+  // ── Nota do contato (CRM): lida ao trocar de conversa; gravada só no clique em "Salvar nota" ──
+
+  function scheduleNote(force = false) {
+    const identity = state.ctx && state.ctx.identity;
+    const key = canLabel(identity) ? identity.key : null;
+    if (!force && key === crm.note.key) return;
+    const n = crm.note;
+    n.key = key;
+    n.text = '';
+    n.saved = '';
+    n.error = false;
+    n.msg = '';
+    n.req++;
+    crmEls.note.value = '';
+    if (!crm.open || !key) { n.loading = false; renderNote(); return; }
+    n.loading = true;
+    renderNote();
+    loadNote(key, n.req);
+  }
+
+  async function loadNote(key, req) {
+    const identity = state.ctx && state.ctx.identity;
+    if (!canLabel(identity) || identity.key !== key) return;
+    const n = crm.note;
+    try {
+      const res = await call('getContactNote', { identity: identityPayload(identity) });
+      if (n.req !== req) return;
+      state.schema.notes = !!(res && res.available);
+      n.saved = (res && typeof res.note === 'string') ? res.note : '';
+      n.text = n.saved;
+      crmEls.note.value = n.text;
+    } catch {
+      if (n.req !== req) return;
+      n.error = true;
+      n.msg = 'Não consegui ler a nota.';
+    }
+    n.loading = false;
+    renderNote();
+  }
+
+  function renderNote() {
+    const n = crm.note;
+    const identity = state.ctx && state.ctx.identity;
+    const ok = canLabel(identity) && n.key === identity.key;
+    const missing = state.schema.notes === false;
+    crmEls.note.disabled = !ok || missing || n.loading || n.saving;
+    crmEls.noteCount.textContent = `${crmEls.note.value.length}/${NOTE_MAX}`;
+    crmEls.noteSave.disabled = crmEls.note.disabled || crmEls.note.value === n.saved;
+    crmEls.noteSave.textContent = n.saving ? 'Salvando…' : 'Salvar nota';
+    let msg = n.msg;
+    let cls = n.error ? 'err' : msg ? 'ok' : '';
+    if (missing) { msg = NOTES_MISSING; cls = 'warn'; }
+    else if (!ok) { msg = 'Abra uma conversa para escrever uma nota'; cls = ''; }
+    else if (n.loading) { msg = 'Carregando…'; cls = ''; }
+    else if (!msg && crmEls.note.value !== n.saved) { msg = 'Não salva: clique em "Salvar nota"'; cls = 'warn'; }
+    crmEls.noteMsg.textContent = msg;
+    crmEls.noteMsg.className = `crm-notemsg${cls ? ` ${cls}` : ''}`;
+  }
+
+  async function saveNote() {
+    const n = crm.note;
+    const identity = state.ctx && state.ctx.identity;
+    if (n.saving || !canLabel(identity) || identity.key !== n.key) return;
+    const text = crmEls.note.value;
+    if (text.length > NOTE_MAX) return;
+    const key = n.key;
+    n.saving = true;
+    n.msg = '';
+    n.error = false;
+    renderNote();
+    try {
+      const res = await call('setContactNote', { identity: identityPayload(identity), note: text });
+      if (n.key === key) {
+        n.saved = (res && typeof res.note === 'string') ? res.note : text.trim();
+        crmEls.note.value = n.saved;
+        n.msg = 'Nota salva.';
+      }
+    } catch (e) {
+      if (n.key === key) {
+        n.error = true;
+        n.msg = e.message === NOTES_MISSING ? NOTES_MISSING : 'Não consegui salvar a nota. Tente de novo.';
+        if (e.message === NOTES_MISSING) state.schema.notes = false;
+      }
+    }
+    n.saving = false;
+    renderNote();
+  }
+
+  // ── Gerenciar etiquetas CRM (renomear, cor, ocultar, ordem, excluir, criar) ──
+
+  function crmError(e) {
+    const m = String((e && e.message) || '');
+    if (/^(Já existe|Nome da etiqueta|Ocultar disponível|Cor fora)/.test(m)) return m;
+    return 'Não consegui salvar no CRM. Tente de novo.';
+  }
+
+  async function crmLabelOp(type, payload, okText) {
+    if (crm.busy) return false;
+    crm.busy = true;
+    renderAllLabels();
+    let ok = false;
+    try {
+      await call(type, payload);
+      ok = true;
+      crm.edit = null;
+      if (okText) crmToast(okText, 'ok', 4000);
+    } catch (e) {
+      crmToast(crmError(e), 'error', 6000);
+    }
+    crm.busy = false;
+    await syncLabels();
+    renderAllLabels();
+    afterLabelChange();
+    if (board.open && isCrm()) refreshBoard();
+    return ok;
+  }
+
+  function setEdit(id, mode) {
+    crm.edit = id && mode ? { id, mode } : null;
+    renderAllLabels();
+    const box = ltRowsEl.querySelector('.lt-edit input, .lt-edit button');
+    if (box) box.focus();
+  }
+
+  function labelEditor(l) {
+    const box = el('div', 'lt-edit');
+    const btn = (text, onClick, cls = '') => {
+      const b = el('button', cls || null, text);
+      b.type = 'button';
+      b.disabled = crm.busy;
+      b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+      return b;
+    };
+    const mode = crm.edit.mode;
+    if (mode === 'rename') {
+      const input = el('input');
+      input.type = 'text';
+      input.maxLength = 40;
+      input.value = l.name;
+      input.setAttribute('aria-label', 'Novo nome da etiqueta CRM');
+      const save = () => crmLabelOp('updateLabel', { id: l.id, name: input.value }, 'Etiqueta CRM renomeada.');
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+      box.append(input, btn('Salvar', save), btn('Cancelar', () => setEdit(null)));
+    } else if (mode === 'color') {
+      PALETTE.forEach((c) => {
+        const sw = btn('', () => crmLabelOp('updateLabel', { id: l.id, color: c }, 'Cor da etiqueta CRM trocada.'), `sw${c === String(l.color).toLowerCase() ? ' on' : ''}`);
+        sw.style.background = c;
+        sw.setAttribute('aria-label', `Cor ${c}`);
+        box.append(sw);
+      });
+      box.append(btn('Cancelar', () => setEdit(null)));
+    } else if (mode === 'delete') {
+      box.append(el('div', 'q', `Excluir '${l.name}'? Os contatos continuam salvos; só a etiqueta e as marcações somem.`));
+      box.append(btn('Excluir', () => crmLabelOp('deleteLabel', { id: l.id }, `Etiqueta CRM "${l.name}" excluída.`), 'danger'),
+        btn('Cancelar', () => setEdit(null)));
+    } else {
+      const idx = state.labels.findIndex((x) => x.id === l.id);
+      const hide = btn(l.hidden ? 'Mostrar' : 'Ocultar', () => crmLabelOp('updateLabel', { id: l.id, hidden: !l.hidden },
+        l.hidden ? 'Etiqueta CRM visível de novo.' : 'Etiqueta CRM oculta (some da barra e do Quadro).'));
+      if (state.schema.hidden !== true) {
+        hide.disabled = true;
+        hide.title = 'Ocultar disponível após atualizar o banco';
+      }
+      const up = btn('↑', () => moveLabel(l.id, idx - 1));
+      up.disabled = crm.busy || idx <= 0;
+      up.setAttribute('aria-label', 'Subir');
+      const down = btn('↓', () => moveLabel(l.id, idx + 1));
+      down.disabled = crm.busy || idx >= state.labels.length - 1;
+      down.setAttribute('aria-label', 'Descer');
+      box.append(btn('Renomear', () => setEdit(l.id, 'rename')), btn('Cor', () => setEdit(l.id, 'color')), hide, up, down,
+        btn('Excluir', () => setEdit(l.id, 'delete'), 'danger'));
+    }
+    return box;
+  }
+
+  // Nova ordem: grava position de todas (some se falhar e volta a ordem do banco)
+  async function moveLabel(id, toIndex) {
+    const from = state.labels.findIndex((l) => l.id === id);
+    if (from < 0 || toIndex < 0 || toIndex >= state.labels.length || from === toIndex || crm.busy) return;
+    const list = state.labels.slice();
+    const [item] = list.splice(from, 1);
+    list.splice(toIndex, 0, item);
+    state.labels = list;
+    renderAllLabels();
+    renderBar();
+    await crmLabelOp('reorderLabels', { ids: list.map((l) => l.id) }, null);
+  }
+
+  function addReorderDrag(item, l) {
+    const grip = item.querySelector('.lt-grip');
+    grip.addEventListener('mousedown', () => { item.draggable = true; });
+    item.addEventListener('dragstart', (e) => {
+      if (crm.busy) { e.preventDefault(); return; }
+      crm.dragId = l.id;
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('application/x-tsp-crm', ''); } catch { /* ok */ }
+      }
+    });
+    item.addEventListener('dragend', () => {
+      crm.dragId = null;
+      item.draggable = false;
+      ltRowsEl.querySelectorAll('.drop-before, .drop-after').forEach((n) => n.classList.remove('drop-before', 'drop-after'));
+    });
+    const after = (e) => {
+      const r = item.getBoundingClientRect();
+      return typeof e.clientY === 'number' && r.height ? e.clientY > r.top + r.height / 2 : true;
+    };
+    item.addEventListener('dragover', (e) => {
+      if (!crm.dragId || crm.dragId === l.id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const a = after(e);
+      item.classList.toggle('drop-after', a);
+      item.classList.toggle('drop-before', !a);
+    });
+    item.addEventListener('dragleave', () => item.classList.remove('drop-before', 'drop-after'));
+    item.addEventListener('drop', (e) => {
+      if (!crm.dragId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const dragId = crm.dragId;
+      crm.dragId = null;
+      item.classList.remove('drop-before', 'drop-after');
+      if (dragId === l.id) return;
+      const from = state.labels.findIndex((x) => x.id === dragId);
+      let to = state.labels.findIndex((x) => x.id === l.id) + (after(e) ? 1 : 0);
+      if (from < to) to -= 1;
+      moveLabel(dragId, to);
+    });
+  }
+
+  function renderNewForm() {
+    crmEls.newBox.hidden = !crm.showNew;
+    crmEls.newBtn.setAttribute('aria-expanded', String(crm.showNew));
+    if (!crm.newColor) crm.newColor = PALETTE[state.labels.length % PALETTE.length];
+    crmEls.newColors.textContent = '';
+    PALETTE.forEach((c) => {
+      const sw = el('button', `sw${c === crm.newColor ? ' on' : ''}`);
+      sw.type = 'button';
+      sw.style.background = c;
+      sw.setAttribute('aria-label', `Cor ${c}`);
+      sw.setAttribute('aria-pressed', String(c === crm.newColor));
+      sw.addEventListener('click', () => { crm.newColor = c; renderNewForm(); });
+      crmEls.newColors.append(sw);
+    });
+  }
+
+  async function createCrmLabel() {
+    const name = crmEls.newName.value.trim();
+    if (!name) { crmToast('Escreva o nome da etiqueta CRM.', 'error', 4000); return; }
+    const ok = await crmLabelOp('createLabel', { name, color: crm.newColor }, `Etiqueta CRM "${name}" criada.`);
+    if (ok) {
+      crmEls.newName.value = '';
+      crm.showNew = false;
+      crm.newColor = null;
+      renderNewForm();
+    }
+  }
+
+  // ── Exportar CSV (gerado aqui mesmo; o arquivo nunca sai do computador) ──
+
+  function csvField(value) {
+    let v = value == null ? '' : String(value);
+    if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`; // o Excel não executa como fórmula
+    return /[";\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  }
+
+  function buildCsv(rows) {
+    const lines = ['nome;telefone', ...rows.map((r) => `${csvField(r.name)};${csvField(r.phone)}`)];
+    return `﻿${lines.join('\r\n')}\r\n`;
+  }
+
+  function csvFileName(labelName, date = new Date()) {
+    const slug = String(labelName).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'etiqueta';
+    const two = (n) => String(n).padStart(2, '0');
+    return `crm-${slug}-${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}.csv`;
+  }
+
+  async function exportCsv(label, box) {
+    if (box.dataset.busy) return;
+    box.dataset.busy = '1';
+    box.textContent = '';
+    box.append('Preparando o CSV…');
+    try {
+      const rows = await call('fetchAllLabelClients', { labelId: label.id });
+      const list = Array.isArray(rows) ? rows : [];
+      if (crm.exportUrl) URL.revokeObjectURL(crm.exportUrl);
+      crm.exportUrl = URL.createObjectURL(new Blob([buildCsv(list)], { type: 'text/csv;charset=utf-8' }));
+      const a = el('a', null, `Baixar ${csvFileName(label.name)}`);
+      a.href = crm.exportUrl;
+      a.download = csvFileName(label.name);
+      box.textContent = '';
+      box.append(a, ` (${list.length} contato${list.length === 1 ? '' : 's'})`);
+    } catch {
+      box.textContent = '';
+      box.append('Não consegui gerar o CSV. Tente de novo.');
+    }
+    delete box.dataset.busy;
+  }
+
+  function exportRow(label) {
+    const wrap = el('div', 'lt-export');
+    const b = el('button', 'bbtn', 'Exportar CSV');
+    b.type = 'button';
+    const out = el('span');
+    b.addEventListener('click', () => exportCsv(label, out));
+    wrap.append(b, out);
+    return wrap;
+  }
+
+  // ── Copiar do WhatsApp (cópia única: depois as duas etiquetas seguem independentes) ──
+
+  // Cor da paleta mais parecida com a cor da etiqueta do WhatsApp
+  function nearestPalette(hex) {
+    const rgb = (h) => { const n = parseInt(String(h).replace('#', '').slice(0, 6), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+    const [r, g, b] = rgb(hex);
+    if ([r, g, b].some((x) => Number.isNaN(x))) return PALETTE[0];
+    let best = PALETTE[0];
+    let bestD = Infinity;
+    PALETTE.forEach((p) => {
+      const [pr, pg, pb] = rgb(p);
+      const dist = (pr - r) ** 2 + (pg - g) ** 2 + (pb - b) ** 2;
+      if (dist < bestD) { bestD = dist; best = p; }
+    });
+    return best;
+  }
+
+  // Conversa do WhatsApp → contato do CRM. @c.us: telefone; @lid: só o nome; grupos e sem nome ficam de fora.
+  function contactFromChat(c) {
+    const id = typeof c.id === 'string' ? c.id : '';
+    const [user, server] = id.split('@');
+    const raw = typeof c.name === 'string' ? c.name.trim().replace(/\s+/g, ' ').slice(0, 100) : '';
+    const name = raw && raw !== user && !/^[+\d\s().-]+$/.test(raw) ? raw : null;
+    if (c.kind !== 'individual') return null;
+    if (server === 'c.us' && /^\d{8,15}$/.test(user)) return { key: `tel:${user}`, phone: user, name };
+    if (server === 'lid' && name) return { key: `nome:${name.toLowerCase()}`, phone: null, name };
+    return null;
+  }
+
+  function renderCopy() {
+    if (!crmEls || !crmEls.copy) return;
+    const box = crmEls.copy;
+    const cp = crm.copy;
+    box.textContent = '';
+    if (!waTabOn()) {
+      box.append(el('div', 'cp-off', 'Disponível quando as etiquetas do WhatsApp (WhatsApp Business) estiverem prontas.'));
+      if (cp.result) box.append(el('div', 'cp-result', cp.result));
+      return;
+    }
+    if (!state.waLabels.some((l) => l.id === cp.waId)) { cp.waId = state.waLabels[0].id; cp.preview = null; }
+    if (cp.dest !== '__new' && !state.labels.some((l) => l.id === cp.dest)) cp.dest = '__new';
+
+    const field = (text, select) => { const f = el('label', 'cp-field', text); f.append(select); return f; };
+    const waSel = el('select');
+    state.waLabels.forEach((l) => {
+      const o = el('option', null, `${l.name} (${l.count})`);
+      o.value = l.id;
+      o.selected = l.id === cp.waId;
+      waSel.append(o);
+    });
+    waSel.disabled = cp.running;
+    waSel.addEventListener('change', () => { cp.waId = waSel.value; cp.preview = null; cp.result = ''; renderCopy(); });
+    const crmSel = el('select');
+    const optNew = el('option', null, 'Criar nova com o mesmo nome');
+    optNew.value = '__new';
+    crmSel.append(optNew);
+    state.labels.forEach((l) => {
+      const o = el('option', null, l.name);
+      o.value = l.id;
+      o.selected = l.id === cp.dest;
+      crmSel.append(o);
+    });
+    crmSel.disabled = cp.running;
+    crmSel.addEventListener('change', () => { cp.dest = crmSel.value; });
+    box.append(field('Etiqueta do WhatsApp', waSel), field('Etiqueta CRM de destino', crmSel));
+
+    const waLabel = waLabelById(cp.waId);
+    const warn = el('div', 'cp-warn');
+    const ready = !!cp.preview && cp.preview.waId === cp.waId && !cp.preview.failed;
+    if (ready) {
+      warn.textContent = `Só entram as conversas carregadas no WhatsApp Web agora (${cp.preview.total} de ${waLabel.count}).`;
+    } else if (cp.preview && cp.preview.waId === cp.waId) {
+      warn.textContent = 'Não consegui contar as conversas do WhatsApp agora. Feche e abra a janela para tentar de novo.';
+    } else {
+      warn.textContent = 'Contando as conversas carregadas no WhatsApp Web…';
+      if (!cp.running && crm.open) previewCopy(cp.waId);
+    }
+    box.append(warn);
+
+    const go = el('button', 'bbtn primary', 'Copiar contatos');
+    go.type = 'button';
+    go.disabled = cp.running || !ready;
+    go.addEventListener('click', () => runCopy());
+    box.append(go);
+
+    const prog = el('div', 'cp-prog');
+    prog.hidden = !cp.running;
+    const barEl = el('div', 'cp-bar');
+    const fill = el('div', 'cp-fill');
+    fill.style.width = `${cp.total ? Math.round((cp.done / cp.total) * 100) : 0}%`;
+    barEl.append(fill);
+    const stop = el('button', 'bbtn', cp.stop ? 'Parando…' : 'Parar');
+    stop.type = 'button';
+    stop.disabled = cp.stop;
+    stop.addEventListener('click', () => { cp.stop = true; renderCopy(); });
+    prog.append(barEl, el('span', null, cp.phase === 'ler' ? 'Lendo conversas…' : `${cp.done} de ${cp.total}`), stop);
+    box.append(prog);
+    if (cp.result) box.append(el('div', `cp-result${cp.error ? ' err' : ''}`, cp.result));
+  }
+
+  async function previewCopy(waId) {
+    const cp = crm.copy;
+    const req = ++cp.previewReq;
+    try {
+      const res = await waRequest('labelChats', { labelId: waId, offset: 0, limit: 1, noPreview: true }, { timeout: 8000 });
+      if (req !== cp.previewReq || cp.waId !== waId) return;
+      cp.preview = { waId, total: Number(res && res.total) || 0 };
+    } catch {
+      if (req !== cp.previewReq) return;
+      cp.preview = { waId, failed: true };
+    }
+    renderCopy();
+  }
+
+  // Lê todas as páginas (sem prévias) e grava em lotes de 100; "Parar" interrompe entre os lotes
+  async function runCopy() {
+    const cp = crm.copy;
+    if (cp.running) return;
+    const waLabel = waLabelById(cp.waId);
+    if (!waLabel) return;
+    Object.assign(cp, { running: true, stop: false, phase: 'ler', done: 0, total: 0, result: '', error: false });
+    renderCopy();
+    let labelId = cp.dest;
+    const sum = { added: 0, tel: 0, name: 0, already: 0, out: 0 };
+    let failed = false;
+    try {
+      if (labelId === '__new') {
+        const name = waLabel.name.slice(0, 40);
+        const same = state.labels.find((l) => l.name.toLowerCase() === name.toLowerCase());
+        if (same) labelId = same.id;
+        else {
+          const created = await call('createLabel', { name, color: nearestPalette(waLabel.hexColor) });
+          labelId = created.id;
+          await syncLabels();
+        }
+        cp.dest = labelId;
+      }
+      const chats = [];
+      for (let offset = 0; !cp.stop; offset += 100) {
+        const res = await waRequest('labelChats', { labelId: waLabel.id, offset, limit: 100, noPreview: true }, { timeout: 8000 });
+        const page = Array.isArray(res && res.chats) ? res.chats : [];
+        chats.push(...page);
+        if (!page.length || offset + 100 >= (Number(res && res.total) || 0)) break;
+      }
+      const byKey = new Map();
+      chats.forEach((c) => {
+        const contact = contactFromChat(c);
+        if (!contact) sum.out++;
+        else if (!byKey.has(contact.key)) byKey.set(contact.key, contact);
+      });
+      const contacts = [...byKey.values()];
+      cp.phase = 'gravar';
+      cp.total = contacts.length;
+      renderCopy();
+      for (let i = 0; i < contacts.length && !cp.stop; i += 100) {
+        const res = await call('bulkAddContactsToLabel', { labelId, contacts: contacts.slice(i, i + 100) });
+        sum.added += res.added || 0;
+        sum.tel += res.addedTel || 0;
+        sum.name += res.addedName || 0;
+        sum.already += res.already || 0;
+        cp.done = Math.min(contacts.length, i + 100);
+        renderCopy();
+      }
+    } catch {
+      failed = true;
+    }
+    const stopped = cp.stop;
+    cp.running = false;
+    cp.stop = false;
+    cp.error = failed;
+    cp.result = `${failed ? 'Parou com erro. ' : stopped ? 'Cópia parada antes do fim. ' : ''}`
+      + `Copiados ${sum.added} (${sum.tel} por telefone, ${sum.name} só pelo nome). Já estavam: ${sum.already}. Fora: ${sum.out} (grupos/sem nome).`;
+    await syncLabels();
+    afterLabelChange();
+    renderCopy();
+  }
+
+  function initCrmWindow() {
+    crmEls.root.querySelector('.crmclose').addEventListener('click', () => closeCrm());
+    crmEls.note.addEventListener('input', () => { crm.note.msg = ''; crm.note.error = false; renderNote(); });
+    crmEls.noteSave.addEventListener('click', () => saveNote());
+    crmEls.newBtn.addEventListener('click', () => {
+      crm.showNew = !crm.showNew;
+      renderNewForm();
+      if (crm.showNew) crmEls.newName.focus();
+    });
+    crmEls.root.querySelector('.crm-create').addEventListener('click', () => createCrmLabel());
+    crmEls.root.querySelector('.crm-cancelnew').addEventListener('click', () => { crm.showNew = false; renderNewForm(); });
+    crmEls.newName.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); createCrmLabel(); } });
+    // Esc fecha primeiro o que estiver aberto dentro da janela; teclas não vão para os atalhos do WhatsApp
+    ['keydown', 'keypress', 'keyup'].forEach((type) => crmEls.root.addEventListener(type, (e) => {
+      if (type === 'keydown' && e.key === 'Escape') {
+        e.preventDefault();
+        if (crm.edit) setEdit(null);
+        else if (crm.showNew) { crm.showNew = false; renderNewForm(); }
+        else closeCrm();
+      }
+      e.stopPropagation();
+    }));
+    ['dragstart', 'drag', 'dragenter', 'dragover', 'dragleave', 'drop', 'dragend'].forEach((type) => crmEls.root.addEventListener(type, (e) => {
+      if (crm.dragId) {
+        e.stopPropagation();
+        if (type === 'drop') { e.preventDefault(); crm.dragId = null; }
+      }
+    }));
+    renderNote();
   }
 
   function initLabelsBar() {
@@ -3203,10 +4031,13 @@
       colsBtn: shadow.querySelector('.board .bcolsbtn'),
       status: shadow.querySelector('.board .bstatus'),
       toast: shadow.querySelector('.board .btoast'),
+      hint: shadow.querySelector('.board .bhint'),
     };
 
-    shadow.querySelector('.wabar .wboard').addEventListener('click', () => openBoard());
+    shadow.querySelector('.wabar .wboard').addEventListener('click', () => (board.open ? closeBoard() : openBoard()));
+    shadow.querySelector('.wabar .wcrm').addEventListener('click', () => (crm.open ? closeCrm() : openCrm()));
     shadow.querySelector('.wabar .wclose').addEventListener('click', () => setBarHidden(true));
+    shadow.querySelectorAll('.wfam button').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); setFamily(b.dataset.fam); }));
     boardEls.colsBtn.addEventListener('click', (e) => { e.stopPropagation(); setColsMenu(!board.menuOpen); });
     shadow.querySelector('.board .brefresh').addEventListener('click', () => refreshBoard());
     shadow.querySelector('.board .bclose').addEventListener('click', () => closeBoard());
@@ -3236,14 +4067,18 @@
     }));
 
     // Botão no cabeçalho do painel: mostrar/ocultar a barra
-    bar.btn = iconButton('tag', 'Mostrar ou ocultar a barra de etiquetas', () => setBarHidden(!state.barHiddenByUser));
+    bar.btn = iconButton('tag', 'Mostrar ou ocultar a barra do topo', () => setBarHidden(!state.barHiddenByUser));
     actions.insertBefore(bar.btn, closeBtn);
 
+    initCrmWindow();
+
     try {
-      chrome.storage.local.get(['labelsBarHidden', 'boardLabelIds'], (saved) => {
+      chrome.storage.local.get(['labelsBarHidden', 'boardLabelIds', 'boardCrmLabelIds', 'labelsFamily'], (saved) => {
         saved = saved || {};
+        const ids = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, BOARD_MAX_COLS) : null);
         state.barHiddenByUser = saved.labelsBarHidden === true;
-        board.savedIds = Array.isArray(saved.boardLabelIds) ? saved.boardLabelIds.filter((x) => typeof x === 'string').slice(0, BOARD_MAX_COLS) : null;
+        state.family = saved.labelsFamily === 'crm' ? 'crm' : 'whatsapp';
+        board.saved = { whatsapp: ids(saved.boardLabelIds), crm: ids(saved.boardCrmLabelIds) };
         renderBar();
       });
     } catch { /* extensão recarregada */ }
@@ -3254,7 +4089,7 @@
     document.addEventListener('visibilitychange', () => { try { barTick(); } catch { /* ok */ } });
   }
 
-  // Se a barra ou o Quadro falhar, o resto da extensão continua funcionando
+  // Se a barra, o Quadro ou a janela falhar, o resto da extensão continua funcionando
   try {
     initLabelsBar();
   } catch {
@@ -3271,10 +4106,9 @@
   renderLastUsed();
   renderLabelsRow();
   renderAllLabels();
-  setTab('mensagens', { persist: false });
   renderList();
   try {
-    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref', 'panelTab'], (saved) => {
+    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref'], (saved) => {
       saved = saved || {};
       state.collapsed = saved.collapsed || {};
       state.lastUsed  = saved.lastUsed || '';
@@ -3288,7 +4122,6 @@
       }
       renderLabelsRow();
       renderAllLabels();
-      setTab(saved.panelTab, { persist: false });
       renderThemeButton();
       applyTheme();
       renderLastUsed();

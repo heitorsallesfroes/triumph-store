@@ -8,9 +8,16 @@ Ela **nunca envia nada sozinha**: só coloca o texto na caixa de mensagem ou
 abre a prévia do anexo. Quem confere e aperta Enter (ou o botão de enviar) é
 sempre você.
 
-Também permite marcar **etiquetas** (criadas no ERP) na conversa aberta.
+No topo do WhatsApp Web fica uma **barra-menu** com o **Quadro** e as
+**Etiquetas CRM**. Existem dois tipos de etiqueta, sempre com o nome junto:
 
-Versão atual: **1.7.0** (precisa do **Google Chrome 111 ou mais novo**)
+- **Etiquetas do WhatsApp**: as nativas do WhatsApp Business. Ficam no
+  WhatsApp (aparecem também no celular).
+- **Etiquetas do CRM**: as nossas, guardadas no Supabase (tabelas
+  `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
+  sistema e vão ser a base de follows e disparos no futuro.
+
+Versão atual: **1.8.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -153,100 +160,140 @@ Se não gravar:
   microfone de verdade, mas o WhatsApp só grava com a permissão dada).
 - Você sempre pode usar **Como arquivo**.
 
-### Etiquetas
+### Barra-menu do topo
 
-1. No ERP, abra **WhatsApp → Etiquetas** e crie as etiquetas (nome e cor).
-   Se ainda não houver nenhuma, o botão **Criar etiquetas sugeridas** cria
-   Novo lead, Orçamento enviado, Negociando, Aguardando pagamento, Venda
-   fechada e Cliente antigo.
-2. No WhatsApp Web, abra a conversa do cliente e o painel.
-3. Abaixo de "Conversa: …" fica a linha **Etiquetas**. Clique no **+** e
-   marque ou desmarque as etiquetas (o ✓ mostra as aplicadas). Salva na hora.
-4. No ERP, em **WhatsApp → Etiquetas → Clientes etiquetados**, aparecem os
-   clientes marcados, com busca por nome ou telefone e filtro por etiqueta.
+Aparece sempre no topo do WhatsApp Web:
 
-#### Aba "Etiquetas" do painel
-
-No topo do painel há duas abas: **Mensagens** (as respostas rápidas, como
-antes) e **Etiquetas**. O painel lembra qual aba estava aberta.
-
-Na aba **Etiquetas**:
-- **Esta conversa:** o nome da conversa aberta e todas as etiquetas. Clique
-  numa etiqueta para marcar ou desmarcar: a marcada fica com a cor cheia e
-  um ✓; a não marcada fica só com o contorno. Sem conversa aberta, ou num
-  grupo, as etiquetas ficam desativadas.
-- **Todas as etiquetas:** na mesma ordem do ERP, cada uma com o número de
-  clientes. Clique numa etiqueta para ver os clientes dela (os mais recentes
-  primeiro; "Ver mais" mostra mais 50). Use "Buscar cliente" para achar por
-  nome ou telefone dentro da etiqueta aberta.
-- **Clique num cliente** para colocar o telefone (ou o nome, se não houver
-  telefone) na busca de conversas do WhatsApp. A extensão **não abre** a
-  conversa: clique você no resultado que aparecer na lista da esquerda. Se a
-  busca do WhatsApp não for encontrada, o painel mostra o nome e o telefone
-  para você procurar à mão.
-- Os números se atualizam ao abrir a aba, depois de marcar ou desmarcar e a
-  cada minuto enquanto a aba estiver aberta.
-
-Se a conta é **WhatsApp Business** com etiquetas, a aba tem duas partes, nesta
-ordem:
-- **ETIQUETAS DO WHATSAPP** (as nativas do WhatsApp):
-  - **Esta conversa:** todas as etiquetas do WhatsApp; as que estão na conversa
-    aberta ficam com a cor cheia e um ✓. Clique para marcar ou desmarcar no
-    WhatsApp. Aparece o aviso com **Desfazer** (vale por 8 segundos). Só
-    conversas individuais; para grupos, use o Quadro.
-  - **Abrir no Quadro:** cada etiqueta com a cor e o número de conversas.
-    Clique para abrir o Quadro com ela na primeira coluna.
-- **ETIQUETAS DO SISTEMA**: as etiquetas do ERP, exatamente como descrito
-  acima (nada mudou nelas).
-
-Sem WhatsApp Business (ou com a biblioteca WA-JS ainda carregando), a parte do
-WhatsApp não aparece e a aba fica como antes.
-
-Como a extensão reconhece o cliente:
-- Pelo **telefone** da conversa, sempre que o WhatsApp Web mostra o número.
-- Se o número não aparece, pelo **nome** do contato. Nesse caso o painel
-  avisa "identificado só pelo nome" e, no ERP, o cliente aparece com esse
-  aviso. Quando o telefone aparecer depois, a extensão passa a usar o
-  telefone e mantém as etiquetas.
-- **Grupos** não recebem etiquetas.
-- Só abrir uma conversa não grava nada: o cliente só é salvo (nome e
-  telefone, nunca mensagens) quando você marca a primeira etiqueta.
-- Se a etiqueta não salvar (sem internet, por exemplo), ela some do painel e
-  aparece o aviso "Não consegui salvar". É só tentar de novo.
-
-### Barra de etiquetas e Quadro (WhatsApp Business)
-
-Se a sua conta é **WhatsApp Business** e tem etiquetas (por exemplo
-"Cliente", "Motoboy"), aparece uma **barra fina no topo** do WhatsApp Web:
-
-- À esquerda, "ETIQUETAS" e um botão para cada etiqueta, com a cor e o número
-  de conversas. Etiqueta com 0 fica mais apagada. Se tiver muitas, role para o
-  lado.
-- Clique numa etiqueta (ou em **Quadro**, à direita) para abrir o **Quadro**:
-  colunas por etiqueta, com um cartão por conversa (nome, última mensagem,
-  data e não lidas). **Clique num cartão** (ou aperte Enter) para abrir a
-  conversa no WhatsApp. **Colunas** escolhe até 6 etiquetas; **Esc** ou
-  **Fechar** fecha o Quadro.
-- **Trocar a etiqueta:** arraste o cartão para outra coluna. A extensão tira a
-  etiqueta da coluna de origem e põe a da coluna de destino, no próprio
-  WhatsApp. Enquanto salva, o cartão fica apagado; deu certo, ele vai para o
-  topo da outra coluna, os números mudam e aparece "Etiqueta trocada para X"
-  com **Desfazer** (8 segundos). Se não der certo, o cartão fica onde estava e
-  aparece "Não consegui trocar a etiqueta. Confira no WhatsApp."
-- Pelo teclado (ou sem arrastar): botão **Mover para…** no cartão, com a lista
-  das colunas visíveis.
-- A extensão **só troca etiquetas quando você arrasta, clica ou aperta
-  Desfazer**, uma conversa por vez. Nunca cria, apaga, renomeia ou muda a cor
-  de etiquetas, não envia nada e não grava nada no ERP. Nomes, números e
-  prévias ficam só na memória enquanto o Quadro está aberto.
-- **O número da etiqueta** é o do WhatsApp e pode incluir conversas que o
-  WhatsApp Web ainda não carregou. Por isso o Quadro pode mostrar menos
-  cartões que o número; nesse caso aparece "Mostrando N conversas carregadas
-  no WhatsApp Web agora." Conversas arquivadas não entram.
-- **Ocultar a barra:** clique no **×** da barra ou no botão de etiqueta (🏷) no
+- **Quadro**: abre o Quadro (veja abaixo).
+- **Etiquetas CRM**: abre a janela das etiquetas do CRM (veja abaixo).
+- **Agendar**, **Disparos** e **Follows**: aparecem com o selo "em breve" e
+  ainda não fazem nada.
+- **WhatsApp | CRM**: escolhe quais etiquetas a barra e o Quadro mostram. A
+  escolha fica salva.
+- Depois vêm as etiquetas da família escolhida, com a cor, o nome e o número.
+  Etiqueta com 0 fica mais apagada. Clique numa delas para abrir o Quadro com
+  ela na primeira coluna. Se a família não tiver etiquetas, aparece "Nenhuma
+  etiqueta do WhatsApp" ou "Nenhuma etiqueta do CRM".
+- No modo CRM aparecem só as etiquetas não ocultas, na ordem da lista. Os
+  números do CRM se atualizam a cada minuto (com a aba do WhatsApp visível) e
+  logo depois de qualquer mudança feita pela extensão.
+- **Ocultar a barra:** clique no **×** ou no botão de etiqueta (🏷) no
   cabeçalho do painel. O mesmo botão mostra de novo. A escolha fica salva.
-- Se a conta não tem etiquetas, ou a biblioteca WA-JS não estiver pronta, a
-  barra simplesmente não aparece (e não ocupa espaço).
+
+O painel da direita agora é **só a biblioteca de mensagens** (não tem mais
+abas). A linha **Etiquetas CRM** abaixo de "Conversa: …" continua lá: clique
+no **+** para marcar ou desmarcar as etiquetas do CRM na conversa aberta.
+
+### Janela "Etiquetas CRM"
+
+Abre pela barra, no mesmo lugar do Quadro. **Esc** (ou **Fechar**) fecha.
+Tem três partes:
+
+**ESTA CONVERSA** (a conversa aberta no WhatsApp)
+- **Etiquetas CRM:** clique numa etiqueta para marcar ou desmarcar. A marcada
+  fica com a cor cheia e um ✓. Sem conversa aberta, ou num grupo, ficam
+  desativadas.
+- **Nota do contato (CRM):** escreva até 2000 caracteres (o contador mostra
+  quanto falta). **Só grava quando você clica em "Salvar nota"**. Se você
+  trocar de conversa sem salvar, o texto não salvo se perde. Salvar a nota
+  cria o contato no CRM se ele ainda não existir (pelo telefone ou, sem
+  telefone, pelo nome).
+- **Etiquetas do WhatsApp nesta conversa** (separado, logo abaixo, só no
+  WhatsApp Business): as etiquetas nativas, com marcar/desmarcar e
+  **Desfazer**, como na 1.7.0. Só conversas individuais.
+
+**TODAS AS ETIQUETAS CRM**
+- A lista com cor, nome e número de contatos. Clique numa etiqueta para ver os
+  contatos dela (os mais recentes primeiro; "Ver mais" mostra mais 50) e use
+  "Buscar cliente" para achar por nome ou telefone. Clicar num cliente coloca o
+  telefone (ou o nome) na busca do WhatsApp e fecha a janela para você ver o
+  resultado. A extensão **não abre** a conversa.
+- **Exportar CSV** (com a etiqueta aberta): prepara o arquivo com todos os
+  contatos da etiqueta (colunas nome e telefone, separadas por ";", em UTF-8,
+  para abrir direto no Excel). Clique em **Baixar crm-<etiqueta>-<data>.csv**
+  para salvar. O arquivo é montado no seu computador.
+- **⋯** ao lado de cada etiqueta: **Renomear**, **Cor** (10 cores fixas),
+  **Ocultar/Mostrar** (a oculta some da barra e do Quadro, mas continua na
+  lista com o selo "oculta"), **↑/↓** e **Excluir**. Para mudar a ordem, você
+  também pode arrastar pelo ⠿.
+- **Excluir** pede confirmação ali mesmo: "Excluir 'X'? Os contatos continuam
+  salvos; só a etiqueta e as marcações somem."
+- **+ Nova etiqueta CRM:** nome (até 40 caracteres) e cor.
+- Dica: "Sugestão de funil: Novo lead → Qualificação → Negociação → Proposta →
+  Pós-venda. Comece com 3 a 6 etiquetas."
+
+**COPIAR DO WHATSAPP** (só no WhatsApp Business)
+- Escolha uma etiqueta do WhatsApp e a etiqueta CRM de destino (ou "Criar nova
+  com o mesmo nome"). Clique em **Copiar contatos**.
+- Antes, o aviso diz quantas conversas entram: "Só entram as conversas
+  carregadas no WhatsApp Web agora (N de M)."
+- Entram só conversas individuais. Com número (`@c.us`), o contato entra pelo
+  telefone. Com id `@lid` (o WhatsApp esconde o número), entra pelo nome da
+  conversa. Grupos e conversas sem nome ficam de fora. As mensagens nunca são
+  lidas.
+- Grava em lotes de 100, com barra de progresso e botão **Parar**. No fim
+  aparece, por exemplo: "Copiados 225 (200 por telefone, 25 só pelo nome). Já
+  estavam: 0. Fora: 5 (grupos/sem nome)."
+- É uma **cópia única**: depois disso, a etiqueta do WhatsApp e a do CRM seguem
+  independentes.
+
+Como a extensão reconhece o cliente no CRM:
+- Pelo **telefone** da conversa, sempre que o WhatsApp Web mostra o número.
+- Se o número não aparece, pelo **nome** do contato. Nesse caso aparece o aviso
+  "identificado só pelo nome". Quando o telefone aparecer depois, a extensão
+  passa a usar o telefone e mantém as etiquetas CRM.
+- **Grupos** não recebem etiquetas CRM.
+- Só abrir uma conversa não grava nada. No CRM ficam só nome, telefone, as
+  etiquetas CRM e a nota que você escrever. **Prévias de mensagens nunca vão
+  para o Supabase.**
+- Se uma etiqueta não salvar (sem internet, por exemplo), ela some e aparece o
+  aviso "Não consegui salvar". É só tentar de novo.
+
+#### Antes de usar: atualizar o banco (uma vez)
+
+A 1.8.0 usa duas colunas novas no Supabase (`wa_labels.hidden` e
+`wa_contacts.notes`), criadas pela migration
+`supabase/migrations/20261031120000_crm_labels_hidden_and_notes.sql`.
+Enquanto ela não for aplicada:
+- nada fica oculto e a opção **Ocultar** fica desativada;
+- a nota fica desativada, com o aviso "Nota disponível após atualizar o banco".
+
+O resto funciona normalmente. O Diagnóstico mostra "Colunas novas do banco: ok"
+ou "falta atualizar".
+
+### Quadro (WhatsApp | CRM)
+
+O mesmo seletor **WhatsApp | CRM** da barra fica no cabeçalho do Quadro.
+**Colunas** escolhe até 6 etiquetas, lembradas separadamente para cada
+família. **Esc** ou **Fechar** fecha o Quadro.
+
+**Modo WhatsApp** (igual à 1.7.0):
+- Uma coluna por etiqueta do WhatsApp, com um cartão por conversa (nome, última
+  mensagem, data e não lidas). Clique num cartão (ou aperte Enter) para abrir a
+  conversa.
+- **Trocar a etiqueta:** arraste o cartão para outra coluna (ou use **Mover
+  para…**). Enquanto salva, o cartão fica apagado. Deu certo: ele vai para o
+  topo da outra coluna e aparece "Etiqueta trocada para X" com **Desfazer** (8
+  segundos). Deu errado: o cartão fica onde estava e aparece "Não consegui
+  trocar a etiqueta. Confira no WhatsApp."
+- **O número da etiqueta** é o do WhatsApp e pode incluir conversas que o
+  WhatsApp Web ainda não carregou ("Mostrando N conversas carregadas no WhatsApp
+  Web agora."). Conversas arquivadas não entram.
+- A extensão só troca etiquetas do WhatsApp quando você arrasta, clica ou aperta
+  Desfazer, uma conversa por vez. Nunca cria, apaga, renomeia nem muda a cor
+  delas.
+
+**Modo CRM:**
+- Uma coluna por etiqueta CRM (não oculta), com um cartão por contato: nome,
+  telefone, data em que entrou na etiqueta e 📝 se tiver nota. 50 por vez, com
+  "Mostrar mais".
+- Arrastar (ou **Mover para…**) tira o contato da etiqueta CRM de origem e põe
+  na de destino, com **Desfazer** (8 segundos). Se falhar, o cartão volta.
+- Clicar num cartão abre a conversa se houver telefone e ela estiver carregada
+  no WhatsApp Web. Se não estiver, aparece "Conversa não carregada no WhatsApp
+  Web. Procure pelo nome: X".
+
+Nomes, números e prévias ficam só na memória enquanto o Quadro está aberto.
 
 ### Privacidade da biblioteca WA-JS
 
@@ -277,6 +324,20 @@ guardada.
 ---
 
 ## O que mudou
+
+### 1.8.0
+- **Barra-menu** no topo: Quadro, Etiquetas CRM e (em breve) Agendar,
+  Disparos e Follows. Seletor **WhatsApp | CRM**. A barra aparece mesmo sem
+  WhatsApp Business.
+- Painel da direita **só com as mensagens** (sem abas).
+- Janela **Etiquetas CRM**: etiquetas e nota da conversa, etiquetas do WhatsApp
+  da conversa (separadas), criar, renomear, cor, ocultar, ordem, excluir,
+  exportar CSV e copiar contatos de uma etiqueta do WhatsApp.
+- **Quadro** também no modo CRM, com arrastar e Desfazer.
+- Diagnóstico: "Etiquetas CRM" (quantidade e ocultas) e "Colunas novas do
+  banco".
+- Precisa da migration `20261031120000_crm_labels_hidden_and_notes.sql` para
+  ocultar etiquetas e para as notas (sem ela, o resto funciona).
 
 ### 1.7.0
 - **Trocar etiquetas do WhatsApp Business** pela extensão, sempre por ação
@@ -404,7 +465,7 @@ Service worker
   `sendVoice { chatId, audio, recordMs }` (só `@c.us`/`@lid`;
   markIsRecording → espera → markIsPaused sempre → sendFileMessage com Blob
   `audio/ogg; codecs=opus`) e `cancel { id }`. Só leitura (1.6.0):
-  `labels` (getAllLabels), `labelChats { labelId, offset, limit }`
+  `labels` (getAllLabels), `labelChats { labelId, offset, limit, noPreview }`
   (chat.list com `withLabels`, sem arquivadas, ordenado por data, prévia só da
   mensagem já carregada) e `openChat { chatId }` (openChatBottom, só para
   conversas já carregadas). Etiquetas (1.7.0): `chatLabels { chatId }`
@@ -427,8 +488,13 @@ Service worker
 - `config.js`: URL e anon key do Supabase (os mesmos valores do `.env` do ERP;
   a anon key é pública por design).
 - `background.js` e `supabase-api.js`: buscam os dados e os arquivos no
-  Supabase. Só leitura, exceto `wa_items.usage_count` e as etiquetas
-  (`wa_contacts` e `wa_contact_labels`).
+  Supabase (o único lugar com acesso à rede). Escrevem só `wa_items.usage_count`
+  e as etiquetas CRM (`wa_labels`, `wa_contacts`, `wa_contact_labels`), sempre
+  a pedido de um clique. O background só atende os tipos da lista `HANDLERS`;
+  cada função valida a entrada (UUID, tamanhos, cores da paleta). Excluir uma
+  etiqueta CRM apaga as marcações e a etiqueta, nunca contatos. Colunas novas
+  (`hidden`, `notes`): tenta com a coluna e, se o banco responder 400 citando
+  a coluna, tenta sem.
 - `mic-bridge.js`: roda no mundo da página (`"world": "MAIN"`,
   `document_start`; por isso o Chrome 111+). Envolve
   `navigator.mediaDevices.getUserMedia`: só quando o painel arma (via
@@ -437,7 +503,8 @@ Service worker
   erro ou após 10 s. Qualquer outro pedido vai direto para a função original.
   Não faz conexões de rede.
 - `content.js`: o painel (em Shadow DOM), o cache em `chrome.storage.local`
-  (`library`, `labels`, `collapsed`, `lastUsed`, `themePref`) e a integração
+  (`library`, `labels`, `collapsed`, `lastUsed`, `themePref`, `labelsBarHidden`,
+  `labelsFamily`, `boardLabelIds`, `boardCrmLabelIds`; nada de contatos, telefones ou notas) e a integração
   com o WhatsApp Web (seletores com alternativas na constante `SEL`; a
   identificação da conversa fica em `identifyConversation`).
 - Não precisa de build: o Chrome carrega os arquivos como estão.

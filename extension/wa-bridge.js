@@ -229,7 +229,7 @@
     return { kind, text: '' };
   }
 
-  function chatCard(chat) {
+  function chatCard(chat, withPreview = true) {
     const id = chatIdOf(chat);
     const group = safe(() => !!chat.isGroup, false) || /@g\.us$/.test(id);
     const kind = group ? 'grupo' : /@(c\.us|lid)$/.test(id) ? 'individual' : 'outro';
@@ -237,7 +237,7 @@
     const name = [safe(() => chat.formattedTitle, ''), safe(() => chat.name, ''), contactName, id.split('@')[0]]
       .map((v) => (typeof v === 'string' ? v.trim() : ''))
       .find(Boolean) || '';
-    const last = lastLoadedMessage(chat);
+    const last = withPreview ? lastLoadedMessage(chat) : null; // sem prévia: nem olha as mensagens
     return {
       id,
       name: name.slice(0, 100),
@@ -283,7 +283,7 @@
       .sort((a, b) => b.t - a.t);
     return {
       total: filtered.length,
-      chats: filtered.slice(offset, offset + pageSize).map(({ c }) => chatCard(c)),
+      chats: filtered.slice(offset, offset + pageSize).map(({ c }) => chatCard(c, p.noPreview !== true)),
     };
   }
 
