@@ -421,6 +421,10 @@
       actions: [{ type: 'enviar', hint: 'a oferta de recompra' }, { type: 'adicionar_etiqueta', label: 'Recompra enviada' }] },
     { key: 'garantia', title: 'Garantia vencendo', name: 'Garantia vencendo', trigger_type: 'entrou_etiqueta', trigger_label: 'Cliente', wait_minutes: 335 * 1440,
       actions: [{ type: 'enviar', hint: 'o aviso de garantia' }, { type: 'adicionar_etiqueta', label: 'Garantia avisada' }] },
+    // 2.2.0: o "remover" segue a etiqueta do gatilho (followsTrigger)
+    { key: 'respondeu_regua', title: 'Respondeu → tirar da régua', name: 'Respondeu → tirar da régua', trigger_type: 'respondeu', trigger_label: 'Follow 1',
+      help: 'Quem respondeu sai da régua e aparece na coluna Responder do Quadro para você decidir o próximo passo.',
+      actions: [{ type: 'remover_etiqueta', followsTrigger: true }, { type: 'adicionar_etiqueta', label: 'Responder' }] },
   ];
 
   // ── Limites ──────────────────────────────────────────────────────────────
@@ -515,6 +519,7 @@
       st.available = true;
       st.settings = s.settings;
       st.campaignsAvailable = s.campaigns === true;
+      st.campaignsV2 = s.campaignsV2 === true; // 2.2.0: mensagem exclusiva, filtros e ações depois de enviar
       st.automationsAvailable = s.automations === true;
       return true;
     }

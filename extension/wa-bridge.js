@@ -520,9 +520,17 @@
       if (!chat || safe(() => !!chat.isGroup, false)) return;
       const last = lastLoadedMessage(chat);
       const ads = kws.length ? adTextsOf(chat) : '';
+      // 2.2.0: horário da última mensagem carregada do CLIENTE (só o horário, nunca o texto)
+      let lastIn = 0;
+      (safe(() => chat.msgs.getModelsArray(), null) || []).forEach((m) => {
+        if (safe(() => m.id.fromMe, true)) return;
+        const t = Number(safe(() => m.t, 0)) || 0;
+        if (t > lastIn) lastIn = t;
+      });
       chats[id] = {
         loaded: true,
         last: last ? { fromMe: !!safe(() => last.id.fromMe, false), t: Number(safe(() => last.t, 0)) || 0 } : null,
+        lastIn: lastIn || null,
         ad: ads ? kws.filter((k) => ads.includes(k)) : [],
       };
     });

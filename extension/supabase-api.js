@@ -799,7 +799,8 @@
       rows = await rest(`wa_settings?select=${SETTINGS_COLUMNS}&id=eq.1`);
     }
     if (!rows.length) return { available: false };
-    return { available: true, settings: rows[0], campaigns: await campaignsTables(), automations: await automationTables() };
+    const campaigns = await campaignsTables();
+    return { available: true, settings: rows[0], campaigns, campaignsV2: campaigns && (await campaignsV2()), automations: await automationTables() };
   }
 
   const hmOf = (v) => String(v || '').slice(0, 5);
@@ -1107,6 +1108,12 @@
 
   const CAMPAIGN_COLUMNS = 'id,name,label_id,item_id,status,start_at,allow_new_chats,skip_recent_days,created_at';
   const TARGET_STATUS = ['pendente', 'enviando', 'enviado', 'falhou', 'pulado'];
+  // 2.2.0 (migration 20261103160000): mensagem exclusiva, ações depois de enviar e filtros do público
+  const CAMPAIGN_V2_COLUMNS = 'parts,after_actions,filters';
+  const AFTER_ACTIONS = ['adicionar_etiqueta', 'remover_etiqueta', 'mover'];
+  const CAMPAIGN_FILTERS = ['tem_etiqueta', 'nao_tem_etiqueta', 'respondeu_recente'];
+  const campaignsV2 = () => probe('wa_campaigns.v2', () => hasColumn('wa_campaigns', 'after_actions'));
+  const campCols = async () => ((await campaignsV2()) ? `${CAMPAIGN_COLUMNS},${CAMPAIGN_V2_COLUMNS}` : CAMPAIGN_COLUMNS);
 
   async function campRest(path, init) {
     try {
@@ -1117,15 +1124,43 @@
     }
   }
 
-  function checkCampaignInput(c) {
+  function checkCampaignInput(c, v2 = false) {
     const p = c || {};
+    const label_id = checkUuid(p.label_id, 'Escolha a etiqueta CRM');
+    // Mensagem: exclusiva do disparo (partes, como wa_item_parts) ou uma mensagem salva
+    let parts = null;
+    if (p.parts != null) {
+      if (!Array.isArray(p.parts) || !p.parts.length || p.parts.length > MAX_PARTS) throw new Error(`Mensagem do disparo: de 1 a ${MAX_PARTS} partes`);
+      parts = p.parts.map(checkPart);
+    }
+    const item_id = parts ? null : (p.item_id == null || p.item_id === '' ? null : checkUuid(p.item_id, 'Escolha a mensagem salva'));
+    if (!parts && !item_id) throw new Error('Escreva a mensagem do disparo ou escolha uma mensagem salva');
+    const after = Array.isArray(p.after_actions) ? p.after_actions : [];
+    if (after.length > 10) throw new Error('No máximo 10 ações depois de enviar');
+    const after_actions = after.map((a, i) => {
+      if (!a || !AFTER_ACTIONS.includes(a.type)) throw new Error(`Depois de enviar, ação ${i + 1}: tipo inválido`);
+      const l = checkUuid(a.label_id, `Depois de enviar, ação ${i + 1}: escolha a etiqueta`);
+      if (a.type === 'mover' && l === label_id) throw new Error(`Depois de enviar, ação ${i + 1}: mover para uma etiqueta diferente da do disparo`);
+      return { type: a.type, label_id: l };
+    });
+    const fl = Array.isArray(p.filters) ? p.filters : [];
+    if (fl.length > 10) throw new Error('No máximo 10 filtros');
+    const filters = fl.map((f, i) => {
+      if (!f || !CAMPAIGN_FILTERS.includes(f.type)) throw new Error(`Filtro ${i + 1}: tipo inválido`);
+      if (f.type === 'respondeu_recente') return { type: f.type, days: intIn(f.days, 1, 365, `Filtro ${i + 1}: dias`) };
+      const l = checkUuid(f.label_id, `Filtro ${i + 1}: escolha a etiqueta`);
+      if (l === label_id) throw new Error(`Filtro ${i + 1}: escolha uma etiqueta diferente da principal`);
+      return { type: f.type, label_id: l };
+    });
+    if (!v2 && (parts || after_actions.length || filters.length)) throw new Error(ENGINE_MISSING);
     const out = {
       name: cleanText(p.name, 60, 'Nome do disparo'),
-      label_id: checkUuid(p.label_id, 'Escolha a etiqueta CRM'),
-      item_id: checkUuid(p.item_id, 'Escolha a mensagem salva'),
+      label_id,
+      item_id,
       allow_new_chats: p.allow_new_chats === true,
       skip_recent_days: intIn(p.skip_recent_days ?? 7, 0, 90, 'Pular quem recebeu nos últimos (dias)'),
       start_at: null,
+      ...(v2 ? { parts, after_actions, filters } : {}),
     };
     if (p.start_at !== undefined && p.start_at !== null && p.start_at !== '') {
       const t = Date.parse(p.start_at);
@@ -1138,7 +1173,7 @@
 
   // Lista com o progresso de cada disparo (contagem por status dos alvos)
   async function fetchCampaigns() {
-    const list = await campRest(`wa_campaigns?select=${CAMPAIGN_COLUMNS}&order=created_at.desc&limit=30`);
+    const list = await campRest(`wa_campaigns?select=${await campCols()}&order=created_at.desc&limit=30`);
     const counts = Object.fromEntries(list.map((c) => [c.id, { pendente: 0, enviando: 0, enviado: 0, falhou: 0, pulado: 0 }]));
     if (list.length) {
       const rows = await campRest(`wa_campaign_targets?select=campaign_id,status&campaign_id=in.${inList(list.map((c) => c.id))}&limit=50000`);
@@ -1148,7 +1183,7 @@
   }
 
   async function saveCampaign({ id, campaign }) {
-    const row = checkCampaignInput(campaign);
+    const row = checkCampaignInput(campaign, await campaignsV2());
     if (id !== undefined && id !== null) {
       checkUuid(id, 'Disparo inválido');
       const rows = await campRest(`wa_campaigns?id=eq.${id}&status=eq.rascunho`, json('PATCH', 'return=representation', row));
@@ -1168,7 +1203,7 @@
 
   async function campaignById(id) {
     checkUuid(id, 'Disparo inválido');
-    const rows = await campRest(`wa_campaigns?select=${CAMPAIGN_COLUMNS}&id=eq.${id}`);
+    const rows = await campRest(`wa_campaigns?select=${await campCols()}&id=eq.${id}`);
     if (!rows.length) throw new Error('Disparo não encontrado');
     return rows[0];
   }
@@ -1176,7 +1211,9 @@
   // Foto da etiqueta: quem vai e quem é pulado (e por quê). Não grava nada.
   async function campaignSnapshot(c) {
     if (!c.label_id) throw new Error('A etiqueta CRM do disparo foi excluída');
-    const noSend = (await rest('wa_labels?select=id,name')).find((l) => noSendKey(l.name) === noSendKey(NO_SEND));
+    const allLabels = await rest('wa_labels?select=id,name');
+    const noSend = allLabels.find((l) => noSendKey(l.name) === noSendKey(NO_SEND));
+    const labelNameOf = (id) => { const l = allLabels.find((x) => x.id === id); return l ? l.name : 'excluída'; };
     const contacts = await flowCandidates({ labelIds: [c.label_id] });
     const recent = new Set();
     if (c.skip_recent_days > 0 && contacts.length) {
@@ -1189,6 +1226,10 @@
       const base = { contact_id: ct.id, chat_id: chat, name: ct.name ? String(ct.name).slice(0, 100) : (ct.phone || null) };
       if (noSend && ct.labelIds.includes(noSend.id)) return { ...base, status: 'pulado', reason: 'Não enviar' };
       if (!chat) return { ...base, status: 'pulado', reason: 'sem telefone' };
+      for (const f of c.filters || []) {
+        if (f.type === 'tem_etiqueta' && !ct.labelIds.includes(f.label_id)) return { ...base, status: 'pulado', reason: `não tem a etiqueta ${labelNameOf(f.label_id)}`.slice(0, 60) };
+        if (f.type === 'nao_tem_etiqueta' && ct.labelIds.includes(f.label_id)) return { ...base, status: 'pulado', reason: `tem a etiqueta ${labelNameOf(f.label_id)}`.slice(0, 60) };
+      }
       if (recent.has(ct.id) || recent.has(chat)) return { ...base, status: 'pulado', reason: `recebeu envio nos últimos ${c.skip_recent_days} dias` };
       return { ...base, status: 'pendente', reason: null };
     });
@@ -1198,20 +1239,42 @@
   }
 
   // Para a tela de confirmação: números e as conversas que vão (para conferir as carregadas)
+  const previewOf = (c, snap) => ({
+    total: snap.total, willSend: snap.willSend, skipped: snap.skipped, allow_new_chats: c.allow_new_chats,
+    chatIds: snap.targets.filter((t) => t.status === 'pendente').map((t) => t.chat_id),
+    // 2.2.0 (Simular): quem vai e quem é pulado, com nome e motivo (só para a tela)
+    targets: snap.targets.slice(0, 2000).map((t) => ({ name: t.name, chat_id: t.chat_id, contact_id: t.contact_id, status: t.status, reason: t.reason })),
+  });
+
   async function previewCampaign({ id }) {
     const c = await campaignById(id);
     if (c.status !== 'rascunho') throw new Error('Este disparo já foi iniciado');
-    const snap = await campaignSnapshot(c);
-    return {
-      total: snap.total, willSend: snap.willSend, skipped: snap.skipped, allow_new_chats: c.allow_new_chats,
-      chatIds: snap.targets.filter((t) => t.status === 'pendente').map((t) => t.chat_id),
+    return previewOf(c, await campaignSnapshot(c));
+  }
+
+  // Simular no editor, antes de salvar: valida o formulário e tira a "foto" sem gravar nada
+  async function simulateCampaign({ campaign }) {
+    const c = checkCampaignInput(campaign, await campaignsV2());
+    return previewOf(c, await campaignSnapshot(c));
+  }
+
+  // Duplicar: rascunho igual (mensagem, ações, filtros), sem alvos
+  async function duplicateCampaign({ id }) {
+    const c = await campaignById(id);
+    const row = {
+      name: `${c.name} (cópia)`.slice(0, 60), label_id: c.label_id, item_id: c.item_id, status: 'rascunho', start_at: null,
+      allow_new_chats: !!c.allow_new_chats, skip_recent_days: c.skip_recent_days,
+      ...('after_actions' in c ? { parts: c.parts || null, after_actions: c.after_actions || [], filters: c.filters || [] } : {}),
     };
+    const rows = await campRest('wa_campaigns', json('POST', 'return=representation', row));
+    return { id: rows[0].id };
   }
 
   // Iniciar (só a pedido do usuário, na confirmação): reserva o rascunho, grava a foto e libera
   async function startCampaign({ id }) {
     const c = await campaignById(id);
     if (c.status !== 'rascunho') throw new Error('Este disparo já foi iniciado');
+    if (!c.item_id && !(Array.isArray(c.parts) && c.parts.length)) throw new Error('O disparo está sem mensagem');
     const held = await campRest(`wa_campaigns?id=eq.${id}&status=eq.rascunho`, json('PATCH', 'return=representation', { status: 'pausada' }));
     if (!held.length) throw new Error('Este disparo já foi iniciado');
     let snap;
@@ -1256,7 +1319,7 @@
   async function nextCampaignTarget() {
     const now = new Date().toISOString();
     await campRest(`wa_campaigns?status=eq.agendada&start_at=lte.${encodeURIComponent(now)}`, json('PATCH', 'return=minimal', { status: 'rodando' }));
-    const running = await campRest(`wa_campaigns?select=${CAMPAIGN_COLUMNS}&status=eq.rodando&order=created_at.asc&limit=10`);
+    const running = await campRest(`wa_campaigns?select=${await campCols()}&status=eq.rodando&order=created_at.asc&limit=10`);
     for (const c of running) {
       const next = await campRest(`wa_campaign_targets?select=id,campaign_id,contact_id,chat_id,name,status&campaign_id=eq.${c.id}&status=eq.pendente&order=id.asc&limit=1`);
       if (next.length) return { campaign: c, target: next[0] };
@@ -1492,7 +1555,7 @@
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve,
     automationUnreserve, applySendLabels, getContactName,
     fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
-    claimTarget, finishTarget, campaignTargets,
+    claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,

@@ -3305,7 +3305,7 @@
     if (total) total.textContent = `Tempo total ~${edTotalSeconds()}s`;
   }
 
-  function numField(label, value, max, onInput) {
+  function numField(label, value, max, onInput, after = edUpdateTotals) {
     const wrap = el('label', 'ed-num');
     const input = el('input');
     input.type = 'number';
@@ -3316,13 +3316,15 @@
     input.addEventListener('input', () => {
       const n = Math.floor(Number(input.value));
       onInput(Number.isFinite(n) ? Math.min(max, Math.max(0, n)) : 0);
-      edUpdateTotals();
+      if (after) after();
     });
     wrap.append(label, input, ' s');
     return wrap;
   }
 
-  function edPartEl(p, i) {
+  // ctx (2.2.0): o mesmo editor de partes serve à mensagem salva e à mensagem exclusiva do disparo
+  const edCtx = () => ({ parts: ed.parts, rerender: renderEditor, msg: edMsg, saving: () => ed.saving, totals: edUpdateTotals });
+  function edPartEl(p, i, ctx = edCtx()) {
     const box = el('div', 'ed-part');
     const head = el('div', 'ed-phead');
     head.append(el('b', null, `Parte ${i + 1}`));
@@ -3333,21 +3335,21 @@
       if (p.localUrl) URL.revokeObjectURL(p.localUrl);
       Object.assign(p, { type: typeSel.value, file: null, localUrl: null, file_url: null, file_name: null, file_size: null });
       if (p.type === 'audio' && !p.typing_seconds) p.typing_seconds = 3;
-      renderEditor();
+      ctx.rerender();
     });
     const mini = (text, title, disabled, onClick) => {
       const b = el('button', 'ed-mini', text);
       b.type = 'button';
       b.title = title;
       b.setAttribute('aria-label', `${title} (parte ${i + 1})`);
-      b.disabled = disabled || ed.saving;
+      b.disabled = disabled || ctx.saving();
       b.addEventListener('click', onClick);
       return b;
     };
     head.append(typeSel,
-      mini('↑', 'Subir', i === 0, () => { ed.parts.splice(i - 1, 0, ed.parts.splice(i, 1)[0]); renderEditor(); }),
-      mini('↓', 'Descer', i === ed.parts.length - 1, () => { ed.parts.splice(i + 1, 0, ed.parts.splice(i, 1)[0]); renderEditor(); }),
-      mini('×', 'Remover', ed.parts.length === 1, () => { if (p.localUrl) URL.revokeObjectURL(p.localUrl); ed.parts.splice(i, 1); renderEditor(); }));
+      mini('↑', 'Subir', i === 0, () => { ctx.parts.splice(i - 1, 0, ctx.parts.splice(i, 1)[0]); ctx.rerender(); }),
+      mini('↓', 'Descer', i === ctx.parts.length - 1, () => { ctx.parts.splice(i + 1, 0, ctx.parts.splice(i, 1)[0]); ctx.rerender(); }),
+      mini('×', 'Remover', ctx.parts.length === 1, () => { if (p.localUrl) URL.revokeObjectURL(p.localUrl); ctx.parts.splice(i, 1); ctx.rerender(); }));
     box.append(head);
 
     if (p.type === 'texto') {
@@ -3371,15 +3373,15 @@
         const f = input.files && input.files[0];
         if (!f) return;
         const mime = edFileMime(p.type, f);
-        if (!ED_MIME[p.type].includes(mime)) { edMsg(`Parte ${i + 1}: tipo de arquivo não aceito.`, true); return; }
-        if (f.size > ED_MAX_BYTES) { edMsg(`Parte ${i + 1}: arquivo acima de 40 MB.`, true); return; }
+        if (!ED_MIME[p.type].includes(mime)) { ctx.msg(`Parte ${i + 1}: tipo de arquivo não aceito.`, true); return; }
+        if (f.size > ED_MAX_BYTES) { ctx.msg(`Parte ${i + 1}: arquivo acima de 40 MB.`, true); return; }
         if (p.localUrl) URL.revokeObjectURL(p.localUrl);
         p.file = f;
         p.localUrl = ['imagem', 'video', 'audio'].includes(p.type) ? URL.createObjectURL(f) : null;
         p.file_name = f.name;
         p.file_size = f.size;
-        edMsg('');
-        renderEditor();
+        ctx.msg('');
+        ctx.rerender();
       });
       pick.append(input);
       fileRow.append(pick);
@@ -3411,8 +3413,8 @@
     if (state.partsAvailable === false) {
       times.append(el('span', 'ed-note', `Esperar e digitando: ${DB_MISSING.toLowerCase()}`));
     } else {
-      times.append(numField('esperar ', p.wait_seconds, 600, (n) => { p.wait_seconds = n; }),
-        numField(p.type === 'audio' ? 'gravando ' : 'digitando ', p.typing_seconds, 60, (n) => { p.typing_seconds = n; }));
+      times.append(numField('esperar ', p.wait_seconds, 600, (n) => { p.wait_seconds = n; }, ctx.totals),
+        numField(p.type === 'audio' ? 'gravando ' : 'digitando ', p.typing_seconds, 60, (n) => { p.typing_seconds = n; }, ctx.totals));
     }
     box.append(times);
     return box;
@@ -3978,12 +3980,20 @@
       if (Array.isArray(labels) && labels.includes(h.noSendLabelId)) return skip('Não enviar');
     }
     if (!target.chat_id) return skip('sem telefone');
-    let item = state.items.find((i) => i.id === campaign.item_id);
-    if (!item) { await reloadLibrary().catch(() => {}); item = state.items.find((i) => i.id === campaign.item_id); }
-    if (!item) return skip('mensagem salva não existe mais');
+    // 2.2.0: mensagem exclusiva do disparo (parts) ou a mensagem salva
+    const exclusive = Array.isArray(campaign.parts) && campaign.parts.length ? campaign.parts.map((p) => ({ ...p })) : null;
+    let item = null;
+    if (!exclusive) {
+      item = state.items.find((i) => i.id === campaign.item_id);
+      if (!item) { await reloadLibrary().catch(() => {}); item = state.items.find((i) => i.id === campaign.item_id); }
+      if (!item) return skip('mensagem salva não existe mais');
+    }
     let info = null;
     try { info = await waRequest('chatsInfo', { chatIds: [target.chat_id], keywords: [] }, { timeout: 8000 }); } catch { info = null; }
     const loaded = !!(info && info.chats && info.chats[target.chat_id]);
+    const replied = (campaign.filters || []).find((x) => x.type === 'respondeu_recente');
+    const lastIn = loaded ? info.chats[target.chat_id].lastIn : null;
+    if (replied && lastIn && Date.now() - lastIn * 1000 <= replied.days * 86400000) return skip(`respondeu nos últimos ${replied.days} dias`);
     let newChat = false;
     if (!loaded) {
       // Conversa nova só com a opção ligada e só para número (@c.us); a ponte confere com queryExists
@@ -3995,7 +4005,7 @@
     const logId = await h.logStart(entry);
     let res;
     try {
-      res = await runSequence({ parts: partsOf(item), chatId: target.chat_id, firstName: E.firstNameOf(target.name), label: 'Disparo', newChat });
+      res = await runSequence({ parts: exclusive || partsOf(item), chatId: target.chat_id, firstName: E.firstNameOf(target.name), label: 'Disparo', newChat });
     } catch {
       res = { status: 'failed', stage: 'sending', sent: 0 };
     }
@@ -4007,7 +4017,23 @@
     }
     await finishTarget(target.id, out.status, out.reason);
     await h.logFinish(logId, out.status, out.reason);
-    if (out.status === 'enviado') { registerUse(item); applyItemLabels(item, { contactId: target.contact_id || undefined, chatId: target.chat_id }); }
+    if (out.status === 'enviado') {
+      if (item) { registerUse(item); applyItemLabels(item, { contactId: target.contact_id || undefined, chatId: target.chat_id }); }
+      // Depois de enviar (2.2.0): só para quem recebeu com sucesso
+      if (target.contact_id) {
+        for (const a of campaign.after_actions || []) {
+          try {
+            if (a.type === 'adicionar_etiqueta') await call('followAdd', { contactId: target.contact_id, labelId: a.label_id });
+            else if (a.type === 'remover_etiqueta') await call('followReserve', { contactId: target.contact_id, labelId: a.label_id });
+            else if (a.type === 'mover') {
+              if (campaign.label_id) await call('followReserve', { contactId: target.contact_id, labelId: campaign.label_id });
+              await call('followAdd', { contactId: target.contact_id, labelId: a.label_id });
+            }
+          } catch { /* a próxima ação segue */ }
+        }
+        if ((campaign.after_actions || []).length) afterLabelChange();
+      }
+    }
     if (dp.open) refreshDisparos({ quiet: true });
     return { attempted: out.status !== 'pulado' };
   }
@@ -4077,7 +4103,8 @@
     const head = el('div', 'fw-head');
     head.append(el('span', 'fw-name', c.name), el('span', `fw-badge${c.status === 'rodando' ? ' on' : ''}`, CAMPAIGN_STATUS[c.status] || c.status));
     card.append(head);
-    card.append(el('div', 'fw-txt', `Etiqueta CRM: ${c.label_id ? labelName(c.label_id) : 'excluída'} · Mensagem: ${c.item_id ? itemTitle(c.item_id) : 'excluída'}`));
+    const msgName = Array.isArray(c.parts) && c.parts.length ? 'exclusiva deste disparo' : c.item_id ? itemTitle(c.item_id) : 'excluída';
+    card.append(el('div', 'fw-txt', `Etiqueta CRM: ${c.label_id ? labelName(c.label_id) : 'excluída'} · Mensagem: ${msgName}`));
     const start = c.start_at ? `início ${schedWhen(c.start_at)}` : 'início: agora (ao confirmar)';
     card.append(el('div', 'fw-txt', `${start}${c.allow_new_chats ? ' · permite conversas novas' : ''}${c.skip_recent_days ? ` · pula quem recebeu nos últimos ${c.skip_recent_days} dias` : ''}`));
     if (c.status !== 'rascunho') card.append(el('div', 'fw-count', campaignProgress(c)));
@@ -4094,10 +4121,26 @@
       if (c.status === 'pausada') row.append(fbtn('ed-mini', 'Retomar', () => doCampaignAction(c, 'resume')));
       if (['rodando', 'agendada', 'pausada'].includes(c.status)) row.append(confirmBtn('cancel', 'Cancelar', 'Confirmar cancelamento'));
       row.append(fbtn('ed-mini', 'Ver alvos', () => openDetail(c)));
+    }
+    row.append(fbtn('ed-mini', 'Duplicar', () => duplicateCampaignRow(c)));
+    if (c.status !== 'rascunho') {
       if (['concluida', 'cancelada'].includes(c.status)) row.append(confirmBtn('delete', 'Excluir', 'Confirmar exclusão'));
     }
     card.append(row);
     return card;
+  }
+
+  // Duplicar: rascunho igual (mensagem, ações e filtros), sem alvos
+  async function duplicateCampaignRow(c) {
+    try {
+      await call('duplicateCampaign', { id: c.id });
+      dp.msg = 'Disparo duplicado como rascunho.';
+      dp.msgErr = false;
+    } catch (e) {
+      dp.msg = `Não consegui duplicar: ${e.message}`;
+      dp.msgErr = true;
+    }
+    await refreshDisparos({ quiet: true });
   }
 
   async function deleteCampaignRow(c) {
@@ -4116,7 +4159,7 @@
   function renderDisparos() {
     if (!dtabEl) return;
     dtabEl.textContent = '';
-    dtabEl.append(el('div', 'crm-intro', 'Disparos mandam uma mensagem salva para todos de uma etiqueta CRM, um por vez, com os mesmos limites e horário dos follows. Só começa quando você confirma "Iniciar disparo".'));
+    dtabEl.append(el('div', 'crm-intro', 'Disparos mandam uma mensagem (exclusiva do disparo ou salva) para todos de uma etiqueta CRM, um por vez, com os mesmos limites e horário das automações. Só começa quando você confirma "Iniciar disparo".'));
     if (motor.state.available === false || motor.state.campaignsAvailable === false) {
       dtabEl.append(el('div', 'ed-note', 'Atualize o banco para usar este recurso.'));
       return;
@@ -4125,6 +4168,7 @@
     if (dp.view === 'new') { renderCampaignForm(); return; }
     if (dp.view === 'confirm') { renderConfirm(); return; }
     if (dp.view === 'detail') { renderDetail(); return; }
+    if (dp.view === 'simulate' && dp.sim) { renderCampaignSim(); return; }
     renderFollowsTop(dtabEl);
     if (dp.msg) dtabEl.append(el('div', `ed-msg${dp.msgErr ? ' err' : ''}`, dp.msg));
     if (dp.error) dtabEl.append(el('div', 'ed-msg err', dp.error));
@@ -4136,15 +4180,43 @@
     dtabEl.append(sec);
   }
 
+  // ── Formulário do disparo (2.2.0: mensagem exclusiva, filtros, depois de enviar, simular) ──
+
+  const v2Ready = () => motor.state.campaignsV2 === true;
+  const AFTER_LABEL = { adicionar_etiqueta: 'Adicionar etiqueta CRM', remover_etiqueta: 'Remover etiqueta CRM', mover: 'Mover (tira a do disparo e põe outra)' };
+  const FILTER_LABEL = { tem_etiqueta: 'também tem a etiqueta', nao_tem_etiqueta: 'NÃO tem a etiqueta', respondeu_recente: 'excluir quem respondeu nos últimos (dias)' };
+
   function openCampaignForm(c) {
     const start = c && c.start_at ? new Date(c.start_at) : null;
+    const hasParts = !!(c && Array.isArray(c.parts) && c.parts.length);
     dp.form = {
       id: c ? c.id : null, name: c ? c.name : '', label_id: c ? c.label_id || '' : '', item_id: c ? c.item_id || '' : '',
+      mode: !v2Ready() ? 'salva' : hasParts ? 'exclusiva' : c && c.item_id ? 'salva' : 'exclusiva',
+      parts: hasParts ? c.parts.map(edPart) : [edPart({ type: 'texto' })],
+      after_actions: c && Array.isArray(c.after_actions) ? c.after_actions.map((a) => ({ ...a })) : [],
+      filters: c && Array.isArray(c.filters) ? c.filters.map((f) => ({ ...f })) : [],
       when: start ? 'data' : 'agora', date: start ? dateInput(start) : '', time: start ? timeInput(start) : '',
-      allow_new_chats: c ? !!c.allow_new_chats : false, skip_recent_days: c ? c.skip_recent_days : 7, msg: '', err: false, saving: false,
+      allow_new_chats: c ? !!c.allow_new_chats : false, skip_recent_days: c ? c.skip_recent_days : 7,
+      quick: { category_id: state.categories.length ? state.categories[0].id : '', title: '', saving: false },
+      msg: '', err: false, saving: false,
     };
     dp.view = 'new';
     renderDisparos();
+  }
+
+  function dpMsg(text, err = false) {
+    if (!dp.form) return;
+    dp.form.msg = text;
+    dp.form.err = err;
+    const box = dtabEl.querySelector('.dp-msg');
+    if (box) { box.textContent = text; box.className = `ed-msg dp-msg${err ? ' err' : ''}`; }
+  }
+
+  const dpCtx = () => ({ parts: dp.form.parts, rerender: renderDisparos, msg: dpMsg, saving: () => dp.form.saving, totals: null });
+
+  // Etiqueta com "Criar agora" (mesmo comportamento do editor de automações)
+  function dpLabelPicker(value, onChange, aria) {
+    return labelPicker(value, onChange, { empty: 'Escolha a etiqueta CRM…', aria, rerender: renderDisparos, onError: (m) => dpMsg(m, true) });
   }
 
   function renderCampaignForm() {
@@ -4160,10 +4232,58 @@
     const lab = labelSelect(f.label_id, { empty: 'Escolha a etiqueta CRM…', aria: 'Etiqueta CRM do disparo' });
     lab.addEventListener('change', () => { f.label_id = lab.value; });
     sec.append(schedField('Para quem (etiqueta CRM)', lab));
-    const it = itemSelect(f.item_id, { aria: 'Mensagem do disparo' });
-    it.addEventListener('change', () => { f.item_id = it.value; });
-    sec.append(schedField('Mensagem salva ({nome} vira o primeiro nome)', it));
+
+    // Mensagem
+    sec.append(el('div', 'crm-sub', 'Mensagem'));
     const modeRow = el('div', 'sc-row');
+    [['exclusiva', 'Escrever só para este disparo'], ['salva', 'Usar uma mensagem salva']].forEach(([m, label]) => {
+      const l = el('label', 'sc-radio');
+      const r = el('input');
+      r.type = 'radio';
+      r.name = 'dp-msgmode';
+      r.checked = f.mode === m;
+      r.disabled = m === 'exclusiva' && !v2Ready();
+      r.addEventListener('change', () => { f.mode = m; renderDisparos(); });
+      l.append(r, label);
+      modeRow.append(l);
+    });
+    sec.append(modeRow);
+    if (!v2Ready()) sec.append(el('div', 'ed-note', 'Mensagem exclusiva, filtros e "depois de enviar": atualize o banco para usar este recurso.'));
+    if (f.mode === 'exclusiva') {
+      sec.append(el('div', 'crm-intro', 'Não cria nada em Mensagens. {nome} vira o primeiro nome; Olá{, nome}! some sem nome.'));
+      f.parts.forEach((p, i) => sec.append(edPartEl(p, i, dpCtx())));
+      const add = el('div', 'ed-add');
+      add.append(el('span', null, '+ Adicionar:'));
+      ED_TYPES.forEach(([v, t]) => {
+        const b = fbtn('ed-mini', t, () => { f.parts.push(edPart({ type: v })); renderDisparos(); });
+        b.disabled = f.saving || f.parts.length >= ED_MAX_PARTS;
+        add.append(b);
+      });
+      sec.append(add);
+      // Salvar também como mensagem rápida
+      const qr = el('div', 'sc-row');
+      const cat = el('select', 'ed-cat');
+      cat.setAttribute('aria-label', 'Categoria da mensagem rápida');
+      state.categories.forEach((c) => { const o = el('option', null, c.name); o.value = c.id; o.selected = c.id === f.quick.category_id; cat.append(o); });
+      cat.addEventListener('change', () => { f.quick.category_id = cat.value; });
+      const qt = el('input', 'ed-title');
+      qt.maxLength = 80;
+      qt.value = f.quick.title;
+      qt.placeholder = 'Título da mensagem rápida';
+      qt.setAttribute('aria-label', 'Título da mensagem rápida');
+      qt.addEventListener('input', () => { f.quick.title = qt.value; });
+      const qb = fbtn('ed-mini', f.quick.saving ? 'Salvando…' : 'Salvar também como mensagem rápida', () => saveCampaignAsItem());
+      qb.disabled = f.quick.saving || !state.categories.length;
+      qr.append(cat, qt, qb);
+      sec.append(qr);
+    } else {
+      const it = itemSelect(f.item_id, { aria: 'Mensagem do disparo' });
+      it.addEventListener('change', () => { f.item_id = it.value; });
+      sec.append(it);
+    }
+
+    // Quando
+    const whenRow = el('div', 'sc-row');
     [['agora', 'Começar ao confirmar'], ['data', 'Data e hora']].forEach(([m, label]) => {
       const l = el('label', 'sc-radio');
       const r = el('input');
@@ -4172,9 +4292,9 @@
       r.checked = f.when === m;
       r.addEventListener('change', () => { f.when = m; renderDisparos(); });
       l.append(r, label);
-      modeRow.append(l);
+      whenRow.append(l);
     });
-    sec.append(modeRow);
+    sec.append(el('div', 'crm-sub', 'Início'), whenRow);
     if (f.when === 'data') {
       const d = el('input', 'ed-title');
       d.type = 'date';
@@ -4190,39 +4310,119 @@
       r.append(schedField('Data', d), schedField('Hora', t));
       sec.append(r);
     }
+
+    // Público
+    sec.append(el('div', 'crm-sub', 'Público (além da etiqueta principal)'));
+    f.filters.forEach((flt, i) => {
+      const row = el('div', 'fw-variant');
+      row.append(el('div', 'crm-sub', FILTER_LABEL[flt.type]));
+      if (flt.type === 'respondeu_recente') {
+        const n = numberInput(flt.days || 7, 1, 365, `Dias do filtro ${i + 1}`);
+        n.addEventListener('input', () => { flt.days = Math.floor(Number(n.value) || 0); });
+        row.append(n);
+      } else row.append(dpLabelPicker(flt.label_id, (v) => { flt.label_id = v; }, `Etiqueta do filtro ${i + 1}`));
+      const rm = fbtn('ed-mini', '✕', () => { f.filters.splice(i, 1); renderDisparos(); });
+      rm.setAttribute('aria-label', 'Remover filtro');
+      row.append(rm);
+      sec.append(row);
+    });
+    const addF = el('div', 'ed-add');
+    [['tem_etiqueta', '+ também tem a etiqueta'], ['nao_tem_etiqueta', '+ NÃO tem a etiqueta'], ['respondeu_recente', '+ excluir quem respondeu nos últimos X dias']].forEach(([t, label]) => {
+      const b = fbtn('ed-mini', label, () => { f.filters.push(t === 'respondeu_recente' ? { type: t, days: 7 } : { type: t, label_id: '' }); renderDisparos(); });
+      b.disabled = !v2Ready() || f.filters.length >= 10;
+      addF.append(b);
+    });
+    sec.append(addF);
     const recent = numberInput(f.skip_recent_days, 0, 90, 'Pular quem recebeu envio automático nos últimos (dias)');
     recent.addEventListener('input', () => { f.skip_recent_days = Math.floor(Number(recent.value) || 0); });
-    sec.append(schedField('Pular quem recebeu qualquer envio automático nos últimos (dias)', recent));
+    sec.append(schedField('Excluir quem recebeu qualquer envio automático nos últimos (dias)', recent));
     const nl = el('label', 'sc-radio');
     const nc = el('input');
     nc.type = 'checkbox';
     nc.checked = f.allow_new_chats;
     nc.addEventListener('change', () => { f.allow_new_chats = nc.checked; });
     nl.append(nc, 'Permitir conversas novas');
-    sec.append(nl, el('div', 'crm-intro', 'Desligado (recomendado): só manda para conversas já carregadas no WhatsApp Web; as outras ficam "pulado". Ligado: manda também para números que nunca falaram com você, depois de conferir que o número tem WhatsApp.'));
+    sec.append(nl, el('div', 'crm-intro', 'Desligado (recomendado): só conversas já carregadas no WhatsApp Web; as outras ficam "pulado". Ligado: manda também para números que nunca falaram com você, depois de conferir que o número tem WhatsApp.'));
+
+    // Depois de enviar
+    sec.append(el('div', 'crm-sub', 'Depois de enviar (só para quem recebeu com sucesso)'));
+    f.after_actions.forEach((a, i) => {
+      const row = el('div', 'fw-variant');
+      const type = el('select', 'ed-cat');
+      type.setAttribute('aria-label', `Depois de enviar ${i + 1}`);
+      Object.entries(AFTER_LABEL).forEach(([k, t]) => { const o = el('option', null, `${i + 1}. ${t}`); o.value = k; o.selected = a.type === k; type.append(o); });
+      type.addEventListener('change', () => { a.type = type.value; renderDisparos(); });
+      row.append(type, dpLabelPicker(a.label_id, (v) => { a.label_id = v; }, `Etiqueta depois de enviar ${i + 1}`));
+      const ctl = el('div', 'ed-add');
+      const up = fbtn('ed-mini', '↑', () => { f.after_actions.splice(i - 1, 0, f.after_actions.splice(i, 1)[0]); renderDisparos(); });
+      up.disabled = i === 0;
+      up.setAttribute('aria-label', 'Subir');
+      const rm = fbtn('ed-mini', '✕', () => { f.after_actions.splice(i, 1); renderDisparos(); });
+      rm.setAttribute('aria-label', 'Remover ação');
+      ctl.append(up, rm);
+      row.append(ctl);
+      sec.append(row);
+    });
+    const addA = fbtn('ed-mini', '+ Ação depois de enviar', () => { f.after_actions.push({ type: 'adicionar_etiqueta', label_id: '' }); renderDisparos(); });
+    addA.disabled = !v2Ready() || f.after_actions.length >= 10;
+    sec.append(addA);
+
     const actions = el('div', 'ed-add');
     const save = fbtn('bbtn primary', f.saving ? 'Salvando…' : 'Salvar e revisar', () => saveCampaignForm());
     save.disabled = f.saving;
-    actions.append(save, fbtn('bbtn', 'Cancelar', () => { dp.view = 'list'; renderDisparos(); }));
-    sec.append(actions, el('div', `ed-msg${f.err ? ' err' : ''}`, f.msg));
+    actions.append(save, fbtn('bbtn', 'Simular', () => simulateCampaignForm()), fbtn('bbtn', 'Cancelar', () => { dp.view = 'list'; renderDisparos(); }));
+    sec.append(actions, el('div', `ed-msg dp-msg${f.err ? ' err' : ''}`, f.msg));
     dtabEl.append(sec);
+  }
+
+  // Sobe os arquivos novos das partes e devolve as partes prontas para gravar
+  async function partsForSave(list, msg) {
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      if (p.type === 'texto' && !String(p.body || '').trim()) throw new Error(`Parte ${i + 1}: escreva o texto.`);
+      if (p.type !== 'texto' && !p.file && !p.file_url) throw new Error(`Parte ${i + 1}: escolha o arquivo.`);
+      let file = { file_url: p.file_url, file_name: p.file_name, file_size: p.file_size };
+      if (p.type !== 'texto' && p.file) {
+        msg(`Enviando o arquivo da parte ${i + 1}…`);
+        file = await call('uploadFile', { partType: p.type, base64: await fileToBase64(p.file), mime: edFileMime(p.type, p.file), fileName: p.file.name });
+        Object.assign(p, file, { file: null });
+      }
+      out.push({ type: p.type, body: p.type === 'audio' ? null : p.body, ...(p.type === 'texto' ? {} : file), wait_seconds: p.wait_seconds, typing_seconds: p.typing_seconds });
+    }
+    return out;
+  }
+
+  async function campaignPayload(f, { upload = true } = {}) {
+    if (f.label_id && String(JSON.stringify([f.after_actions, f.filters])).includes('"new:')) throw new Error('Crie as etiquetas que faltam (botão "Criar agora").');
+    let start_at = null;
+    if (f.when === 'data') {
+      if (!f.date || !f.time) throw new Error('Escolha a data e a hora do início.');
+      const when = new Date(`${f.date}T${f.time}:00`);
+      if (Number.isNaN(when.getTime())) throw new Error('Data e hora inválidas.');
+      start_at = when.toISOString();
+    }
+    const exclusive = f.mode === 'exclusiva';
+    let parts = null;
+    if (exclusive) {
+      parts = upload ? await partsForSave(f.parts, dpMsg) : f.parts.map((p) => ({ type: p.type, body: p.type === 'audio' ? null : p.body, file_url: p.file_url || (p.file ? 'pendente' : null), file_name: p.file_name, file_size: p.file_size, wait_seconds: p.wait_seconds, typing_seconds: p.typing_seconds }));
+    }
+    const v2 = v2Ready();
+    return {
+      name: f.name, label_id: f.label_id || null, item_id: exclusive ? null : f.item_id || null, start_at, allow_new_chats: f.allow_new_chats,
+      skip_recent_days: f.skip_recent_days,
+      ...(v2 ? { parts, after_actions: f.after_actions.map((a) => ({ type: a.type, label_id: a.label_id || null })), filters: f.filters.map((x) => ({ ...x })) } : {}),
+    };
   }
 
   async function saveCampaignForm() {
     const f = dp.form;
     if (f.saving) return;
-    const fail = (m) => { f.msg = m; f.err = true; renderDisparos(); };
-    let start_at = null;
-    if (f.when === 'data') {
-      if (!f.date || !f.time) return fail('Escolha a data e a hora do início.');
-      const when = new Date(`${f.date}T${f.time}:00`);
-      if (Number.isNaN(when.getTime())) return fail('Data e hora inválidas.');
-      start_at = when.toISOString();
-    }
     f.saving = true;
     renderDisparos();
     try {
-      const r = await call('saveCampaign', { id: f.id || undefined, campaign: { name: f.name, label_id: f.label_id || null, item_id: f.item_id || null, start_at, allow_new_chats: f.allow_new_chats, skip_recent_days: f.skip_recent_days } });
+      const campaign = await campaignPayload(f);
+      const r = await call('saveCampaign', { id: f.id || undefined, campaign });
       f.saving = false;
       await refreshDisparos({ quiet: true });
       const c = dp.list.find((x) => x.id === r.id);
@@ -4231,8 +4431,116 @@
       renderDisparos();
     } catch (e) {
       f.saving = false;
-      fail(e.message);
+      f.msg = e.message;
+      f.err = true;
+      renderDisparos();
     }
+  }
+
+  // "Salvar também como mensagem rápida": cria o item (opcional; o disparo segue com a mensagem exclusiva)
+  async function saveCampaignAsItem() {
+    const f = dp.form;
+    if (f.quick.saving) return;
+    if (!f.quick.title.trim()) { dpMsg('Escreva o título da mensagem rápida.', true); return; }
+    f.quick.saving = true;
+    renderDisparos();
+    try {
+      const parts = await partsForSave(f.parts, dpMsg);
+      await call('saveItem', { category_id: f.quick.category_id, title: f.quick.title, parts });
+      await reloadLibrary().catch(() => {});
+      f.quick.saving = false;
+      f.quick.title = '';
+      f.msg = 'Também salva em Mensagens.';
+      f.err = false;
+    } catch (e) {
+      f.quick.saving = false;
+      f.msg = `Não consegui salvar a mensagem rápida: ${e.message}`;
+      f.err = true;
+    }
+    renderDisparos();
+  }
+
+  // ── Simular (não envia nem grava nada) ──
+
+  function firstPartPreview(c, name) {
+    const first = Array.isArray(c.parts) && c.parts.length ? c.parts[0] : (() => { const it = state.items.find((i) => i.id === c.item_id); return it ? partsOf(it)[0] : null; })();
+    if (!first) return '(sem mensagem)';
+    const text = first.body ? fillVars(first.body, name) : '';
+    const kind = first.type === 'texto' ? '' : `[${first.type}] `;
+    return `${kind}${firstWords(text, 14)}`.trim() || `[${first.type}]`;
+  }
+
+  async function runSimulation(campaign, preview) {
+    const pv = preview;
+    const go = pv.targets.filter((t) => t.status === 'pendente');
+    const loaded = {};
+    const ids = go.map((t) => t.chat_id).filter(Boolean);
+    for (let i = 0; i < ids.length; i += 500) {
+      try {
+        const r = await waRequest('chatsInfo', { chatIds: ids.slice(i, i + 500), keywords: [] }, { timeout: 8000 });
+        Object.assign(loaded, (r && r.chats) || {});
+      } catch { /* WhatsApp não pronto: conta como não carregada */ }
+    }
+    const replied = (campaign.filters || []).find((x) => x.type === 'respondeu_recente');
+    const rows = pv.targets.map((t) => {
+      if (t.status !== 'pendente') return { ...t, send: false };
+      const info = loaded[t.chat_id];
+      if (!info) {
+        if (!campaign.allow_new_chats || !/^\d{8,15}@c\.us$/.test(t.chat_id || '')) return { ...t, send: false, reason: 'conversa não carregada' };
+      }
+      if (replied && info && info.lastIn && Date.now() - info.lastIn * 1000 <= replied.days * 86400000) return { ...t, send: false, reason: `respondeu nos últimos ${replied.days} dias` };
+      return { ...t, send: true, preview: firstPartPreview(campaign, E.firstNameOf(t.name)), newChat: !info };
+    });
+    return { rows, sending: rows.filter((r) => r.send).length, total: rows.length };
+  }
+
+  async function simulateCampaignForm() {
+    const f = dp.form;
+    dpMsg('Simulando…');
+    try {
+      const campaign = await campaignPayload(f, { upload: false });
+      const pv = await call('simulateCampaign', { campaign: { ...campaign, parts: campaign.parts && campaign.parts.map((p) => (p.file_url === 'pendente' ? { ...p, file_url: null, type: 'texto', body: p.body || `[${p.type}]` } : p)) } });
+      dp.sim = { from: 'new', campaign, ...(await runSimulation(campaign, pv)) };
+      dp.view = 'simulate';
+      renderDisparos();
+    } catch (e) {
+      dpMsg(`Não consegui simular: ${e.message}`, true);
+    }
+  }
+
+  async function simulateSaved(c) {
+    try {
+      const pv = await call('previewCampaign', { id: c.id });
+      dp.sim = { from: 'confirm', campaign: c, ...(await runSimulation(c, pv)) };
+      dp.view = 'simulate';
+    } catch (e) {
+      dp.msg = `Não consegui simular: ${e.message}`;
+      dp.msgErr = true;
+    }
+    renderDisparos();
+  }
+
+  function renderCampaignSim() {
+    const sim = dp.sim;
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'SIMULAR DISPARO'));
+    sec.append(el('div', 'crm-intro', 'Nada foi enviado nem gravado.'));
+    const skip = sim.rows.filter((r) => !r.send);
+    const box = el('div', 'fw-test');
+    box.append(el('div', null, `Total na etiqueta: ${sim.total} · vão receber: ${sim.sending} · pulados: ${skip.length}`));
+    box.append(el('div', null, `Tempo estimado pelos limites: ${E.estimateText(sim.sending, motor.state.settings)}`));
+    sec.append(box);
+    sim.rows.slice(0, 200).forEach((r) => {
+      const line = el('div', `sc-item fw-sim ${r.send ? 'ok' : 'skip'}`);
+      const main = el('div', 'sc-main');
+      main.append(el('div', 'sc-who', r.name || 'Contato'), el('div', 'sc-prev', r.send ? `${r.newChat ? '(conversa nova) ' : ''}${r.preview}` : `pulado: ${r.reason}`));
+      line.append(main);
+      sec.append(line);
+    });
+    if (sim.rows.length > 200) sec.append(el('div', 'crm-intro', `Mostrando 200 de ${sim.rows.length}.`));
+    sec.append(el('div', 'ed-note', MASS_WARNING));
+    sec.append(fbtn('bbtn', 'Voltar', () => { dp.view = sim.from === 'new' ? 'new' : 'confirm'; renderDisparos(); }));
+    dtabEl.append(sec);
   }
 
   // Confirmação: total, pulados (e por quê), tempo estimado e o aviso
@@ -4280,7 +4588,7 @@
     if (cf.notLoadedSkip) skips.push(['conversa não carregada no WhatsApp Web', cf.notLoadedSkip]);
     const skipTotal = skips.reduce((a, [, n]) => a + n, 0);
     lines.push(`Pulados: ${skipTotal}${skips.length ? ` (${skips.map(([r, n]) => `${r}: ${n}`).join('; ')})` : ''}`);
-    lines.push(`Mensagem: ${itemTitle(c.item_id)}`);
+    lines.push(`Mensagem: ${Array.isArray(c.parts) && c.parts.length ? `exclusiva deste disparo (${c.parts.length} parte${c.parts.length === 1 ? '' : 's'})` : itemTitle(c.item_id)}`);
     lines.push(`Tempo estimado pelos limites: ${E.estimateText(cf.sending, motor.state.settings)}`);
     lines.push(c.start_at && Date.parse(c.start_at) > Date.now() ? `Começa em ${schedWhen(c.start_at)} (no horário comercial)` : 'Começa agora (no horário comercial)');
     const box = el('div', 'fw-test');
@@ -4289,7 +4597,7 @@
     const actions = el('div', 'ed-add');
     const go = fbtn('bbtn primary', dp.busy ? 'Iniciando…' : 'Iniciar disparo', () => startCampaignNow(c));
     go.disabled = dp.busy || !cf.sending;
-    actions.append(go, fbtn('bbtn', 'Voltar', () => { dp.view = 'list'; refreshDisparos(); }));
+    actions.append(go, fbtn('bbtn', 'Simular', () => simulateSaved(c)), fbtn('bbtn', 'Voltar', () => { dp.view = 'list'; refreshDisparos(); }));
     sec.append(actions);
     dtabEl.append(sec);
   }
@@ -4632,6 +4940,7 @@
       const card = el('div', 'fw-card');
       card.append(el('div', 'fw-name', t.title));
       card.append(el('div', 'fw-txt', summaryOf(templateToAutomation(t)).text));
+      if (t.help) card.append(el('div', 'crm-intro', t.help));
       card.append(fbtn('ed-mini', 'Usar este modelo', () => openAutomationEditor(templateToAutomation(t), { template: t })));
       sec.append(card);
     });
@@ -4643,7 +4952,9 @@
     return {
       id: null, name: t.name, active: false, trigger_type: t.trigger_type, trigger_label_id: labelRef(t.trigger_label),
       wait_minutes: t.wait_minutes, schedule_days: [1, 2, 3, 4, 5], schedule_time: '10:00', ignore_older_days: 15, conditions: [],
-      actions: t.actions.map((x) => (x.type === 'enviar' ? { type: 'enviar', item_id: '', variants: [], hint: x.hint } : { type: x.type, label_id: labelRef(x.label) })),
+      actions: t.actions.map((x) => (x.type === 'enviar' ? { type: 'enviar', item_id: '', variants: [], hint: x.hint }
+        : x.followsTrigger ? { type: x.type, label_id: labelRef(t.trigger_label), followsTrigger: true } : { type: x.type, label_id: labelRef(x.label) })),
+      help: t.help || null,
     };
   }
 
@@ -4661,13 +4972,13 @@
       ignore_older_days: src.ignore_older_days || 15,
       conditions: (src.conditions || []).map((c) => ({ ...c })),
       actions: (src.actions || []).map((x) => ({ ...x, variants: (x.variants || []).map((v) => ({ ...v })) })),
-      template: template ? template.title : null, msg: '', err: false,
+      template: template ? template.title : null, help: src.help || null, msg: '', err: false,
     };
     renderFollows();
   }
 
   // Select de etiqueta CRM que aceita "new:Nome" (etiqueta de modelo que ainda não existe)
-  function labelPicker(value, onChange, { empty = 'Escolha a etiqueta CRM…', aria } = {}) {
+  function labelPicker(value, onChange, { empty = 'Escolha a etiqueta CRM…', aria, rerender = () => renderFollows(), onError = null } = {}) {
     const wrap = el('div', 'sc-row');
     const sel = labelSelect(String(value || '').startsWith(NEW_LABEL) ? '' : value, { empty, aria });
     if (String(value || '').startsWith(NEW_LABEL)) {
@@ -4676,7 +4987,7 @@
       o.selected = true;
       sel.append(o);
     }
-    sel.addEventListener('change', () => { onChange(sel.value); renderFollows(); });
+    sel.addEventListener('change', () => { onChange(sel.value); rerender(); });
     wrap.append(sel);
     if (String(value || '').startsWith(NEW_LABEL)) {
       const name = value.slice(NEW_LABEL.length);
@@ -4688,9 +4999,10 @@
         } catch (e) {
           const existing = labelIdByName(name);
           if (existing) onChange(existing);
+          else if (onError) onError(`Não consegui criar a etiqueta: ${e.message}`);
           else { fl.edit.msg = `Não consegui criar a etiqueta: ${e.message}`; fl.edit.err = true; }
         }
-        renderFollows();
+        rerender();
       }));
     }
     return wrap;
@@ -4710,6 +5022,7 @@
     const f = fl.edit;
     const sec = el('section', 'crmsec fw-editor');
     sec.append(el('div', 'wt-head', f.id ? 'EDITAR AUTOMAÇÃO' : `NOVA AUTOMAÇÃO${f.template ? ` · MODELO: ${f.template.toUpperCase()}` : ''}`));
+    if (f.help) sec.append(el('div', 'crm-intro', f.help));
     const summaryBox = el('div', 'fw-test fw-summary');
     const updateSummary = () => {
       const s = summaryOf(editorToAutomation(f));
@@ -4739,7 +5052,8 @@
     E.FUTURE_TRIGGERS.forEach((t) => { const o = el('option', null, `${t.label} (${t.note})`); o.value = t.type; o.disabled = true; trig.append(o); });
     trig.addEventListener('change', () => { f.trigger_type = trig.value; renderFollows(); });
     q.append(trig);
-    q.append(schedField('Etiqueta CRM do gatilho', labelPicker(f.trigger_label_id, (v) => { f.trigger_label_id = v; }, { aria: 'Etiqueta do gatilho' })));
+    // Ações "remover a etiqueta do gatilho" (do modelo) acompanham a etiqueta escolhida aqui
+    q.append(schedField('Etiqueta CRM do gatilho', labelPicker(f.trigger_label_id, (v) => { f.trigger_label_id = v; f.actions.forEach((x) => { if (x.followsTrigger) x.label_id = v; }); }, { aria: 'Etiqueta do gatilho' })));
     if (f.trigger_type === 'sem_resposta') {
       const hours = numberInput(Math.floor(f.wait_minutes / 60), 0, 8760, 'Horas');
       const mins = numberInput(f.wait_minutes % 60, 0, 59, 'Minutos');
@@ -4859,7 +5173,8 @@
         addV.disabled = x.variants.length >= 10;
         row.append(addV);
       } else if (x.type !== 'parar') {
-        row.append(labelPicker(x.label_id, (v) => { x.label_id = v; }, { aria: `Etiqueta da ação ${i + 1}` }));
+        row.append(labelPicker(x.label_id, (v) => { x.label_id = v; x.followsTrigger = false; }, { aria: `Etiqueta da ação ${i + 1}` }));
+        if (x.followsTrigger) row.append(el('div', 'crm-intro', 'Acompanha a etiqueta do gatilho.'));
       }
       const ctl = el('div', 'ed-add');
       const up = fbtn('ed-mini', '↑', () => { f.actions.splice(i - 1, 0, f.actions.splice(i, 1)[0]); renderFollows(); });

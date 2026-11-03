@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.1.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.2.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -227,7 +227,9 @@ entrar de novo, vale de novo).
   Ligar/Desligar, Duplicar e Excluir (com confirmação no painel). O editor tem
   os 3 blocos e o resumo ao vivo.
 - **+ Nova automação**: modelos prontos (Follow de venda, Pedido de avaliação,
-  Recompra, Garantia vencendo) ou em branco. O modelo só preenche o editor;
+  Recompra, Garantia vencendo e, na 2.2.0, **Respondeu → tirar da régua**: quem
+  respondeu sai da etiqueta e vai para "Responder", que aparece como coluna no
+  Quadro) ou em branco. O modelo só preenche o editor;
   nada é criado antes de **Salvar**. Etiquetas que ainda não existem aparecem
   com o botão **Criar agora**.
 - **Simular**, **Testar com a conversa aberta**, **Histórico** e os contadores
@@ -278,6 +280,23 @@ mesmo motor (mesmos limites, intervalo, horário comercial e "Pausar tudo").
   continua no próximo.
 - Sem a migration `20261103140000_wa_campaigns.sql`, a seção mostra "Atualize
   o banco para usar este recurso".
+- **2.2.0** (migration `20261103160000_wa_campaigns_v2.sql`):
+  - **Mensagem**: "Escrever só para este disparo" (padrão; o mesmo editor de
+    partes das mensagens: texto, imagem, vídeo, áudio, PDF, esperar,
+    digitando/gravando, até 10 partes, `{nome}` e `Olá{, nome}!`) ou "Usar uma
+    mensagem salva". A mensagem exclusiva não cria nada em Mensagens; o botão
+    **Salvar também como mensagem rápida** cria, se você quiser.
+  - **Público**: além da etiqueta principal, "também tem a etiqueta X", "NÃO
+    tem a etiqueta X" (vários), "excluir quem respondeu nos últimos X dias" e
+    "excluir quem recebeu envio automático nos últimos X dias".
+  - **Depois de enviar** (só para quem recebeu com sucesso): adicionar,
+    remover ou mover etiqueta CRM, com "Criar agora". A etiqueta "Ao enviar"
+    da mensagem salva continua valendo.
+  - **Simular** no editor e na confirmação: quem recebe (com a prévia da 1ª
+    parte já com o nome), quem é pulado e por quê, total e tempo estimado.
+    Nada é enviado nem gravado.
+  - **Duplicar**: cria um rascunho igual (mensagem, ações, filtros), sem alvos.
+  - Sem essa migration, o disparo funciona como na 2.0.0 (só mensagem salva).
 
 ### Áudio como mensagem de voz
 
@@ -528,6 +547,13 @@ guardada.
 
 ## O que mudou
 
+### 2.2.0
+- **Disparos**: mensagem exclusiva do disparo (editor de partes), "Salvar
+  também como mensagem rápida", filtros de público, ações "Depois de enviar",
+  Simular e Duplicar.
+- Modelo de automação **Respondeu → tirar da régua**.
+- Precisa da migration `20261103160000_wa_campaigns_v2.sql`.
+
 ### 2.1.0
 - **Automações** "Quando → Se → Então" no lugar das réguas (seção 🔁
   Automações): 4 gatilhos, condições, ações em ordem, modelos prontos,
@@ -747,7 +773,8 @@ Service worker
   tentar de novo).
   Motor (2.0.0, só leitura): `chatsInfo { chatIds (até 500, só @c.us/@lid),
   keywords (até 20) }` → `{ chats: { id: { loaded, last: { fromMe, t }, ad:
-  [palavras que aparecem no ctwaContext] } } }`; nunca devolve texto.
+  [palavras que aparecem no ctwaContext], lastIn (2.2.0: horário da última
+  mensagem do cliente) } } }`; nunca devolve texto.
   Disparo (2.0.0-D2): `campaignSend { campaign: true, chatId (só número @c.us),
   kind: 'texto' | 'voz' | 'imagem' | 'video' | 'documento' | 'audio-arquivo', ... }`
   é o **único** pedido com `createChat: true`: chama `contact.queryExists`

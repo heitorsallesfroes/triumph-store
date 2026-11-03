@@ -67,6 +67,9 @@ const HANDLERS = {
   claimTarget:          (m) => WaApi.claimTarget({ id: m.id }),
   finishTarget:         (m) => WaApi.finishTarget({ id: m.id, status: m.status, reason: m.reason }),
   campaignTargets:      (m) => WaApi.campaignTargets({ id: m.id, offset: m.offset, limit: m.limit }),
+  // Disparos 2.2.0: Simular no editor (não grava nada) e Duplicar (rascunho sem alvos)
+  simulateCampaign:     (m) => WaApi.simulateCampaign({ campaign: m.campaign }),
+  duplicateCampaign:    (m) => WaApi.duplicateCampaign({ id: m.id }),
   // Automações e mensagem que etiqueta (2.1.0): cada uma valida a entrada em supabase-api.js
   fetchAutomations:     ()  => WaApi.fetchAutomations(),
   saveAutomation:       (m) => WaApi.saveAutomation({ id: m.id, automation: m.automation }),
