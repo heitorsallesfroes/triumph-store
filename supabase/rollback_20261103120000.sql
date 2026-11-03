@@ -19,6 +19,8 @@
 -- aqui também: estão na cópia, seja porque a migration da Fase 2 as fechou, seja porque as
 -- migrations 20261103130000/20261103140000/20261103150000
 -- foram aplicadas depois da Fase 2 e se registraram nela. Voltam a "public access <tabela>".
+-- ERP → CRM (20261103180000): sem tabela nova e a função do gatilho é SECURITY DEFINER;
+-- nada a desfazer aqui.
 -- ============================================================================
 
 begin;

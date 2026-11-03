@@ -36,6 +36,8 @@
 -- migrations 20261103130000/20261103140000/20261103150000 forem
 -- aplicadas DEPOIS desta, elas mesmas criam essas tabelas só para authenticated e se registram
 -- na cópia rls_backup_20261103 (o rollback abre todas do mesmo jeito).
+-- ERP → CRM (20261103180000): sem tabela nova; o gatilho de pós-venda usa uma função
+-- SECURITY DEFINER (passa por cima do RLS de propósito), então nada muda aqui.
 -- ============================================================================
 
 begin;

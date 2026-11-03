@@ -5,6 +5,9 @@ import {
   Flame, Upload, AlertTriangle, Folder, Tag, Users, Sparkles,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import ClientsToCrm from '../components/whatsapp/ClientsToCrm';
+import AutoPostSale from '../components/whatsapp/AutoPostSale';
+import WaResults from '../components/whatsapp/WaResults';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -114,7 +117,8 @@ const inputStyle: React.CSSProperties = {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function WhatsApp() {
+// Cadastro antigo de mensagens e etiquetas (aba "Mensagens (antigo)"): mantido só por segurança
+function LegacyMessages() {
   const [categories, setCategories] = useState<WaCategory[]>([]);
   const [items, setItems]           = useState<WaItem[]>([]);
   const [loading, setLoading]       = useState(true);
@@ -1081,6 +1085,51 @@ function LabelsTab() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Página WhatsApp do ERP: ponte vendas → CRM do WhatsApp ──────────────────
+type PageTab = 'clientes' | 'posvenda' | 'resultados' | 'antigo';
+const PAGE_TABS: [PageTab, string][] = [['clientes', 'Clientes → CRM'], ['posvenda', 'Pós-venda automático'], ['resultados', 'Resultados'], ['antigo', 'Mensagens (antigo)']];
+
+export default function WhatsApp() {
+  const [pageTab, setPageTab] = useState<PageTab>('clientes');
+  return (
+    <div>
+      <div style={{ padding: '28px 32px 0', maxWidth: 1200, margin: '0 auto' }}>
+        <h1 style={{ fontSize: 26, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 12, margin: 0 }}>
+          <MessageCircle size={28} color={ORANGE} />
+          WhatsApp
+        </h1>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>Clientes das vendas no CRM do WhatsApp, pós-venda automático e resultados</p>
+        <div style={{ display: 'flex', gap: 4, marginTop: 18, borderBottom: '1px solid var(--border-main)', flexWrap: 'wrap' }}>
+          {PAGE_TABS.map(([id, label]) => (
+            <button key={id} onClick={() => setPageTab(id)}
+              style={{ padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: 'transparent', border: 'none', marginBottom: -1,
+                borderBottom: pageTab === id ? `2px solid ${ORANGE}` : '2px solid transparent',
+                color: pageTab === id ? ORANGE : 'var(--text-muted)' }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {pageTab === 'antigo' ? (
+        <>
+          <div style={{ maxWidth: 1200, margin: '16px auto 0', padding: '0 32px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', borderRadius: 10, background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', color: ORANGE, fontSize: 13 }}>
+              <AlertTriangle size={15} /> Agora as mensagens são cadastradas pela extensão no WhatsApp Web; esta aba fica só por segurança.
+            </div>
+          </div>
+          <LegacyMessages />
+        </>
+      ) : (
+        <div style={{ padding: '20px 32px 28px', maxWidth: 1200, margin: '0 auto' }}>
+          {pageTab === 'clientes' && <ClientsToCrm />}
+          {pageTab === 'posvenda' && <AutoPostSale />}
+          {pageTab === 'resultados' && <WaResults />}
+        </div>
+      )}
     </div>
   );
 }
