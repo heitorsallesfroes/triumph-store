@@ -1,6 +1,6 @@
 // Service worker: faz as chamadas ao Supabase pelo painel (content.js),
 // fora das regras de CSP/CORS da página do WhatsApp.
-importScripts('config.js', 'auth.js', 'supabase-api.js');
+importScripts('config.js', 'auth.js', 'sale-calc.js', 'supabase-api.js');
 
 const HANDLERS = {
   fetchLibrary:   ()  => WaApi.fetchLibrary(),
@@ -80,6 +80,13 @@ const HANDLERS = {
   automationUnreserve:  (m) => WaApi.automationUnreserve({ id: m.id }),
   applySendLabels:      (m) => WaApi.applySendLabels({ addLabelId: m.addLabelId, removeLabelId: m.removeLabelId, contactId: m.contactId, identity: m.identity, chatId: m.chatId, name: m.name }),
   getContactName:       (m) => WaApi.getContactName(m.identity),
+  // Venda pela conversa (2.3.0): só createSaleFromChat grava nas tabelas do ERP, e só pelo botão "Registrar venda"
+  erpCatalog:            ()  => WaApi.erpCatalog(),
+  createSaleFromChat:    (m) => WaApi.createSaleFromChat({ sale: m.sale }),
+  recentChatSale:        (m) => WaApi.recentChatSale({ chatId: m.chatId, phone: m.phone }),
+  fetchChatSales:        ()  => WaApi.fetchChatSales(),
+  saleContactLabels:     (m) => WaApi.saleContactLabels({ chatId: m.chatId, name: m.name, phone: m.phone, addLabelId: m.addLabelId, removeLabelIds: m.removeLabelIds }),
+  saleTriggerCandidates: (m) => WaApi.saleTriggerCandidates({ sinceDays: m.sinceDays }),
   // Conta (1.9.1): a senha só segue para o Supabase Auth; o painel recebe só conectada/dica do e-mail
   authStatus:      ()  => WaAuth.status(),
   authSignIn:      (m) => WaAuth.signIn({ email: m.email, password: m.password }),

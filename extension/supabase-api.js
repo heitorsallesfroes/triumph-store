@@ -800,7 +800,10 @@
     }
     if (!rows.length) return { available: false };
     const campaigns = await campaignsTables();
-    return { available: true, settings: rows[0], campaigns, campaignsV2: campaigns && (await campaignsV2()), automations: await automationTables() };
+    return {
+      available: true, settings: rows[0], campaigns, campaignsV2: campaigns && (await campaignsV2()), automations: await automationTables(),
+      salesOrigin: await salesOrigin(),
+    };
   }
 
   const hmOf = (v) => String(v || '').slice(0, 5);
@@ -1364,7 +1367,7 @@
 
   const AUTOMATION_TABLES = ['wa_automations', 'wa_automation_runs'];
   const AUTOMATION_COLUMNS = 'id,name,active,position,trigger_type,trigger_label_id,wait_minutes,schedule_days,schedule_time,conditions,actions,ignore_older_days,created_at';
-  const TRIGGERS = ['sem_resposta', 'entrou_etiqueta', 'respondeu', 'dia_hora'];
+  const TRIGGERS = ['sem_resposta', 'entrou_etiqueta', 'respondeu', 'dia_hora', 'venda_registrada'];
   const CONDITIONS = ['tem_etiqueta', 'nao_tem_etiqueta', 'anuncio', 'parada_max_dias'];
   const ACTIONS = ['enviar', 'adicionar_etiqueta', 'remover_etiqueta', 'mover', 'parar'];
   const RUN_KEY_RE = /^[\w:@.+-]{1,120}$/;
@@ -1422,18 +1425,20 @@
     }
     const label_id = checkUuid(a.label_id, `${what}: escolha a etiqueta`);
     if (a.type === 'mover' && label_id === triggerLabel) throw new Error(`${what}: mover para uma etiqueta diferente da do gatilho`);
+    if (a.type === 'mover' && !triggerLabel) throw new Error(`${what}: sem etiqueta no gatilho, use "adicionar etiqueta"`);
     return { type: a.type, label_id };
   }
 
   function checkAutomation(input) {
     const a = input || {};
-    if (a.trigger_type === 'venda_registrada') throw new Error('O gatilho "venda registrada" chega com a Etapa E');
     if (!TRIGGERS.includes(a.trigger_type)) throw new Error('Escolha o gatilho (Quando)');
     const row = {
       name: cleanText(a.name, 60, 'Nome da automação'),
       active: a.active === true,
       trigger_type: a.trigger_type,
-      trigger_label_id: checkUuid(a.trigger_label_id, 'Escolha a etiqueta CRM do gatilho'),
+      // 2.3.0: "venda registrada" não precisa de etiqueta (vale para quem teve a venda registrada pela conversa)
+      trigger_label_id: a.trigger_type === 'venda_registrada' && (a.trigger_label_id == null || a.trigger_label_id === '')
+        ? null : checkUuid(a.trigger_label_id, 'Escolha a etiqueta CRM do gatilho'),
       wait_minutes: null, schedule_days: null, schedule_time: null,
       ignore_older_days: intIn(a.ignore_older_days ?? 15, 1, 365, 'Ignorar conversas paradas há (dias)'),
     };
@@ -1461,6 +1466,7 @@
 
   async function saveAutomation({ id, automation }) {
     const row = checkAutomation(automation);
+    if (row.trigger_type === 'venda_registrada' && !(await salesOrigin())) throw new Error(ENGINE_MISSING);
     if (id !== undefined && id !== null) {
       checkUuid(id, 'Automação inválida');
       const rows = await autoRest(`wa_automations?id=eq.${id}`, json('PATCH', 'return=representation', row));
@@ -1551,7 +1557,216 @@
     return { name: rows.length ? rows[0].name || null : null };
   }
 
+  // ── Venda pela conversa (2.3.0) ──
+  // Grava nas tabelas do ERP EXATAMENTE como a tela "Nova Venda" (src/pages/Sales.tsx): sales,
+  // sale_items, sale_accessories, status 'em_separacao', estoque baixado na criação (como o ERP) e o
+  // Tiny avisado pela mesma Edge Function. Nunca grava finalized_at (o trigger do banco faz isso ao
+  // finalizar no ERP). Os cálculos ficam em sale-calc.js (cópia dos do ERP). Só a pedido do clique.
+
+  const SALE = () => root.TspSale;
+  const salesOrigin = () => probe('sales.wa_chat_id', () => hasColumn('sales', 'wa_chat_id'));
+  const FEE_KEY_RE = /^fee_(vm|ea)_(debit|credit_\d{1,2})$/;
+  const clip = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().replace(/\s+/g, ' ').slice(0, max) : null);
+  const clipText = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+  const numIn = (v, min, max, what) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < min || n > max) throw new Error(`${what}: valor inválido`);
+    return Math.round(n * 100) / 100;
+  };
+
+  async function feeConfig() {
+    const rows = await rest('system_config?select=key,value');
+    return Object.fromEntries(rows.filter((r) => FEE_KEY_RE.test(r.key)).map((r) => [r.key, r.value]));
+  }
+
+  // Listas do ERP para o formulário (produtos com estoque e preço, acessórios, motoboys, cidades, bairros)
+  async function erpCatalog() {
+    const [products, accessories, motoboys, cities, neighborhoods, fees, originAvailable] = await Promise.all([
+      rest('products?select=id,model,color,category,price,cost,current_stock&order=model.asc&limit=5000'),
+      rest('accessories?select=id,name,cost&order=name.asc&limit=2000'),
+      rest('motoboys?select=id,name&order=name.asc'),
+      rest('cities?select=id,name&order=name.asc&limit=5000'),
+      rest('neighborhoods?select=id,name&order=name.asc&limit=10000'),
+      feeConfig(),
+      salesOrigin(),
+    ]);
+    return { products, accessories, motoboys, cities, neighborhoods, fees, originAvailable, erpUrl: (root.WA_CONFIG && root.WA_CONFIG.ERP_URL) || null };
+  }
+
+  // Cidade/bairro novos entram na lista do ERP (o ERP faz o mesmo ao salvar a venda)
+  async function ensurePlace(table, name) {
+    if (!name) return;
+    const rows = await rest(`${table}?select=id,name`);
+    if (rows.some((r) => String(r.name).toLowerCase() === name.toLowerCase())) return;
+    try {
+      await rest(table, json('POST', 'return=minimal', { name }));
+    } catch (err) {
+      if (!/duplicate|23505|409/.test(err.message)) throw err;
+    }
+  }
+
+  function checkSaleInput(s) {
+    const S = SALE();
+    const deliveryTypes = S.DELIVERY_TYPES.map(([k]) => k);
+    const methods = S.PAYMENT_METHODS.map(([k]) => k);
+    if (!deliveryTypes.includes(s.delivery_type)) throw new Error('Tipo de entrega inválido');
+    if (!methods.includes(s.payment_method)) throw new Error('Forma de pagamento inválida');
+    const card = ['credit_card', 'debit_card', 'payment_link'].includes(s.payment_method);
+    const brand = card && S.CARD_BRANDS.some(([k]) => k === s.card_brand) ? s.card_brand : '';
+    const installments = s.payment_method === 'credit_card' || s.payment_method === 'payment_link' ? intIn(Number(s.installments) || 0, 0, 12, 'Parcelas') : 0;
+    if (!Array.isArray(s.items) || !s.items.length || s.items.length > 30) throw new Error('Adicione pelo menos um produto');
+    const merged = new Map();
+    s.items.forEach((it, i) => {
+      const id = checkUuid(it && it.product_id, `Produto ${i + 1} inválido`);
+      const quantity = intIn(Number(it.quantity), 1, 999, `Quantidade do produto ${i + 1}`);
+      const unit_price = numIn(it.unit_price, 0, 1000000, `Valor do produto ${i + 1}`);
+      // Como o ERP: o mesmo produto de novo soma na quantidade
+      if (merged.has(id)) merged.get(id).quantity += quantity;
+      else merged.set(id, { product_id: id, quantity, unit_price });
+    });
+    const accs = Array.isArray(s.accessories) ? s.accessories : [];
+    if (accs.length > 30) throw new Error('Acessórios demais');
+    const accessories = accs.map((a, i) => ({ accessory_id: checkUuid(a && a.accessory_id, `Acessório ${i + 1} inválido`), quantity: intIn(Number(a.quantity), 1, 999, `Quantidade do acessório ${i + 1}`) }));
+    const form = {
+      customer_name: clip(s.customer_name, 100) || '',
+      customer_phone: clip(s.customer_phone, 30),
+      address_street: clip(s.address_street, 200),
+      address_number: clip(s.address_number, 30),
+      address_complement: clip(s.address_complement, 200),
+      city: clip(s.city, 80) || '',
+      neighborhood: clip(s.neighborhood, 80) || '',
+      state: clip(s.state, 30),
+      zip_code: clip(s.zip_code, 12),
+      delivery_type: s.delivery_type,
+      motoboy_id: s.delivery_type === 'motoboy' && s.motoboy_id ? checkUuid(s.motoboy_id, 'Motoboy inválido') : null,
+      delivery_fee: s.delivery_type === 'motoboy' ? numIn(s.delivery_fee ?? S.DEFAULT_DELIVERY_FEE, 0, 10000, 'Taxa do motoboy') : 0,
+      delivery_cost: s.delivery_type === 'correios' ? numIn(s.delivery_cost ?? 0, 0, 10000, 'Frete') : 0,
+      delivery_notes: clipText(s.delivery_notes, 1000),
+      payment_status: s.payment_status === 'pago' ? 'pago' : 'a_cobrar',
+    };
+    const v = S.validateAddress(form.delivery_type, form);
+    if (!v.isValid) throw new Error(v.message);
+    const extra = {
+      wa_chat_id: typeof s.wa_chat_id === 'string' && SCHED_CHAT_RE.test(s.wa_chat_id) ? s.wa_chat_id : null,
+      origin: s.origin === 'anuncio' ? 'anuncio' : 'organico',
+      ad_source: clip(s.ad_source, 60),
+      ad_title: clip(s.ad_title, 300),
+      ad_url: typeof s.ad_url === 'string' && /^https?:\/\/\S{1,500}$/.test(s.ad_url) ? s.ad_url : null,
+      wa_warranty_months: s.warranty_months == null || s.warranty_months === '' ? null : intIn(Number(s.warranty_months), 0, 120, 'Garantia (meses)'),
+    };
+    return { form, items: [...merged.values()], accessories, payment: { method: s.payment_method, card_brand: brand, installments }, extra };
+  }
+
+  async function createSaleFromChat({ sale }) {
+    const S = SALE();
+    const { form, items, accessories, payment, extra } = checkSaleInput(sale || {});
+    // Dados frescos do banco: custo (unit_cost) e categoria do produto, custo do acessório, taxas
+    const products = await rest(`products?select=id,model,color,category,price,cost,current_stock,tiny_id&id=in.${inList(items.map((i) => i.product_id))}`);
+    const byId = new Map(products.map((p) => [p.id, p]));
+    items.forEach((it) => { if (!byId.has(it.product_id)) throw new Error('Produto não encontrado'); });
+    const accRows = accessories.length ? await rest(`accessories?select=id,name,cost&id=in.${inList(accessories.map((a) => a.accessory_id))}`) : [];
+    const accById = new Map(accRows.map((a) => [a.id, a]));
+    accessories.forEach((a) => { if (!accById.has(a.accessory_id)) throw new Error('Acessório não encontrado'); });
+    const cfg = await feeConfig();
+    const calcItems = items.map((it) => ({ ...it, unit_cost: Number(byId.get(it.product_id).cost) || 0, category: byId.get(it.product_id).category }));
+    const calcAcc = accessories.map((a) => ({ ...a, cost: Number(accById.get(a.accessory_id).cost) || 0 }));
+    // Igual ao estado inicial do ERP: uma forma de pagamento, valor 0 (= o total da venda)
+    const payments = [{ method: payment.method, card_brand: payment.card_brand, installments: payment.installments, amount: 0 }];
+    await ensurePlace('cities', form.city);
+    await ensurePlace('neighborhoods', form.neighborhood);
+    const { row, saleItems, saleAccessories } = S.buildSale({ form, items: calcItems, accessories: calcAcc, payments, cfg });
+    if (await salesOrigin()) Object.assign(row, extra);
+    const created = await rest('sales', json('POST', 'return=representation', row));
+    const saleId = created[0].id;
+    try {
+      await rest('sale_items', json('POST', 'return=minimal', saleItems.map((x) => ({ ...x, sale_id: saleId }))));
+      if (saleAccessories.length) await rest('sale_accessories', json('POST', 'return=minimal', saleAccessories.map((x) => ({ ...x, sale_id: saleId }))));
+    } catch (err) {
+      // Sem itens a venda ficaria errada no ERP: desfaz (o estoque ainda não foi mexido)
+      await rest(`sale_items?sale_id=eq.${saleId}`, { method: 'DELETE' }).catch(() => {});
+      await rest(`sales?id=eq.${saleId}`, { method: 'DELETE' }).catch(() => {});
+      throw err;
+    }
+    // Estoque: o ERP baixa na criação da venda (products.current_stock) e avisa o Tiny
+    let tinyFailed = 0;
+    for (const it of items) {
+      const fresh = await rest(`products?select=current_stock,tiny_id&id=eq.${it.product_id}`);
+      if (!fresh.length) continue;
+      const novo = (Number(fresh[0].current_stock) || 0) - it.quantity;
+      await rest(`products?id=eq.${it.product_id}`, json('PATCH', 'return=minimal', { current_stock: novo }));
+      if (fresh[0].tiny_id) {
+        try {
+          const { SUPABASE_URL } = root.WA_CONFIG;
+          const res = await supaFetch(`${SUPABASE_URL}/functions/v1/update-tiny-stock`, json('POST', 'return=minimal', { tiny_id: fresh[0].tiny_id, quantidade: novo }));
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok || !body.success) tinyFailed++;
+        } catch { tinyFailed++; }
+      }
+    }
+    return { id: saleId, total: row.total_sale_price, status: row.status, tinyFailed };
+  }
+
+  // Venda desta conversa nas últimas 24 h (para avisar antes de registrar outra)
+  async function recentChatSale({ chatId, phone }) {
+    const since = encodeURIComponent(new Date(Date.now() - 24 * 3600 * 1000).toISOString());
+    if (await salesOrigin()) {
+      if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) return { exists: false };
+      const rows = await rest(`sales?select=id&wa_chat_id=eq.${encodeURIComponent(chatId)}&created_at=gte.${since}&limit=1`);
+      return { exists: rows.length > 0 };
+    }
+    const p = clip(phone, 30);
+    if (!p) return { exists: false };
+    const rows = await rest(`sales?select=id&customer_phone=eq.${encodeURIComponent(p)}&created_at=gte.${since}&limit=1`);
+    return { exists: rows.length > 0 };
+  }
+
+  // Últimas 20 vendas registradas pela extensão
+  async function fetchChatSales() {
+    if (!(await salesOrigin())) throw new Error(ENGINE_MISSING);
+    return rest('sales?select=id,customer_name,total_sale_price,status,sale_date,created_at,wa_chat_id&wa_chat_id=not.is.null&order=created_at.desc&limit=20');
+  }
+
+  // Contato da conversa (cria e guarda o chat_id se preciso) + "tirar das automações e pôr em Cliente"
+  async function saleContactLabels({ chatId, name, phone, addLabelId, removeLabelIds }) {
+    if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
+    const add = addLabelId ? checkUuid(addLabelId, 'Etiqueta inválida') : null;
+    const remove = Array.isArray(removeLabelIds) ? removeLabelIds.slice(0, 50).map((l) => checkUuid(l, 'Etiqueta inválida')) : [];
+    let found = (await contactsByChats([chatId]))[chatId];
+    let contactId = found && found.id;
+    if (!contactId) {
+      const ph = phoneOfChat(chatId) || (typeof phone === 'string' && /^\d{8,15}$/.test(phone.replace(/\D/g, '')) ? phone.replace(/\D/g, '') : null);
+      const nm = clip(name, 100);
+      const c = ph ? await ensureContact({ key: `tel:${ph}`, phone: ph, name: nm }) : nm ? await ensureContact({ key: nameKey(nm), phone: null, name: nm }) : null;
+      if (!c) return { contactId: null, labelIds: [] };
+      await rememberChatId(c, chatId).catch(() => {});
+      contactId = c.id;
+    }
+    for (const l of remove) await rest(`wa_contact_labels?contact_id=eq.${contactId}&label_id=eq.${l}`, { method: 'DELETE' });
+    if (add) await followAdd({ contactId, labelId: add });
+    return { contactId, labelIds: await labelIdsOf(contactId) };
+  }
+
+  // Gatilho "venda registrada": contatos das vendas registradas pela extensão nos últimos dias
+  async function saleTriggerCandidates({ sinceDays = 2 } = {}) {
+    if (!(await salesOrigin())) return [];
+    const days = intIn(Number(sinceDays) || 2, 1, 30, 'Dias');
+    const since = encodeURIComponent(new Date(Date.now() - days * 86400000).toISOString());
+    const sales = await rest(`sales?select=id,wa_chat_id,created_at&wa_chat_id=not.is.null&created_at=gte.${since}&order=created_at.asc&limit=500`);
+    if (!sales.length) return [];
+    const byChat = await contactsByChats(sales.map((s) => s.wa_chat_id));
+    const ids = [...new Set(Object.values(byChat).map((c) => c.id))];
+    if (!ids.length) return [];
+    const cols = (await chatIdColumn()) ? 'id,name,phone,chat_id' : 'id,name,phone';
+    const contacts = await rest(`wa_contacts?select=${cols}&id=in.${inList(ids)}`);
+    const links = await rest(`wa_contact_labels?select=contact_id,label_id,created_at&contact_id=in.${inList(ids)}&limit=10000`);
+    const info = new Map(contacts.map((c) => [c.id, { id: c.id, name: c.name || null, phone: c.phone || null, chat_id: c.chat_id || null, labelIds: [], links: [] }]));
+    links.forEach((l) => { const c = info.get(l.contact_id); if (c) { c.labelIds.push(l.label_id); c.links.push({ label_id: l.label_id, created_at: l.created_at }); } });
+    return sales.filter((s) => byChat[s.wa_chat_id] && info.has(byChat[s.wa_chat_id].id))
+      .map((s) => ({ ...info.get(byChat[s.wa_chat_id].id), chat_id: info.get(byChat[s.wa_chat_id].id).chat_id || s.wa_chat_id, sale_id: s.id }));
+  }
+
   root.WaApi = {
+    erpCatalog, createSaleFromChat, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve,
     automationUnreserve, applySendLabels, getContactName,
     fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,

@@ -14,6 +14,7 @@
 
   const ICONS = {
     zap:       '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+    money:     '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>',
     eye:       '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
     send:      '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
     search:    '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -777,6 +778,20 @@
       .panel.sec-disparos .status, .panel.sec-disparos .labels, .panel.sec-disparos .name-note,
       .panel.sec-disparos .tools, .panel.sec-disparos .banner, .panel.sec-disparos .list { display: none; }
       .dtab .crmsec { display: flex; flex-direction: column; gap: 7px; }
+      /* Seção Vendas (2.3.0) */
+      .vtab { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 10px; flex-direction: column; gap: 10px; scrollbar-width: thin; }
+      .vtab > * { flex-shrink: 0; }
+      .panel.sec-vendas .vtab { display: flex; }
+      .panel.sec-vendas .labels, .panel.sec-vendas .name-note,
+      .panel.sec-vendas .tools, .panel.sec-vendas .banner, .panel.sec-vendas .list { display: none; }
+      .vtab .crmsec { display: flex; flex-direction: column; gap: 7px; }
+      .vd-results { display: flex; flex-direction: column; gap: 3px; }
+      .vd-prod { text-align: left; padding: 5px 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); font-size: 12px; }
+      .vd-prod:hover { border-color: var(--accent); }
+      .vd-total { font-size: 13px; }
+      .vd-sale { width: 100%; text-align: left; border: none; }
+      .sale-quick { margin-left: auto; flex-shrink: 0; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; background: transparent; color: inherit; font-size: 11px; font-weight: 700; }
+      .sale-quick[hidden] { display: none; }
       .fw-count { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
       .fw-card { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); font-size: 12px; text-align: left; }
       .fw-card.on { border-color: var(--accent); }
@@ -1093,9 +1108,10 @@
           <button type="button" class="pboard" title="Abrir o Quadro" aria-pressed="false">${svg('board')}<span>Quadro</span></button>
           <button type="button" data-sec="agendados" title="Agendados" aria-pressed="false">${svg('clock')}<span>Agendados</span></button>
           <button type="button" data-sec="disparos" title="Disparos (envio para uma etiqueta CRM)" aria-pressed="false">${svg('megaphone')}<span>Disparos</span></button>
+          <button type="button" data-sec="vendas" title="Vendas pela conversa" aria-pressed="false">${svg('money')}<span>Vendas</span></button>
           <button type="button" data-sec="follows" title="Automações (Quando → Se → Então)" aria-pressed="false">${svg('repeat')}<span>Automações</span></button>
         </nav>
-        <div class="status warn"><span class="dot"></span><span class="txt"></span></div>
+        <div class="status warn"><span class="dot"></span><span class="txt"></span><button class="sale-quick" type="button" title="Registrar venda desta conversa" hidden>💰 Venda</button></div>
         <div class="labels">
           <span class="lbl">Etiquetas CRM</span>
           <div class="chips"></div>
@@ -1159,6 +1175,7 @@
         <div class="stab" role="region" aria-label="Agendados"></div>
         <div class="ftab" role="region" aria-label="Automações"></div>
         <div class="dtab" role="region" aria-label="Disparos"></div>
+        <div class="vtab" role="region" aria-label="Vendas"></div>
         <div class="seqbar" role="status" aria-live="polite" hidden><span class="seqtxt"></span><button class="seqstop" type="button">Parar</button></div>
         <div class="toast" role="status" aria-live="polite"></div>
         <footer class="foot"><span class="last">Último usado: <b>—</b></span><button class="foot-pause" type="button" hidden></button><span class="ver"></span></footer>
@@ -1423,13 +1440,14 @@
   }
 
   function setSection(section, { persist = true } = {}) {
-    state.section = ['etiquetas', 'agendados', 'follows', 'disparos'].includes(section) ? section : 'mensagens';
+    state.section = ['etiquetas', 'agendados', 'follows', 'disparos', 'vendas'].includes(section) ? section : 'mensagens';
     const labels = state.section === 'etiquetas';
     panel.classList.toggle('sec-labels', labels);
     panel.classList.toggle('sec-sched', state.section === 'agendados');
     panel.classList.toggle('sec-follows', state.section === 'follows');
     panel.classList.toggle('sec-disparos', state.section === 'disparos');
-    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados', follows: 'Automações', disparos: 'Disparos' }[state.section];
+    panel.classList.toggle('sec-vendas', state.section === 'vendas');
+    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados', follows: 'Automações', disparos: 'Disparos', vendas: 'Vendas' }[state.section];
     panel.setAttribute('aria-label', brandTxt.textContent);
     if (persist) storageSet({ panelSection: state.section }); // só o nome da seção
     setMenuOpen(false);
@@ -1446,6 +1464,7 @@
     syncSchedActive();
     syncFollowsActive();
     syncDisparosActive();
+    syncVendasActive();
   }
 
   navBtns.forEach((b) => b.addEventListener('click', () => {
@@ -1493,6 +1512,7 @@
     statusTxt.title = statusTxt.textContent;
     if (prevFirst !== null && prevFirst !== state.ctx.firstName) refreshOpenBubble();
     onConversationIdentity(state.ctx.identity);
+    renderSaleQuick();
   }
 
   // ── Etiquetas da conversa ──────────────────────────────────────────────────
@@ -4823,7 +4843,7 @@
 
   const TRIGGER_LABEL = {
     sem_resposta: 'Ficou sem responder (tempo útil)', entrou_etiqueta: 'Entrou na etiqueta há (tempo corrido)',
-    respondeu: 'Respondeu', dia_hora: 'Dia e hora fixos',
+    respondeu: 'Respondeu', dia_hora: 'Dia e hora fixos', venda_registrada: 'Venda registrada pela conversa',
   };
   const ACTION_LABEL = { enviar: 'Enviar mensagem salva', adicionar_etiqueta: 'Adicionar etiqueta CRM', remover_etiqueta: 'Remover etiqueta CRM', mover: 'Mover (tira a do gatilho e põe outra)', parar: 'Parar' };
   const COND_LABEL = { tem_etiqueta: 'tem a etiqueta CRM', nao_tem_etiqueta: 'não tem a etiqueta CRM', anuncio: 'veio do anúncio com a palavra', parada_max_dias: 'conversa parada há no máximo (dias)' };
@@ -5048,12 +5068,21 @@
     q.append(el('div', 'fw-k', 'QUANDO'));
     const trig = el('select', 'ed-cat');
     trig.setAttribute('aria-label', 'Gatilho');
-    E.TRIGGER_TYPES.forEach((t) => { const o = el('option', null, TRIGGER_LABEL[t]); o.value = t; o.selected = f.trigger_type === t; trig.append(o); });
+    E.TRIGGER_TYPES.forEach((t) => {
+      const off = t === 'venda_registrada' && motor.state.salesOrigin !== true;
+      const o = el('option', null, off ? `${TRIGGER_LABEL[t]} (atualize o banco)` : TRIGGER_LABEL[t]);
+      o.value = t;
+      o.disabled = off && f.trigger_type !== t;
+      o.selected = f.trigger_type === t;
+      trig.append(o);
+    });
     E.FUTURE_TRIGGERS.forEach((t) => { const o = el('option', null, `${t.label} (${t.note})`); o.value = t.type; o.disabled = true; trig.append(o); });
     trig.addEventListener('change', () => { f.trigger_type = trig.value; renderFollows(); });
     q.append(trig);
     // Ações "remover a etiqueta do gatilho" (do modelo) acompanham a etiqueta escolhida aqui
-    q.append(schedField('Etiqueta CRM do gatilho', labelPicker(f.trigger_label_id, (v) => { f.trigger_label_id = v; f.actions.forEach((x) => { if (x.followsTrigger) x.label_id = v; }); }, { aria: 'Etiqueta do gatilho' })));
+    const saleTrig = f.trigger_type === 'venda_registrada';
+    q.append(schedField(saleTrig ? 'Só para quem está na etiqueta CRM (opcional)' : 'Etiqueta CRM do gatilho', labelPicker(f.trigger_label_id, (v) => { f.trigger_label_id = v; f.actions.forEach((x) => { if (x.followsTrigger) x.label_id = v; }); }, { aria: 'Etiqueta do gatilho', empty: saleTrig ? '(qualquer contato)' : 'Escolha a etiqueta CRM…' })));
+    if (saleTrig) q.append(el('div', 'crm-intro', 'Roda uma vez para cada venda registrada pela conversa (botão 💰 Venda).'));
     if (f.trigger_type === 'sem_resposta') {
       const hours = numberInput(Math.floor(f.wait_minutes / 60), 0, 8760, 'Horas');
       const mins = numberInput(f.wait_minutes % 60, 0, 59, 'Minutos');
@@ -5441,6 +5470,505 @@
     ftabEl.append(sec);
   }
 
+  // ── 💰 Vendas pela conversa (2.3.0) ──────────────────────────────────────
+  // Formulário da venda da conversa aberta. Só grava ao clicar em "Registrar venda" (o background
+  // recalcula tudo como o ERP). Nomes, telefones e endereços ficam só na tela e na venda do ERP.
+
+  const TS = globalThis.TspSale;
+  const vtabEl = shadow.querySelector('.vtab');
+  const saleQuick = shadow.querySelector('.sale-quick');
+  const ERP_STATUS = { em_separacao: 'Em separação', embalado: 'Embalado', em_rota: 'Em rota de entrega', finalizado: 'Finalizado', pago: 'Pago', embalar_amanha: 'Embalar amanhã', reembolsado: 'Reembolsado', concluido: 'Concluído' };
+  const vs = { open: false, view: 'list', catalog: null, list: null, listError: '', form: null, msg: '', err: false, busy: false, done: null, courier: null };
+
+  function syncVendasActive() {
+    const want = state.open && state.section === 'vendas';
+    vs.open = want;
+    if (!want) return;
+    loadSaleCatalog();
+    if (vs.view === 'list') loadChatSales();
+  }
+
+  async function loadSaleCatalog() {
+    try { vs.catalog = await call('erpCatalog'); } catch (e) { vs.catalog = { error: e.message }; }
+    renderVendas();
+  }
+
+  async function loadChatSales() {
+    try { vs.list = await call('fetchChatSales'); vs.listError = ''; } catch (e) { vs.list = []; vs.listError = e.message; }
+    renderVendas();
+  }
+
+  if (saleQuick) saleQuick.addEventListener('click', () => { if (!state.open) setOpen(true); setSection('vendas'); openSaleForm(); });
+
+  // Pode rodar antes da seção existir (updateContext): busca o botão direto no painel
+  function renderSaleQuick() {
+    const b = shadow.querySelector('.sale-quick');
+    if (!b) return;
+    const id = state.ctx && state.ctx.identity;
+    b.hidden = !(id && (id.kind === 'tel' || id.kind === 'name'));
+  }
+
+  const productLabel = (p) => `${p.model}${p.color ? ` · ${p.color}` : ''}`;
+
+  async function openSaleForm() {
+    vs.view = 'form';
+    vs.msg = '';
+    vs.err = false;
+    vs.done = null;
+    vs.courier = null;
+    const ctx = getContext();
+    state.ctx = ctx;
+    let chat = null;
+    try { chat = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { chat = null; }
+    const chatId = chat && chat.kind === 'individual' ? chat.chatId : null;
+    const phone = ctx.identity && ctx.identity.phone ? ctx.identity.phone : (chatId && /^\d+@c\.us$/.test(chatId) ? chatId.split('@')[0] : '');
+    const fullName = ctx.fullName && !ctx.isNumber ? ctx.fullName : '';
+    // Etiquetas de gatilho das automações ativas (carrega se o motor ainda não leu)
+    if (!motor.state.automations.length) await motor.loadAutomations();
+    const autoLabels = activeAutomations().map((a) => a.trigger_label_id).filter(Boolean);
+    vs.form = {
+      chatId, customer_name: (ctx.identity && crmNames.get(ctx.identity.key)) || fullName || '', customer_phone: phone || '',
+      items: [], search: '', accessories: [], payment_method: 'credit_card', card_brand: 'visa_mastercard', installments: 10, payment_status: 'a_cobrar',
+      delivery_type: 'motoboy', motoboy_id: '', delivery_fee: TS.DEFAULT_DELIVERY_FEE, delivery_cost: 0,
+      city: '', neighborhood: '', address_street: '', address_number: '', address_complement: '', reference: '', zip_code: '', schedule: '', notes: '',
+      warranty_months: '', origin: 'organico', ad: null, map: null, addressHint: null,
+      moveLabels: true, clientLabel: labelRef('Cliente'), removeLabels: state.convLabelIds.filter((l) => autoLabels.includes(l)),
+      dupAsk: false,
+    };
+    if (!vs.catalog) await loadSaleCatalog();
+    renderVendas();
+    if (chatId) {
+      try {
+        const info = await waRequest('chatSaleInfo', { chatId }, { timeout: 4000 });
+        if (info && info.ad) { vs.form.ad = info.ad; vs.form.origin = 'anuncio'; }
+        if (info) vs.form.saleInfo = info;
+      } catch { /* sem origem detectada */ }
+      renderVendas();
+    }
+  }
+
+  function saleTotals(f) {
+    const cat = vs.catalog || {};
+    const items = f.items.map((it) => { const p = (cat.products || []).find((x) => x.id === it.product_id) || {}; return { ...it, unit_cost: Number(p.cost) || 0, category: p.category }; });
+    const accessories = f.accessories.map((a) => { const x = (cat.accessories || []).find((y) => y.id === a.accessory_id) || {}; return { ...a, cost: Number(x.cost) || 0 }; });
+    const payments = [{ method: f.payment_method, card_brand: f.card_brand, installments: Number(f.installments) || 0, amount: 0 }];
+    return TS.computeTotals({ items, accessories, payments, delivery_type: f.delivery_type, delivery_fee: Number(f.delivery_fee) || 0, delivery_cost: Number(f.delivery_cost) || 0, cfg: cat.fees || {} });
+  }
+
+  function deliveryNotes(f) {
+    const lines = [];
+    if (f.reference.trim()) lines.push(`Referência: ${f.reference.trim()}`);
+    if (f.schedule.trim()) lines.push(`Horário: ${f.schedule.trim()}`);
+    if (f.map) lines.push(`Mapa: ${f.map.url}${f.map.name ? ` (${f.map.name})` : ''}`);
+    if (f.notes.trim()) lines.push(f.notes.trim());
+    return lines.join('\n');
+  }
+
+  const inputField = (label, value, onInput, { type = 'text', max = 200, aria, list } = {}) => {
+    const i = el('input', 'ed-title');
+    i.type = type;
+    i.maxLength = max;
+    i.value = value;
+    i.setAttribute('aria-label', aria || label);
+    if (list) i.setAttribute('list', list);
+    i.addEventListener('input', () => onInput(i.value));
+    return schedField(label, i);
+  };
+
+  function selectOf(options, value, aria, onChange) {
+    const sel = el('select', 'ed-cat');
+    sel.setAttribute('aria-label', aria);
+    options.forEach(([k, t]) => { const o = el('option', null, t); o.value = k; o.selected = String(k) === String(value); sel.append(o); });
+    sel.addEventListener('change', () => onChange(sel.value));
+    return sel;
+  }
+
+  function renderSaleForm() {
+    const f = vs.form;
+    const cat = vs.catalog || {};
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'NOVA VENDA DESTA CONVERSA'));
+    if (!f.chatId) sec.append(el('div', 'ed-note', 'Abra uma conversa individual no WhatsApp.'));
+    if (cat.error) sec.append(el('div', 'ed-msg err', `Não consegui carregar os dados do ERP: ${cat.error}`));
+
+    sec.append(el('div', 'crm-sub', '1. Cliente'));
+    const r1 = el('div', 'sc-row');
+    r1.append(inputField('Nome', f.customer_name, (v) => { f.customer_name = v; }, { max: 100, aria: 'Nome do cliente' }), inputField('Telefone', f.customer_phone, (v) => { f.customer_phone = v; }, { max: 30, aria: 'Telefone do cliente' }));
+    sec.append(r1);
+
+    // Produtos
+    sec.append(el('div', 'crm-sub', '2. Produtos'));
+    const search = el('input', 'ed-title');
+    search.value = f.search;
+    search.placeholder = 'Buscar produto (modelo ou cor)';
+    search.setAttribute('aria-label', 'Buscar produto');
+    const results = el('div', 'vd-results');
+    const showResults = () => {
+      results.textContent = '';
+      const q = globalThis.TspEngine.stripAccents(f.search).toLowerCase().trim();
+      if (!q) return;
+      (cat.products || []).filter((p) => globalThis.TspEngine.stripAccents(productLabel(p)).toLowerCase().includes(q)).slice(0, 8).forEach((p) => {
+        const b = fbtn('vd-prod', `${productLabel(p)} · estoque ${p.current_stock} · ${TS.money(p.price)}`, () => {
+          const ex = f.items.find((x) => x.product_id === p.id);
+          if (ex) ex.quantity += 1;
+          else f.items.push({ product_id: p.id, quantity: 1, unit_price: Number(p.price) || 0 });
+          f.search = '';
+          renderVendas();
+        });
+        results.append(b);
+      });
+    };
+    search.addEventListener('input', () => { f.search = search.value; showResults(); });
+    sec.append(search, results);
+    showResults();
+    f.items.forEach((it, i) => {
+      const p = (cat.products || []).find((x) => x.id === it.product_id) || { model: 'produto' };
+      const row = el('div', 'fw-variant');
+      row.append(el('div', 'sc-who', `${productLabel(p)}${p.current_stock != null ? ` · estoque ${p.current_stock}` : ''}`));
+      const r = el('div', 'sc-row');
+      const q = numberInput(it.quantity, 1, 999, `Quantidade do produto ${i + 1}`);
+      q.addEventListener('input', () => { it.quantity = Math.max(1, Math.floor(Number(q.value) || 1)); renderTotal(); });
+      const pr = el('input', 'ed-title');
+      pr.type = 'number';
+      pr.step = '0.01';
+      pr.min = '0';
+      pr.value = String(it.unit_price);
+      pr.setAttribute('aria-label', `Valor unitário do produto ${i + 1}`);
+      pr.addEventListener('input', () => { it.unit_price = Math.max(0, Number(pr.value) || 0); renderTotal(); });
+      r.append(schedField('Qtd.', q), schedField('Valor unitário (R$)', pr), fbtn('ed-mini', '✕', () => { f.items.splice(i, 1); renderVendas(); }));
+      row.append(r);
+      sec.append(row);
+    });
+    // Acessórios (como no ERP: só custo, não entram no valor da venda)
+    if ((cat.accessories || []).length) {
+      const ar = el('div', 'sc-row');
+      const accSel = selectOf([['', '+ acessório (brinde, entra só no custo)'], ...cat.accessories.map((a) => [a.id, a.name])], '', 'Adicionar acessório', (v) => {
+        if (!v) return;
+        const ex = f.accessories.find((x) => x.accessory_id === v);
+        if (ex) ex.quantity += 1; else f.accessories.push({ accessory_id: v, quantity: 1 });
+        renderVendas();
+      });
+      ar.append(accSel);
+      sec.append(ar);
+      f.accessories.forEach((a, i) => {
+        const x = cat.accessories.find((y) => y.id === a.accessory_id) || { name: 'acessório' };
+        const row = el('div', 'sc-row');
+        const q = numberInput(a.quantity, 1, 999, `Quantidade do acessório ${i + 1}`);
+        q.addEventListener('input', () => { a.quantity = Math.max(1, Math.floor(Number(q.value) || 1)); renderTotal(); });
+        row.append(el('span', 'sc-who', x.name), q, fbtn('ed-mini', '✕', () => { f.accessories.splice(i, 1); renderVendas(); }));
+        sec.append(row);
+      });
+    }
+
+    // Pagamento
+    sec.append(el('div', 'crm-sub', '3. Pagamento'));
+    const pr = el('div', 'sc-row');
+    pr.append(selectOf(TS.PAYMENT_METHODS, f.payment_method, 'Forma de pagamento', (v) => {
+      f.payment_method = v;
+      // como o ERP: fora de cartão, sem bandeira e sem parcelas
+      if (!['credit_card', 'debit_card', 'payment_link'].includes(v)) { f.card_brand = ''; f.installments = 0; }
+      if (v !== 'credit_card' && v !== 'payment_link') f.installments = 0;
+      if (['credit_card', 'debit_card', 'payment_link'].includes(v) && !f.card_brand) f.card_brand = 'visa_mastercard';
+      renderVendas();
+    }));
+    if (['credit_card', 'debit_card', 'payment_link'].includes(f.payment_method)) {
+      pr.append(selectOf([['', 'Bandeira (definir depois)'], ...TS.CARD_BRANDS], f.card_brand, 'Bandeira', (v) => { f.card_brand = v; renderTotal(); }));
+    }
+    if (f.payment_method === 'credit_card' || f.payment_method === 'payment_link') {
+      pr.append(selectOf([['0', 'Parcelas (definir depois)'], ...Array.from({ length: 12 }, (_, i) => [String(i + 1), `${i + 1}x`])], String(f.installments), 'Parcelas', (v) => { f.installments = Number(v) || 0; renderTotal(); }));
+    }
+    sec.append(pr);
+    const ps = el('div', 'sc-row');
+    [['a_cobrar', 'A cobrar'], ['pago', 'Já pago']].forEach(([k, t]) => {
+      const l = el('label', 'sc-radio');
+      const r = el('input');
+      r.type = 'radio';
+      r.name = 'vd-paystatus';
+      r.checked = f.payment_status === k;
+      r.addEventListener('change', () => { f.payment_status = k; });
+      l.append(r, t);
+      ps.append(l);
+    });
+    sec.append(ps);
+    const totalEl = el('div', 'fw-count vd-total');
+    const renderTotal = () => {
+      const t = saleTotals(f);
+      totalEl.textContent = `Total: ${TS.money(t.totalSalePrice)} · taxa ${TS.money(t.cardFee)} · líquido ${TS.money(t.netReceived)}`;
+    };
+    renderTotal();
+    sec.append(totalEl);
+
+    // Entrega
+    sec.append(el('div', 'crm-sub', '4. Entrega'));
+    const dr = el('div', 'sc-row');
+    dr.append(selectOf(TS.DELIVERY_TYPES, f.delivery_type, 'Tipo de entrega', (v) => { f.delivery_type = v; renderVendas(); }));
+    if (f.delivery_type === 'motoboy') {
+      dr.append(selectOf([['', 'Selecionar Motoboy'], ...(cat.motoboys || []).map((m) => [m.id, m.name])], f.motoboy_id, 'Motoboy', (v) => { f.motoboy_id = v; }));
+      const fee = numberInput(f.delivery_fee, 0, 10000, 'Taxa do motoboy');
+      fee.addEventListener('input', () => { f.delivery_fee = Math.max(0, Number(fee.value) || 0); renderTotal(); });
+      dr.append(schedField('Taxa do motoboy (R$)', fee));
+    }
+    if (f.delivery_type === 'correios') {
+      const cost = numberInput(f.delivery_cost, 0, 10000, 'Frete');
+      cost.addEventListener('input', () => { f.delivery_cost = Math.max(0, Number(cost.value) || 0); renderTotal(); });
+      dr.append(schedField('Frete (R$)', cost));
+    }
+    sec.append(dr);
+    const dl = (id, list) => { const d = el('datalist'); d.id = id; list.forEach((x) => { const o = el('option'); o.value = x.name; d.append(o); }); return d; };
+    sec.append(dl('vd-cities', cat.cities || []), dl('vd-neigh', cat.neighborhoods || []));
+    const ar2 = el('div', 'sc-row');
+    ar2.append(inputField('Cidade', f.city, (v) => { f.city = v; }, { max: 80, list: 'vd-cities' }), inputField('Bairro', f.neighborhood, (v) => { f.neighborhood = v; }, { max: 80, list: 'vd-neigh' }));
+    sec.append(ar2);
+    const ar3 = el('div', 'sc-row');
+    ar3.append(inputField('Rua', f.address_street, (v) => { f.address_street = v; }), inputField('Número', f.address_number, (v) => { f.address_number = v; }, { max: 30 }));
+    sec.append(ar3);
+    const ar4 = el('div', 'sc-row');
+    ar4.append(inputField('Complemento', f.address_complement, (v) => { f.address_complement = v; }), inputField('Referência', f.reference, (v) => { f.reference = v; }), inputField('CEP (opcional)', f.zip_code, (v) => { f.zip_code = v; }, { max: 12 }));
+    sec.append(ar4);
+    sec.append(inputField('Horário de entrega', f.schedule, (v) => { f.schedule = v; }, { max: 80 }));
+    const sh = el('div', 'ed-add');
+    ['hoje 15h', 'hoje à tarde', 'amanhã manhã', 'amanhã tarde'].forEach((t) => sh.append(fbtn('ed-mini', t, () => { f.schedule = t; renderVendas(); })));
+    sec.append(sh);
+    sec.append(fbtn('bbtn', 'Pegar endereço da conversa', () => pickAddressFromChat()));
+    if (f.map) sec.append(el('div', 'fw-test', `Localização: ${f.map.name || 'sem nome'} · ${f.map.url}`));
+    if (f.addressHint) {
+      const hint = el('div', 'fw-test');
+      hint.append(el('div', null, `O cliente escreveu: "${f.addressHint}"`), fbtn('ed-mini', 'Usar como rua', () => { f.address_street = f.addressHint.slice(0, 200); f.addressHint = null; renderVendas(); }));
+      sec.append(hint);
+    }
+    sec.append(inputField('Observações para a entrega', f.notes, (v) => { f.notes = v; }, { max: 500 }));
+
+    // Garantia, origem e etiquetas
+    sec.append(el('div', 'crm-sub', '5. Garantia'));
+    const w = numberInput(f.warranty_months === '' ? '' : f.warranty_months, 0, 120, 'Garantia (meses)');
+    w.placeholder = 'meses';
+    w.addEventListener('input', () => { f.warranty_months = w.value === '' ? '' : Math.max(0, Math.min(120, Math.floor(Number(w.value) || 0))); });
+    sec.append(schedField('Garantia (meses)', w));
+    if (cat.originAvailable === false) sec.append(el('div', 'ed-note', 'Garantia, origem e conversa da venda: atualize o banco para guardar (a venda é registrada mesmo assim).'));
+    sec.append(el('div', 'crm-sub', '6. Origem'));
+    const or = el('div', 'sc-row');
+    [['anuncio', 'Veio de anúncio'], ['organico', 'Orgânico']].forEach(([k, t]) => {
+      const l = el('label', 'sc-radio');
+      const r = el('input');
+      r.type = 'radio';
+      r.name = 'vd-origin';
+      r.checked = f.origin === k;
+      r.addEventListener('change', () => { f.origin = k; });
+      l.append(r, t);
+      or.append(l);
+    });
+    sec.append(or);
+    if (f.ad) {
+      const ad = el('div', 'fw-test');
+      ad.append(el('div', null, `Veio do anúncio: ${f.ad.title || '(sem título)'}${f.ad.platform ? ` · ${f.ad.platform}` : ''}`));
+      if (f.ad.url) {
+        const a = el('a', null, 'abrir anúncio');
+        a.href = f.ad.url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        ad.append(a);
+      }
+      sec.append(ad);
+    }
+    sec.append(el('div', 'crm-sub', '7. Opções'));
+    const ml = el('label', 'sc-radio');
+    const mc = el('input');
+    mc.type = 'checkbox';
+    mc.checked = f.moveLabels;
+    mc.addEventListener('change', () => { f.moveLabels = mc.checked; renderVendas(); });
+    ml.append(mc, 'Tirar das automações e pôr na etiqueta CRM:');
+    sec.append(ml);
+    if (f.moveLabels) {
+      sec.append(labelPicker(f.clientLabel, (v) => { f.clientLabel = v; }, { aria: 'Etiqueta do cliente', rerender: renderVendas, onError: (m) => { vs.msg = m; vs.err = true; } }));
+      const cur = state.convLabelIds.filter((l) => l !== f.clientLabel);
+      if (cur.length) {
+        sec.append(el('div', 'crm-intro', 'Tirar destas etiquetas CRM:'));
+        const box = el('div', 'ed-add');
+        cur.forEach((l) => {
+          const lab = el('label', 'sc-radio');
+          const c = el('input');
+          c.type = 'checkbox';
+          c.checked = f.removeLabels.includes(l);
+          c.addEventListener('change', () => { f.removeLabels = c.checked ? [...new Set([...f.removeLabels, l])] : f.removeLabels.filter((x) => x !== l); });
+          lab.append(c, labelName(l));
+          box.append(lab);
+        });
+        sec.append(box);
+      }
+    }
+    if (f.dupAsk) {
+      const dup = el('div', 'fw-test');
+      dup.append(el('div', 'ed-note', 'Já existe uma venda desta conversa hoje. Registrar outra?'), fbtn('bbtn primary', 'Registrar outra', () => registerSale(true)), fbtn('bbtn', 'Cancelar', () => { f.dupAsk = false; renderVendas(); }));
+      sec.append(dup);
+    }
+    const actions = el('div', 'ed-add');
+    const go = fbtn('bbtn primary', vs.busy ? 'Registrando…' : 'Registrar venda', () => registerSale(false));
+    go.disabled = vs.busy || !f.chatId || !f.items.length;
+    actions.append(go, fbtn('bbtn', 'Gerar mensagem do entregador', () => openCourier()), fbtn('bbtn', 'Cancelar', () => { vs.view = 'list'; loadChatSales(); }));
+    sec.append(actions, el('div', `ed-msg${vs.err ? ' err' : ''}`, vs.msg));
+    vtabEl.append(sec);
+  }
+
+  async function pickAddressFromChat() {
+    const f = vs.form;
+    if (!f.chatId) return;
+    let info = null;
+    try { info = await waRequest('chatSaleInfo', { chatId: f.chatId }, { timeout: 4000 }); } catch { info = null; }
+    if (!info) { vs.msg = 'Não consegui ler a conversa.'; vs.err = true; renderVendas(); return; }
+    if (info.location) f.map = { url: TS.mapUrl(info.location.lat, info.location.lng), name: info.location.name || null };
+    if (info.addressText) f.addressHint = info.addressText;
+    vs.msg = info.location || info.addressText ? '' : 'Nenhuma localização ou endereço nas mensagens carregadas.';
+    vs.err = false;
+    renderVendas();
+  }
+
+  function salePayload(f) {
+    return {
+      customer_name: f.customer_name, customer_phone: f.customer_phone,
+      items: f.items.map((i) => ({ product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price })),
+      accessories: f.accessories.map((a) => ({ accessory_id: a.accessory_id, quantity: a.quantity })),
+      payment_method: f.payment_method, card_brand: f.card_brand, installments: f.installments, payment_status: f.payment_status,
+      delivery_type: f.delivery_type, motoboy_id: f.motoboy_id || null, delivery_fee: f.delivery_fee, delivery_cost: f.delivery_cost,
+      city: f.city, neighborhood: f.neighborhood, address_street: f.address_street, address_number: f.address_number,
+      address_complement: f.address_complement, zip_code: f.zip_code, delivery_notes: deliveryNotes(f),
+      wa_chat_id: f.chatId, origin: f.origin, ad_source: f.origin === 'anuncio' && f.ad ? f.ad.platform || f.ad.sourceType || null : null,
+      ad_title: f.origin === 'anuncio' && f.ad ? f.ad.title : null, ad_url: f.origin === 'anuncio' && f.ad ? f.ad.url : null,
+      warranty_months: f.warranty_months === '' ? null : f.warranty_months,
+    };
+  }
+
+  async function registerSale(confirmedDup) {
+    const f = vs.form;
+    if (vs.busy || !f || !f.chatId) return;
+    if (!f.items.length) { vs.msg = 'Adicione pelo menos um produto.'; vs.err = true; renderVendas(); return; }
+    const v = TS.validateAddress(f.delivery_type, f);
+    if (!v.isValid) { vs.msg = v.message; vs.err = true; renderVendas(); return; }
+    if (f.moveLabels && String(f.clientLabel || '').startsWith('new:')) { vs.msg = 'Crie a etiqueta do cliente (botão "Criar agora") ou desmarque a opção.'; vs.err = true; renderVendas(); return; }
+    vs.busy = true;
+    vs.msg = '';
+    renderVendas();
+    try {
+      if (!confirmedDup) {
+        const dup = await call('recentChatSale', { chatId: f.chatId, phone: f.customer_phone });
+        if (dup && dup.exists) { f.dupAsk = true; vs.busy = false; renderVendas(); return; }
+      }
+      f.dupAsk = false;
+      const res = await call('createSaleFromChat', { sale: salePayload(f) });
+      // contato da conversa (para o gatilho "venda registrada") + opção de etiquetas
+      try {
+        await call('saleContactLabels', { chatId: f.chatId, name: f.customer_name, phone: f.customer_phone, addLabelId: f.moveLabels && f.clientLabel ? f.clientLabel : null, removeLabelIds: f.moveLabels ? f.removeLabels : [] });
+        afterLabelChange();
+      } catch { /* a venda já está registrada */ }
+      motor.state.lastEvalAt = 0; // automações "venda registrada" no próximo ciclo
+      vs.done = { id: res.id, total: res.total, tinyFailed: res.tinyFailed };
+      vs.view = 'done';
+    } catch (e) {
+      vs.msg = `Não consegui registrar: ${e.message}`;
+      vs.err = true;
+    }
+    vs.busy = false;
+    renderVendas();
+  }
+
+  function renderSaleDone() {
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'VENDA REGISTRADA'));
+    sec.append(el('div', 'fw-test', `Venda registrada (pendente). Finalize no ERP. Total ${TS.money(vs.done.total)}.`));
+    const url = vs.catalog && vs.catalog.erpUrl;
+    if (url) {
+      const a = el('a', null, 'abrir o ERP');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      sec.append(a);
+    } else sec.append(el('div', 'crm-intro', 'No ERP: Histórico de Vendas.'));
+    if (vs.done.tinyFailed) sec.append(el('div', 'ed-note', 'O estoque do Tiny não confirmou a atualização: confira no ERP.'));
+    sec.append(fbtn('bbtn', 'Gerar mensagem do entregador', () => openCourier()), fbtn('bbtn', 'Voltar', () => { vs.view = 'list'; loadChatSales(); }));
+    vtabEl.append(sec);
+  }
+
+  // ── Mensagem do entregador (só monta o texto; enviar é um clique) ──
+  async function openCourier() {
+    const f = vs.form;
+    if (!f) return;
+    const cat = vs.catalog || {};
+    const t = saleTotals(f);
+    const text = TS.courierMessage({
+      customer_name: f.customer_name, customer_phone: f.customer_phone, address_street: f.address_street, address_number: f.address_number,
+      neighborhood: f.neighborhood, city: f.city, reference: f.reference, schedule: f.schedule,
+      items: f.items.map((i) => { const p = (cat.products || []).find((x) => x.id === i.product_id); return { quantity: i.quantity, name: p ? productLabel(p) : 'produto' }; }),
+      total: t.totalSalePrice, payment_method: f.payment_method, payment_status: f.payment_status, map_url: f.map ? f.map.url : null,
+    });
+    vs.courier = { text, back: vs.view, chats: null, target: '' };
+    vs.view = 'courier';
+    renderVendas();
+    try { vs.courier.chats = await waRequest('recentChats', { limit: 30 }, { timeout: 6000 }); } catch { vs.courier.chats = []; }
+    if (vs.view === 'courier') renderVendas();
+  }
+
+  function renderCourier() {
+    const c = vs.courier;
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'MENSAGEM DO ENTREGADOR'));
+    const ta = el('textarea', 'ed-text');
+    ta.rows = 10;
+    ta.value = c.text;
+    ta.setAttribute('aria-label', 'Mensagem do entregador');
+    ta.addEventListener('input', () => { c.text = ta.value; });
+    sec.append(ta);
+    const r = el('div', 'ed-add');
+    r.append(fbtn('bbtn', 'Copiar', async () => { const okc = await copyToClipboard(c.text); toast(okc ? 'Mensagem copiada.' : 'Não foi possível copiar.', okc ? 'ok' : 'error', 2500); }));
+    sec.append(r);
+    const sr = el('div', 'sc-row');
+    sr.append(selectOf([['', c.chats ? 'Enviar para… (conversa carregada)' : 'Carregando conversas…'], ...(c.chats || []).map((x) => [x.id, x.name || x.id.split('@')[0]])], c.target, 'Enviar para', (v) => { c.target = v; }));
+    sr.append(fbtn('bbtn primary', 'Enviar', () => sendCourier()));
+    sec.append(sr, fbtn('bbtn', 'Voltar', () => { vs.view = c.back === 'courier' ? 'form' : c.back; renderVendas(); }));
+    vtabEl.append(sec);
+  }
+
+  async function sendCourier() {
+    const c = vs.courier;
+    if (!c.target || !c.text.trim()) { toast('Escolha a conversa.', 'warn', 3000); return; }
+    if (state.busyId || seq) { toast('Já tem um envio em andamento.', 'warn', 4000); return; }
+    state.busyId = 'courier';
+    try {
+      const res = await runSequence({ parts: [{ type: 'texto', body: c.text.slice(0, 4096), wait_seconds: 0, typing_seconds: 0 }], chatId: c.target, firstName: '' });
+      sequenceToast(res, 1);
+    } finally {
+      state.busyId = null;
+    }
+  }
+
+  // ── Lista ──
+  function renderVendas() {
+    if (!vtabEl) return;
+    vtabEl.textContent = '';
+    vtabEl.append(el('div', 'crm-intro', 'Registre a venda da conversa aberta direto no ERP (fica "Em separação"; finalize no ERP).'));
+    if (vs.view === 'form' && vs.form) { renderSaleForm(); return; }
+    if (vs.view === 'done' && vs.done) { renderSaleDone(); return; }
+    if (vs.view === 'courier' && vs.courier) { renderCourier(); return; }
+    const top = el('div', 'ed-add');
+    top.append(fbtn('bbtn primary', '💰 Nova venda desta conversa', () => openSaleForm()));
+    vtabEl.append(top);
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'ÚLTIMAS 20 VENDAS PELA CONVERSA'));
+    if (vs.listError) sec.append(el('div', 'ed-note', vs.listError === 'Atualize o banco para usar este recurso' ? 'Atualize o banco para usar este recurso (a lista precisa da migration 20261103170000).' : vs.listError));
+    else if (!vs.list) sec.append(el('div', 'lt-none', 'Carregando…'));
+    else if (!vs.list.length) sec.append(el('div', 'lt-none', 'Nenhuma venda registrada pela extensão ainda.'));
+    (vs.list || []).forEach((s) => {
+      const line = fbtn('sc-item vd-sale', '', async () => {
+        try { await waRequest('openChat', { chatId: s.wa_chat_id }, { timeout: 6000 }); } catch { toast('Essa conversa não está carregada no WhatsApp Web.', 'warn', 4000); }
+      });
+      const main = el('div', 'sc-main');
+      main.append(el('div', 'sc-who', s.customer_name || 'Cliente'), el('div', 'sc-prev', `${TS.money(s.total_sale_price)} · ${ERP_STATUS[s.status] || s.status}`));
+      const side = el('div', 'sc-side');
+      side.append(el('span', 'sc-when', schedWhen(s.created_at || s.sale_date)));
+      line.append(main, side);
+      sec.append(line);
+    });
+    vtabEl.append(sec);
+  }
+
   // Diagnóstico: só estados (sem nomes nem números)
   function engineDiagRows() {
     const m = motor.state;
@@ -5457,7 +5985,11 @@
     const autoRow = m.available === null ? { label: 'Automações', status: 'warn', screen: 'testando...' }
       : m.automationsAvailable === true ? { label: 'Automações', status: 'ok', screen: 'ok' }
         : { label: 'Automações', status: 'warn', screen: 'falta atualizar o banco (migration 20261103150000)' };
-    return [motorRow, flowsRow, autoRow];
+    // 2.3.0: venda pela conversa (colunas de origem da venda)
+    const saleRow = m.available === null ? { label: 'Vendas pela conversa', status: 'warn', screen: 'testando...' }
+      : m.salesOrigin === true ? { label: 'Vendas pela conversa', status: 'ok', screen: 'ok' }
+        : { label: 'Vendas pela conversa', status: 'warn', screen: 'falta atualizar o banco (migration 20261103170000)' };
+    return [motorRow, flowsRow, autoRow, saleRow];
   }
 
   // ── Diagnóstico (nunca inclui conteúdo de conversa) ────────────────────────
@@ -5696,6 +6228,7 @@
     loadSchema().then(renderDiag);
     refreshAuth();
     call('fetchSchedules').then((r) => { sched.available = !!(r && r.available); }, () => {}).then(renderDiag);
+    motor.loadSettings().catch(() => {}).then(renderDiag); // 2.3.0: linhas do motor/automações/vendas sem esperar o 1º ciclo
   }
 
   function showList() {

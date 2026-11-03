@@ -537,6 +537,71 @@
     return { chats };
   }
 
+  // ── Venda pela conversa (2.3.0): SÓ LEITURA da conversa aberta ─────────────
+  // Última localização mandada pelo cliente, um texto do cliente que pareça endereço (só sugestão,
+  // o usuário confirma) e a origem do anúncio (ctwaContext). Nada disso é guardado aqui.
+
+  const ADDRESS_RE = /\b(rua|r\.|av\.?|avenida|travessa|tv\.|estrada|rodovia|alameda|praça|praca|largo|condom[ií]nio|bloco|apto|apartamento|n[º°o]\.?\s*\d|cep)\b/i;
+
+  function adOf(msgs) {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const ctx = safe(() => msgs[i].ctwaContext, null);
+      if (!ctx || typeof ctx !== 'object') continue;
+      const str = (k, max) => { const v = safe(() => ctx[k], ''); return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null; };
+      const url = str('sourceUrl', 500);
+      const app = (str('sourceApp', 40) || str('conversionSource', 40) || '').toLowerCase();
+      const platform = /insta/.test(app) || /instagram\.com/.test(url || '') ? 'Instagram' : /face|fb/.test(app) || /facebook\.com|fb\.(me|com)/.test(url || '') ? 'Facebook' : null;
+      return { title: str('title', 300), body: str('description', 300) || str('body', 300), url: url && /^https?:\/\//.test(url) ? url : null, sourceType: str('sourceType', 40), platform };
+    }
+    return null;
+  }
+
+  async function chatSaleInfo(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const chat = await individualLoadedChat(payload && payload.chatId);
+    const msgs = (safe(() => chat.msgs.getModelsArray(), null) || []).slice().sort((a, b) => (Number(safe(() => a.t, 0)) || 0) - (Number(safe(() => b.t, 0)) || 0));
+    let location = null;
+    let addressText = null;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (safe(() => m.id.fromMe, true)) continue;
+      const type = safe(() => m.type, '');
+      if (!location && (type === 'location' || type === 'liveLocation')) {
+        const lat = Number(safe(() => m.lat, NaN));
+        const lng = Number(safe(() => m.lng, NaN));
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          const loc = safe(() => m.loc, '') || safe(() => m.comment, '');
+          location = { lat, lng, name: typeof loc === 'string' && loc.trim() ? loc.trim().replace(/\s+/g, ' ').slice(0, 200) : null };
+        }
+      }
+      if (!addressText && type === 'chat') {
+        const body = safe(() => m.body, '');
+        if (typeof body === 'string' && body.length <= 300 && ADDRESS_RE.test(body) && /\d/.test(body)) addressText = body.trim().replace(/\s+/g, ' ');
+      }
+      if (location && addressText) break;
+    }
+    return { location, addressText, ad: adOf(msgs) };
+  }
+
+  // Conversas individuais carregadas, mais recentes primeiro (para "Enviar para…")
+  async function recentChats(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const limit = Math.min(50, Math.max(1, Math.floor(Number(payload && payload.limit) || 30)));
+    let loaded;
+    try {
+      loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS);
+    } catch (err) {
+      if (err instanceof BridgeError) throw err;
+      throw new BridgeError('chats_failed', 'Não consegui ler as conversas', 'before-send');
+    }
+    return (Array.isArray(loaded) ? loaded : [])
+      .map((c) => chatCard(c, false))
+      .filter((c) => c.kind === 'individual')
+      .sort((a, b) => b.t - a.t)
+      .slice(0, limit)
+      .map((c) => ({ id: c.id, name: c.name }));
+  }
+
   // ── Disparo para conversa nova (2.0.0-D2) ────────────────────────────────
   // ÚNICO pedido que cria conversa. Só para disparo com "permitir conversas novas"
   // (payload.campaign === true), só números @c.us e só depois de contact.queryExists
@@ -620,6 +685,8 @@
     setChatLabels: (payload) => setChatLabels(payload),
     chatsInfo: (payload) => chatsInfo(payload),
     campaignSend: (payload, requestId) => campaignSend(requestId, payload),
+    chatSaleInfo: (payload) => chatSaleInfo(payload),
+    recentChats: (payload) => recentChats(payload),
   };
 
   function reply(request, ok, data, error) {

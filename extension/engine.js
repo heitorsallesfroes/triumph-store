@@ -259,8 +259,9 @@
 
   // ── Automações (2.1.0): QUANDO → SE → ENTÃO ─────────────────────────────
 
-  const TRIGGER_TYPES = ['sem_resposta', 'entrou_etiqueta', 'respondeu', 'dia_hora'];
-  const FUTURE_TRIGGERS = [{ type: 'venda_registrada', label: 'Venda registrada', note: 'chega com a Etapa E' }];
+  // 2.3.0: 'venda_registrada' = venda registrada pela conversa (migration 20261103170000)
+  const TRIGGER_TYPES = ['sem_resposta', 'entrou_etiqueta', 'respondeu', 'dia_hora', 'venda_registrada'];
+  const FUTURE_TRIGGERS = [];
 
   const dateKey = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`; };
   const linkOf = (contact, labelId) => (contact.links || []).find((l) => l.label_id === labelId) || null;
@@ -308,7 +309,10 @@
   // action: 'run' (com runKey e plan) | 'wait' (dueAt) | 'none' | 'skip' | 'done' (já rodou)
   function evaluateAutomation({ automation: a, contact, chat, settings, now, noSendLabelId, ranKeys }) {
     const labels = contact.labelIds || [];
-    if (!labels.includes(a.trigger_label_id)) return { action: 'skip', reason: 'fora da etiqueta do gatilho' };
+    const saleTrigger = a.trigger_type === 'venda_registrada';
+    if (saleTrigger && !contact.sale_id) return { action: 'skip', reason: 'sem venda registrada' };
+    if (saleTrigger && a.trigger_label_id && !labels.includes(a.trigger_label_id)) return { action: 'skip', reason: 'fora da etiqueta do gatilho' };
+    if (!saleTrigger && !labels.includes(a.trigger_label_id)) return { action: 'skip', reason: 'fora da etiqueta do gatilho' };
     if (noSendLabelId && labels.includes(noSendLabelId)) return { action: 'skip', reason: 'Não enviar' };
     const needsChat = automationNeedsChat(a);
     const chatId = chatIdOfContact(contact);
@@ -339,6 +343,8 @@
       if (!last) return { action: 'skip', reason: 'conversa sem mensagens carregadas', chatId };
       if (last.fromMe) return { action: 'none', reason: 'ainda não respondeu', chatId };
       runKey = labelKey;
+    } else if (saleTrigger) {
+      runKey = `venda@${contact.sale_id}`; // uma vez por venda
     } else if (a.trigger_type === 'dia_hora') {
       const t = parseHM(a.schedule_time);
       const d = new Date(now);
@@ -386,6 +392,7 @@
     if (a.trigger_type === 'sem_resposta') quando = `Quando o contato da etiqueta ${lab(a.trigger_label_id)} fica ${formatWait(a.wait_minutes)} úteis sem responder (${scheduleText(settings)})`;
     else if (a.trigger_type === 'entrou_etiqueta') quando = `Quando faz ${waitPhrase(a.wait_minutes)} que o contato entrou na etiqueta ${lab(a.trigger_label_id)}`;
     else if (a.trigger_type === 'respondeu') quando = `Quando o contato da etiqueta ${lab(a.trigger_label_id)} responde`;
+    else if (a.trigger_type === 'venda_registrada') quando = `Quando uma venda for registrada pela conversa${a.trigger_label_id ? ` (só quem está na etiqueta ${lab(a.trigger_label_id)})` : ''}`;
     else if (a.trigger_type === 'dia_hora') quando = `Toda ${formatDays(a.schedule_days || [])} às ${String(a.schedule_time || '').slice(0, 5) || '?'}, para quem está na etiqueta ${lab(a.trigger_label_id)}`;
     else quando = 'Quando (gatilho não escolhido)';
     const conds = (a.conditions || []).map((c) => {
@@ -521,6 +528,7 @@
       st.campaignsAvailable = s.campaigns === true;
       st.campaignsV2 = s.campaignsV2 === true; // 2.2.0: mensagem exclusiva, filtros e ações depois de enviar
       st.automationsAvailable = s.automations === true;
+      st.salesOrigin = s.salesOrigin === true; // 2.3.0: colunas de origem da venda + gatilho "venda registrada"
       return true;
     }
 
@@ -777,15 +785,21 @@
     async function evaluateAutomations() {
       const list = st.automations.filter((a) => a.active).sort((a, b) => (a.position || 0) - (b.position || 0));
       if (!list.length) return [];
-      const labelIds = [...new Set(list.map((a) => a.trigger_label_id).filter(Boolean))];
-      if (!labelIds.length) return [];
-      const contacts = await api('flowCandidates', { labelIds });
+      const labelList = list.filter((a) => a.trigger_type !== 'venda_registrada');
+      const saleList = list.filter((a) => a.trigger_type === 'venda_registrada');
+      const labelIds = [...new Set(labelList.map((a) => a.trigger_label_id).filter(Boolean))];
+      const contacts = labelIds.length ? await api('flowCandidates', { labelIds }) : [];
       const people = Array.isArray(contacts) ? contacts : [];
+      // 2.3.0: "venda registrada": um candidato por venda registrada pela conversa (últimos 2 dias)
+      let buyers = [];
+      if (saleList.length) { try { buyers = await api('saleTriggerCandidates', { sinceDays: 2 }); } catch { buyers = []; } }
+      if (!Array.isArray(buyers)) buyers = [];
+      if (!people.length && !buyers.length) return [];
       let ran = [];
       try { ran = await api('automationRuns', { automationIds: list.map((a) => a.id) }); } catch { ran = null; }
       if (!Array.isArray(ran)) return []; // sem saber o que já rodou, não executa nada
       const ranKeys = new Set(ran);
-      const chatIds = [...new Set(people.map(chatIdOfContact).filter(Boolean))];
+      const chatIds = [...new Set([...people, ...buyers].map(chatIdOfContact).filter(Boolean))];
       const keywords = [...new Set(list.flatMap(automationKeywords))].slice(0, 20);
       const chats = {};
       if (list.some(automationNeedsChat)) {
@@ -797,7 +811,14 @@
       }
       const t = now();
       const rows = [];
-      list.forEach((automation) => {
+      saleList.forEach((automation) => {
+        buyers.forEach((contact) => {
+          const chatId = chatIdOfContact(contact);
+          const ev = evaluateAutomation({ automation, contact, chat: chatId ? chats[chatId] : null, settings: st.settings, now: t, noSendLabelId: st.noSendLabelId, ranKeys });
+          rows.push({ automation, contact, ev });
+        });
+      });
+      labelList.forEach((automation) => {
         people.filter((c) => (c.labelIds || []).includes(automation.trigger_label_id)).forEach((contact) => {
           const chatId = chatIdOfContact(contact);
           const ev = evaluateAutomation({ automation, contact, chat: chatId ? chats[chatId] : null, settings: st.settings, now: t, noSendLabelId: st.noSendLabelId, ranKeys });

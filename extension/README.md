@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.2.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.3.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -127,6 +127,42 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
 - Sem a migration `20261031130000_wa_item_parts.sql` aplicada, o editor
   funciona só com **1 parte** e mostra "Atualize o banco para usar este
   recurso" nas opções de várias partes, esperar e digitando.
+
+### 💰 Vendas pela conversa — 2.3.0
+
+Registra a venda da conversa aberta **direto no ERP**, do mesmo jeito que a tela
+"Nova Venda" do ERP: mesmas tabelas (`sales`, `sale_items`,
+`sale_accessories`), mesmos cálculos (taxas de cartão da configuração, custos,
+lucro, volumes), status **Em separação** e **estoque baixado na hora**, como o
+ERP faz (o Tiny também é avisado). Finalize a venda no ERP, como sempre.
+
+- Abra pelo botão **💰 Venda** na linha da conversa ou pela seção **Vendas**.
+- Cliente (nome e telefone da conversa, editáveis), produtos do ERP (com cor,
+  estoque e preço; o valor pode ser mudado), acessórios (brindes: entram só no
+  custo, como no ERP), pagamento (as opções do ERP), entrega (Loja Física,
+  Motoboy com taxa, Correios com frete; cidade e bairro do ERP; rua, número,
+  complemento, referência, CEP e horário com atalhos), garantia em meses.
+- **Pegar endereço da conversa**: a localização mandada pelo cliente vira um
+  link do Google Maps nas observações; um texto que parece endereço só aparece
+  como sugestão ("Usar como rua").
+- **Origem**: se a conversa veio de um anúncio (Instagram/Facebook), mostra
+  "Veio do anúncio: <título>" e "abrir anúncio"; senão, "Orgânico".
+- **Tirar das automações e pôr na etiqueta CRM Cliente** (marcado): tira das
+  etiquetas de automação que você deixar marcadas e põe em "Cliente".
+- **Registrar venda**: só grava nesse clique. Se a conversa já teve venda
+  registrada nas últimas 24 h, pergunta antes. Depois mostra "Venda registrada
+  (pendente). Finalize no ERP." (com link se `ERP_URL` estiver preenchido em
+  `config.js`).
+- **Gerar mensagem do entregador**: monta o texto (cliente, telefone, rua,
+  bairro, referência, horário, produtos, valor a cobrar e forma, mapa) com
+  **Copiar** e **Enviar para…** (uma conversa carregada, por clique).
+- A lista mostra as últimas 20 vendas registradas pela extensão; clicar abre
+  a conversa.
+- Automações: gatilho novo **"QUANDO uma venda for registrada pela conversa"**
+  (uma vez por venda).
+- Precisa da migration `20261103170000_sales_whatsapp_origin.sql` para guardar
+  a conversa, a origem e a garantia, para a lista e para o gatilho. Sem ela, a
+  venda é registrada igual, só sem esses campos.
 
 ### Prévia editável (olho) — 2.1.0
 
@@ -547,6 +583,13 @@ guardada.
 
 ## O que mudou
 
+### 2.3.0
+- **💰 Vendas pela conversa**: registrar venda no ERP pela conversa (igual à
+  tela Nova Venda), mensagem do entregador, lista das vendas, origem do anúncio
+  e gatilho de automação "venda registrada".
+- Diagnóstico: linha "Vendas pela conversa".
+- Precisa da migration `20261103170000_sales_whatsapp_origin.sql`.
+
 ### 2.2.0
 - **Disparos**: mensagem exclusiva do disparo (editor de partes), "Salvar
   também como mensagem rápida", filtros de público, ações "Depois de enviar",
@@ -736,6 +779,7 @@ WhatsApp Web (mundo da página, "world": "MAIN")
         ▼
 Mundo isolado da extensão
   data/nomes-br.js ......... lista de nomes comuns para o {nome} (2.1.0)
+  sale-calc.js ............. cálculos da venda copiados do ERP (2.3.0; também no background)
   engine.js ................ motor de envios (lógica pura + fila; sem rede, sem DOM)
   content.js ............... painel; áudio: rápido (WA-JS) → plano B (microfone) → plano C (arquivo)
         ▲  chrome.runtime.sendMessage
@@ -815,6 +859,11 @@ Service worker
   o áudio da biblioteca (sem ligar no alto-falante). Desarma após usar, após
   erro ou após 10 s. Qualquer outro pedido vai direto para a função original.
   Não faz conexões de rede.
+- `sale-calc.js` (2.3.0): cópia dos cálculos da tela "Nova Venda" do ERP
+  (`src/pages/Sales.tsx`, `src/lib/cardFees.ts`, `src/lib/systemConfig.ts`,
+  `src/lib/addressValidation.ts`, `src/lib/dateUtils.ts`). Se o ERP mudar a
+  conta, mude aqui também. O background recalcula a venda com os dados frescos
+  do banco antes de gravar.
 - `data/nomes-br.js` (2.1.0): `TSP_NOMES_BR`, um `Set` com os 10 mil
   primeiros nomes mais comuns do Censo 2010 (IBGE, conjunto "genero-nomes" do
   Brasil.IO), sem acento e em minúsculas. Gerado uma vez fora da extensão.
