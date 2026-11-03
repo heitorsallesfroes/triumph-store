@@ -3,6 +3,9 @@
 // (wa_labels, wa_contacts, wa_contact_labels) e a biblioteca pelo editor (wa_categories, wa_items,
 // wa_item_parts e arquivos novos no bucket wa-media) e os agendamentos (wa_schedules: criar e cancelar
 // por clique; o executor do painel reserva e marca o resultado dos que o usuário agendou).
+// 2.0.0: motor de envios (wa_settings, wa_send_log), réguas de follow (wa_flows, wa_flow_variants)
+// e disparos (wa_campaigns, wa_campaign_targets): configurar só por clique; o motor do painel reserva,
+// registra e troca as etiquetas da régua dos contatos que entraram nela.
 (function (root) {
   // Mensagens entre background e página têm limite (~64 MB); o arquivo vai em base64 (+33%).
   const MAX_FILE_BYTES = 40 * 1024 * 1024;
@@ -128,16 +131,19 @@
   const eq = (value) => `eq.${encodeURIComponent(value)}`;
   const nameKey = (name) => `nome:${name.toLowerCase().replace(/\s+/g, ' ').trim()}`;
 
+  // chatId (2.0.0): id da conversa individual, quando a extensão sabe (só é gravado se a coluna existir)
+  const IDENTITY_CHAT_RE = /^[0-9]+@(c\.us|lid)$/;
   function checkIdentity(identity) {
-    const { key, phone, name } = identity || {};
+    const { key, phone, name, chatId } = identity || {};
     const cleanName = typeof name === 'string' && name.trim() ? name.trim().replace(/\s+/g, ' ').slice(0, 100) : null;
+    const chat = typeof chatId === 'string' && IDENTITY_CHAT_RE.test(chatId) ? chatId : null;
     if (typeof key !== 'string') throw new Error('Identificação inválida');
     if (key.startsWith('tel:')) {
       if (!/^\d{8,15}$/.test(phone || '') || key !== `tel:${phone}`) throw new Error('Telefone inválido');
-      return { key, phone, name: cleanName };
+      return { key, phone, name: cleanName, chatId: chat };
     }
     if (!cleanName || key !== nameKey(cleanName)) throw new Error('Identificação inválida');
-    return { key, phone: null, name: cleanName };
+    return { key, phone: null, name: cleanName, chatId: chat };
   }
 
   // Coluna nova ainda não criada no banco: o PostgREST responde 400 citando o nome dela
@@ -203,6 +209,7 @@
     if (typeof labelId !== 'string' || !UUID_RE.test(labelId)) throw new Error('Etiqueta inválida');
     if (on) {
       const contact = await ensureContact(id);
+      if (id.chatId) await rememberChatId(contact, id.chatId).catch(() => {});
       await rest('wa_contact_labels?on_conflict=contact_id,label_id', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' },
@@ -422,7 +429,15 @@
     const list = [...byKey.values()];
     await rest('wa_contacts?on_conflict=key', json('POST', 'resolution=ignore-duplicates,return=minimal',
       list.map((c) => ({ key: c.key, name: c.name, phone: c.phone }))));
-    const rows = await rest(`wa_contacts?select=id,key&key=in.${inList(list.map((c) => c.key))}`);
+    const hasChatCol = list.some((c) => c.chatId) && (await chatIdColumn());
+    const rows = await rest(`wa_contacts?select=id,key${hasChatCol ? ',chat_id' : ''}&key=in.${inList(list.map((c) => c.key))}`);
+    // 2.0.0: grava o id da conversa de quem ainda não tem (ou mudou)
+    if (hasChatCol) {
+      const want = new Map(list.filter((c) => c.chatId).map((c) => [c.key, c.chatId]));
+      for (const r of rows) {
+        if (want.has(r.key) && r.chat_id !== want.get(r.key)) await rememberChatId(r, want.get(r.key)).catch(() => {});
+      }
+    }
     const ids = rows.map((r) => r.id);
     if (!ids.length) return { added: 0, addedTel: 0, addedName: 0, already: 0 };
     const existing = await rest(`wa_contact_labels?select=contact_id&label_id=eq.${labelId}&contact_id=in.${inList(ids)}`);
@@ -701,7 +716,377 @@
     return { updated: rows.length > 0 };
   }
 
+  // ── Motor de envios (2.0.0-D1): configurações, trava, histórico e réguas (follows) ──
+  // Tudo validado aqui. Sem as tabelas (migration 20261103130000): { available: false } ou
+  // "Atualize o banco para usar este recurso".
+
+  const ENGINE_MISSING = 'Atualize o banco para usar este recurso';
+  const ENGINE_TABLES = ['wa_settings', 'wa_flows', 'wa_flow_variants', 'wa_send_log'];
+  const CAMPAIGN_TABLES = ['wa_campaigns', 'wa_campaign_targets'];
+  const SETTINGS_COLUMNS = 'id,paused_all,max_per_hour,max_per_day,min_interval_s,max_interval_s,business_start,business_end,business_days,runner_id,lease_until,updated_at';
+  const RUNNER_RE = /^[a-z0-9]{4,40}$/;
+  const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const SEND_SOURCES = ['follow', 'disparo', 'agendado'];
+  const SEND_STATUS = ['enviando', 'enviado', 'falhou', 'pulado'];
+  const REASON_MAX = 60;
+
+  // Tabela que não existe: o PostgREST responde 404 (PGRST205) ou 400/42P01
+  const tableMissing = (err, tables) => /^Supabase (400|404):/.test(err.message)
+    && (tables.some((t) => new RegExp(`\\b${t}\\b`).test(err.message)) || /^Supabase 404:/.test(err.message));
+
+  async function engineRest(path, init) {
+    try {
+      return await rest(path, init);
+    } catch (err) {
+      if (tableMissing(err, ENGINE_TABLES)) throw new Error(ENGINE_MISSING);
+      throw err;
+    }
+  }
+
+  // Colunas/tabelas novas: "sim" fica guardado; "não" é testado de novo depois de 5 min
+  const probeCache = new Map();
+  async function probe(key, fn) {
+    const hit = probeCache.get(key);
+    if (hit && (hit.value || Date.now() - hit.at < 5 * 60 * 1000)) return hit.value;
+    let value = false;
+    try { value = await fn(); } catch { value = false; }
+    probeCache.set(key, { value, at: Date.now() });
+    return value;
+  }
+  const chatIdColumn = () => probe('wa_contacts.chat_id', () => hasColumn('wa_contacts', 'chat_id'));
+  const campaignsTables = () => probe('campaigns', async () => {
+    try {
+      await rest('wa_campaigns?select=id&limit=1');
+      await rest('wa_campaign_targets?select=id&limit=1');
+      return true;
+    } catch (err) {
+      if (tableMissing(err, CAMPAIGN_TABLES)) return false;
+      throw err;
+    }
+  });
+
+  // Grava o id da conversa do contato (quando a extensão sabe e a coluna existe)
+  async function rememberChatId(contact, chatId) {
+    if (!contact || !chatId || contact.chat_id === chatId) return;
+    if (!(await chatIdColumn())) return;
+    await rest(`wa_contacts?id=eq.${contact.id}`, json('PATCH', 'return=minimal', { chat_id: chatId }));
+  }
+
+  async function getEngineSettings() {
+    let rows;
+    try {
+      rows = await rest(`wa_settings?select=${SETTINGS_COLUMNS}&id=eq.1`);
+    } catch (err) {
+      if (tableMissing(err, ['wa_settings'])) return { available: false };
+      throw err;
+    }
+    if (!rows.length) {
+      await rest('wa_settings?on_conflict=id', json('POST', 'resolution=ignore-duplicates,return=minimal', { id: 1 }));
+      rows = await rest(`wa_settings?select=${SETTINGS_COLUMNS}&id=eq.1`);
+    }
+    if (!rows.length) return { available: false };
+    return { available: true, settings: rows[0], campaigns: await campaignsTables() };
+  }
+
+  const hmOf = (v) => String(v || '').slice(0, 5);
+
+  async function updateEngineSettings(patch) {
+    const p = patch || {};
+    const out = {};
+    if (p.paused_all !== undefined) {
+      if (typeof p.paused_all !== 'boolean') throw new Error('Valor inválido');
+      out.paused_all = p.paused_all;
+    }
+    if (p.max_per_hour !== undefined) out.max_per_hour = intIn(p.max_per_hour, 1, 200, 'Envios por hora');
+    if (p.max_per_day !== undefined) out.max_per_day = intIn(p.max_per_day, 1, 2000, 'Envios por dia');
+    if (p.min_interval_s !== undefined) out.min_interval_s = intIn(p.min_interval_s, 10, 3600, 'Intervalo mínimo (s)');
+    if (p.max_interval_s !== undefined) out.max_interval_s = intIn(p.max_interval_s, 10, 3600, 'Intervalo máximo (s)');
+    if (p.business_start !== undefined) {
+      if (!HM_RE.test(p.business_start)) throw new Error('Início do expediente inválido');
+      out.business_start = p.business_start;
+    }
+    if (p.business_end !== undefined) {
+      if (!HM_RE.test(p.business_end)) throw new Error('Fim do expediente inválido');
+      out.business_end = p.business_end;
+    }
+    if (p.business_days !== undefined) {
+      const days = Array.isArray(p.business_days) ? [...new Set(p.business_days)] : null;
+      if (!days || !days.length || days.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) throw new Error('Escolha pelo menos um dia');
+      out.business_days = days.sort((a, b) => a - b);
+    }
+    if (!Object.keys(out).length) throw new Error('Nada para mudar');
+    const current = (await getEngineSettings());
+    if (!current.available) throw new Error(ENGINE_MISSING);
+    const merged = { ...current.settings, ...out };
+    if (merged.min_interval_s > merged.max_interval_s) throw new Error('O intervalo mínimo não pode passar do máximo');
+    if (hmOf(merged.business_start) >= hmOf(merged.business_end)) throw new Error('O expediente precisa terminar depois de começar');
+    const rows = await engineRest(`wa_settings?id=eq.1&select=${SETTINGS_COLUMNS}`,
+      json('PATCH', 'return=representation', { ...out, updated_at: new Date().toISOString() }));
+    return { settings: rows[0] };
+  }
+
+  // Trava: só assume se ninguém tem, se venceu, ou se já é nossa
+  async function claimLease({ runnerId, ttlS }) {
+    if (typeof runnerId !== 'string' || !RUNNER_RE.test(runnerId)) throw new Error('Identificador inválido');
+    const ttl = intIn(ttlS, 30, 120, 'Tempo da trava');
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const until = new Date(now.getTime() + ttl * 1000).toISOString();
+    const cond = encodeURIComponent(`(lease_until.is.null,lease_until.lt."${nowIso}",runner_id.eq."${runnerId}")`);
+    const rows = await engineRest(`wa_settings?id=eq.1&or=${cond}&select=runner_id,lease_until`,
+      json('PATCH', 'return=representation', { runner_id: runnerId, lease_until: until }));
+    if (rows.length && rows[0].runner_id === runnerId) return { held: true, lease_until: rows[0].lease_until };
+    const cur = await engineRest('wa_settings?id=eq.1&select=lease_until');
+    return { held: false, lease_until: cur.length ? cur[0].lease_until : null };
+  }
+
+  async function countRows2(path) {
+    try {
+      return await countRows(path);
+    } catch (err) {
+      if (/^Supabase 40[04]/.test(err.message)) throw new Error(ENGINE_MISSING);
+      throw err;
+    }
+  }
+
+  // Envios que contam nos limites: tudo menos 'pulado'
+  async function sendCounts({ hourSince, daySince }) {
+    const h = Date.parse(hourSince);
+    const d = Date.parse(daySince);
+    if (!Number.isFinite(h) || !Number.isFinite(d)) throw new Error('Data inválida');
+    const base = 'wa_send_log?status=neq.pulado&created_at=gte.';
+    const [hour, day] = await Promise.all([
+      countRows2(base + encodeURIComponent(new Date(h).toISOString())),
+      countRows2(base + encodeURIComponent(new Date(d).toISOString())),
+    ]);
+    return { hour, day };
+  }
+
+  // Momento do último envio (para respeitar o intervalo depois de recarregar a página)
+  async function lastSendAt() {
+    const rows = await engineRest('wa_send_log?select=created_at&status=neq.pulado&order=created_at.desc&limit=1');
+    return { at: rows.length ? rows[0].created_at : null };
+  }
+
+  const optUuid = (v, what) => {
+    if (v === undefined || v === null) return null;
+    return checkUuid(v, what);
+  };
+  const cleanReason = (v) => (typeof v === 'string' && v.trim() ? v.trim().replace(/\s+/g, ' ').slice(0, REASON_MAX) : null);
+
+  async function logSend({ source, source_id, contact_id, chat_id, item_id, status, reason }) {
+    if (!SEND_SOURCES.includes(source)) throw new Error('Origem inválida');
+    if (!SEND_STATUS.includes(status)) throw new Error('Status inválido');
+    const chat = chat_id == null ? null : (typeof chat_id === 'string' && SCHED_CHAT_RE.test(chat_id) ? chat_id : null);
+    const rows = await engineRest('wa_send_log', json('POST', 'return=representation', {
+      source, source_id: optUuid(source_id, 'Origem inválida'), contact_id: optUuid(contact_id, 'Contato inválido'),
+      chat_id: chat, item_id: optUuid(item_id, 'Mensagem inválida'), status, reason: cleanReason(reason),
+    }));
+    return { id: rows[0].id };
+  }
+
+  async function finishSendLog({ id, status, reason }) {
+    checkUuid(id, 'Registro inválido');
+    if (!SEND_STATUS.includes(status) || status === 'enviando') throw new Error('Status inválido');
+    await engineRest(`wa_send_log?id=eq.${id}&status=eq.enviando`, json('PATCH', 'return=minimal', { status, reason: cleanReason(reason) }));
+    return true;
+  }
+
+  const phoneOfChat = (chatId) => {
+    const m = /^(\d{8,15})@c\.us$/.exec(chatId || '');
+    return m ? m[1] : null;
+  };
+
+  // Contatos de um lote de conversas: { chatId: { id, name } } (por chat_id ou telefone)
+  async function contactsByChats(chatIds) {
+    const out = {};
+    const ids = [...new Set(chatIds.filter((c) => typeof c === 'string' && SCHED_CHAT_RE.test(c)))];
+    if (!ids.length) return out;
+    const hasCol = await chatIdColumn();
+    for (let i = 0; i < ids.length; i += 100) {
+      const part = ids.slice(i, i + 100);
+      if (hasCol) {
+        const rows = await rest(`wa_contacts?select=id,name,chat_id&chat_id=in.${inList(part)}`);
+        rows.forEach((r) => { out[r.chat_id] = { id: r.id, name: r.name }; });
+      }
+      const phones = part.filter((c) => !out[c]).map(phoneOfChat).filter(Boolean);
+      if (phones.length) {
+        const rows = await rest(`wa_contacts?select=id,name,phone&phone=in.${inList(phones)}`);
+        rows.forEach((r) => { out[`${r.phone}@c.us`] = out[`${r.phone}@c.us`] || { id: r.id, name: r.name }; });
+      }
+    }
+    return out;
+  }
+
+  // Contato da conversa e se ele tem a etiqueta (ex.: "Não enviar")
+  async function chatContact({ chatId, labelId }) {
+    if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
+    const found = (await contactsByChats([chatId]))[chatId];
+    if (!found) return { contactId: null, hasLabel: false };
+    if (!labelId) return { contactId: found.id, hasLabel: false };
+    checkUuid(labelId);
+    const rows = await rest(`wa_contact_labels?select=label_id&contact_id=eq.${found.id}&label_id=eq.${labelId}`);
+    return { contactId: found.id, hasLabel: rows.length > 0 };
+  }
+
+  // Últimos envios automáticos com o nome do contato (só para a tela)
+  async function fetchSendLog({ limit = 50 } = {}) {
+    const lim = Math.min(200, Math.max(1, Math.floor(Number(limit) || 50)));
+    const rows = await engineRest(`wa_send_log?select=id,source,contact_id,chat_id,status,reason,created_at&order=created_at.desc&limit=${lim}`);
+    const contactIds = [...new Set(rows.map((r) => r.contact_id).filter(Boolean))];
+    const names = {};
+    for (let i = 0; i < contactIds.length; i += 100) {
+      const got = await rest(`wa_contacts?select=id,name,phone&id=in.${inList(contactIds.slice(i, i + 100))}`);
+      got.forEach((c) => { names[c.id] = c.name || c.phone || null; });
+    }
+    const byChat = await contactsByChats(rows.filter((r) => !r.contact_id && r.chat_id).map((r) => r.chat_id));
+    return rows.map((r) => ({
+      id: r.id, source: r.source, status: r.status, reason: r.reason, created_at: r.created_at,
+      name: (r.contact_id && names[r.contact_id]) || (r.chat_id && byChat[r.chat_id] && byChat[r.chat_id].name) || null,
+    }));
+  }
+
+  // Etiqueta CRM "Não enviar" (cinza): cria se não existir
+  const NO_SEND = 'Não enviar';
+  const noSendKey = (n) => String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+  async function ensureNoSendLabel() {
+    const find = async () => (await rest('wa_labels?select=id,name')).find((l) => noSendKey(l.name) === noSendKey(NO_SEND));
+    const found = await find();
+    if (found) return { id: found.id, created: false };
+    try {
+      const l = await createLabel({ name: NO_SEND, color: '#6b7280' });
+      return { id: l.id, created: true };
+    } catch (err) {
+      const again = await find(); // outra aba criou ao mesmo tempo
+      if (again) return { id: again.id, created: false };
+      throw err;
+    }
+  }
+
+  // ── Réguas (wa_flows + wa_flow_variants) ──
+
+  const FLOW_COLUMNS = 'id,name,active,label_id,wait_minutes,item_id,next_label_id,reply_label_id,ignore_older_days,position,created_at';
+  const VARIANT_COLUMNS = 'id,flow_id,position,condition,label_id,ad_keyword,item_id';
+
+  async function fetchFlows() {
+    const [flows, variants] = await Promise.all([
+      engineRest(`wa_flows?select=${FLOW_COLUMNS}&order=position.asc,created_at.asc`),
+      engineRest(`wa_flow_variants?select=${VARIANT_COLUMNS}&order=flow_id.asc,position.asc&limit=10000`),
+    ]);
+    return flows.map((f) => ({ ...f, variants: variants.filter((v) => v.flow_id === f.id).sort((a, b) => a.position - b.position) }));
+  }
+
+  function checkVariant(v, i) {
+    const n = i + 1;
+    if (!v || typeof v !== 'object' || !['etiqueta', 'anuncio'].includes(v.condition)) throw new Error(`Variante ${n}: condição inválida`);
+    const item_id = checkUuid(v.item_id, `Variante ${n}: escolha a mensagem`);
+    if (v.condition === 'etiqueta') return { condition: 'etiqueta', label_id: checkUuid(v.label_id, `Variante ${n}: escolha a etiqueta`), ad_keyword: null, item_id };
+    const kw = typeof v.ad_keyword === 'string' ? v.ad_keyword.trim().replace(/\s+/g, ' ') : '';
+    if (!kw || kw.length > 60) throw new Error(`Variante ${n}: palavra do anúncio de 1 a 60 caracteres`);
+    return { condition: 'anuncio', label_id: null, ad_keyword: kw, item_id };
+  }
+
+  async function saveFlow(input) {
+    const f = input || {};
+    if (f.id !== undefined && f.id !== null) checkUuid(f.id, 'Régua inválida');
+    const row = {
+      name: cleanText(f.name, 60, 'Nome da régua'),
+      active: f.active === true,
+      label_id: checkUuid(f.label_id, 'Escolha a etiqueta de entrada'),
+      wait_minutes: intIn(f.wait_minutes, 1, 43200, 'Espera (minutos)'),
+      item_id: optUuid(f.item_id, 'Mensagem inválida'),
+      next_label_id: optUuid(f.next_label_id, 'Etiqueta inválida'),
+      reply_label_id: optUuid(f.reply_label_id, 'Etiqueta inválida'),
+      ignore_older_days: intIn(f.ignore_older_days ?? 15, 1, 365, 'Ignorar conversas paradas há (dias)'),
+    };
+    if (row.next_label_id === row.label_id || row.reply_label_id === row.label_id) throw new Error('A etiqueta de saída precisa ser diferente da de entrada');
+    const variants = Array.isArray(f.variants) ? f.variants : [];
+    if (variants.length > 10) throw new Error('No máximo 10 variantes');
+    const list = variants.map(checkVariant);
+    if (!row.item_id && !list.length) throw new Error('Escolha a mensagem (padrão ou uma variante)');
+    let id = f.id;
+    if (id) {
+      const rows = await engineRest(`wa_flows?id=eq.${id}`, json('PATCH', 'return=representation', row));
+      if (!rows.length) throw new Error('Régua não encontrada');
+    } else {
+      const last = await engineRest('wa_flows?select=position&order=position.desc&limit=1');
+      const position = last.length ? (Number(last[0].position) || 0) + 1 : 0;
+      const rows = await engineRest('wa_flows', json('POST', 'return=representation', { ...row, position }));
+      id = rows[0].id;
+    }
+    await engineRest(`wa_flow_variants?flow_id=eq.${id}`, { method: 'DELETE' });
+    if (list.length) {
+      await engineRest('wa_flow_variants', json('POST', 'return=minimal', list.map((v, i) => ({ ...v, flow_id: id, position: i }))));
+    }
+    return { id };
+  }
+
+  async function setFlowActive({ id, active }) {
+    checkUuid(id, 'Régua inválida');
+    if (typeof active !== 'boolean') throw new Error('Valor inválido');
+    const rows = await engineRest(`wa_flows?id=eq.${id}`, json('PATCH', 'return=representation', { active }));
+    return { active: rows.length ? rows[0].active : null };
+  }
+
+  async function deleteFlow({ id }) {
+    checkUuid(id, 'Régua inválida');
+    await engineRest(`wa_flows?id=eq.${id}`, { method: 'DELETE' });
+    return true;
+  }
+
+  // Contatos com qualquer uma das etiquetas de entrada, com TODAS as etiquetas CRM de cada um
+  async function flowCandidates({ labelIds }) {
+    if (!Array.isArray(labelIds) || !labelIds.length || labelIds.length > 50) throw new Error('Lista inválida');
+    labelIds.forEach((l) => checkUuid(l));
+    const cols = (await chatIdColumn()) ? 'id,name,phone,chat_id' : 'id,name,phone';
+    const rows = await rest(`wa_contact_labels?select=contact_id,contact:wa_contacts!inner(${cols})&label_id=in.${inList(labelIds)}&limit=5000`);
+    const byId = new Map();
+    rows.forEach((r) => {
+      if (r.contact && !byId.has(r.contact.id)) byId.set(r.contact.id, { id: r.contact.id, name: r.contact.name || null, phone: r.contact.phone || null, chat_id: r.contact.chat_id || null, labelIds: [] });
+    });
+    const ids = [...byId.keys()];
+    for (let i = 0; i < ids.length; i += 100) {
+      const links = await rest(`wa_contact_labels?select=contact_id,label_id&contact_id=in.${inList(ids.slice(i, i + 100))}&limit=10000`);
+      links.forEach((l) => { const c = byId.get(l.contact_id); if (c) c.labelIds.push(l.label_id); });
+    }
+    return [...byId.values()];
+  }
+
+  async function contactLabelIds({ contactId }) {
+    checkUuid(contactId, 'Contato inválido');
+    return labelIdsOf(contactId);
+  }
+
+  // Reserva do follow: só quem apagar a ligação contato↔etiqueta da régua envia
+  async function followReserve({ contactId, labelId }) {
+    checkUuid(contactId, 'Contato inválido');
+    checkUuid(labelId);
+    const rows = await rest(`wa_contact_labels?contact_id=eq.${contactId}&label_id=eq.${labelId}`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
+    return { reserved: Array.isArray(rows) && rows.length > 0 };
+  }
+
+  async function followAdd({ contactId, labelId }) {
+    checkUuid(contactId, 'Contato inválido');
+    checkUuid(labelId);
+    await rest('wa_contact_labels?on_conflict=contact_id,label_id', json('POST', 'resolution=ignore-duplicates,return=minimal',
+      { contact_id: contactId, label_id: labelId }));
+    return true;
+  }
+
+  async function followMove({ contactId, fromLabelId, toLabelId }) {
+    checkUuid(fromLabelId);
+    checkUuid(toLabelId);
+    if (fromLabelId === toLabelId) throw new Error('Mesma etiqueta');
+    const r = await followReserve({ contactId, labelId: fromLabelId });
+    if (!r.reserved) return { moved: false };
+    await followAdd({ contactId, labelId: toLabelId });
+    return { moved: true };
+  }
+
   root.WaApi = {
+    getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,
+    chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
+    followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,
     saveItem, deleteItem, createCategory, renameCategory, deleteCategory, uploadFile, partsTableExists,
     fetchLibrary, incrementUsage, fetchFile, isAllowedFileUrl, MAX_FILE_BYTES,

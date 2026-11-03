@@ -469,6 +469,66 @@
     return sendJob(requestId, chatId, ms, () => wpp.chat.sendFileMessage(chatId, blob, options));
   }
 
+  // ── Motor de envios (2.0.0): SÓ LEITURA do que já está carregado no WhatsApp Web ──
+  // Para cada conversa pedida: se está carregada, quem mandou a última mensagem e quando
+  // (só fromMe + horário, nunca o texto) e quais palavras de anúncio aparecem no ctwaContext
+  // (o texto do anúncio é comparado aqui e nunca sai da ponte).
+
+  const INFO_MAX_CHATS = 500;
+  const INFO_MAX_KEYWORDS = 20;
+  const INDIVIDUAL_RE = /^[^@\s]+@(c\.us|lid)$/;
+
+  function adTextsOf(chat) {
+    const msgs = safe(() => chat.msgs.getModelsArray(), null);
+    if (!Array.isArray(msgs)) return '';
+    const parts = [];
+    for (const m of msgs) {
+      const ctx = safe(() => m.ctwaContext, null);
+      if (!ctx || typeof ctx !== 'object') continue;
+      ['title', 'description', 'body'].forEach((k) => {
+        const v = safe(() => ctx[k], '');
+        if (typeof v === 'string' && v) parts.push(v);
+      });
+    }
+    return parts.join('\n').toLowerCase();
+  }
+
+  async function chatsInfo(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const p = payload || {};
+    const ids = Array.isArray(p.chatIds) ? p.chatIds : null;
+    const keywords = p.keywords === undefined ? [] : Array.isArray(p.keywords) ? p.keywords : null;
+    if (!ids || ids.length > INFO_MAX_CHATS || ids.some((id) => typeof id !== 'string' || !INDIVIDUAL_RE.test(id))) {
+      throw new BridgeError('invalid_request', 'Pedido inválido', 'before-send');
+    }
+    if (!keywords || keywords.length > INFO_MAX_KEYWORDS || keywords.some((k) => typeof k !== 'string' || !k.trim() || k.length > 60)) {
+      throw new BridgeError('invalid_request', 'Pedido inválido', 'before-send');
+    }
+    let loaded;
+    try {
+      loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS);
+    } catch (err) {
+      if (err instanceof BridgeError) throw err;
+      throw new BridgeError('chats_failed', 'Não consegui ler as conversas', 'before-send');
+    }
+    const byId = new Map();
+    (Array.isArray(loaded) ? loaded : []).forEach((c) => byId.set(chatIdOf(c), c));
+    const kws = keywords.map((k) => k.trim().toLowerCase());
+    const chats = {};
+    ids.forEach((id) => {
+      const chat = byId.get(id);
+      if (!chat || safe(() => !!chat.isGroup, false)) return;
+      const last = lastLoadedMessage(chat);
+      const ads = kws.length ? adTextsOf(chat) : '';
+      chats[id] = {
+        loaded: true,
+        last: last ? { fromMe: !!safe(() => last.id.fromMe, false), t: Number(safe(() => last.t, 0)) || 0 } : null,
+        ad: ads ? kws.filter((k) => ads.includes(k)) : [],
+      };
+    });
+    return { chats };
+  }
+
   function cancel(payload) {
     const job = payload && typeof payload.id === 'string' ? jobs.get(payload.id) : null;
     if (!job || job.stage !== 'before-send') return { cancelled: false };
@@ -489,6 +549,7 @@
     openChat: (payload) => openChat(payload),
     chatLabels: (payload) => chatLabels(payload),
     setChatLabels: (payload) => setChatLabels(payload),
+    chatsInfo: (payload) => chatsInfo(payload),
   };
 
   function reply(request, ok, data, error) {

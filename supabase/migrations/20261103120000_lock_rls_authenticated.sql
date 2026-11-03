@@ -31,6 +31,10 @@
 -- anon e deixam de funcionar depois desta migration (precisam de login ou da
 -- service_role rodando só no seu PC).
 -- Tabela que não existir no banco é pulada (aviso NOTICE), sem erro.
+-- Extensão 2.0.0: wa_settings, wa_flows, wa_flow_variants, wa_send_log, wa_campaigns e
+-- wa_campaign_targets também entram. Se as migrations 20261103130000/20261103140000 forem
+-- aplicadas DEPOIS desta, elas mesmas criam essas tabelas só para authenticated e se registram
+-- na cópia rls_backup_20261103 (o rollback abre todas do mesmo jeito).
 -- ============================================================================
 
 begin;
@@ -80,7 +84,10 @@ declare
     -- ERP (aba WhatsApp) e extensão
     'wa_categories', 'wa_items', 'wa_labels',
     -- só a extensão
-    'wa_item_parts', 'wa_contacts', 'wa_contact_labels', 'wa_schedules'
+    'wa_item_parts', 'wa_contacts', 'wa_contact_labels', 'wa_schedules',
+    -- extensão 2.0.0 (motor, follows e disparos: migrations 20261103130000 e 20261103140000)
+    'wa_settings', 'wa_flows', 'wa_flow_variants', 'wa_send_log',
+    'wa_campaigns', 'wa_campaign_targets'
   ];
 begin
   foreach t in array tables loop

@@ -4,9 +4,11 @@ Esta extensão do Google Chrome mostra, **dentro do WhatsApp Web**, um painel co
 as mensagens, áudios, imagens, vídeos e documentos cadastrados na aba
 **WhatsApp** do ERP.
 
-Ela **nunca envia nada sozinha**: só coloca o texto na caixa de mensagem ou
-abre a prévia do anexo. Quem confere e aperta Enter (ou o botão de enviar) é
-sempre você.
+Ela **só envia sozinha o que você configurou**: agendamentos, réguas de
+follow ligadas por você e disparos iniciados por você. Tudo isso passa por um
+**motor único** com limites, horário comercial e o botão **Pausar tudo** (veja
+"Motor de envios" abaixo). O resto (a seta, "Colocar na caixa") só acontece
+no seu clique.
 
 No topo do painel fica um **menu de seções** (Mensagens, Etiquetas, Quadro…).
 No topo do WhatsApp Web fica uma **barra** com as etiquetas. Existem dois tipos
@@ -16,9 +18,9 @@ de etiqueta, sempre com o nome junto:
   WhatsApp (aparecem também no celular).
 - **Etiquetas do CRM**: as nossas, guardadas no Supabase (tabelas
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
-  sistema e vão ser a base de follows e disparos no futuro.
+  sistema e são a base dos follows e dos disparos.
 
-Versão atual: **1.9.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.0.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -144,6 +146,12 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
   pronto) e envia **um de cada vez**, com 15 a 30 segundos entre eles. Antes de
   enviar, ela "reserva" o agendamento no banco: com duas abas ou dois
   computadores abertos, só um envia.
+- **2.0.0, com a migration `20261103130000_wa_flows.sql` aplicada**: os
+  agendamentos passam pelo **motor de envios** (veja abaixo). Valem os mesmos
+  limites, o intervalo entre contatos, o horário comercial e o "Pausar tudo":
+  um agendamento marcado para fora do expediente sai no começo do próximo
+  expediente (se passar de 24 h de atraso, expira). Contato com a etiqueta CRM
+  **Não enviar** não recebe (fica "falhou").
 - Enquanto envia, o rodapé do painel mostra "Agendado · Enviando 1/3 …" com
   **Parar** (Parar marca o agendamento como cancelado).
 - Se a conversa não estiver carregada no WhatsApp Web, o agendamento fica como
@@ -151,6 +159,56 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
   fica **falhou** e a extensão **nunca reenvia sozinha**: confira a conversa.
 - Sem a migration `20261031140000_wa_schedules.sql` aplicada, a seção mostra
   "Atualize o banco para usar este recurso" (o resto funciona).
+
+### Motor de envios (2.0.0)
+
+Tudo que sai sozinho (agendados, follows e disparos) passa por **uma fila só**:
+
+- **Uma mensagem por vez.** Entre um contato e outro, espera um intervalo
+  **aleatório** entre o mínimo e o máximo configurados (padrão 45 a 120 s).
+- **Limites somados** (padrão 30 por hora e 150 por dia), contando follows,
+  disparos e agendados juntos (tabela `wa_send_log`).
+- **Horário comercial** (padrão 09:00–19:00, seg–sáb). Fora dele, nada sai;
+  continua no próximo expediente.
+- **Pausar tudo**: no topo da seção Follows e no rodapé do painel (quando há
+  envio automático ligado). Pausar também para a sequência automática em
+  andamento.
+- **Não enviar**: a extensão cria sozinha a etiqueta CRM cinza "Não enviar".
+  Contato com ela nunca recebe nada automático.
+- **Um computador por vez**: a aba que executa guarda uma "trava" no banco e a
+  renova a cada 30 s. Se ela fechar, outra aba (ou outro PC) assume em até
+  90 s. O Diagnóstico mostra "este computador executa", "outro computador
+  executa" ou "pausado".
+- Cada envio é **reservado no banco** antes. Se o WhatsApp não confirmar o
+  envio, fica **falhou** e **nunca é reenviado**. Se falhar antes de enviar
+  (ex.: conversa não carregada), fica falhou ou pulado, com o motivo.
+- Edite os limites em **Follows → Limites e horário**.
+
+### Follows (seção 🔁 Follows)
+
+Uma **régua** manda uma mensagem para quem está numa etiqueta CRM e **não
+respondeu** depois de um tempo.
+
+- **1. Quem entra**: os contatos com a etiqueta CRM escolhida.
+- **2. Espera**: o tempo sem resposta depois da **sua** última mensagem,
+  contando **só** os minutos do horário comercial e dos dias permitidos, e só
+  com o WhatsApp Web aberto. Conversas paradas há mais de N dias (padrão 15)
+  são puladas.
+- **3. Manda**: variantes em ordem ("SE tem a etiqueta X", "SE veio do
+  anúncio com a palavra Y"); a primeira que bater vale; senão a mensagem
+  **SEMPRE** (padrão). `{nome}` vira o primeiro nome do contato.
+- **4. Depois vai para**: depois de enviar, o contato sai da etiqueta da régua
+  e vai para a próxima (ou só sai). Isso impede reenvio. **Se responder vai
+  para**: quem respondeu sai da régua e vai para essa etiqueta.
+- A conversa precisa estar **carregada no WhatsApp Web** (a extensão nunca
+  cria conversa num follow). O id da conversa é guardado no contato quando
+  você marca uma etiqueta CRM ou usa "Copiar do WhatsApp".
+- **Simular**: mostra quem receberia o quê agora e quem seria pulado, sem
+  enviar nem gravar nada. **Testar com a conversa aberta**: qual régua, qual
+  mensagem e quanto falta. **Colocar a conversa aberta numa régua**: marca a
+  etiqueta CRM de entrada. **Histórico**: os últimos 50 envios automáticos.
+- Sem a migration `20261103130000_wa_flows.sql`, a seção mostra "Atualize o
+  banco para usar este recurso" e os agendamentos funcionam como na 1.9.0.
 
 ### Áudio como mensagem de voz
 
@@ -232,8 +290,8 @@ Logo abaixo do cabeçalho do painel há uma fileira de botões, com ícone e nom
 - **Etiquetas**: as etiquetas do CRM, dentro do próprio painel (veja abaixo).
 - **Quadro**: abre o Quadro grande. O painel continua na seção em que estava.
 - **Agendados**: agendar mensagens (veja "Agendamento" abaixo).
-- **Disparos** e **Follows**: desativados, com o selo "em breve" (passe o
-  mouse: "Chega nas próximas versões").
+- **Follows**: réguas automáticas (veja "Follows" acima).
+- **Disparos**: desativado, com o selo "em breve".
 
 A seção ativa fica destacada em laranja e o título do cabeçalho muda
 ("Mensagens", "Etiquetas CRM" ou "Agendados"). O painel lembra a última seção escolhida.
@@ -401,6 +459,23 @@ guardada.
 
 ## O que mudou
 
+### 2.0.0
+- **Motor de envios** único para agendados, follows e disparos: fila só, uma
+  sequência por vez, intervalo aleatório, limites por hora/dia somados, horário
+  comercial, **Pausar tudo**, etiqueta CRM **Não enviar** e trava para só um
+  computador executar.
+- **Follows** (réguas) na seção 🔁 Follows: esquema em cartões, editor,
+  Simular, Testar com a conversa aberta, Colocar numa régua e Histórico.
+- O id da conversa (`chat_id`) é guardado no contato ao marcar etiqueta CRM ou
+  copiar do WhatsApp.
+- Diagnóstico: "Motor de envios" e "Follows e Disparos".
+- Precisa da migration `20261103130000_wa_flows.sql`.
+
+### 1.9.1
+- **Login**: aviso "Entre com sua conta do sistema" no topo do painel. Com a
+  conta conectada, as chamadas ao Supabase usam o seu login. Diagnóstico:
+  linha "Conta" e botão "Sair".
+
 ### 1.9.0
 - **Editor de mensagens no painel**: criar, editar, duplicar e excluir
   mensagens, e criar/renomear/excluir categorias, sem sair do WhatsApp.
@@ -549,6 +624,7 @@ WhatsApp Web (mundo da página, "world": "MAIN")
         │  'tsp-wa-content'/'tsp-wa-bridge' e 'tsp-wajs-content'/'tsp-wajs-bridge')
         ▼
 Mundo isolado da extensão
+  engine.js ................ motor de envios (lógica pura + fila; sem rede, sem DOM)
   content.js ............... painel; áudio: rápido (WA-JS) → plano B (microfone) → plano C (arquivo)
         ▲  chrome.runtime.sendMessage
         ▼
@@ -583,6 +659,9 @@ Service worker
   `stage: 'before-send'` = nada
   foi enviado (pode ir para o plano B); `'sending'` = o envio começou (não
   tentar de novo).
+  Motor (2.0.0, só leitura): `chatsInfo { chatIds (até 500, só @c.us/@lid),
+  keywords (até 20) }` → `{ chats: { id: { loaded, last: { fromMe, t }, ad:
+  [palavras que aparecem no ctwaContext] } } }`; nunca devolve texto.
 - Atualizar a WA-JS: ver `vendor/README.md` (npm pack fora do repositório,
   conferir SHA-256, trocar o arquivo sem alterar, rodar os testes).
 
@@ -598,7 +677,10 @@ Service worker
   biblioteca pelo editor (`wa_categories`, `wa_items`, `wa_item_parts` e
   arquivos novos no bucket `wa-media`) e os agendamentos (`wa_schedules`),
   sempre a pedido de um clique (ou, no caso do executor, para marcar o
-  resultado de um agendamento feito pelo usuário). O background só atende os tipos da lista `HANDLERS`;
+  resultado de um agendamento feito pelo usuário). 2.0.0: o motor também
+  grava `wa_settings` (trava e "Pausar tudo"), `wa_send_log` (cada envio
+  automático) e troca as etiquetas CRM da régua do contato que recebeu ou
+  respondeu; réguas (`wa_flows`, `wa_flow_variants`) e limites só pelo editor. O background só atende os tipos da lista `HANDLERS`;
   cada função valida a entrada (UUID, tamanhos, cores da paleta). Excluir uma
   etiqueta CRM apaga as marcações e a etiqueta, nunca contatos. Colunas novas
   (`hidden`, `notes`): tenta com a coluna e, se o banco responder 400 citando
@@ -610,6 +692,10 @@ Service worker
   o áudio da biblioteca (sem ligar no alto-falante). Desarma após usar, após
   erro ou após 10 s. Qualquer outro pedido vai direto para a função original.
   Não faz conexões de rede.
+- `engine.js` (2.0.0): carregado antes do `content.js`, no mesmo mundo
+  isolado. Tempo útil, avaliação das réguas, limites, intervalo aleatório,
+  trava e a fila única (`TspEngine.createMotor`). Não faz rede nem mexe na
+  página: recebe o background, a ponte e o envio em sequência por parâmetro.
 - `content.js`: o painel (em Shadow DOM), o cache em `chrome.storage.local`
   (`library`, `labels`, `collapsed`, `lastUsed`, `themePref`, `labelsBarHidden`,
   `labelsFamily`, `boardLabelIds`, `boardCrmLabelIds`, `panelSection`; nada de contatos, telefones ou notas) e a integração

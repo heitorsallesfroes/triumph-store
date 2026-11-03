@@ -752,6 +752,32 @@
       .panel.sec-sched .status, .panel.sec-sched .labels, .panel.sec-sched .name-note,
       .panel.sec-sched .tools, .panel.sec-sched .banner, .panel.sec-sched .list { display: none; }
       .stab .crmsec { display: flex; flex-direction: column; gap: 7px; }
+      /* Seção Follows (2.0.0) */
+      .ftab { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 10px; flex-direction: column; gap: 10px; scrollbar-width: thin; }
+      .ftab > * { flex-shrink: 0; }
+      .panel.sec-follows .ftab { display: flex; }
+      .panel.sec-follows .status, .panel.sec-follows .labels, .panel.sec-follows .name-note,
+      .panel.sec-follows .tools, .panel.sec-follows .banner, .panel.sec-follows .list { display: none; }
+      .ftab .crmsec { display: flex; flex-direction: column; gap: 7px; }
+      .fw-count { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+      .fw-card { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); font-size: 12px; text-align: left; }
+      .fw-card.on { border-color: var(--accent); }
+      .fw-new { align-items: center; color: var(--accent); font-weight: 700; border-style: dashed; background: transparent; }
+      .fw-head { display: flex; align-items: center; gap: 8px; }
+      .fw-name { flex: 1; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .fw-badge { padding: 1px 7px; border-radius: 999px; background: var(--card); color: var(--muted); font-size: 9.5px; font-weight: 800; letter-spacing: .04em; }
+      .fw-badge.on { background: var(--ok-soft); color: var(--ok); }
+      .fw-step { display: flex; gap: 7px; }
+      .fw-n { width: 17px; height: 17px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+      .fw-txt { flex: 1; min-width: 0; line-height: 1.4; word-break: break-word; }
+      .fw-arrow { text-align: center; color: var(--muted); font-size: 12px; }
+      .fw-variant { display: flex; flex-direction: column; gap: 5px; padding: 7px; border-radius: 8px; background: var(--bg2); }
+      .fw-test { display: flex; flex-direction: column; gap: 4px; padding: 7px 8px; border-radius: 8px; background: var(--bg2); font-size: 12px; }
+      .fw-sim.ok .sc-prev { color: var(--ok); }
+      .fw-sim.skip .sc-prev { color: var(--warn); }
+      .foot-pause { flex-shrink: 0; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); font-size: 10.5px; font-weight: 700; color: var(--fg); }
+      .foot-pause.on { border-color: var(--accent); color: var(--accent); }
+      .foot-pause[hidden] { display: none; }
       .sc-row { display: flex; flex-wrap: wrap; gap: 8px; }
       .sc-row .ed-field { flex: 1; min-width: 110px; }
       .sc-radio { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
@@ -1046,7 +1072,7 @@
           <button type="button" class="pboard" title="Abrir o Quadro" aria-pressed="false">${svg('board')}<span>Quadro</span></button>
           <button type="button" data-sec="agendados" title="Agendados" aria-pressed="false">${svg('clock')}<span>Agendados</span></button>
           <button type="button" aria-disabled="true" title="Chega nas próximas versões">${svg('megaphone')}<span>Disparos</span><span class="psoon">em breve</span></button>
-          <button type="button" aria-disabled="true" title="Chega nas próximas versões">${svg('repeat')}<span>Follows</span><span class="psoon">em breve</span></button>
+          <button type="button" data-sec="follows" title="Follows (réguas automáticas)" aria-pressed="false">${svg('repeat')}<span>Follows</span></button>
         </nav>
         <div class="status warn"><span class="dot"></span><span class="txt"></span></div>
         <div class="labels">
@@ -1110,9 +1136,10 @@
           <div class="vbar"><div class="vfill"></div></div>
         </div>
         <div class="stab" role="region" aria-label="Agendados"></div>
+        <div class="ftab" role="region" aria-label="Follows"></div>
         <div class="seqbar" role="status" aria-live="polite" hidden><span class="seqtxt"></span><button class="seqstop" type="button">Parar</button></div>
         <div class="toast" role="status" aria-live="polite"></div>
-        <footer class="foot"><span class="last">Último usado: <b>—</b></span><span class="ver"></span></footer>
+        <footer class="foot"><span class="last">Último usado: <b>—</b></span><button class="foot-pause" type="button" hidden></button><span class="ver"></span></footer>
       </aside>
     </div>
   `;
@@ -1374,11 +1401,12 @@
   }
 
   function setSection(section, { persist = true } = {}) {
-    state.section = ['etiquetas', 'agendados'].includes(section) ? section : 'mensagens';
+    state.section = ['etiquetas', 'agendados', 'follows'].includes(section) ? section : 'mensagens';
     const labels = state.section === 'etiquetas';
     panel.classList.toggle('sec-labels', labels);
     panel.classList.toggle('sec-sched', state.section === 'agendados');
-    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados' }[state.section];
+    panel.classList.toggle('sec-follows', state.section === 'follows');
+    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados', follows: 'Follows' }[state.section];
     panel.setAttribute('aria-label', brandTxt.textContent);
     if (persist) storageSet({ panelSection: state.section }); // só o nome da seção
     setMenuOpen(false);
@@ -1393,6 +1421,7 @@
     if (want && !crm.open) openCrm();
     else if (!want && crm.open) closeCrm();
     syncSchedActive();
+    syncFollowsActive();
   }
 
   navBtns.forEach((b) => b.addEventListener('click', () => {
@@ -1583,7 +1612,15 @@
 
     pendingLabelOps++;
     try {
-      const ids = await call('setContactLabel', { identity: identityPayload(identity), labelId, on });
+      // 2.0.0: manda junto o id da conversa aberta (para os follows acharem a conversa)
+      let chatId;
+      if (on && state.waStatus && state.waStatus.ready) {
+        try {
+          const chat = await waRequest('activeChat', {}, { timeout: 1000 });
+          if (chat && chat.kind === 'individual' && typeof chat.chatId === 'string') chatId = chat.chatId;
+        } catch { chatId = undefined; }
+      }
+      const ids = await call('setContactLabel', { identity: { ...identityPayload(identity), chatId }, labelId, on });
       if (pendingLabelOps === 1) apply(ids);
       afterLabelChange();
     } catch {
@@ -3360,7 +3397,7 @@
   const SCHED_STATUS_LABEL = { pendente: 'pendente', enviando: 'enviando', enviada: 'enviada', falhou: 'falhou', cancelada: 'cancelada', expirada: 'expirada' };
   const SCHED_ERROR_LABEL = {
     chat_not_loaded: 'conversa não carregada', send_unconfirmed: 'envio não confirmado', item_not_found: 'mensagem salva não existe mais',
-    stopped: 'parado por você', not_ready: 'WhatsApp não estava pronto',
+    stopped: 'parado por você', not_ready: 'WhatsApp não estava pronto', no_send: 'contato com a etiqueta "Não enviar"',
   };
 
   const sched = {
@@ -3663,7 +3700,7 @@
     if (row.item_id) {
       item = state.items.find((i) => i.id === row.item_id);
       if (!item) { await reloadLibrary().catch(() => {}); item = state.items.find((i) => i.id === row.item_id); }
-      if (!item) { await finishSched(row.id, 'falhou', 'item_not_found'); return; }
+      if (!item) { await finishSched(row.id, 'falhou', 'item_not_found'); return { status: 'missing' }; }
       parts = partsOf(item);
     } else {
       parts = [{ type: 'texto', body: row.body, wait_seconds: 0, typing_seconds: 0 }];
@@ -3681,6 +3718,7 @@
       await finishSched(row.id, 'enviada');
       if (item) registerUse(item);
       toast(`Agendamento enviado${row.chat_name ? ` para ${row.chat_name}` : ''}.`, 'ok', 5000);
+      return res;
     } else if (res.status === 'stopped') {
       await finishSched(row.id, 'cancelada', 'stopped');
       toast('Agendamento parado e cancelado.', 'warn', 5000);
@@ -3692,11 +3730,683 @@
       await finishSched(row.id, 'falhou', 'send_unconfirmed');
       toast('Agendamento: não consegui confirmar o envio. Confira a conversa antes de tentar de novo.', 'error', 12000);
     }
+    return res; // 2.0.0: o motor registra o resultado em wa_send_log
   }
 
+  // ── Motor de envios (2.0.0): agendados + follows (+ disparos) numa fila só ──────────
+  // A lógica fica em engine.js (TspEngine). Aqui só ligamos o motor ao painel: background (call),
+  // ponte do WhatsApp (waRequest) e o envio em sequência (runSequence). Sem as tabelas novas,
+  // o motor chama o executor de agendamentos da 1.9.0 (schedTick), como antes.
+
+  const E = globalThis.TspEngine;
+  const AUTO_LABELS = ['Agendado', 'Follow', 'Disparo'];
+
+  const motor = E.createMotor({
+    api: (type, payload) => call(type, payload),
+    wa: {
+      ready: async () => { const st = await refreshWaStatus(); return !!(st && st.ready); },
+      chatsInfo: (p) => waRequest('chatsInfo', p, { timeout: 8000 }),
+    },
+    sendParts: (o) => runSequence(o),
+    partsOf: (item) => partsOf(item),
+    itemById: async (id) => {
+      let item = state.items.find((i) => i.id === id);
+      if (!item) { await reloadLibrary().catch(() => {}); item = state.items.find((i) => i.id === id); }
+      return item || null;
+    },
+    isManualBusy: () => !!(seq || state.busyId),
+    runScheduled: (row) => runScheduled(row),
+    legacyTick: () => schedTick(),
+    onChange: () => renderEngineUi(),
+    onItemUsed: (item) => registerUse(item),
+    onLabelsChanged: () => { syncLabels().catch(() => {}); },
+    stopRunning: () => { if (seq && AUTO_LABELS.includes(seq.label)) stopSequence(); },
+    campaignJob: (api) => campaignJob(api),
+    runCampaignJob: (job, helpers) => runCampaignJob(job, helpers),
+  });
+
+  // Disparos chegam na D2; até lá o motor não tem campanhas para rodar
+  async function campaignJob() { return null; }
+  async function runCampaignJob() { return { attempted: false }; }
+
   function startScheduler() {
-    setTimeout(() => { schedTick(); }, SCHED_FIRST_MS);
-    setInterval(() => { schedTick(); }, SCHED_TICK_MS);
+    motor.start();
+  }
+
+  const ftabEl = shadow.querySelector('.ftab');
+  const footPause = shadow.querySelector('.foot-pause');
+
+  const fl = {
+    open: false, timer: null, view: 'list', loading: false, error: '', msg: '', msgErr: false,
+    edit: null, settingsForm: null, sim: null, test: null, history: null, putFlowId: '', saving: false, confirmDelete: false,
+  };
+
+  const labelName = (id) => { const l = state.labels.find((x) => x.id === id); return l ? l.name : 'etiqueta excluída'; };
+  const itemTitle = (id) => { const i = state.items.find((x) => x.id === id); return i ? i.title : 'mensagem excluída'; };
+  const activeFlows = () => motor.state.flows.filter((f) => f.active);
+  const autoActive = () => motor.state.available === true && (activeFlows().length > 0 || !!(motor.state.settings && motor.state.settings.paused_all));
+
+  function engineRoleText() {
+    const m = motor.state;
+    if (m.available === false) return 'sem o banco atualizado';
+    if (m.settings && m.settings.paused_all) return 'pausado';
+    if (m.role === 'este') return 'este computador executa';
+    if (m.role === 'outro') return 'outro computador executa';
+    return 'aguardando o WhatsApp ficar pronto';
+  }
+
+  function renderFootPause() {
+    if (!footPause) return;
+    const show = autoActive();
+    footPause.hidden = !show;
+    if (!show) return;
+    const paused = !!(motor.state.settings && motor.state.settings.paused_all);
+    footPause.textContent = paused ? '▶ Retomar envios' : '⏸ Pausar envios';
+    footPause.classList.toggle('on', paused);
+  }
+
+  function renderEngineUi() {
+    renderFootPause();
+    if (fl.open && fl.view === 'list') renderFollows();
+    if (state.view === 'diag') renderDiag();
+  }
+
+  async function togglePauseAll() {
+    const paused = !!(motor.state.settings && motor.state.settings.paused_all);
+    try {
+      await motor.setPaused(!paused);
+      toast(paused ? 'Envios automáticos retomados.' : 'Envios automáticos pausados.', 'ok', 3000);
+    } catch (e) {
+      toast(e.message === 'Atualize o banco para usar este recurso' ? e.message : 'Não consegui mudar. Tente de novo.', 'error', 5000);
+    }
+    renderEngineUi();
+  }
+  if (footPause) footPause.addEventListener('click', () => togglePauseAll());
+
+  function syncFollowsActive() {
+    const want = state.open && state.section === 'follows';
+    clearInterval(fl.timer);
+    fl.timer = null;
+    fl.open = want;
+    if (!want) return;
+    refreshFollows();
+    fl.timer = setInterval(() => { if (fl.view === 'list') refreshFollows({ quiet: true }); }, 15 * 1000);
+  }
+
+  async function refreshFollows({ quiet = false } = {}) {
+    if (!quiet) { fl.loading = true; renderFollows(); }
+    await motor.loadSettings();
+    if (motor.state.available) {
+      await Promise.all([motor.loadFlows(), motor.refreshCounts(), motor.ensureNoSendLabel()]);
+      fl.error = '';
+    }
+    fl.loading = false;
+    renderFollows();
+    renderFootPause();
+  }
+
+  const fbtn = (cls, text, onClick) => {
+    const b = el('button', cls, text);
+    b.type = 'button';
+    b.addEventListener('click', onClick);
+    return b;
+  };
+
+  function labelSelect(value, { empty = null, aria } = {}) {
+    const sel = el('select', 'ed-cat');
+    if (aria) sel.setAttribute('aria-label', aria);
+    if (empty !== null) {
+      const o = el('option', null, empty);
+      o.value = '';
+      sel.append(o);
+    }
+    state.labels.forEach((l) => {
+      const o = el('option', null, l.name);
+      o.value = l.id;
+      o.selected = l.id === value;
+      sel.append(o);
+    });
+    if (value && !state.labels.some((l) => l.id === value)) {
+      const o = el('option', null, 'etiqueta excluída');
+      o.value = value;
+      o.selected = true;
+      sel.append(o);
+    }
+    return sel;
+  }
+
+  function itemSelect(value, { empty = 'Escolha uma mensagem…', aria } = {}) {
+    const sel = el('select', 'ed-cat');
+    if (aria) sel.setAttribute('aria-label', aria);
+    const none = el('option', null, empty);
+    none.value = '';
+    sel.append(none);
+    state.items.forEach((i) => {
+      const o = el('option', null, `${i.title}${isMultiPart(i) ? ` (${i.parts.length} partes)` : ''}`);
+      o.value = i.id;
+      o.selected = i.id === value;
+      sel.append(o);
+    });
+    return sel;
+  }
+
+  function flowCard(f) {
+    const card = el('div', `fw-card${f.active ? ' on' : ''}`);
+    const head = el('div', 'fw-head');
+    head.append(el('span', 'fw-name', f.name), el('span', `fw-badge${f.active ? ' on' : ''}`, f.active ? 'ATIVA' : 'DESLIGADA'));
+    card.append(head);
+    const step = (n, title, text) => {
+      const row = el('div', 'fw-step');
+      row.append(el('span', 'fw-n', String(n)), el('div', 'fw-txt'));
+      row.lastChild.append(el('b', null, `${title}: `), text);
+      return row;
+    };
+    card.append(step(1, 'Quem entra', `etiqueta CRM ${labelName(f.label_id)}`));
+    card.append(step(2, 'Espera', E.waitText(f, motor.state.settings)));
+    const sends = el('div', 'fw-txt');
+    (f.variants || []).forEach((v) => {
+      const cond = v.condition === 'etiqueta' ? `SE tem a etiqueta ${labelName(v.label_id)}` : `SE veio do anúncio com "${v.ad_keyword}"`;
+      sends.append(el('div', null, `${cond} → ${itemTitle(v.item_id)}`));
+    });
+    sends.append(el('div', null, `SEMPRE → ${f.item_id ? itemTitle(f.item_id) : '(nada: pula)'}`));
+    const s3 = el('div', 'fw-step');
+    s3.append(el('span', 'fw-n', '3'));
+    const s3t = el('div', 'fw-txt');
+    s3t.append(el('b', null, 'Manda:'), sends);
+    s3.append(s3t);
+    card.append(s3);
+    card.append(step(4, 'Depois vai para', `${f.next_label_id ? labelName(f.next_label_id) : 'sai da régua'} · Se responder vai para: ${f.reply_label_id ? labelName(f.reply_label_id) : 'não muda'}`));
+    const actions = el('div', 'ed-add');
+    actions.append(
+      fbtn('ed-mini', 'Editar', () => openFlowEditor(f)),
+      fbtn('ed-mini', f.active ? 'Desligar' : 'Ligar', async () => {
+        try {
+          await call('setFlowActive', { id: f.id, active: !f.active });
+          await motor.loadFlows();
+        } catch (e) {
+          flash(`Não consegui mudar: ${e.message}`, true);
+        }
+        renderFollows();
+        renderFootPause();
+      }),
+    );
+    card.append(actions);
+    return card;
+  }
+
+  function flash(text, err = false) {
+    fl.msg = text;
+    fl.msgErr = err;
+  }
+
+  function renderFollowsTop(box) {
+    const m = motor.state;
+    const s = m.settings || E.DEFAULT_SETTINGS;
+    const top = el('section', 'crmsec');
+    const row = el('div', 'ed-add');
+    const paused = !!s.paused_all;
+    const p = fbtn(`bbtn${paused ? ' primary' : ''}`, paused ? '▶ Retomar' : '⏸ Pausar tudo', () => togglePauseAll());
+    p.classList.add('fw-pause');
+    row.append(p, fbtn('bbtn', 'Limites e horário', () => openSettings()));
+    top.append(row);
+    top.append(el('div', 'fw-count', `Envios na última hora: ${m.counts.hour}/${s.max_per_hour} · hoje: ${m.counts.day}/${s.max_per_day}`));
+    top.append(el('div', 'crm-intro', `Motor: ${engineRoleText()}${m.waiting && m.role === 'este' && !paused ? ` · agora: ${m.waiting}` : ''}`));
+    box.append(top);
+  }
+
+  function renderFollows() {
+    if (!ftabEl) return;
+    ftabEl.textContent = '';
+    ftabEl.append(el('div', 'crm-intro', 'Réguas de follow: o motor manda a mensagem para quem está na etiqueta CRM e não respondeu, só no horário comercial e com o WhatsApp Web aberto. Contatos com a etiqueta "Não enviar" nunca recebem.'));
+    if (motor.state.available === false) {
+      ftabEl.append(el('div', 'ed-note', 'Atualize o banco para usar este recurso.'));
+      return;
+    }
+    if (motor.state.available === null) {
+      ftabEl.append(el('div', 'lt-none', 'Carregando…'));
+      return;
+    }
+    if (fl.view === 'edit') { renderFlowEditor(); return; }
+    if (fl.view === 'settings') { renderSettings(); return; }
+    if (fl.view === 'simulate') { renderSimulation(); return; }
+    if (fl.view === 'history') { renderHistory(); return; }
+
+    renderFollowsTop(ftabEl);
+    if (fl.msg) ftabEl.append(el('div', `ed-msg${fl.msgErr ? ' err' : ''}`, fl.msg));
+
+    const list = el('section', 'crmsec');
+    list.append(el('div', 'wt-head', 'ESQUEMA DOS FOLLOWS'));
+    const flows = [...motor.state.flows].sort((a, b) => (a.position || 0) - (b.position || 0));
+    if (!flows.length) list.append(el('div', 'lt-none', fl.loading ? 'Carregando…' : 'Nenhuma régua ainda.'));
+    flows.forEach((f, i) => {
+      if (i) list.append(el('div', 'fw-arrow', '↓'));
+      list.append(flowCard(f));
+    });
+    const add = fbtn('fw-card fw-new', '+ Nova régua', () => openFlowEditor(null));
+    list.append(add);
+    ftabEl.append(list);
+
+    const tools = el('section', 'crmsec');
+    tools.append(el('div', 'wt-head', 'FERRAMENTAS'));
+    const r1 = el('div', 'ed-add');
+    r1.append(
+      fbtn('bbtn', 'Simular', () => openSimulation()),
+      fbtn('bbtn', 'Testar com a conversa aberta', () => testOpenChat()),
+      fbtn('bbtn', 'Histórico', () => openHistory()),
+    );
+    tools.append(r1);
+    if (fl.test) {
+      const t = el('div', 'fw-test');
+      fl.test.forEach((line) => t.append(el('div', null, line)));
+      tools.append(t);
+    }
+    tools.append(el('div', 'crm-sub', 'Colocar a conversa aberta numa régua'));
+    const r2 = el('div', 'sc-row');
+    const sel = el('select', 'ed-cat');
+    sel.setAttribute('aria-label', 'Régua');
+    const none = el('option', null, 'Escolha a régua…');
+    none.value = '';
+    sel.append(none);
+    flows.forEach((f) => {
+      const o = el('option', null, `${f.name}${f.active ? '' : ' (desligada)'}`);
+      o.value = f.id;
+      o.selected = f.id === fl.putFlowId;
+      sel.append(o);
+    });
+    sel.addEventListener('change', () => { fl.putFlowId = sel.value; });
+    r2.append(sel, fbtn('bbtn primary', 'Colocar', () => putOpenChatInFlow()));
+    tools.append(r2);
+    ftabEl.append(tools);
+  }
+
+  // ── Editor de régua ──
+
+  function openFlowEditor(f) {
+    fl.view = 'edit';
+    fl.confirmDelete = false;
+    fl.edit = f ? {
+      id: f.id, name: f.name, active: !!f.active, label_id: f.label_id, wait_minutes: f.wait_minutes, item_id: f.item_id || '',
+      next_label_id: f.next_label_id || '', reply_label_id: f.reply_label_id || '', ignore_older_days: f.ignore_older_days || 15,
+      variants: (f.variants || []).map((v) => ({ condition: v.condition, label_id: v.label_id || '', ad_keyword: v.ad_keyword || '', item_id: v.item_id || '' })),
+      msg: '', err: false,
+    } : {
+      id: null, name: '', active: false, label_id: '', wait_minutes: 120, item_id: '', next_label_id: '', reply_label_id: '', ignore_older_days: 15,
+      variants: [], msg: '', err: false,
+    };
+    renderFollows();
+  }
+
+  function backToList() {
+    fl.view = 'list';
+    fl.edit = null;
+    fl.settingsForm = null;
+    renderFollows();
+  }
+
+  function numberInput(value, min, max, aria) {
+    const i = el('input', 'ed-title');
+    i.type = 'number';
+    i.min = String(min);
+    i.max = String(max);
+    i.step = '1';
+    i.value = String(value);
+    i.setAttribute('aria-label', aria);
+    return i;
+  }
+
+  function renderFlowEditor() {
+    const f = fl.edit;
+    const sec = el('section', 'crmsec fw-editor');
+    sec.append(el('div', 'wt-head', f.id ? 'EDITAR RÉGUA' : 'NOVA RÉGUA'));
+    const name = el('input', 'ed-title');
+    name.maxLength = 60;
+    name.value = f.name;
+    name.placeholder = 'Ex.: Follow 1 (2h)';
+    name.addEventListener('input', () => { f.name = name.value; });
+    sec.append(schedField('Nome', name));
+    const act = el('label', 'sc-radio');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = f.active;
+    cb.addEventListener('change', () => { f.active = cb.checked; });
+    act.append(cb, 'Ativa');
+    sec.append(act);
+
+    const who = labelSelect(f.label_id, { empty: 'Escolha a etiqueta CRM…', aria: 'Quem entra' });
+    who.addEventListener('change', () => { f.label_id = who.value; });
+    sec.append(schedField('1. Quem entra (etiqueta CRM)', who));
+
+    const hours = numberInput(Math.floor(f.wait_minutes / 60), 0, 720, 'Horas');
+    const mins = numberInput(f.wait_minutes % 60, 0, 59, 'Minutos');
+    const upd = () => { f.wait_minutes = (Math.max(0, Math.floor(Number(hours.value) || 0)) * 60) + Math.max(0, Math.min(59, Math.floor(Number(mins.value) || 0))); };
+    hours.addEventListener('input', upd);
+    mins.addEventListener('input', upd);
+    const wr = el('div', 'sc-row');
+    wr.append(schedField('2. Espera: horas', hours), schedField('minutos', mins));
+    sec.append(wr);
+    sec.append(el('div', 'crm-intro', `Conta só ${E.scheduleText(motor.state.settings)} (mude em "Limites e horário").`));
+    const older = numberInput(f.ignore_older_days, 1, 365, 'Ignorar conversas paradas há (dias)');
+    older.addEventListener('input', () => { f.ignore_older_days = Math.floor(Number(older.value) || 0); });
+    sec.append(schedField('Ignorar conversas paradas há mais de (dias)', older));
+
+    sec.append(el('div', 'crm-sub', '3. Manda (a primeira variante que bater; senão a padrão)'));
+    f.variants.forEach((v, i) => {
+      const row = el('div', 'fw-variant');
+      const cond = el('select', 'ed-cat');
+      cond.setAttribute('aria-label', `Condição da variante ${i + 1}`);
+      [['etiqueta', 'SE tem a etiqueta'], ['anuncio', 'SE veio do anúncio com']].forEach(([k, t]) => {
+        const o = el('option', null, t);
+        o.value = k;
+        o.selected = v.condition === k;
+        cond.append(o);
+      });
+      cond.addEventListener('change', () => { v.condition = cond.value; renderFollows(); });
+      row.append(cond);
+      if (v.condition === 'etiqueta') {
+        const ls = labelSelect(v.label_id, { empty: 'Escolha…', aria: `Etiqueta da variante ${i + 1}` });
+        ls.addEventListener('change', () => { v.label_id = ls.value; });
+        row.append(ls);
+      } else {
+        const kw = el('input', 'ed-title');
+        kw.maxLength = 60;
+        kw.value = v.ad_keyword;
+        kw.placeholder = 'palavra do anúncio';
+        kw.setAttribute('aria-label', `Palavra do anúncio da variante ${i + 1}`);
+        kw.addEventListener('input', () => { v.ad_keyword = kw.value; });
+        row.append(kw);
+      }
+      const is = itemSelect(v.item_id, { aria: `Mensagem da variante ${i + 1}` });
+      is.addEventListener('change', () => { v.item_id = is.value; });
+      row.append(is);
+      const ctl = el('div', 'ed-add');
+      const up = fbtn('ed-mini', '↑', () => { f.variants.splice(i - 1, 0, f.variants.splice(i, 1)[0]); renderFollows(); });
+      up.disabled = i === 0;
+      up.setAttribute('aria-label', 'Subir');
+      const down = fbtn('ed-mini', '↓', () => { f.variants.splice(i + 1, 0, f.variants.splice(i, 1)[0]); renderFollows(); });
+      down.disabled = i === f.variants.length - 1;
+      down.setAttribute('aria-label', 'Descer');
+      const rm = fbtn('ed-mini', '✕', () => { f.variants.splice(i, 1); renderFollows(); });
+      rm.setAttribute('aria-label', 'Remover variante');
+      ctl.append(up, down, rm);
+      row.append(ctl);
+      sec.append(row);
+    });
+    const addV = fbtn('ed-mini', '+ Variante', () => { f.variants.push({ condition: 'etiqueta', label_id: '', ad_keyword: '', item_id: '' }); renderFollows(); });
+    addV.disabled = f.variants.length >= 10;
+    sec.append(addV);
+    const def = itemSelect(f.item_id, { empty: '(sem padrão: pula quem não bater)', aria: 'Mensagem padrão' });
+    def.addEventListener('change', () => { f.item_id = def.value; });
+    sec.append(schedField('SEMPRE (padrão)', def));
+
+    const next = labelSelect(f.next_label_id, { empty: '(só sai da régua)', aria: 'Depois vai para' });
+    next.addEventListener('change', () => { f.next_label_id = next.value; });
+    sec.append(schedField('4. Depois de enviar vai para', next));
+    const reply = labelSelect(f.reply_label_id, { empty: '(não muda)', aria: 'Se responder vai para' });
+    reply.addEventListener('change', () => { f.reply_label_id = reply.value; });
+    sec.append(schedField('Se responder vai para', reply));
+
+    const actions = el('div', 'ed-add');
+    const save = fbtn('bbtn primary', fl.saving ? 'Salvando…' : 'Salvar', () => saveFlowForm());
+    save.disabled = fl.saving;
+    actions.append(save, fbtn('bbtn', 'Cancelar', () => backToList()));
+    if (f.id) {
+      actions.append(fbtn('bbtn', fl.confirmDelete ? 'Confirmar exclusão' : 'Excluir', async () => {
+        if (!fl.confirmDelete) { fl.confirmDelete = true; renderFollows(); return; }
+        try {
+          await call('deleteFlow', { id: f.id });
+          await motor.loadFlows();
+          flash('Régua excluída.');
+          backToList();
+        } catch (e) {
+          f.msg = `Não consegui excluir: ${e.message}`;
+          f.err = true;
+          renderFollows();
+        }
+      }));
+    }
+    sec.append(actions, el('div', `ed-msg${f.err ? ' err' : ''}`, f.msg));
+    ftabEl.append(sec);
+  }
+
+  async function saveFlowForm() {
+    const f = fl.edit;
+    if (!f || fl.saving) return;
+    const flow = {
+      id: f.id || undefined, name: f.name, active: f.active, label_id: f.label_id || null, wait_minutes: f.wait_minutes,
+      item_id: f.item_id || null, next_label_id: f.next_label_id || null, reply_label_id: f.reply_label_id || null,
+      ignore_older_days: f.ignore_older_days,
+      variants: f.variants.map((v) => ({ condition: v.condition, label_id: v.label_id || null, ad_keyword: v.ad_keyword, item_id: v.item_id || null })),
+    };
+    fl.saving = true;
+    f.msg = '';
+    renderFollows();
+    try {
+      await call('saveFlow', { flow });
+      await motor.loadFlows();
+      flash('Régua salva.');
+      fl.saving = false;
+      backToList();
+      renderFootPause();
+      return;
+    } catch (e) {
+      f.msg = e.message;
+      f.err = true;
+    }
+    fl.saving = false;
+    renderFollows();
+  }
+
+  // ── Limites e horário ──
+
+  function openSettings() {
+    const s = motor.state.settings || E.DEFAULT_SETTINGS;
+    fl.settingsForm = {
+      max_per_hour: s.max_per_hour, max_per_day: s.max_per_day, min_interval_s: s.min_interval_s, max_interval_s: s.max_interval_s,
+      business_start: String(s.business_start).slice(0, 5), business_end: String(s.business_end).slice(0, 5),
+      business_days: [...(s.business_days || [])], msg: '', err: false,
+    };
+    fl.view = 'settings';
+    renderFollows();
+  }
+
+  function renderSettings() {
+    const f = fl.settingsForm;
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'LIMITES E HORÁRIO'));
+    sec.append(el('div', 'crm-intro', 'Valem para tudo que sai sozinho: follows, disparos e agendados, somados.'));
+    const num = (key, label, min, max) => {
+      const i = numberInput(f[key], min, max, label);
+      i.addEventListener('input', () => { f[key] = Math.floor(Number(i.value) || 0); });
+      return schedField(label, i);
+    };
+    const r1 = el('div', 'sc-row');
+    r1.append(num('max_per_hour', 'Máx. por hora', 1, 200), num('max_per_day', 'Máx. por dia', 1, 2000));
+    const r2 = el('div', 'sc-row');
+    r2.append(num('min_interval_s', 'Intervalo mín. (s)', 10, 3600), num('max_interval_s', 'Intervalo máx. (s)', 10, 3600));
+    const time = (key, label) => {
+      const i = el('input', 'ed-title');
+      i.type = 'time';
+      i.value = f[key];
+      i.setAttribute('aria-label', label);
+      i.addEventListener('input', () => { f[key] = i.value; });
+      return schedField(label, i);
+    };
+    const r3 = el('div', 'sc-row');
+    r3.append(time('business_start', 'Início do expediente'), time('business_end', 'Fim do expediente'));
+    const days = el('div', 'ed-add');
+    E.DAY_NAMES.forEach((name, d) => {
+      const l = el('label', 'sc-radio');
+      const c = el('input');
+      c.type = 'checkbox';
+      c.checked = f.business_days.includes(d);
+      c.addEventListener('change', () => {
+        f.business_days = c.checked ? [...new Set([...f.business_days, d])] : f.business_days.filter((x) => x !== d);
+      });
+      l.append(c, name);
+      days.append(l);
+    });
+    sec.append(r1, r2, r3, el('div', 'crm-sub', 'Dias'), days);
+    const actions = el('div', 'ed-add');
+    actions.append(fbtn('bbtn primary', 'Salvar', async () => {
+      const patch = { ...f };
+      delete patch.msg;
+      delete patch.err;
+      try {
+        await motor.saveSettings(patch);
+        flash('Limites e horário salvos.');
+        backToList();
+      } catch (e) {
+        f.msg = e.message;
+        f.err = true;
+        renderFollows();
+      }
+    }), fbtn('bbtn', 'Cancelar', () => backToList()));
+    sec.append(actions, el('div', `ed-msg${f.err ? ' err' : ''}`, f.msg));
+    ftabEl.append(sec);
+  }
+
+  // ── Simular (não envia nem grava nada) ──
+
+  function evText(ev) {
+    if (ev.action === 'send') {
+      const how = ev.variant.kind === 'etiqueta' ? `variante: etiqueta ${labelName(ev.variant.variant.label_id)}`
+        : ev.variant.kind === 'anuncio' ? `variante: anúncio "${ev.variant.variant.ad_keyword}"` : 'padrão';
+      return { kind: 'ok', text: `receberia agora: ${itemTitle(ev.itemId)} (${how})` };
+    }
+    if (ev.action === 'wait') return { kind: 'wait', text: ev.leftMs == null ? 'aguardando (sem horário comercial configurado)' : `aguardando: falta ${E.formatLeft(ev.leftMs)}` };
+    if (ev.action === 'reply') return { kind: 'wait', text: `respondeu → vai para ${labelName(ev.toLabelId)}` };
+    if (ev.action === 'none') return { kind: 'wait', text: 'respondeu (fica na etiqueta)' };
+    return { kind: 'skip', text: `pulado: ${ev.reason}` };
+  }
+
+  async function openSimulation() {
+    fl.view = 'simulate';
+    fl.sim = { loading: true, rows: [], total: 0 };
+    renderFollows();
+    let res;
+    try { res = await motor.simulate(200); } catch (e) { res = { available: true, rows: [], error: e.message }; }
+    fl.sim = { loading: false, rows: res.rows || [], total: res.total || 0, error: res.error || '' };
+    if (fl.view === 'simulate') renderFollows();
+  }
+
+  function renderSimulation() {
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'SIMULAR'));
+    sec.append(el('div', 'crm-intro', 'Quem receberia o quê agora. Nada foi enviado nem gravado.'));
+    const s = fl.sim || { loading: true, rows: [] };
+    if (s.loading) sec.append(el('div', 'lt-none', 'Calculando…'));
+    else if (s.error) sec.append(el('div', 'ed-msg err', `Não consegui simular: ${s.error}`));
+    else if (!s.rows.length) sec.append(el('div', 'lt-none', activeFlows().length ? 'Ninguém nas etiquetas das réguas ativas.' : 'Nenhuma régua ativa.'));
+    s.rows.forEach((r) => {
+      const t = evText(r.ev);
+      const line = el('div', `sc-item fw-sim ${t.kind}`);
+      const main = el('div', 'sc-main');
+      main.append(el('div', 'sc-who', `${r.contact.name || r.contact.phone || 'Contato'} · ${r.flow.name}`), el('div', 'sc-prev', t.text));
+      line.append(main);
+      sec.append(line);
+    });
+    if (s.total > s.rows.length) sec.append(el('div', 'crm-intro', `Mostrando ${s.rows.length} de ${s.total}.`));
+    sec.append(fbtn('bbtn', 'Voltar', () => backToList()));
+    ftabEl.append(sec);
+  }
+
+  // ── Testar / colocar a conversa aberta ──
+
+  async function openChatContact() {
+    const ctx = getContext();
+    state.ctx = ctx;
+    let chat = null;
+    try { chat = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { chat = null; }
+    if (!chat || chat.kind !== 'individual' || !ctx.identity || !canLabel(ctx.identity)) return null;
+    return { ctx, chatId: chat.chatId, identity: { ...identityPayload(ctx.identity), chatId: chat.chatId } };
+  }
+
+  async function testOpenChat() {
+    fl.test = ['Testando…'];
+    renderFollows();
+    const open = await openChatContact();
+    if (!open) { fl.test = ['Abra uma conversa individual no WhatsApp.']; renderFollows(); return; }
+    let labels = [];
+    try { labels = await call('getContactLabels', { identity: open.identity }); } catch { labels = []; }
+    const flows = activeFlows().filter((f) => labels.includes(f.label_id));
+    if (!flows.length) { fl.test = ['Esta conversa não está em nenhuma régua ativa.']; renderFollows(); return; }
+    const contact = { id: null, name: open.ctx.fullName || null, phone: open.identity.phone || null, chat_id: open.chatId, labelIds: labels };
+    const keywords = [...new Set(flows.flatMap((f) => (f.variants || []).filter((v) => v.condition === 'anuncio').map((v) => v.ad_keyword.trim().toLowerCase())))];
+    let info = null;
+    try { info = await waRequest('chatsInfo', { chatIds: [open.chatId], keywords }, { timeout: 8000 }); } catch { info = null; }
+    const chat = info && info.chats ? info.chats[open.chatId] : null;
+    fl.test = flows.map((flow) => {
+      const ev = E.evaluateFollow({ flow, contact, contactLabelIds: labels, chat, settings: motor.state.settings, now: Date.now(), noSendLabelId: motor.state.noSendLabelId });
+      return `${flow.name}: ${evText(ev).text}`;
+    });
+    renderFollows();
+  }
+
+  async function putOpenChatInFlow() {
+    const flow = motor.state.flows.find((f) => f.id === fl.putFlowId);
+    if (!flow) { flash('Escolha a régua.', true); renderFollows(); return; }
+    const open = await openChatContact();
+    if (!open) { flash('Abra uma conversa individual no WhatsApp.', true); renderFollows(); return; }
+    try {
+      await call('setContactLabel', { identity: open.identity, labelId: flow.label_id, on: true });
+      afterLabelChange();
+      flash(`Conversa colocada na régua "${flow.name}" (etiqueta CRM ${labelName(flow.label_id)}).`);
+    } catch (e) {
+      flash(`Não consegui colocar: ${e.message}`, true);
+    }
+    renderFollows();
+  }
+
+  // ── Histórico ──
+
+  const SOURCE_LABEL = { follow: 'follow', disparo: 'disparo', agendado: 'agendado' };
+
+  async function openHistory() {
+    fl.view = 'history';
+    fl.history = { loading: true, rows: [] };
+    renderFollows();
+    try {
+      fl.history = { loading: false, rows: await call('fetchSendLog', { limit: 50 }) };
+    } catch (e) {
+      fl.history = { loading: false, rows: [], error: e.message };
+    }
+    if (fl.view === 'history') renderFollows();
+  }
+
+  function renderHistory() {
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'HISTÓRICO (ÚLTIMOS 50)'));
+    const h = fl.history || { loading: true, rows: [] };
+    if (h.loading) sec.append(el('div', 'lt-none', 'Carregando…'));
+    else if (h.error) sec.append(el('div', 'ed-msg err', h.error));
+    else if (!h.rows.length) sec.append(el('div', 'lt-none', 'Nenhum envio automático ainda.'));
+    (h.rows || []).forEach((r) => {
+      const line = el('div', `sc-item st-${r.status}`);
+      const main = el('div', 'sc-main');
+      main.append(el('div', 'sc-who', r.name || 'Contato'), el('div', 'sc-prev', `${SOURCE_LABEL[r.source] || r.source}${r.reason ? ` · ${r.reason}` : ''}`));
+      const side = el('div', 'sc-side');
+      side.append(el('span', 'sc-when', schedWhen(r.created_at)), el('span', 'sc-status', r.status));
+      line.append(main, side);
+      sec.append(line);
+    });
+    sec.append(fbtn('bbtn', 'Voltar', () => backToList()));
+    ftabEl.append(sec);
+  }
+
+  // Diagnóstico: só estados (sem nomes nem números)
+  function engineDiagRows() {
+    const m = motor.state;
+    const motorRow = m.available === null
+      ? { label: 'Motor de envios', status: 'warn', screen: 'testando...' }
+      : m.available === false
+        ? { label: 'Motor de envios', status: 'warn', screen: 'sem o banco atualizado (só agendamentos, como na 1.9.0)' }
+        : { label: 'Motor de envios', status: m.role === 'este' || m.role === 'outro' ? 'ok' : 'warn', screen: engineRoleText() };
+    let flowsRow;
+    if (m.available === null) flowsRow = { label: 'Follows e Disparos', status: 'warn', screen: 'testando...' };
+    else if (m.available === false) flowsRow = { label: 'Follows e Disparos', status: 'warn', screen: 'falta atualizar o banco (migrations 20261103130000 e 20261103140000)' };
+    else if (m.campaignsAvailable === false) flowsRow = { label: 'Follows e Disparos', status: 'warn', screen: 'follows ok; disparos: falta atualizar o banco (migration 20261103140000)' };
+    else flowsRow = { label: 'Follows e Disparos', status: 'ok', screen: 'ok' };
+    return [motorRow, flowsRow];
   }
 
   // ── Diagnóstico (nunca inclui conteúdo de conversa) ────────────────────────
@@ -3739,6 +4449,7 @@
       schemaDiagRow(),
       partsDiagRow(),
       schedDiagRow(),
+      ...engineDiagRows(),
       ...waDiagRows(),
       {
         label: 'Ponte do microfone carregada',
@@ -5075,8 +5786,8 @@
     const raw = typeof c.name === 'string' ? c.name.trim().replace(/\s+/g, ' ').slice(0, 100) : '';
     const name = raw && raw !== user && !/^[+\d\s().-]+$/.test(raw) ? raw : null;
     if (c.kind !== 'individual') return null;
-    if (server === 'c.us' && /^\d{8,15}$/.test(user)) return { key: `tel:${user}`, phone: user, name };
-    if (server === 'lid' && name) return { key: `nome:${name.toLowerCase()}`, phone: null, name };
+    if (server === 'c.us' && /^\d{8,15}$/.test(user)) return { key: `tel:${user}`, phone: user, name, chatId: id };
+    if (server === 'lid' && name) return { key: `nome:${name.toLowerCase()}`, phone: null, name, chatId: id };
     return null;
   }
 

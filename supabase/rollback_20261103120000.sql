@@ -13,6 +13,11 @@
 --   4. Devolve ao papel anon os privilégios que ele tinha na view motoboy_stats.
 --   5. Apaga o schema de cópia rls_backup_20261103 (permite aplicar de novo).
 -- Resultado: o banco volta a ficar aberto para a chave anon, como na Fase 1.
+--
+-- Tabelas da extensão 2.0.0 (wa_settings, wa_flows, wa_flow_variants, wa_send_log,
+-- wa_campaigns, wa_campaign_targets) entram aqui também: estão na cópia, seja porque a
+-- migration da Fase 2 as fechou, seja porque as migrations 20261103130000/20261103140000
+-- foram aplicadas depois da Fase 2 e se registraram nela. Voltam a "public access <tabela>".
 -- ============================================================================
 
 begin;
