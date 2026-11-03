@@ -539,6 +539,16 @@
       .banner[hidden] { display: none; }
       .banner span { flex: 1; }
       .banner button { border: none; background: transparent; padding: 0; text-decoration: underline; font-size: 12px; color: inherit; }
+      /* Conta (1.9.1): aviso fixo no topo enquanto não houver sessão */
+      .auth { margin: 0 12px 8px; padding: 9px 10px; border-radius: 9px; background: var(--warn-soft); color: var(--fg); font-size: 12px; }
+      .auth[hidden] { display: none; }
+      .auth-t { font-weight: 700; color: var(--warn); margin-bottom: 6px; }
+      .auth-f { display: flex; flex-direction: column; gap: 6px; }
+      .auth-f input { height: 30px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; outline: none; }
+      .auth-f input:focus { border-color: var(--accent); }
+      .auth-f .btn { margin-top: 0; justify-content: center; }
+      .auth-err { color: var(--err); font-size: 11.5px; }
+      .auth-err:empty { display: none; }
 
       .list { flex: 1; overflow-y: auto; padding: 8px 10px 10px; scrollbar-width: thin; }
       .list > * { animation: fadeIn .18s ease both; }
@@ -1021,6 +1031,15 @@
           <div class="brand"><span class="logo">${svg('zap', 'fill')}</span><span class="brand-txt">Mensagens</span></div>
           <div class="actions"></div>
         </header>
+        <div class="auth" role="region" aria-label="Conta" hidden>
+          <div class="auth-t">Entre com sua conta do sistema</div>
+          <div class="auth-f">
+            <input class="auth-email" type="email" autocomplete="username" maxlength="200" placeholder="E-mail" aria-label="E-mail" />
+            <input class="auth-pass" type="password" autocomplete="current-password" maxlength="200" placeholder="Senha" aria-label="Senha" />
+            <button class="btn primary auth-go" type="button">Entrar</button>
+            <div class="auth-err" role="alert"></div>
+          </div>
+        </div>
         <nav class="pnav" aria-label="Seções do painel">
           <button type="button" data-sec="mensagens" title="Mensagens" aria-pressed="false">${svg('zap')}<span>Mensagens</span></button>
           <button type="button" data-sec="etiquetas" title="Etiquetas CRM" aria-pressed="false">${svg('tag')}<span>Etiquetas</span></button>
@@ -1165,6 +1184,73 @@
   const diagBtn    = iconButton('activity', 'Diagnóstico', () => (state.view === 'diag' ? showList() : showDiag()));
   const closeBtn   = iconButton('x', 'Fechar (Esc)', () => setOpen(false));
   actions.append(refreshBtn, themeBtn, diagBtn, closeBtn);
+
+  // ── Conta (1.9.1): login pelo background (Supabase Auth). Sem sessão, tudo segue com a chave anon. ──
+  // O painel só fica sabendo se está conectada e a dica do e-mail; a senha sai do campo direto
+  // para o background (que só a envia ao Supabase Auth) e o campo é limpo em seguida.
+  const auth = { connected: null, emailHint: '', busy: false };
+  const authEl    = shadow.querySelector('.auth');
+  const authEmail = shadow.querySelector('.auth-email');
+  const authPass  = shadow.querySelector('.auth-pass');
+  const authGo    = shadow.querySelector('.auth-go');
+  const authErr   = shadow.querySelector('.auth-err');
+
+  function renderAuth() {
+    authEl.hidden = auth.connected !== false;
+    authGo.disabled = auth.busy;
+    authGo.textContent = auth.busy ? 'Entrando…' : 'Entrar';
+  }
+
+  async function refreshAuth() {
+    try {
+      const st = await call('authStatus');
+      auth.connected = !!(st && st.connected);
+      auth.emailHint = (st && st.emailHint) || '';
+    } catch {
+      if (auth.connected === null) auth.connected = false;
+    }
+    renderAuth();
+    if (state.view === 'diag') renderDiag();
+  }
+
+  async function signIn() {
+    if (auth.busy) return;
+    const email = authEmail.value.trim();
+    const password = authPass.value;
+    authErr.textContent = '';
+    if (!email || !password) { authErr.textContent = 'Preencha e-mail e senha.'; return; }
+    auth.busy = true;
+    renderAuth();
+    try {
+      const st = await call('authSignIn', { email, password });
+      auth.connected = !!(st && st.connected);
+      auth.emailHint = (st && st.emailHint) || '';
+      authEmail.value = '';
+      toast('Conta conectada.', 'ok', 2500);
+      sync();
+    } catch (err) {
+      authErr.textContent = String((err && err.message) || 'Não foi possível entrar');
+    } finally {
+      authPass.value = '';
+      auth.busy = false;
+      renderAuth();
+      if (state.view === 'diag') renderDiag();
+    }
+  }
+
+  async function signOut() {
+    try { await call('authSignOut'); } catch { /* a sessão local é apagada mesmo assim */ }
+    auth.connected = false;
+    auth.emailHint = '';
+    renderAuth();
+    if (state.view === 'diag') renderDiag();
+    toast('Você saiu da conta.', 'ok', 2500);
+  }
+
+  authGo.addEventListener('click', () => signIn());
+  [authEmail, authPass].forEach((input) => input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); signIn(); }
+  }));
 
   // Re-injeta o painel e o estilo se o WhatsApp recriar a página
   function ensureInjected() {
@@ -3638,6 +3724,7 @@
       { label: 'Extensão', status: 'ok', screen: `v${VERSION} · Chrome ${chrome_}` },
       { label: 'Biblioteca carregada', status: state.loaded ? 'ok' : 'fail', screen: libValue },
       { label: 'Conexão com o Supabase', status: supabase.status, screen: supabase.v },
+      accountDiagRow(),
       { label: 'Conversa detectada', status: ctx.conv ? 'ok' : 'warn', screen: ctx.conv ? `sim (${ctx.conv.via})` : 'nenhuma conversa aberta' },
       { label: 'Caixa de mensagem', status: ctx.composer ? 'ok' : (ctx.conv ? 'fail' : 'warn'), screen: ctx.composer ? `encontrada (${ctx.composer.via})` : 'não encontrada' },
       { label: 'Nome do contato', status: contact.status, screen: contact.screen, copy: contact.copy },
@@ -3671,6 +3758,13 @@
       { label: 'Painel na página', status: host.isConnected && layoutStyle.isConnected ? 'ok' : 'fail', screen: host.isConnected && layoutStyle.isConnected ? 'injetado' : 'faltando (será re-injetado)' },
     ];
     return rows;
+  }
+
+  // Conta (1.9.1): só conectada / não conectada; na tela, a dica do e-mail (2 letras + domínio)
+  function accountDiagRow() {
+    if (auth.connected === null) return { label: 'Conta', status: 'warn', screen: 'testando...' };
+    if (!auth.connected) return { label: 'Conta', status: 'warn', screen: 'não conectada (entre pelo aviso no topo do painel)', copy: 'não conectada' };
+    return { label: 'Conta', status: 'ok', screen: auth.emailHint ? `conectada (${auth.emailHint})` : 'conectada', copy: 'conectada' };
   }
 
   // Itens com várias partes (migration 20261031130000): só ok / falta atualizar
@@ -3812,6 +3906,14 @@
       toast(ok ? 'Diagnóstico copiado.' : 'Não foi possível copiar.', ok ? 'ok' : 'error', 2500);
     });
     actionsRow.append(retest, copy);
+    if (auth.connected) {
+      const out = el('button', 'btn');
+      out.type = 'button';
+      out.classList.add('auth-out');
+      out.append('Sair');
+      out.addEventListener('click', () => signOut());
+      actionsRow.append(out);
+    }
 
     listEl.append(head, list, actionsRow,
       el('div', 'diag-hint', 'O texto copiado não inclui nomes de contatos nem mensagens.'));
@@ -3830,6 +3932,7 @@
     pingBridge().then(renderDiag);
     refreshWaStatus().then(renderDiag);
     loadSchema().then(renderDiag);
+    refreshAuth();
     call('fetchSchedules').then((r) => { sched.available = !!(r && r.available); }, () => {}).then(renderDiag);
   }
 
@@ -5233,6 +5336,13 @@
   renderAllLabels();
   renderList();
   setSection('mensagens', { persist: false });
+  refreshAuth();
+  try {
+    // Sessão criada, renovada ou apagada pelo background (ex.: renovação recusada): reconsulta o status
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes && Object.prototype.hasOwnProperty.call(changes, 'waAuth')) refreshAuth();
+    });
+  } catch { /* extensão recarregada */ }
   try {
     chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref', 'panelSection'], (saved) => {
       saved = saved || {};

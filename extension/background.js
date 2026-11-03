@@ -1,6 +1,6 @@
 // Service worker: faz as chamadas ao Supabase pelo painel (content.js),
 // fora das regras de CSP/CORS da página do WhatsApp.
-importScripts('config.js', 'supabase-api.js');
+importScripts('config.js', 'auth.js', 'supabase-api.js');
 
 const HANDLERS = {
   fetchLibrary:   ()  => WaApi.fetchLibrary(),
@@ -36,6 +36,10 @@ const HANDLERS = {
   dueSchedules:    ()  => WaApi.dueSchedules(),
   claimSchedule:   (m) => WaApi.claimSchedule({ id: m.id }),
   finishSchedule:  (m) => WaApi.finishSchedule({ id: m.id, status: m.status, error_code: m.error_code }),
+  // Conta (1.9.1): a senha só segue para o Supabase Auth; o painel recebe só conectada/dica do e-mail
+  authStatus:      ()  => WaAuth.status(),
+  authSignIn:      (m) => WaAuth.signIn({ email: m.email, password: m.password }),
+  authSignOut:     ()  => WaAuth.signOut(),
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

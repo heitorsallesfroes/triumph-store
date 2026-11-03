@@ -20,7 +20,9 @@ import {
   Sun,
   Moon,
   MessageCircle,
+  LogOut,
 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 interface LayoutProps {
   children: ReactNode;
@@ -210,6 +212,25 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
               </div>
             </div>
             <Zap size={13} style={{ color: ORANGE }} />
+            <button
+              onClick={() => { supabase.auth.signOut(); }}
+              title="Sair"
+              aria-label="Sair"
+              style={{
+                flexShrink: 0,
+                width: 26, height: 26,
+                borderRadius: 6,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = ORANGE; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; }}
+            >
+              <LogOut size={13} />
+            </button>
           </div>
         </div>
       </aside>

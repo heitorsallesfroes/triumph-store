@@ -15,16 +15,16 @@
     return root.WA_CONFIG;
   }
 
+  // 1.9.1: com sessão (auth.js) vai o Bearer do usuário; sem sessão, a chave anon como antes
+  function supaFetch(url, init = {}) {
+    if (root.WaAuth && typeof root.WaAuth.authFetch === 'function') return root.WaAuth.authFetch(url, init);
+    const { SUPABASE_ANON_KEY } = cfg();
+    return fetch(url, { ...init, headers: { ...(init.headers || {}), apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } });
+  }
+
   async function rest(path, init = {}) {
-    const { SUPABASE_URL, SUPABASE_ANON_KEY } = cfg();
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-      ...init,
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        ...(init.headers || {}),
-      },
-    });
+    const { SUPABASE_URL } = cfg();
+    const res = await supaFetch(`${SUPABASE_URL}/rest/v1/${path}`, init);
     const text = await res.text().catch(() => '');
     if (!res.ok) throw new Error(`Supabase ${res.status}: ${text.slice(0, 200)}`);
     return text ? JSON.parse(text) : null;
@@ -220,10 +220,10 @@
 
   // Total de linhas sem baixá-las (HEAD + Prefer: count=exact → Content-Range "*/N")
   async function countRows(path) {
-    const { SUPABASE_URL, SUPABASE_ANON_KEY } = cfg();
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    const { SUPABASE_URL } = cfg();
+    const res = await supaFetch(`${SUPABASE_URL}/rest/v1/${path}`, {
       method: 'HEAD',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'count=exact' },
+      headers: { Prefer: 'count=exact' },
     });
     if (!res.ok) throw new Error(`Supabase ${res.status}`);
     const total = Number((res.headers.get('content-range') || '').split('/')[1]);
@@ -600,11 +600,11 @@
     if (base64.length > Math.ceil(MAX_FILE_BYTES / 3) * 4 + 4) throw new Error('Arquivo acima de 40 MB');
     const bytes = fromBase64(base64);
     if (!bytes.length || bytes.length > MAX_FILE_BYTES) throw new Error('Arquivo acima de 40 MB');
-    const { SUPABASE_URL, SUPABASE_ANON_KEY } = cfg();
+    const { SUPABASE_URL } = cfg();
     const path = `${crypto.randomUUID()}/${sanitizeFileName(fileName)}`;
-    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`, {
+    const res = await supaFetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`, {
       method: 'POST',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': m, 'x-upsert': 'false' },
+      headers: { 'Content-Type': m, 'x-upsert': 'false' },
       body: bytes,
     });
     if (!res.ok) {
