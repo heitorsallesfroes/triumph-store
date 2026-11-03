@@ -37,14 +37,20 @@
   const ITEM_ORDER = 'order=position.asc,created_at.asc';
 
   // Pede também record_seconds; se a coluna ainda não existe no banco (erro 400), busca sem ela
+  // 2.1.0: pede também as etiquetas "ao enviar"; sem essas colunas (migration 20261103150000) busca sem elas
+  const ON_SEND_COLUMNS = 'on_send_add_label_id,on_send_remove_label_id';
+  // Coluna opcional que o banco disser que não existe sai da consulta, e tenta de novo
   async function fetchItems() {
-    try {
-      return await rest(`wa_items?select=${ITEM_COLUMNS},record_seconds&${ITEM_ORDER}`);
-    } catch (err) {
-      if (/^Supabase 400:/.test(err.message) && /record_seconds/.test(err.message)) {
-        return rest(`wa_items?select=${ITEM_COLUMNS}&${ITEM_ORDER}`);
+    let optional = ['record_seconds', ...ON_SEND_COLUMNS.split(',')];
+    for (;;) {
+      try {
+        return await rest(`wa_items?select=${[ITEM_COLUMNS, ...optional].join(',')}&${ITEM_ORDER}`);
+      } catch (err) {
+        const gone = /^Supabase 400:/.test(err.message) ? optional.filter((c) => new RegExp(`\\b${c}\\b`).test(err.message)) : [];
+        if (!gone.length) throw err;
+        // as duas colunas "ao enviar" vêm juntas na mesma migration
+        optional = optional.filter((c) => !gone.includes(c) && !(gone.some((g) => g.startsWith('on_send_')) && c.startsWith('on_send_')));
       }
-      throw err;
     }
   }
 
@@ -534,18 +540,26 @@
 
   // Cria ou edita um item. A parte 1 é espelhada nos campos do wa_items (para o ERP continuar mostrando algo).
   // Sem a tabela de partes: só item de 1 parte (campos do wa_items, como antes).
-  async function saveItem({ id, category_id, title, parts }) {
+  async function saveItem({ id, category_id, title, parts, on_send_add_label_id, on_send_remove_label_id }) {
     if (id !== undefined && id !== null) checkUuid(id, 'Item inválido');
     checkUuid(category_id, 'Categoria inválida');
     const cleanTitle = cleanText(title, TITLE_MAX, 'Título');
     if (!Array.isArray(parts) || !parts.length || parts.length > MAX_PARTS) throw new Error(`De 1 a ${MAX_PARTS} partes`);
     const list = parts.map(checkPart);
+    // 2.1.0: etiquetas CRM "ao enviar" (opcionais; só gravadas se as colunas existirem)
+    const addLabel = on_send_add_label_id == null || on_send_add_label_id === '' ? null : checkUuid(on_send_add_label_id, 'Etiqueta inválida');
+    const removeLabel = on_send_remove_label_id == null || on_send_remove_label_id === '' ? null : checkUuid(on_send_remove_label_id, 'Etiqueta inválida');
+    if (addLabel && addLabel === removeLabel) throw new Error('Escolha etiquetas diferentes para colocar e tirar');
+    const wantsLabels = on_send_add_label_id !== undefined || on_send_remove_label_id !== undefined;
+    const labelCols = wantsLabels && (await probe('wa_items.on_send', () => hasColumn('wa_items', 'on_send_add_label_id')));
+    if ((addLabel || removeLabel) && !labelCols) throw new Error('Atualize o banco para usar este recurso');
     const hasTable = await partsTableExists();
     if (!hasTable && list.length > 1) throw new Error(PARTS_MISSING);
     const first = list[0];
     const fields = {
       category_id, title: cleanTitle, type: first.type, body: first.body,
       file_url: first.file_url, file_name: first.file_name, file_size: first.file_size,
+      ...(labelCols ? { on_send_add_label_id: addLabel, on_send_remove_label_id: removeLabel } : {}),
     };
     let itemId = id;
     if (itemId) {
@@ -785,7 +799,7 @@
       rows = await rest(`wa_settings?select=${SETTINGS_COLUMNS}&id=eq.1`);
     }
     if (!rows.length) return { available: false };
-    return { available: true, settings: rows[0], campaigns: await campaignsTables() };
+    return { available: true, settings: rows[0], campaigns: await campaignsTables(), automations: await automationTables() };
   }
 
   const hmOf = (v) => String(v || '').slice(0, 5);
@@ -1042,12 +1056,16 @@
     const rows = await rest(`wa_contact_labels?select=contact_id,contact:wa_contacts!inner(${cols})&label_id=in.${inList(labelIds)}&limit=5000`);
     const byId = new Map();
     rows.forEach((r) => {
-      if (r.contact && !byId.has(r.contact.id)) byId.set(r.contact.id, { id: r.contact.id, name: r.contact.name || null, phone: r.contact.phone || null, chat_id: r.contact.chat_id || null, labelIds: [] });
+      if (r.contact && !byId.has(r.contact.id)) byId.set(r.contact.id, { id: r.contact.id, name: r.contact.name || null, phone: r.contact.phone || null, chat_id: r.contact.chat_id || null, labelIds: [], links: [] });
     });
     const ids = [...byId.keys()];
     for (let i = 0; i < ids.length; i += 100) {
-      const links = await rest(`wa_contact_labels?select=contact_id,label_id&contact_id=in.${inList(ids.slice(i, i + 100))}&limit=10000`);
-      links.forEach((l) => { const c = byId.get(l.contact_id); if (c) c.labelIds.push(l.label_id); });
+      // 2.1.0: created_at = quando o contato entrou na etiqueta (gatilho "entrou na etiqueta" e run_key)
+      const links = await rest(`wa_contact_labels?select=contact_id,label_id,created_at&contact_id=in.${inList(ids.slice(i, i + 100))}&limit=10000`);
+      links.forEach((l) => {
+        const c = byId.get(l.contact_id);
+        if (c) { c.labelIds.push(l.label_id); c.links.push({ label_id: l.label_id, created_at: l.created_at || null }); }
+      });
     }
     return [...byId.values()];
   }
@@ -1277,7 +1295,202 @@
     return { targets: rows.slice(0, lim), hasMore: rows.length > lim };
   }
 
+  // ── Automações (2.1.0): wa_automations + wa_automation_runs ──
+  // QUANDO (gatilho) → SE (condições) → ENTÃO (ações em ordem). Configurar só por clique (editor);
+  // o motor do painel reserva (wa_automation_runs, unique) antes de executar.
+
+  const AUTOMATION_TABLES = ['wa_automations', 'wa_automation_runs'];
+  const AUTOMATION_COLUMNS = 'id,name,active,position,trigger_type,trigger_label_id,wait_minutes,schedule_days,schedule_time,conditions,actions,ignore_older_days,created_at';
+  const TRIGGERS = ['sem_resposta', 'entrou_etiqueta', 'respondeu', 'dia_hora'];
+  const CONDITIONS = ['tem_etiqueta', 'nao_tem_etiqueta', 'anuncio', 'parada_max_dias'];
+  const ACTIONS = ['enviar', 'adicionar_etiqueta', 'remover_etiqueta', 'mover', 'parar'];
+  const RUN_KEY_RE = /^[\w:@.+-]{1,120}$/;
+
+  const automationTables = () => probe('automations', async () => {
+    try {
+      await rest('wa_automations?select=id&limit=1');
+      await rest('wa_automation_runs?select=id&limit=1');
+      return true;
+    } catch (err) {
+      if (tableMissing(err, AUTOMATION_TABLES)) return false;
+      throw err;
+    }
+  });
+
+  async function autoRest(path, init) {
+    try {
+      return await rest(path, init);
+    } catch (err) {
+      if (tableMissing(err, AUTOMATION_TABLES)) throw new Error(ENGINE_MISSING);
+      throw err;
+    }
+  }
+
+  const cleanKeyword = (v, what) => {
+    const kw = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '';
+    if (!kw || kw.length > 60) throw new Error(`${what}: palavra do anúncio de 1 a 60 caracteres`);
+    return kw;
+  };
+
+  function checkCondition(c, i) {
+    const what = `Condição ${i + 1}`;
+    if (!c || typeof c !== 'object' || !CONDITIONS.includes(c.type)) throw new Error(`${what}: tipo inválido`);
+    if (c.type === 'tem_etiqueta' || c.type === 'nao_tem_etiqueta') return { type: c.type, label_id: checkUuid(c.label_id, `${what}: escolha a etiqueta`) };
+    if (c.type === 'anuncio') return { type: 'anuncio', keyword: cleanKeyword(c.keyword, what) };
+    return { type: 'parada_max_dias', days: intIn(c.days, 1, 365, `${what}: dias`) };
+  }
+
+  function checkAction(a, i, triggerLabel) {
+    const what = `Ação ${i + 1}`;
+    if (!a || typeof a !== 'object' || !ACTIONS.includes(a.type)) throw new Error(`${what}: tipo inválido`);
+    if (a.type === 'parar') return { type: 'parar' };
+    if (a.type === 'enviar') {
+      const variants = Array.isArray(a.variants) ? a.variants : [];
+      if (variants.length > 10) throw new Error(`${what}: no máximo 10 variantes`);
+      const list = variants.map((v, j) => {
+        const w = `${what}, variante ${j + 1}`;
+        if (!v || !['etiqueta', 'anuncio'].includes(v.when)) throw new Error(`${w}: condição inválida`);
+        const item_id = checkUuid(v.item_id, `${w}: escolha a mensagem`);
+        return v.when === 'etiqueta' ? { when: 'etiqueta', label_id: checkUuid(v.label_id, `${w}: escolha a etiqueta`), item_id } : { when: 'anuncio', keyword: cleanKeyword(v.keyword, w), item_id };
+      });
+      const item_id = a.item_id == null || a.item_id === '' ? null : checkUuid(a.item_id, `${what}: mensagem inválida`);
+      if (!item_id && !list.length) throw new Error(`${what}: escolha a mensagem`);
+      return { type: 'enviar', item_id, variants: list };
+    }
+    const label_id = checkUuid(a.label_id, `${what}: escolha a etiqueta`);
+    if (a.type === 'mover' && label_id === triggerLabel) throw new Error(`${what}: mover para uma etiqueta diferente da do gatilho`);
+    return { type: a.type, label_id };
+  }
+
+  function checkAutomation(input) {
+    const a = input || {};
+    if (a.trigger_type === 'venda_registrada') throw new Error('O gatilho "venda registrada" chega com a Etapa E');
+    if (!TRIGGERS.includes(a.trigger_type)) throw new Error('Escolha o gatilho (Quando)');
+    const row = {
+      name: cleanText(a.name, 60, 'Nome da automação'),
+      active: a.active === true,
+      trigger_type: a.trigger_type,
+      trigger_label_id: checkUuid(a.trigger_label_id, 'Escolha a etiqueta CRM do gatilho'),
+      wait_minutes: null, schedule_days: null, schedule_time: null,
+      ignore_older_days: intIn(a.ignore_older_days ?? 15, 1, 365, 'Ignorar conversas paradas há (dias)'),
+    };
+    if (a.trigger_type === 'sem_resposta' || a.trigger_type === 'entrou_etiqueta') row.wait_minutes = intIn(a.wait_minutes, 1, 525600, 'Espera (minutos)');
+    if (a.trigger_type === 'dia_hora') {
+      const days = Array.isArray(a.schedule_days) ? [...new Set(a.schedule_days)] : null;
+      if (!days || !days.length || days.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) throw new Error('Escolha pelo menos um dia da semana');
+      if (typeof a.schedule_time !== 'string' || !HM_RE.test(a.schedule_time.slice(0, 5))) throw new Error('Escolha a hora');
+      row.schedule_days = days.sort((x, y) => x - y);
+      row.schedule_time = a.schedule_time.slice(0, 5);
+    }
+    const conditions = Array.isArray(a.conditions) ? a.conditions : [];
+    if (conditions.length > 10) throw new Error('No máximo 10 condições');
+    row.conditions = conditions.map(checkCondition);
+    const actions = Array.isArray(a.actions) ? a.actions : [];
+    if (!actions.length || actions.length > 10) throw new Error('De 1 a 10 ações');
+    row.actions = actions.map((x, i) => checkAction(x, i, row.trigger_label_id));
+    if (!row.actions.some((x) => x.type !== 'parar')) throw new Error('Escolha pelo menos uma ação');
+    return row;
+  }
+
+  async function fetchAutomations() {
+    return autoRest(`wa_automations?select=${AUTOMATION_COLUMNS}&order=position.asc,created_at.asc`);
+  }
+
+  async function saveAutomation({ id, automation }) {
+    const row = checkAutomation(automation);
+    if (id !== undefined && id !== null) {
+      checkUuid(id, 'Automação inválida');
+      const rows = await autoRest(`wa_automations?id=eq.${id}`, json('PATCH', 'return=representation', row));
+      if (!rows.length) throw new Error('Automação não encontrada');
+      return { id };
+    }
+    const last = await autoRest('wa_automations?select=position&order=position.desc&limit=1');
+    const position = last.length ? (Number(last[0].position) || 0) + 1 : 0;
+    const rows = await autoRest('wa_automations', json('POST', 'return=representation', { ...row, position }));
+    return { id: rows[0].id };
+  }
+
+  async function setAutomationActive({ id, active }) {
+    checkUuid(id, 'Automação inválida');
+    if (typeof active !== 'boolean') throw new Error('Valor inválido');
+    const rows = await autoRest(`wa_automations?id=eq.${id}`, json('PATCH', 'return=representation', { active }));
+    return { active: rows.length ? rows[0].active : null };
+  }
+
+  async function deleteAutomation({ id }) {
+    checkUuid(id, 'Automação inválida');
+    await autoRest(`wa_automations?id=eq.${id}`, { method: 'DELETE' });
+    return true;
+  }
+
+  // Execuções já feitas das automações (para não repetir): "automação:contato:run_key"
+  async function automationRuns({ automationIds }) {
+    if (!Array.isArray(automationIds) || automationIds.length > 100) throw new Error('Lista inválida');
+    automationIds.forEach((a) => checkUuid(a, 'Automação inválida'));
+    if (!automationIds.length) return [];
+    const rows = await autoRest(`wa_automation_runs?select=automation_id,contact_id,run_key&automation_id=in.${inList(automationIds)}&limit=50000`);
+    return rows.map((r) => `${r.automation_id}:${r.contact_id}:${r.run_key}`);
+  }
+
+  // Reserva: só quem conseguir gravar a linha (unique) executa
+  async function automationReserve({ automationId, contactId, runKey }) {
+    checkUuid(automationId, 'Automação inválida');
+    checkUuid(contactId, 'Contato inválido');
+    if (typeof runKey !== 'string' || !RUN_KEY_RE.test(runKey)) throw new Error('Execução inválida');
+    const rows = await autoRest('wa_automation_runs?on_conflict=automation_id,contact_id,run_key',
+      json('POST', 'resolution=ignore-duplicates,return=representation', { automation_id: automationId, contact_id: contactId, run_key: runKey }));
+    return { reserved: rows.length > 0, id: rows.length ? rows[0].id : null };
+  }
+
+  // Nada foi enviado (erro antes do envio): libera para tentar de novo mais tarde
+  async function automationUnreserve({ id }) {
+    checkUuid(id, 'Execução inválida');
+    await autoRest(`wa_automation_runs?id=eq.${id}`, { method: 'DELETE' });
+    return true;
+  }
+
+  // ── Mensagem rápida que etiqueta (2.1.0) ──
+  // Depois que a mensagem INTEIRA saiu: põe/tira o contato das etiquetas CRM do item.
+  // Acha o contato pelo id, pela conversa aberta (identity) ou pelo id da conversa; cria se preciso.
+  async function applySendLabels({ addLabelId, removeLabelId, contactId, identity, chatId, name }) {
+    const add = addLabelId == null || addLabelId === '' ? null : checkUuid(addLabelId, 'Etiqueta inválida');
+    const remove = removeLabelId == null || removeLabelId === '' ? null : checkUuid(removeLabelId, 'Etiqueta inválida');
+    if (!add && !remove) return { applied: false };
+    let contact = null;
+    if (contactId) {
+      contact = { id: checkUuid(contactId, 'Contato inválido') };
+    } else if (identity) {
+      const id = checkIdentity(identity);
+      contact = await ensureContact(id);
+      if (id.chatId) await rememberChatId(contact, id.chatId).catch(() => {});
+    } else if (typeof chatId === 'string' && SCHED_CHAT_RE.test(chatId)) {
+      const found = (await contactsByChats([chatId]))[chatId];
+      if (found) contact = { id: found.id };
+      else {
+        const phone = phoneOfChat(chatId);
+        const nm = typeof name === 'string' && name.trim() && !/^[+\d\s().-]+$/.test(name) ? name.trim().replace(/\s+/g, ' ').slice(0, 100) : null;
+        if (phone) contact = await ensureContact({ key: `tel:${phone}`, phone, name: nm });
+        else if (nm) contact = await ensureContact({ key: nameKey(nm), phone: null, name: nm });
+        if (contact) await rememberChatId(contact, chatId).catch(() => {});
+      }
+    }
+    if (!contact) return { applied: false };
+    if (remove) await rest(`wa_contact_labels?contact_id=eq.${contact.id}&label_id=eq.${remove}`, { method: 'DELETE' });
+    if (add) await followAdd({ contactId: contact.id, labelId: add });
+    return { applied: true, contactId: contact.id, labelIds: await labelIdsOf(contact.id) };
+  }
+
+  // Nome salvo no CRM para o contato da conversa aberta (para o {nome})
+  async function getContactName(identity) {
+    const found = await findContact(checkIdentity(identity));
+    if (!found) return { name: null };
+    const rows = await rest(`wa_contacts?select=name&id=eq.${found.id}`);
+    return { name: rows.length ? rows[0].name || null : null };
+  }
+
   root.WaApi = {
+    fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve,
+    automationUnreserve, applySendLabels, getContactName,
     fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,

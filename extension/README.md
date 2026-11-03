@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.0.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.1.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -128,6 +128,23 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
   funciona só com **1 parte** e mostra "Atualize o banco para usar este
   recurso" nas opções de várias partes, esperar e digitando.
 
+### Prévia editável (olho) — 2.1.0
+
+- Na prévia, os textos e as legendas ficam **editáveis**, já com o `{nome}`
+  preenchido. Sem nome, o lugar fica destacado e aparece um campo para digitar
+  o nome (só nesta conversa).
+- **Enviar só nesta conversa** manda o que está na tela; a mensagem salva
+  **não muda**. **Restaurar** volta o texto original.
+
+### Mensagem rápida que etiqueta — 2.1.0
+
+- No editor de mensagens: **Ao enviar, colocar na etiqueta CRM** e **e tirar
+  da etiqueta CRM** (opcionais).
+- Só muda as etiquetas quando a mensagem **inteira** sai com sucesso: pela
+  seta, pela prévia, por agendamento, automação ou disparo. Se falhar ou for
+  parada, não mexe. Cria o contato (e guarda o id da conversa) se preciso.
+- "Colocar na caixa" (você aperta Enter) não conta como envio.
+
 ### Agendamento (seção ⏰ Agendados)
 
 - Abra a conversa individual no WhatsApp, abra o painel e clique em
@@ -184,31 +201,54 @@ Tudo que sai sozinho (agendados, follows e disparos) passa por **uma fila só**:
   (ex.: conversa não carregada), fica falhou ou pulado, com o motivo.
 - Edite os limites em **Follows → Limites e horário**.
 
-### Follows (seção 🔁 Follows)
+### Automações (seção 🔁 Automações) — 2.1.0
 
-Uma **régua** manda uma mensagem para quem está numa etiqueta CRM e **não
-respondeu** depois de um tempo.
+Cada automação é **QUANDO → SE → ENTÃO**, sempre para os contatos de uma
+etiqueta CRM, e roda **uma vez por entrada na etiqueta** (se o contato sair e
+entrar de novo, vale de novo).
 
-- **1. Quem entra**: os contatos com a etiqueta CRM escolhida.
-- **2. Espera**: o tempo sem resposta depois da **sua** última mensagem,
-  contando **só** os minutos do horário comercial e dos dias permitidos, e só
-  com o WhatsApp Web aberto. Conversas paradas há mais de N dias (padrão 15)
-  são puladas.
-- **3. Manda**: variantes em ordem ("SE tem a etiqueta X", "SE veio do
-  anúncio com a palavra Y"); a primeira que bater vale; senão a mensagem
-  **SEMPRE** (padrão). `{nome}` vira o primeiro nome do contato.
-- **4. Depois vai para**: depois de enviar, o contato sai da etiqueta da régua
-  e vai para a próxima (ou só sai). Isso impede reenvio. **Se responder vai
-  para**: quem respondeu sai da régua e vai para essa etiqueta.
-- A conversa precisa estar **carregada no WhatsApp Web** (a extensão nunca
-  cria conversa num follow). O id da conversa é guardado no contato quando
-  você marca uma etiqueta CRM ou usa "Copiar do WhatsApp".
-- **Simular**: mostra quem receberia o quê agora e quem seria pulado, sem
-  enviar nem gravar nada. **Testar com a conversa aberta**: qual régua, qual
-  mensagem e quanto falta. **Colocar a conversa aberta numa régua**: marca a
-  etiqueta CRM de entrada. **Histórico**: os últimos 50 envios automáticos.
-- Sem a migration `20261103130000_wa_flows.sql`, a seção mostra "Atualize o
-  banco para usar este recurso" e os agendamentos funcionam como na 1.9.0.
+- **QUANDO** (gatilho):
+  - **Ficou sem responder**: a sua última mensagem está há X minutos **úteis**
+    sem resposta (só no horário comercial e dias permitidos; conversas paradas
+    há mais de N dias são puladas).
+  - **Entrou na etiqueta há**: X minutos, horas ou dias **corridos** desde que
+    o contato entrou na etiqueta, mesmo que tenha conversado no meio.
+  - **Respondeu**: a última mensagem carregada é do cliente.
+  - **Dia e hora fixos**: em dias da semana e hora escolhidos, para todos da
+    etiqueta (cada um uma vez por dia).
+  - "Venda registrada" aparece desativado: chega com a Etapa E.
+- **SE** (todas precisam bater): tem a etiqueta CRM; não tem a etiqueta CRM;
+  veio do anúncio com a palavra; conversa parada há no máximo X dias.
+- **ENTÃO** (em ordem): enviar mensagem salva (com variantes "se tem a
+  etiqueta X, manda Y"), adicionar etiqueta, remover etiqueta, mover (tira a do
+  gatilho e põe outra) e parar. **Se o envio falhar, as ações seguintes não
+  rodam.**
+- Os cartões mostram as frases "Quando… / Se… / Então…". Botões: Editar,
+  Ligar/Desligar, Duplicar e Excluir (com confirmação no painel). O editor tem
+  os 3 blocos e o resumo ao vivo.
+- **+ Nova automação**: modelos prontos (Follow de venda, Pedido de avaliação,
+  Recompra, Garantia vencendo) ou em branco. O modelo só preenche o editor;
+  nada é criado antes de **Salvar**. Etiquetas que ainda não existem aparecem
+  com o botão **Criar agora**.
+- **Simular**, **Testar com a conversa aberta**, **Histórico** e os contadores
+  continuam iguais. Tudo passa pelo motor de envios (limites, horário, Pausar
+  tudo, "Não enviar", trava entre abas).
+- As réguas da 2.0.0 viram automações equivalentes quando a migration
+  `20261103150000_wa_automations.sql` é aplicada (e uma automação "respondeu"
+  para quem tinha "Se responder vai para"). Antes disso, a seção mostra
+  "Atualize o banco para usar este recurso" e as réguas continuam rodando.
+
+### {nome} inteligente (2.1.0)
+
+- Ordem: o nome salvo no CRM; senão a primeira palavra do nome do WhatsApp.
+  Nos dois casos, **só se a palavra estiver na lista de nomes brasileiros
+  comuns** (`data/nomes-br.js`, 10 mil nomes do Censo 2010 do IBGE), sem
+  diferenciar acento e maiúsculas. "Loja do Zé", "Fé em Deus" e emoji não
+  viram nome. O nome aparece com a primeira letra maiúscula.
+- `{nome}` sozinho: o nome, ou vazio. `Olá{, nome}! Tudo bem?`: vira
+  "Olá, Fernanda! Tudo bem?" com nome e "Olá! Tudo bem?" sem nome (o trecho
+  inteiro entre chaves some).
+- Vale para a seta, a prévia, agendados, automações e disparos.
 
 ### Disparos (seção 📣 Disparos)
 
@@ -320,7 +360,7 @@ Logo abaixo do cabeçalho do painel há uma fileira de botões, com ícone e nom
 - **Quadro**: abre o Quadro grande. O painel continua na seção em que estava.
 - **Agendados**: agendar mensagens (veja "Agendamento" abaixo).
 - **Disparos**: envio para uma etiqueta CRM (veja "Disparos" acima).
-- **Follows**: réguas automáticas (veja "Follows" acima).
+- **Automações**: Quando → Se → Então (veja "Automações" acima).
 
 A seção ativa fica destacada em laranja e o título do cabeçalho muda
 ("Mensagens", "Etiquetas CRM" ou "Agendados"). O painel lembra a última seção escolhida.
@@ -487,6 +527,18 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.1.0
+- **Automações** "Quando → Se → Então" no lugar das réguas (seção 🔁
+  Automações): 4 gatilhos, condições, ações em ordem, modelos prontos,
+  uma execução por entrada na etiqueta (`wa_automation_runs`). As réguas da
+  2.0.0 são migradas sem perder nada.
+- **Mensagem rápida que etiqueta**: põe/tira etiquetas CRM quando a mensagem
+  inteira sai.
+- **Prévia editável** com "Enviar só nesta conversa" e "Restaurar".
+- **{nome} inteligente** (lista de nomes do IBGE) e a sintaxe `{, nome}`.
+- Diagnóstico: linha "Automações".
+- Precisa da migration `20261103150000_wa_automations.sql`.
 
 ### 2.0.0
 - **Motor de envios** único para agendados, follows e disparos: fila só, uma
@@ -657,6 +709,7 @@ WhatsApp Web (mundo da página, "world": "MAIN")
         │  'tsp-wa-content'/'tsp-wa-bridge' e 'tsp-wajs-content'/'tsp-wajs-bridge')
         ▼
 Mundo isolado da extensão
+  data/nomes-br.js ......... lista de nomes comuns para o {nome} (2.1.0)
   engine.js ................ motor de envios (lógica pura + fila; sem rede, sem DOM)
   content.js ............... painel; áudio: rápido (WA-JS) → plano B (microfone) → plano C (arquivo)
         ▲  chrome.runtime.sendMessage
@@ -720,7 +773,10 @@ Service worker
   automático) e troca as etiquetas CRM da régua do contato que recebeu ou
   respondeu; réguas (`wa_flows`, `wa_flow_variants`) e limites só pelo editor.
   Disparos (`wa_campaigns`, `wa_campaign_targets`): criados e iniciados só por
-  clique; o motor só reserva e marca o resultado de cada alvo. O background só atende os tipos da lista `HANDLERS`;
+  clique; o motor só reserva e marca o resultado de cada alvo. 2.1.0:
+  automações (`wa_automations`) só pelo editor; o motor grava
+  `wa_automation_runs` (reserva) e troca as etiquetas das ações; as etiquetas
+  "ao enviar" do item (`wa_items.on_send_*`) são aplicadas depois do envio. O background só atende os tipos da lista `HANDLERS`;
   cada função valida a entrada (UUID, tamanhos, cores da paleta). Excluir uma
   etiqueta CRM apaga as marcações e a etiqueta, nunca contatos. Colunas novas
   (`hidden`, `notes`): tenta com a coluna e, se o banco responder 400 citando
@@ -732,6 +788,9 @@ Service worker
   o áudio da biblioteca (sem ligar no alto-falante). Desarma após usar, após
   erro ou após 10 s. Qualquer outro pedido vai direto para a função original.
   Não faz conexões de rede.
+- `data/nomes-br.js` (2.1.0): `TSP_NOMES_BR`, um `Set` com os 10 mil
+  primeiros nomes mais comuns do Censo 2010 (IBGE, conjunto "genero-nomes" do
+  Brasil.IO), sem acento e em minúsculas. Gerado uma vez fora da extensão.
 - `engine.js` (2.0.0): carregado antes do `content.js`, no mesmo mundo
   isolado. Tempo útil, avaliação das réguas, limites, intervalo aleatório,
   trava e a fila única (`TspEngine.createMotor`). Não faz rede nem mexe na

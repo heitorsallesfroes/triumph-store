@@ -23,7 +23,7 @@ const HANDLERS = {
   moveContactLabel:       (m) => WaApi.moveContactLabel({ contactId: m.contactId, from: m.from, to: m.to }),
   fetchAllLabelClients:   (m) => WaApi.fetchAllLabelClients({ labelId: m.labelId }),
   // Editor de mensagens (1.9.0): cada uma valida a entrada em supabase-api.js
-  saveItem:        (m) => WaApi.saveItem({ id: m.id, category_id: m.category_id, title: m.title, parts: m.parts }),
+  saveItem:        (m) => WaApi.saveItem({ id: m.id, category_id: m.category_id, title: m.title, parts: m.parts, on_send_add_label_id: m.on_send_add_label_id, on_send_remove_label_id: m.on_send_remove_label_id }),
   deleteItem:      (m) => WaApi.deleteItem({ id: m.id }),
   createCategory:  (m) => WaApi.createCategory({ name: m.name }),
   renameCategory:  (m) => WaApi.renameCategory({ id: m.id, name: m.name }),
@@ -67,6 +67,16 @@ const HANDLERS = {
   claimTarget:          (m) => WaApi.claimTarget({ id: m.id }),
   finishTarget:         (m) => WaApi.finishTarget({ id: m.id, status: m.status, reason: m.reason }),
   campaignTargets:      (m) => WaApi.campaignTargets({ id: m.id, offset: m.offset, limit: m.limit }),
+  // Automações e mensagem que etiqueta (2.1.0): cada uma valida a entrada em supabase-api.js
+  fetchAutomations:     ()  => WaApi.fetchAutomations(),
+  saveAutomation:       (m) => WaApi.saveAutomation({ id: m.id, automation: m.automation }),
+  setAutomationActive:  (m) => WaApi.setAutomationActive({ id: m.id, active: m.active }),
+  deleteAutomation:     (m) => WaApi.deleteAutomation({ id: m.id }),
+  automationRuns:       (m) => WaApi.automationRuns({ automationIds: m.automationIds }),
+  automationReserve:    (m) => WaApi.automationReserve({ automationId: m.automationId, contactId: m.contactId, runKey: m.runKey }),
+  automationUnreserve:  (m) => WaApi.automationUnreserve({ id: m.id }),
+  applySendLabels:      (m) => WaApi.applySendLabels({ addLabelId: m.addLabelId, removeLabelId: m.removeLabelId, contactId: m.contactId, identity: m.identity, chatId: m.chatId, name: m.name }),
+  getContactName:       (m) => WaApi.getContactName(m.identity),
   // Conta (1.9.1): a senha só segue para o Supabase Auth; o painel recebe só conectada/dica do e-mail
   authStatus:      ()  => WaAuth.status(),
   authSignIn:      (m) => WaAuth.signIn({ email: m.email, password: m.password }),

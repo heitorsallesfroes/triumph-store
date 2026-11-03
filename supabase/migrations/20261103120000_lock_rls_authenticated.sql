@@ -32,7 +32,8 @@
 -- service_role rodando só no seu PC).
 -- Tabela que não existir no banco é pulada (aviso NOTICE), sem erro.
 -- Extensão 2.0.0: wa_settings, wa_flows, wa_flow_variants, wa_send_log, wa_campaigns e
--- wa_campaign_targets também entram. Se as migrations 20261103130000/20261103140000 forem
+-- wa_campaign_targets (e, na 2.1.0, wa_automations e wa_automation_runs) também entram. Se as
+-- migrations 20261103130000/20261103140000/20261103150000 forem
 -- aplicadas DEPOIS desta, elas mesmas criam essas tabelas só para authenticated e se registram
 -- na cópia rls_backup_20261103 (o rollback abre todas do mesmo jeito).
 -- ============================================================================
@@ -87,7 +88,9 @@ declare
     'wa_item_parts', 'wa_contacts', 'wa_contact_labels', 'wa_schedules',
     -- extensão 2.0.0 (motor, follows e disparos: migrations 20261103130000 e 20261103140000)
     'wa_settings', 'wa_flows', 'wa_flow_variants', 'wa_send_log',
-    'wa_campaigns', 'wa_campaign_targets'
+    'wa_campaigns', 'wa_campaign_targets',
+    -- extensão 2.1.0 (automações: migration 20261103150000)
+    'wa_automations', 'wa_automation_runs'
   ];
 begin
   foreach t in array tables loop

@@ -164,10 +164,9 @@
 
   // ── Contato, conversa e mensagem ─────────────────────────────────────────
 
+  // 2.1.0: nome do CRM pelo {nome} inteligente (lista de nomes comuns; ver smartFirstName)
   function firstNameOf(name) {
-    const n = typeof name === 'string' ? name.trim() : '';
-    if (!n || /^[+\d\s().-]+$/.test(n)) return '';
-    return n.split(/\s+/)[0];
+    return smartFirstName({ crmName: name });
   }
 
   const CHAT_RE = /^[0-9]+@(c\.us|lid)$/;
@@ -220,6 +219,209 @@
     if (!pick) return { action: 'skip', reason: 'sem mensagem', chatId };
     return { action: 'send', reason: '', chatId, itemId: pick.itemId, variant: pick };
   }
+
+  // ── {nome} inteligente (2.1.0) ───────────────────────────────────────────
+  // Nome do CRM; senão a primeira palavra do nome do WhatsApp. Nos dois casos, só se a palavra
+  // estiver na lista de nomes brasileiros comuns (data/nomes-br.js), comparando sem acento e sem
+  // maiúsculas: o nome do CRM também vem do WhatsApp ("Loja", "Fé em Deus" e emoji são recusados).
+
+  const stripAccents = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const nameSet = () => (root.TSP_NOMES_BR instanceof Set ? root.TSP_NOMES_BR : null);
+
+  function firstWordOf(name) {
+    const n = typeof name === 'string' ? name.trim() : '';
+    if (!n) return '';
+    const w = n.split(/\s+/)[0].replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
+    return /^\p{L}[\p{L}'-]{1,29}$/u.test(w) ? w : '';
+  }
+
+  function isCommonName(word) {
+    const list = nameSet();
+    return !!list && !!word && list.has(stripAccents(word).toLowerCase());
+  }
+
+  const capName = (w) => { const l = w.toLowerCase(); return l.charAt(0).toUpperCase() + l.slice(1); };
+
+  function smartFirstName({ crmName, waName } = {}) {
+    for (const src of [crmName, waName]) {
+      const w = firstWordOf(src);
+      if (w && isCommonName(w)) return capName(w);
+    }
+    return '';
+  }
+
+  // {nome} → nome (vazio sem nome). {, nome} / {Oi nome!} → o trecho inteiro só se houver nome.
+  const NAME_VAR = /\{([^{}]*?)\bnome\b([^{}]*?)\}/gi;
+  function fillName(text, name) {
+    return String(text == null ? '' : text).replace(NAME_VAR, (m, pre, suf) => (name ? `${pre}${name}${suf}` : ''));
+  }
+  const hasNameVar = (text) => /\{[^{}]*?\bnome\b[^{}]*?\}/i.test(String(text || ''));
+
+  // ── Automações (2.1.0): QUANDO → SE → ENTÃO ─────────────────────────────
+
+  const TRIGGER_TYPES = ['sem_resposta', 'entrou_etiqueta', 'respondeu', 'dia_hora'];
+  const FUTURE_TRIGGERS = [{ type: 'venda_registrada', label: 'Venda registrada', note: 'chega com a Etapa E' }];
+
+  const dateKey = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`; };
+  const linkOf = (contact, labelId) => (contact.links || []).find((l) => l.label_id === labelId) || null;
+
+  function automationNeedsChat(a) {
+    return a.trigger_type === 'sem_resposta' || a.trigger_type === 'respondeu'
+      || (a.conditions || []).some((c) => c.type === 'anuncio' || c.type === 'parada_max_dias')
+      || (a.actions || []).some((x) => x.type === 'enviar');
+  }
+
+  // Palavras de anúncio que a ponte precisa procurar (condições + variantes)
+  function automationKeywords(a) {
+    const out = [];
+    (a.conditions || []).forEach((c) => { if (c.type === 'anuncio') out.push(normKw(c.keyword)); });
+    (a.actions || []).forEach((x) => { if (x.type === 'enviar') (x.variants || []).forEach((v) => { if (v.when === 'anuncio') out.push(normKw(v.keyword)); }); });
+    return [...new Set(out.filter(Boolean))];
+  }
+
+  function resolveSendItem(action, labels, ads) {
+    const has = new Set(labels || []);
+    const ad = new Set([...(ads || [])].map(normKw));
+    for (const v of action.variants || []) {
+      if (v.when === 'etiqueta' && v.label_id && has.has(v.label_id) && v.item_id) return { itemId: v.item_id, kind: 'etiqueta', variant: v };
+      if (v.when === 'anuncio' && normKw(v.keyword) && ad.has(normKw(v.keyword)) && v.item_id) return { itemId: v.item_id, kind: 'anuncio', variant: v };
+    }
+    return action.item_id ? { itemId: action.item_id, kind: 'padrao', variant: null } : null;
+  }
+
+  // Próximo dia/hora de um gatilho dia_hora a partir de now (ms) — null se não houver dias
+  function nextScheduleAt(a, now) {
+    const t = parseHM(a.schedule_time);
+    const days = new Set(a.schedule_days || []);
+    if (t == null || !days.size) return null;
+    let day = midnightOf(now);
+    for (let i = 0; i < 8; i++) {
+      const d = new Date(day);
+      const at = atMinute(d.getFullYear(), d.getMonth(), d.getDate(), t);
+      if (days.has(d.getDay()) && at > now) return at;
+      day = nextMidnight(day);
+    }
+    return null;
+  }
+
+  // Decide o que fazer com uma automação para um contato agora.
+  // action: 'run' (com runKey e plan) | 'wait' (dueAt) | 'none' | 'skip' | 'done' (já rodou)
+  function evaluateAutomation({ automation: a, contact, chat, settings, now, noSendLabelId, ranKeys }) {
+    const labels = contact.labelIds || [];
+    if (!labels.includes(a.trigger_label_id)) return { action: 'skip', reason: 'fora da etiqueta do gatilho' };
+    if (noSendLabelId && labels.includes(noSendLabelId)) return { action: 'skip', reason: 'Não enviar' };
+    const needsChat = automationNeedsChat(a);
+    const chatId = chatIdOfContact(contact);
+    if (needsChat && !chatId) return { action: 'skip', reason: 'sem telefone' };
+    if (needsChat && (!chat || !chat.loaded)) return { action: 'skip', reason: 'conversa não carregada', chatId };
+    const last = chat && chat.last && Number(chat.last.t) ? chat.last : null;
+    const link = linkOf(contact, a.trigger_label_id);
+    const enteredAt = link && link.created_at ? Date.parse(link.created_at) : null;
+    const labelKey = `${a.trigger_label_id}@${Number.isFinite(enteredAt) ? enteredAt : 0}`;
+    let runKey;
+    if (a.trigger_type === 'sem_resposta') {
+      if (!last) return { action: 'skip', reason: 'conversa sem mensagens carregadas', chatId };
+      if (!last.fromMe) return { action: 'none', reason: 'cliente respondeu', chatId };
+      const lastMs = Number(last.t) * 1000;
+      if (now - lastMs > (Number(a.ignore_older_days) || 15) * DAY_MS) return { action: 'skip', reason: 'conversa parada', chatId };
+      const need = (Number(a.wait_minutes) || 0) * MIN_MS;
+      if (businessMsBetween(lastMs, now, settings) < need) {
+        const dueAt = addBusinessMs(lastMs, need, settings);
+        return { action: 'wait', reason: 'aguardando', chatId, dueAt, leftMs: dueAt == null ? null : Math.max(0, dueAt - now) };
+      }
+      runKey = labelKey;
+    } else if (a.trigger_type === 'entrou_etiqueta') {
+      if (!Number.isFinite(enteredAt)) return { action: 'skip', reason: 'sem data de entrada na etiqueta', chatId };
+      const dueAt = enteredAt + (Number(a.wait_minutes) || 0) * MIN_MS;
+      if (now < dueAt) return { action: 'wait', reason: 'aguardando', chatId, dueAt, leftMs: dueAt - now };
+      runKey = labelKey;
+    } else if (a.trigger_type === 'respondeu') {
+      if (!last) return { action: 'skip', reason: 'conversa sem mensagens carregadas', chatId };
+      if (last.fromMe) return { action: 'none', reason: 'ainda não respondeu', chatId };
+      runKey = labelKey;
+    } else if (a.trigger_type === 'dia_hora') {
+      const t = parseHM(a.schedule_time);
+      const d = new Date(now);
+      const todayAt = t == null ? null : atMinute(d.getFullYear(), d.getMonth(), d.getDate(), t);
+      if (todayAt == null || !(a.schedule_days || []).includes(d.getDay()) || now < todayAt) {
+        const dueAt = nextScheduleAt(a, now);
+        return { action: 'wait', reason: 'aguardando o dia/hora', chatId, dueAt, leftMs: dueAt == null ? null : dueAt - now };
+      }
+      runKey = `dia@${dateKey(now)}`;
+    } else {
+      return { action: 'skip', reason: 'gatilho desativado' };
+    }
+    if (ranKeys && ranKeys.has(`${a.id}:${contact.id}:${runKey}`)) return { action: 'done', reason: 'já rodou', chatId, runKey };
+    for (const c of a.conditions || []) {
+      let okC = true;
+      if (c.type === 'tem_etiqueta') okC = labels.includes(c.label_id);
+      else if (c.type === 'nao_tem_etiqueta') okC = !labels.includes(c.label_id);
+      else if (c.type === 'anuncio') okC = !!chat && (chat.ad || []).map(normKw).includes(normKw(c.keyword));
+      else if (c.type === 'parada_max_dias') okC = !!last && now - Number(last.t) * 1000 <= (Number(c.days) || 0) * DAY_MS;
+      if (!okC) return { action: 'skip', reason: 'condição não bateu', chatId, condition: c };
+    }
+    const plan = [];
+    for (const x of a.actions || []) {
+      if (x.type === 'parar') break;
+      if (x.type === 'enviar') {
+        const pick = resolveSendItem(x, labels, chat ? chat.ad : []);
+        if (!pick) return { action: 'skip', reason: 'sem mensagem', chatId };
+        plan.push({ type: 'enviar', itemId: pick.itemId, pick });
+      } else plan.push({ type: x.type, label_id: x.label_id });
+    }
+    if (!plan.length) return { action: 'skip', reason: 'nenhuma ação', chatId };
+    return { action: 'run', reason: '', chatId, runKey, plan };
+  }
+
+  // Frase-resumo "QUANDO … → SE … → ENTÃO …"
+  function waitPhrase(minutes) {
+    const m = Math.max(0, Math.round(Number(minutes) || 0));
+    if (m >= 1440 && m % 1440 === 0) { const d = m / 1440; return `${d} dia${d === 1 ? '' : 's'}`; }
+    return formatWait(m);
+  }
+
+  function automationSummary(a, { labelName = (id) => id, itemTitle = (id) => id, settings } = {}) {
+    const lab = (id) => `"${id ? labelName(id) : '?'}"`;
+    let quando;
+    if (a.trigger_type === 'sem_resposta') quando = `Quando o contato da etiqueta ${lab(a.trigger_label_id)} fica ${formatWait(a.wait_minutes)} úteis sem responder (${scheduleText(settings)})`;
+    else if (a.trigger_type === 'entrou_etiqueta') quando = `Quando faz ${waitPhrase(a.wait_minutes)} que o contato entrou na etiqueta ${lab(a.trigger_label_id)}`;
+    else if (a.trigger_type === 'respondeu') quando = `Quando o contato da etiqueta ${lab(a.trigger_label_id)} responde`;
+    else if (a.trigger_type === 'dia_hora') quando = `Toda ${formatDays(a.schedule_days || [])} às ${String(a.schedule_time || '').slice(0, 5) || '?'}, para quem está na etiqueta ${lab(a.trigger_label_id)}`;
+    else quando = 'Quando (gatilho não escolhido)';
+    const conds = (a.conditions || []).map((c) => {
+      if (c.type === 'tem_etiqueta') return `tem a etiqueta ${lab(c.label_id)}`;
+      if (c.type === 'nao_tem_etiqueta') return `não tem a etiqueta ${lab(c.label_id)}`;
+      if (c.type === 'anuncio') return `veio do anúncio com "${c.keyword || '?'}"`;
+      if (c.type === 'parada_max_dias') return `a conversa está parada há no máximo ${c.days} dia${Number(c.days) === 1 ? '' : 's'}`;
+      return '?';
+    });
+    const se = conds.length ? `Se ${conds.join(' e ')}` : 'Sem condições';
+    const acts = [];
+    for (const x of a.actions || []) {
+      if (x.type === 'parar') { acts.push('para'); break; }
+      if (x.type === 'enviar') {
+        const vs = (x.variants || []).map((v) => (v.when === 'etiqueta' ? `se tem ${lab(v.label_id)}: "${itemTitle(v.item_id)}"` : `se veio do anúncio com "${v.keyword}": "${itemTitle(v.item_id)}"`));
+        const base = x.item_id ? `"${itemTitle(x.item_id)}"` : '(nada se nenhuma variante bater)';
+        acts.push(`envia ${base}${vs.length ? ` (${vs.join('; ')})` : ''}`);
+      } else if (x.type === 'adicionar_etiqueta') acts.push(`adiciona a etiqueta ${lab(x.label_id)}`);
+      else if (x.type === 'remover_etiqueta') acts.push(`tira a etiqueta ${lab(x.label_id)}`);
+      else if (x.type === 'mover') acts.push(`move para ${lab(x.label_id)}`);
+    }
+    const entao = acts.length ? `Então ${acts.join(', depois ')}` : 'Então (nenhuma ação)';
+    return { quando, se, entao, text: `${quando} → ${se} → ${entao}` };
+  }
+
+  // Modelos prontos: só preenchem o editor (etiquetas pelo nome; o editor oferece "criar agora")
+  const AUTOMATION_TEMPLATES = [
+    { key: 'follow_venda', title: 'Follow de venda', name: 'Follow de venda', trigger_type: 'sem_resposta', trigger_label: 'Follow 1', wait_minutes: 120,
+      actions: [{ type: 'enviar', hint: 'a mensagem de follow' }, { type: 'mover', label: 'Follow 2' }] },
+    { key: 'avaliacao', title: 'Pedido de avaliação', name: 'Pedido de avaliação', trigger_type: 'entrou_etiqueta', trigger_label: 'Cliente', wait_minutes: 15 * 1440,
+      actions: [{ type: 'enviar', hint: 'a mensagem com o link de avaliação do Google' }, { type: 'mover', label: 'Avaliação pedida' }] },
+    { key: 'recompra', title: 'Recompra', name: 'Recompra', trigger_type: 'entrou_etiqueta', trigger_label: 'Cliente', wait_minutes: 60 * 1440,
+      actions: [{ type: 'enviar', hint: 'a oferta de recompra' }, { type: 'adicionar_etiqueta', label: 'Recompra enviada' }] },
+    { key: 'garantia', title: 'Garantia vencendo', name: 'Garantia vencendo', trigger_type: 'entrou_etiqueta', trigger_label: 'Cliente', wait_minutes: 335 * 1440,
+      actions: [{ type: 'enviar', hint: 'o aviso de garantia' }, { type: 'adicionar_etiqueta', label: 'Garantia avisada' }] },
+  ];
 
   // ── Limites ──────────────────────────────────────────────────────────────
 
@@ -288,6 +490,8 @@
       lastEvalAt: 0,
       queue: [],               // follows elegíveis (memória)
       flows: [],
+      automationsAvailable: null, // tabelas da 2.1.0 (wa_automations, wa_automation_runs)
+      automations: [],
       noSendLabelId: null,
       current: null,           // { source } enquanto envia
       probeAt: 0,
@@ -311,6 +515,7 @@
       st.available = true;
       st.settings = s.settings;
       st.campaignsAvailable = s.campaigns === true;
+      st.automationsAvailable = s.automations === true;
       return true;
     }
 
@@ -551,6 +756,151 @@
       if (deps.onLabelsChanged) deps.onLabelsChanged();
     }
 
+    // ── Automações (2.1.0): substituem as réguas quando a migration 20261103150000 existe ──
+
+    async function loadAutomations() {
+      try {
+        const r = await api('fetchAutomations');
+        const next = Array.isArray(r) ? r : [];
+        if (JSON.stringify(next) !== JSON.stringify(st.automations)) st.lastEvalAt = 0;
+        st.automations = next;
+      } catch { /* mantém */ }
+      return st.automations;
+    }
+
+    // Avalia as automações ativas para os contatos das etiquetas dos gatilhos (só leitura)
+    async function evaluateAutomations() {
+      const list = st.automations.filter((a) => a.active).sort((a, b) => (a.position || 0) - (b.position || 0));
+      if (!list.length) return [];
+      const labelIds = [...new Set(list.map((a) => a.trigger_label_id).filter(Boolean))];
+      if (!labelIds.length) return [];
+      const contacts = await api('flowCandidates', { labelIds });
+      const people = Array.isArray(contacts) ? contacts : [];
+      let ran = [];
+      try { ran = await api('automationRuns', { automationIds: list.map((a) => a.id) }); } catch { ran = null; }
+      if (!Array.isArray(ran)) return []; // sem saber o que já rodou, não executa nada
+      const ranKeys = new Set(ran);
+      const chatIds = [...new Set(people.map(chatIdOfContact).filter(Boolean))];
+      const keywords = [...new Set(list.flatMap(automationKeywords))].slice(0, 20);
+      const chats = {};
+      if (list.some(automationNeedsChat)) {
+        for (let i = 0; i < chatIds.length; i += 500) {
+          let r = null;
+          try { r = await deps.wa.chatsInfo({ chatIds: chatIds.slice(i, i + 500), keywords }); } catch { r = null; }
+          Object.assign(chats, (r && r.chats) || {});
+        }
+      }
+      const t = now();
+      const rows = [];
+      list.forEach((automation) => {
+        people.filter((c) => (c.labelIds || []).includes(automation.trigger_label_id)).forEach((contact) => {
+          const chatId = chatIdOfContact(contact);
+          const ev = evaluateAutomation({ automation, contact, chat: chatId ? chats[chatId] : null, settings: st.settings, now: t, noSendLabelId: st.noSendLabelId, ranKeys });
+          rows.push({ automation, contact, ev });
+        });
+      });
+      return rows;
+    }
+
+    async function refreshAutomationQueue() {
+      await loadAutomations();
+      st.lastEvalAt = now();
+      let rows;
+      try { rows = await evaluateAutomations(); } catch { return; }
+      const t = now();
+      const sending = new Set();
+      st.queue = rows.filter((r) => {
+        if (r.ev.action !== 'run') return false;
+        const until = failedRecently.get(`${r.automation.id}:${r.contact.id}`);
+        if (until && until > t) return false;
+        if (r.ev.plan.some((p) => p.type === 'enviar')) {
+          if (sending.has(r.contact.id)) return false; // um envio por contato por ciclo
+          sending.add(r.contact.id);
+        }
+        return true;
+      });
+    }
+
+    async function automationJob() {
+      if (now() - st.lastEvalAt >= FOLLOW_EVAL_MS) await refreshAutomationQueue();
+      while (st.queue.length) {
+        const r = st.queue.shift();
+        // Confere de novo, com dados frescos, antes de reservar
+        let labels = null;
+        try { labels = await api('contactLabelIds', { contactId: r.contact.id }); } catch { labels = null; }
+        if (!Array.isArray(labels)) continue;
+        const contact = { ...r.contact, labelIds: labels };
+        let chat = null;
+        if (automationNeedsChat(r.automation) && r.ev.chatId) {
+          let info = null;
+          try { info = await deps.wa.chatsInfo({ chatIds: [r.ev.chatId], keywords: automationKeywords(r.automation) }); } catch { info = null; }
+          chat = info && info.chats ? info.chats[r.ev.chatId] : null;
+        }
+        const ev = evaluateAutomation({ automation: r.automation, contact, chat, settings: st.settings, now: now(), noSendLabelId: st.noSendLabelId, ranKeys: null });
+        if (ev.action !== 'run' || ev.runKey !== r.ev.runKey) continue;
+        return { kind: 'automacao', automation: r.automation, contact, ev };
+      }
+      return null;
+    }
+
+    async function runAutomationJob({ automation, contact, ev }) {
+      let res0 = null;
+      try { res0 = await api('automationReserve', { automationId: automation.id, contactId: contact.id, runKey: ev.runKey }); } catch { res0 = null; }
+      if (!res0 || !res0.reserved) return; // outra aba já rodou (ou está rodando)
+      const runId = res0.id;
+      const trigger = automation.trigger_label_id;
+      let sent = 0;
+      for (const step of ev.plan) {
+        if (step.type === 'enviar') {
+          const entry = { source: 'follow', source_id: automation.id, contact_id: contact.id, chat_id: ev.chatId, item_id: step.itemId };
+          const item = await deps.itemById(step.itemId);
+          if (!item) {
+            await logSkip(entry, 'sem mensagem');
+            if (!sent) { try { await api('automationUnreserve', { id: runId }); } catch { /* ok */ } }
+            failedRecently.set(`${automation.id}:${contact.id}`, now() + RETRY_AFTER_FAIL_MS);
+            break;
+          }
+          const logId = await logStart(entry);
+          st.current = { source: 'automacao' };
+          changed();
+          let res;
+          try {
+            res = await deps.sendParts({ parts: deps.partsOf(item), chatId: ev.chatId, firstName: smartFirstName({ crmName: contact.name }), label: 'Automação' });
+          } catch {
+            res = { status: 'failed', stage: 'sending', sent: 0 };
+          } finally {
+            st.current = null;
+          }
+          const out = outcome(res);
+          await logFinish(logId, out.status, out.reason);
+          if (out.status !== 'pulado') afterAttempt();
+          if (out.status !== 'enviado') {
+            // Falhou: as ações seguintes não rodam. Nada saiu (e nada antes) → libera para tentar mais tarde.
+            if (out.retry && !sent) { try { await api('automationUnreserve', { id: runId }); } catch { /* ok */ } }
+            if (out.retry) failedRecently.set(`${automation.id}:${contact.id}`, now() + RETRY_AFTER_FAIL_MS);
+            break;
+          }
+          sent++;
+          if (deps.onItemUsed) deps.onItemUsed(item);
+          if (deps.onItemSent) { try { await deps.onItemSent(item, { contactId: contact.id, chatId: ev.chatId }); } catch { /* etiqueta do item */ } }
+        } else if (step.type === 'adicionar_etiqueta') {
+          try { await api('followAdd', { contactId: contact.id, labelId: step.label_id }); } catch { /* segue */ }
+        } else if (step.type === 'remover_etiqueta') {
+          try { await api('followReserve', { contactId: contact.id, labelId: step.label_id }); } catch { /* segue */ }
+        } else if (step.type === 'mover') {
+          try {
+            await api('followReserve', { contactId: contact.id, labelId: trigger });
+            await api('followAdd', { contactId: contact.id, labelId: step.label_id });
+          } catch { /* segue */ }
+        }
+      }
+      if (!ev.plan.some((p) => p.type === 'enviar')) {
+        await logSkip({ source: 'follow', source_id: automation.id, contact_id: contact.id, chat_id: ev.chatId || null, item_id: null },
+          automation.trigger_type === 'respondeu' ? 'respondeu' : 'etiquetas atualizadas');
+      }
+      if (deps.onLabelsChanged) deps.onLabelsChanged();
+    }
+
     // ── Ciclo ──
 
     async function step() {
@@ -578,13 +928,14 @@
       // Ordem: agendados (hora marcada) → disparos → follows
       let job = await scheduleJob();
       if (!job && st.campaignsAvailable && deps.campaignJob) job = await deps.campaignJob(api);
-      if (!job) job = await followJob();
+      if (!job) job = st.automationsAvailable ? await automationJob() : await followJob();
       if (!job) return false;
       // A trava ainda é nossa? (renova antes de enviar)
       if (!(await ensureLease({ force: st.leaseUntil - now() < 45 * 1000 }))) return false;
       if (st.settings.paused_all) return false;
       if (job.kind === 'agendado') await runScheduleJob(job);
       else if (job.kind === 'follow') await runFollowJob(job);
+      else if (job.kind === 'automacao') await runAutomationJob(job);
       else if (deps.runCampaignJob) {
         st.current = { source: 'disparo' };
         changed();
@@ -660,6 +1011,11 @@
     async function simulate(limit = 200) {
       await loadSettings();
       if (!st.available) return { available: false, rows: [] };
+      if (st.automationsAvailable) {
+        await loadAutomations();
+        const rows = await evaluateAutomations();
+        return { available: true, automations: true, rows: rows.slice(0, limit), total: rows.length };
+      }
       await loadFlows();
       const rows = await evaluate();
       return { available: true, rows: rows.slice(0, limit), total: rows.length };
@@ -667,7 +1023,7 @@
 
     return {
       state: st, runnerId, start, stop, tick, leaseTick, setPaused, saveSettings, simulate, loadSettings, loadFlows,
-      refreshCounts, evaluate, ensureNoSendLabel,
+      refreshCounts, evaluate, ensureNoSendLabel, loadAutomations, evaluateAutomations,
     };
   }
 
@@ -676,6 +1032,9 @@
     parseHM, normSettings, businessMsBetween, isBusinessTime, addBusinessMs, nextBusinessStart,
     formatWait, formatDays, scheduleText, waitText, formatLeft, hm,
     firstNameOf, chatIdOfContact, pickVariant, evaluateFollow,
+    smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
+    TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,
+    resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
     limitCheck, randomGapMs, estimateDuration, estimateText,
     createMotor,
   };
