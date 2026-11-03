@@ -433,10 +433,13 @@
 
     // ── Follows ──
 
+    // Réguas mudaram (salvar, ligar/desligar, excluir): reavalia no próximo ciclo
     async function loadFlows() {
       try {
         const r = await api('fetchFlows');
-        st.flows = Array.isArray(r) ? r : [];
+        const next = Array.isArray(r) ? r : [];
+        if (JSON.stringify(next) !== JSON.stringify(st.flows)) st.lastEvalAt = 0;
+        st.flows = next;
       } catch { /* mantém */ }
       return st.flows;
     }
@@ -469,8 +472,8 @@
     }
 
     async function refreshFollowQueue() {
-      st.lastEvalAt = now();
       await loadFlows();
+      st.lastEvalAt = now();
       let rows;
       try { rows = await evaluate(); } catch { return; }
       // Quem respondeu: troca de etiqueta (sem envio, não conta nos limites)
@@ -492,7 +495,8 @@
     }
 
     async function followJob() {
-      if (!st.queue.length || now() - st.lastEvalAt >= FOLLOW_EVAL_MS) await refreshFollowQueue();
+      // Reavalia as réguas no máximo a cada 60 s; entre uma e outra, usa a fila já montada
+      if (now() - st.lastEvalAt >= FOLLOW_EVAL_MS) await refreshFollowQueue();
       while (st.queue.length) {
         const r = st.queue.shift();
         // Confere de novo, com dados frescos, antes de reservar
@@ -575,10 +579,10 @@
       let job = await scheduleJob();
       if (!job && st.campaignsAvailable && deps.campaignJob) job = await deps.campaignJob(api);
       if (!job) job = await followJob();
-      if (!job) return;
+      if (!job) return false;
       // A trava ainda é nossa? (renova antes de enviar)
-      if (!(await ensureLease({ force: st.leaseUntil - now() < 45 * 1000 }))) return;
-      if (st.settings.paused_all) return;
+      if (!(await ensureLease({ force: st.leaseUntil - now() < 45 * 1000 }))) return false;
+      if (st.settings.paused_all) return false;
       if (job.kind === 'agendado') await runScheduleJob(job);
       else if (job.kind === 'follow') await runFollowJob(job);
       else if (deps.runCampaignJob) {
@@ -588,12 +592,27 @@
         try { r = await deps.runCampaignJob(job, { logStart, logFinish, logSkip, outcome, noSendLabelId: st.noSendLabelId }); } finally { st.current = null; }
         if (r && r.attempted) afterAttempt();
       }
+      return true;
+    }
+
+    // Depois de um envio, acorda assim que o intervalo acabar (sem esperar o próximo ciclo de 10 s);
+    // depois de um pulo, logo em seguida. Só um despertador por vez.
+    let wakeTimer = null;
+    let running = false;
+    const setWake = deps.setWake || ((fn, ms) => setTimeout(fn, ms));
+    const clearWake = deps.clearWake || ((t) => clearTimeout(t));
+    function wakeAt(ms) {
+      if (!running) return;
+      if (wakeTimer) clearWake(wakeTimer);
+      wakeTimer = setWake(() => { wakeTimer = null; tick(); }, Math.max(200, ms - now()));
     }
 
     async function tick() {
       if (busy) return;
       busy = true;
-      try { await step(); } catch { /* próximo ciclo */ } finally { busy = false; changed(); }
+      let didJob = false;
+      try { didJob = await step(); } catch { /* próximo ciclo */ } finally { busy = false; changed(); }
+      if (didJob && st.role === 'este') wakeAt(Math.max(st.nextAllowedAt, now()) + 100);
     }
 
     async function leaseTick() {
@@ -606,6 +625,7 @@
     }
 
     function start() {
+      running = true;
       const set = deps.setTimer || ((fn, ms, repeat) => (repeat ? setInterval(fn, ms) : setTimeout(fn, ms)));
       timers.push(set(() => tick(), FIRST_MS, false));
       timers.push(set(() => tick(), TICK_MS, true));
@@ -613,6 +633,8 @@
     }
 
     function stop() {
+      running = false;
+      if (wakeTimer) { clearWake(wakeTimer); wakeTimer = null; }
       const clear = deps.clearTimer || ((t) => { clearTimeout(t); clearInterval(t); });
       timers.forEach((t) => clear(t));
       timers = [];

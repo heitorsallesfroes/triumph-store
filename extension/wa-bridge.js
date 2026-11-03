@@ -529,6 +529,67 @@
     return { chats };
   }
 
+  // ── Disparo para conversa nova (2.0.0-D2) ────────────────────────────────
+  // ÚNICO pedido que cria conversa. Só para disparo com "permitir conversas novas"
+  // (payload.campaign === true), só números @c.us e só depois de contact.queryExists
+  // confirmar que o número tem WhatsApp. Manda só a 1ª parte (sem "digitando…": a conversa
+  // ainda não existe); as outras partes seguem pelo envio normal (conversa já carregada).
+
+  const QUERY_TIMEOUT_MS = 8000;
+
+  async function campaignSend(requestId, payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const p = payload || {};
+    if (p.campaign !== true) throw new BridgeError('invalid_request', 'Pedido inválido', 'before-send');
+    if (typeof p.chatId !== 'string' || !/^\d{8,15}@c\.us$/.test(p.chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida (só números @c.us)', 'before-send');
+    let send;
+    const newChat = { createChat: true, markIsRead: false };
+    if (p.kind === 'texto') {
+      if (typeof p.text !== 'string' || !p.text.trim() || p.text.length > TEXT_MAX) throw new BridgeError('invalid_text', 'Texto inválido (1 a 4096 caracteres)', 'before-send');
+      send = () => wpp.chat.sendTextMessage(p.chatId, p.text, newChat);
+    } else if (p.kind === 'voz') {
+      if (!(p.data instanceof ArrayBuffer) || p.data.byteLength === 0 || p.data.byteLength > SEND_MAX_BYTES) throw new BridgeError('invalid_audio', 'Áudio inválido', 'before-send');
+      const blob = new Blob([p.data], { type: 'audio/ogg; codecs=opus' });
+      send = () => wpp.chat.sendFileMessage(p.chatId, blob, { ...newChat, type: 'audio', isPtt: true, waveform: true });
+    } else {
+      const type = Object.prototype.hasOwnProperty.call(MEDIA_TYPE, p.kind) ? MEDIA_TYPE[p.kind] : null;
+      if (!type) throw new BridgeError('invalid_kind', 'Tipo de arquivo inválido', 'before-send');
+      if (!(p.data instanceof ArrayBuffer) || p.data.byteLength === 0) throw new BridgeError('invalid_file', 'Arquivo inválido', 'before-send');
+      if (p.data.byteLength > SEND_MAX_BYTES) throw new BridgeError('file_too_big', 'Arquivo acima de 40 MB', 'before-send');
+      if (typeof p.mime !== 'string' || !/^[\w.+-]+\/[\w.+-]+$/.test(p.mime) || p.mime.length > 100) throw new BridgeError('invalid_file', 'Tipo do arquivo inválido', 'before-send');
+      if (p.fileName != null && (typeof p.fileName !== 'string' || p.fileName.length > 200)) throw new BridgeError('invalid_file', 'Nome do arquivo inválido', 'before-send');
+      if (p.caption != null && (typeof p.caption !== 'string' || p.caption.length > TEXT_MAX)) throw new BridgeError('invalid_text', 'Legenda inválida', 'before-send');
+      const blob = new Blob([p.data], { type: p.mime });
+      const options = { ...newChat, type };
+      if (p.fileName) options.filename = p.fileName;
+      if (type !== 'audio' && p.caption && p.caption.trim()) options.caption = p.caption;
+      if (type === 'audio') options.isPtt = false;
+      send = () => wpp.chat.sendFileMessage(p.chatId, blob, options);
+    }
+    if (jobs.has(requestId)) throw new BridgeError('duplicate', 'Pedido repetido', 'before-send');
+    const job = { cancelled: false, stage: 'before-send', wake: null };
+    jobs.set(requestId, job);
+    try {
+      let exists;
+      try {
+        exists = await withTimeout(Promise.resolve().then(() => wpp.contact.queryExists(p.chatId)), QUERY_TIMEOUT_MS);
+      } catch {
+        throw new BridgeError('query_failed', 'Não consegui confirmar se o número tem WhatsApp', 'before-send');
+      }
+      if (!exists) throw new BridgeError('no_whatsapp', 'Número sem WhatsApp', 'before-send');
+      if (job.cancelled) throw new BridgeError('cancelled', 'Envio cancelado', 'before-send');
+      job.stage = 'sending';
+      try {
+        await send();
+      } catch {
+        throw new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
+      }
+      return { sent: true };
+    } finally {
+      jobs.delete(requestId);
+    }
+  }
+
   function cancel(payload) {
     const job = payload && typeof payload.id === 'string' ? jobs.get(payload.id) : null;
     if (!job || job.stage !== 'before-send') return { cancelled: false };
@@ -550,6 +611,7 @@
     chatLabels: (payload) => chatLabels(payload),
     setChatLabels: (payload) => setChatLabels(payload),
     chatsInfo: (payload) => chatsInfo(payload),
+    campaignSend: (payload, requestId) => campaignSend(requestId, payload),
   };
 
   function reply(request, ok, data, error) {

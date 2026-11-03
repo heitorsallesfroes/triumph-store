@@ -1083,7 +1083,203 @@
     return { moved: true };
   }
 
+  // ── Disparos (2.0.0-D2): wa_campaigns + wa_campaign_targets ──
+  // Nada sai sem o usuário confirmar "Iniciar disparo" (startCampaign). A lista de alvos é
+  // uma "foto" da etiqueta naquele momento. Sem as tabelas: "Atualize o banco para usar este recurso".
+
+  const CAMPAIGN_COLUMNS = 'id,name,label_id,item_id,status,start_at,allow_new_chats,skip_recent_days,created_at';
+  const TARGET_STATUS = ['pendente', 'enviando', 'enviado', 'falhou', 'pulado'];
+
+  async function campRest(path, init) {
+    try {
+      return await rest(path, init);
+    } catch (err) {
+      if (tableMissing(err, CAMPAIGN_TABLES)) throw new Error(ENGINE_MISSING);
+      throw err;
+    }
+  }
+
+  function checkCampaignInput(c) {
+    const p = c || {};
+    const out = {
+      name: cleanText(p.name, 60, 'Nome do disparo'),
+      label_id: checkUuid(p.label_id, 'Escolha a etiqueta CRM'),
+      item_id: checkUuid(p.item_id, 'Escolha a mensagem salva'),
+      allow_new_chats: p.allow_new_chats === true,
+      skip_recent_days: intIn(p.skip_recent_days ?? 7, 0, 90, 'Pular quem recebeu nos últimos (dias)'),
+      start_at: null,
+    };
+    if (p.start_at !== undefined && p.start_at !== null && p.start_at !== '') {
+      const t = Date.parse(p.start_at);
+      if (typeof p.start_at !== 'string' || !Number.isFinite(t)) throw new Error('Data e hora inválidas');
+      if (t > Date.now() + 366 * 24 * 3600 * 1000) throw new Error('No máximo 1 ano para frente');
+      out.start_at = new Date(t).toISOString();
+    }
+    return out;
+  }
+
+  // Lista com o progresso de cada disparo (contagem por status dos alvos)
+  async function fetchCampaigns() {
+    const list = await campRest(`wa_campaigns?select=${CAMPAIGN_COLUMNS}&order=created_at.desc&limit=30`);
+    const counts = Object.fromEntries(list.map((c) => [c.id, { pendente: 0, enviando: 0, enviado: 0, falhou: 0, pulado: 0 }]));
+    if (list.length) {
+      const rows = await campRest(`wa_campaign_targets?select=campaign_id,status&campaign_id=in.${inList(list.map((c) => c.id))}&limit=50000`);
+      rows.forEach((r) => { if (counts[r.campaign_id] && r.status in counts[r.campaign_id]) counts[r.campaign_id][r.status]++; });
+    }
+    return list.map((c) => ({ ...c, counts: counts[c.id] }));
+  }
+
+  async function saveCampaign({ id, campaign }) {
+    const row = checkCampaignInput(campaign);
+    if (id !== undefined && id !== null) {
+      checkUuid(id, 'Disparo inválido');
+      const rows = await campRest(`wa_campaigns?id=eq.${id}&status=eq.rascunho`, json('PATCH', 'return=representation', row));
+      if (!rows.length) throw new Error('Só dá para editar disparo em rascunho');
+      return { id };
+    }
+    const rows = await campRest('wa_campaigns', json('POST', 'return=representation', { ...row, status: 'rascunho' }));
+    return { id: rows[0].id };
+  }
+
+  async function deleteCampaign({ id }) {
+    checkUuid(id, 'Disparo inválido');
+    const rows = await campRest(`wa_campaigns?id=eq.${id}&status=in.(rascunho,concluida,cancelada)`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
+    if (!rows.length) throw new Error('Pause ou cancele o disparo antes de excluir');
+    return true;
+  }
+
+  async function campaignById(id) {
+    checkUuid(id, 'Disparo inválido');
+    const rows = await campRest(`wa_campaigns?select=${CAMPAIGN_COLUMNS}&id=eq.${id}`);
+    if (!rows.length) throw new Error('Disparo não encontrado');
+    return rows[0];
+  }
+
+  // Foto da etiqueta: quem vai e quem é pulado (e por quê). Não grava nada.
+  async function campaignSnapshot(c) {
+    if (!c.label_id) throw new Error('A etiqueta CRM do disparo foi excluída');
+    const noSend = (await rest('wa_labels?select=id,name')).find((l) => noSendKey(l.name) === noSendKey(NO_SEND));
+    const contacts = await flowCandidates({ labelIds: [c.label_id] });
+    const recent = new Set();
+    if (c.skip_recent_days > 0 && contacts.length) {
+      const since = new Date(Date.now() - c.skip_recent_days * 24 * 3600 * 1000).toISOString();
+      const logs = await engineRest(`wa_send_log?select=contact_id,chat_id&status=eq.enviado&created_at=gte.${encodeURIComponent(since)}&limit=50000`);
+      logs.forEach((l) => { if (l.contact_id) recent.add(l.contact_id); if (l.chat_id) recent.add(l.chat_id); });
+    }
+    const targets = contacts.map((ct) => {
+      const chat = ct.chat_id && SCHED_CHAT_RE.test(ct.chat_id) ? ct.chat_id : (ct.phone && /^\d{8,15}$/.test(ct.phone) ? `${ct.phone}@c.us` : null);
+      const base = { contact_id: ct.id, chat_id: chat, name: ct.name ? String(ct.name).slice(0, 100) : (ct.phone || null) };
+      if (noSend && ct.labelIds.includes(noSend.id)) return { ...base, status: 'pulado', reason: 'Não enviar' };
+      if (!chat) return { ...base, status: 'pulado', reason: 'sem telefone' };
+      if (recent.has(ct.id) || recent.has(chat)) return { ...base, status: 'pulado', reason: `recebeu envio nos últimos ${c.skip_recent_days} dias` };
+      return { ...base, status: 'pendente', reason: null };
+    });
+    const skipped = {};
+    targets.filter((t) => t.status === 'pulado').forEach((t) => { skipped[t.reason] = (skipped[t.reason] || 0) + 1; });
+    return { targets, total: targets.length, willSend: targets.filter((t) => t.status === 'pendente').length, skipped };
+  }
+
+  // Para a tela de confirmação: números e as conversas que vão (para conferir as carregadas)
+  async function previewCampaign({ id }) {
+    const c = await campaignById(id);
+    if (c.status !== 'rascunho') throw new Error('Este disparo já foi iniciado');
+    const snap = await campaignSnapshot(c);
+    return {
+      total: snap.total, willSend: snap.willSend, skipped: snap.skipped, allow_new_chats: c.allow_new_chats,
+      chatIds: snap.targets.filter((t) => t.status === 'pendente').map((t) => t.chat_id),
+    };
+  }
+
+  // Iniciar (só a pedido do usuário, na confirmação): reserva o rascunho, grava a foto e libera
+  async function startCampaign({ id }) {
+    const c = await campaignById(id);
+    if (c.status !== 'rascunho') throw new Error('Este disparo já foi iniciado');
+    const held = await campRest(`wa_campaigns?id=eq.${id}&status=eq.rascunho`, json('PATCH', 'return=representation', { status: 'pausada' }));
+    if (!held.length) throw new Error('Este disparo já foi iniciado');
+    let snap;
+    try {
+      snap = await campaignSnapshot(c);
+      for (let i = 0; i < snap.targets.length; i += 500) {
+        await campRest('wa_campaign_targets', json('POST', 'return=minimal', snap.targets.slice(i, i + 500).map((t) => ({ ...t, campaign_id: id }))));
+      }
+    } catch (err) {
+      await campRest(`wa_campaign_targets?campaign_id=eq.${id}`, { method: 'DELETE' }).catch(() => {});
+      await campRest(`wa_campaigns?id=eq.${id}&status=eq.pausada`, json('PATCH', 'return=minimal', { status: 'rascunho' })).catch(() => {});
+      throw err;
+    }
+    const future = c.start_at && Date.parse(c.start_at) > Date.now();
+    const status = future ? 'agendada' : 'rodando';
+    await campRest(`wa_campaigns?id=eq.${id}&status=eq.pausada`, json('PATCH', 'return=minimal', { status, start_at: c.start_at || new Date().toISOString() }));
+    return { status, total: snap.total, willSend: snap.willSend };
+  }
+
+  const CAMPAIGN_ACTIONS = {
+    pause: { from: ['rodando', 'agendada'], to: () => 'pausada' },
+    resume: { from: ['pausada'], to: (c) => (c.start_at && Date.parse(c.start_at) > Date.now() ? 'agendada' : 'rodando') },
+    cancel: { from: ['rascunho', 'agendada', 'rodando', 'pausada'], to: () => 'cancelada' },
+  };
+
+  async function campaignAction({ id, action }) {
+    const a = Object.prototype.hasOwnProperty.call(CAMPAIGN_ACTIONS, action) ? CAMPAIGN_ACTIONS[action] : null;
+    if (!a) throw new Error('Ação inválida');
+    const c = await campaignById(id);
+    if (!a.from.includes(c.status)) throw new Error('Não dá para fazer isso agora');
+    const to = a.to(c);
+    const rows = await campRest(`wa_campaigns?id=eq.${id}&status=eq.${c.status}`, json('PATCH', 'return=representation', { status: to }));
+    if (!rows.length) throw new Error('O disparo mudou: atualize a lista');
+    if (to === 'cancelada') {
+      await campRest(`wa_campaign_targets?campaign_id=eq.${id}&status=eq.pendente`, json('PATCH', 'return=minimal', { status: 'pulado', reason: 'disparo cancelado' }));
+    }
+    return { status: to };
+  }
+
+  // Próximo alvo de um disparo rodando (o motor chama). Libera os agendados que chegaram na hora
+  // e conclui os que acabaram. Alvo preso em "enviando" (aba fechou no meio) vira falhou, sem reenvio.
+  async function nextCampaignTarget() {
+    const now = new Date().toISOString();
+    await campRest(`wa_campaigns?status=eq.agendada&start_at=lte.${encodeURIComponent(now)}`, json('PATCH', 'return=minimal', { status: 'rodando' }));
+    const running = await campRest(`wa_campaigns?select=${CAMPAIGN_COLUMNS}&status=eq.rodando&order=created_at.asc&limit=10`);
+    for (const c of running) {
+      const next = await campRest(`wa_campaign_targets?select=id,campaign_id,contact_id,chat_id,name,status&campaign_id=eq.${c.id}&status=eq.pendente&order=id.asc&limit=1`);
+      if (next.length) return { campaign: c, target: next[0] };
+      const busy = await campRest(`wa_campaign_targets?select=id&campaign_id=eq.${c.id}&status=eq.enviando&limit=1`);
+      if (busy.length) {
+        await campRest(`wa_campaign_targets?campaign_id=eq.${c.id}&status=eq.enviando`, json('PATCH', 'return=minimal', { status: 'falhou', reason: 'envio não confirmado' }));
+      }
+      await campRest(`wa_campaigns?id=eq.${c.id}&status=eq.rodando`, json('PATCH', 'return=minimal', { status: 'concluida' }));
+    }
+    return null;
+  }
+
+  // Reserva do alvo: só sai de 'pendente' para 'enviando' uma vez
+  async function claimTarget({ id }) {
+    checkUuid(id, 'Alvo inválido');
+    const rows = await campRest(`wa_campaign_targets?id=eq.${id}&status=eq.pendente`, json('PATCH', 'return=representation', { status: 'enviando' }));
+    return rows.length ? rows[0] : null;
+  }
+
+  // Resultado: enviado/falhou saem de 'enviando'; pulado sai de 'pendente' ou 'enviando'
+  async function finishTarget({ id, status, reason }) {
+    checkUuid(id, 'Alvo inválido');
+    if (!['enviado', 'falhou', 'pulado'].includes(status)) throw new Error('Status inválido');
+    const from = status === 'pulado' ? 'in.(pendente,enviando)' : 'eq.enviando';
+    const patch = { status, reason: cleanReason(reason) };
+    if (status === 'enviado') patch.sent_at = new Date().toISOString();
+    const rows = await campRest(`wa_campaign_targets?id=eq.${id}&status=${from}`, json('PATCH', 'return=representation', patch));
+    return { updated: rows.length > 0 };
+  }
+
+  async function campaignTargets({ id, offset = 0, limit = 200 }) {
+    checkUuid(id, 'Disparo inválido');
+    const off = Math.max(0, Math.floor(Number(offset) || 0));
+    const lim = Math.min(500, Math.max(1, Math.floor(Number(limit) || 200)));
+    const rows = await campRest(`wa_campaign_targets?select=id,name,status,reason,sent_at&campaign_id=eq.${id}&order=id.asc&offset=${off}&limit=${lim + 1}`);
+    return { targets: rows.slice(0, lim), hasMore: rows.length > lim };
+  }
+
   root.WaApi = {
+    fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
+    claimTarget, finishTarget, campaignTargets,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,

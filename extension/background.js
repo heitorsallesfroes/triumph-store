@@ -56,6 +56,17 @@ const HANDLERS = {
   followReserve:        (m) => WaApi.followReserve({ contactId: m.contactId, labelId: m.labelId }),
   followAdd:            (m) => WaApi.followAdd({ contactId: m.contactId, labelId: m.labelId }),
   followMove:           (m) => WaApi.followMove({ contactId: m.contactId, fromLabelId: m.fromLabelId, toLabelId: m.toLabelId }),
+  // Disparos (2.0.0-D2): nada sai sem startCampaign (botão "Iniciar disparo" da confirmação)
+  fetchCampaigns:       ()  => WaApi.fetchCampaigns(),
+  saveCampaign:         (m) => WaApi.saveCampaign({ id: m.id, campaign: m.campaign }),
+  deleteCampaign:       (m) => WaApi.deleteCampaign({ id: m.id }),
+  previewCampaign:      (m) => WaApi.previewCampaign({ id: m.id }),
+  startCampaign:        (m) => WaApi.startCampaign({ id: m.id }),
+  campaignAction:       (m) => WaApi.campaignAction({ id: m.id, action: m.action }),
+  nextCampaignTarget:   ()  => WaApi.nextCampaignTarget(),
+  claimTarget:          (m) => WaApi.claimTarget({ id: m.id }),
+  finishTarget:         (m) => WaApi.finishTarget({ id: m.id, status: m.status, reason: m.reason }),
+  campaignTargets:      (m) => WaApi.campaignTargets({ id: m.id, offset: m.offset, limit: m.limit }),
   // Conta (1.9.1): a senha só segue para o Supabase Auth; o painel recebe só conectada/dica do e-mail
   authStatus:      ()  => WaAuth.status(),
   authSignIn:      (m) => WaAuth.signIn({ email: m.email, password: m.password }),

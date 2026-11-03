@@ -210,6 +210,35 @@ respondeu** depois de um tempo.
 - Sem a migration `20261103130000_wa_flows.sql`, a seção mostra "Atualize o
   banco para usar este recurso" e os agendamentos funcionam como na 1.9.0.
 
+### Disparos (seção 📣 Disparos)
+
+Manda uma mensagem salva para todos de uma etiqueta CRM, **um por vez**, pelo
+mesmo motor (mesmos limites, intervalo, horário comercial e "Pausar tudo").
+
+- **+ Novo disparo**: nome, etiqueta CRM, mensagem salva (pode ter várias
+  partes; `{nome}` vira o primeiro nome), início (ao confirmar ou numa data e
+  hora) e "pular quem recebeu qualquer envio automático nos últimos N dias"
+  (padrão 7).
+- **Permitir conversas novas** (desligado por padrão): desligado, só manda para
+  conversas **já carregadas** no WhatsApp Web; as outras ficam "pulado:
+  conversa não carregada". Ligado, também manda para números que nunca falaram
+  com você: só números (não `@lid`), e só depois de o WhatsApp confirmar que o
+  número tem WhatsApp (senão "pulado: número sem WhatsApp").
+- **Confirmação** antes de iniciar: total da etiqueta, quantos vão receber,
+  quantos serão pulados e por quê, tempo estimado pelos limites e o aviso
+  "Envios em massa podem fazer o WhatsApp bloquear seu número. Use mensagens
+  que o cliente espera receber e respeite os limites." **Nada sai antes de
+  "Iniciar disparo".**
+- Ao iniciar, a lista é **congelada** (uma "foto" da etiqueta naquele
+  momento), já pulando "Não enviar" e contatos sem telefone/id da conversa.
+  Quem entrar na etiqueta depois não recebe.
+- Durante: progresso (enviados, falhas, pulados, restantes), **Pausar**,
+  **Retomar**, **Cancelar** (com confirmação; os que faltavam ficam "pulado:
+  disparo cancelado") e **Ver alvos**. Fora do expediente o disparo para e
+  continua no próximo.
+- Sem a migration `20261103140000_wa_campaigns.sql`, a seção mostra "Atualize
+  o banco para usar este recurso".
+
 ### Áudio como mensagem de voz
 
 Ao clicar na **seta** de um áudio, ele chega para o cliente como uma
@@ -290,8 +319,8 @@ Logo abaixo do cabeçalho do painel há uma fileira de botões, com ícone e nom
 - **Etiquetas**: as etiquetas do CRM, dentro do próprio painel (veja abaixo).
 - **Quadro**: abre o Quadro grande. O painel continua na seção em que estava.
 - **Agendados**: agendar mensagens (veja "Agendamento" abaixo).
+- **Disparos**: envio para uma etiqueta CRM (veja "Disparos" acima).
 - **Follows**: réguas automáticas (veja "Follows" acima).
-- **Disparos**: desativado, com o selo "em breve".
 
 A seção ativa fica destacada em laranja e o título do cabeçalho muda
 ("Mensagens", "Etiquetas CRM" ou "Agendados"). O painel lembra a última seção escolhida.
@@ -466,10 +495,14 @@ guardada.
   computador executar.
 - **Follows** (réguas) na seção 🔁 Follows: esquema em cartões, editor,
   Simular, Testar com a conversa aberta, Colocar numa régua e Histórico.
+- **Disparos** na seção 📣 Disparos: lista congelada da etiqueta, pulos com
+  motivo, confirmação com estimativa e aviso, pausar/retomar/cancelar,
+  conversas novas só com a opção ligada e o número confirmado.
 - O id da conversa (`chat_id`) é guardado no contato ao marcar etiqueta CRM ou
   copiar do WhatsApp.
 - Diagnóstico: "Motor de envios" e "Follows e Disparos".
-- Precisa da migration `20261103130000_wa_flows.sql`.
+- Precisa das migrations `20261103130000_wa_flows.sql` (motor e follows) e
+  `20261103140000_wa_campaigns.sql` (disparos).
 
 ### 1.9.1
 - **Login**: aviso "Entre com sua conta do sistema" no topo do painel. Com a
@@ -662,6 +695,11 @@ Service worker
   Motor (2.0.0, só leitura): `chatsInfo { chatIds (até 500, só @c.us/@lid),
   keywords (até 20) }` → `{ chats: { id: { loaded, last: { fromMe, t }, ad:
   [palavras que aparecem no ctwaContext] } } }`; nunca devolve texto.
+  Disparo (2.0.0-D2): `campaignSend { campaign: true, chatId (só número @c.us),
+  kind: 'texto' | 'voz' | 'imagem' | 'video' | 'documento' | 'audio-arquivo', ... }`
+  é o **único** pedido com `createChat: true`: chama `contact.queryExists`
+  antes (sem WhatsApp → `no_whatsapp` em `before-send`) e manda só a 1ª parte;
+  o painel só o usa em disparo com "Permitir conversas novas".
 - Atualizar a WA-JS: ver `vendor/README.md` (npm pack fora do repositório,
   conferir SHA-256, trocar o arquivo sem alterar, rodar os testes).
 
@@ -680,7 +718,9 @@ Service worker
   resultado de um agendamento feito pelo usuário). 2.0.0: o motor também
   grava `wa_settings` (trava e "Pausar tudo"), `wa_send_log` (cada envio
   automático) e troca as etiquetas CRM da régua do contato que recebeu ou
-  respondeu; réguas (`wa_flows`, `wa_flow_variants`) e limites só pelo editor. O background só atende os tipos da lista `HANDLERS`;
+  respondeu; réguas (`wa_flows`, `wa_flow_variants`) e limites só pelo editor.
+  Disparos (`wa_campaigns`, `wa_campaign_targets`): criados e iniciados só por
+  clique; o motor só reserva e marca o resultado de cada alvo. O background só atende os tipos da lista `HANDLERS`;
   cada função valida a entrada (UUID, tamanhos, cores da paleta). Excluir uma
   etiqueta CRM apaga as marcações e a etiqueta, nunca contatos. Colunas novas
   (`hidden`, `notes`): tenta com a coluna e, se o banco responder 400 citando

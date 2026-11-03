@@ -759,6 +759,13 @@
       .panel.sec-follows .status, .panel.sec-follows .labels, .panel.sec-follows .name-note,
       .panel.sec-follows .tools, .panel.sec-follows .banner, .panel.sec-follows .list { display: none; }
       .ftab .crmsec { display: flex; flex-direction: column; gap: 7px; }
+      /* Seção Disparos (2.0.0) */
+      .dtab { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 10px; flex-direction: column; gap: 10px; scrollbar-width: thin; }
+      .dtab > * { flex-shrink: 0; }
+      .panel.sec-disparos .dtab { display: flex; }
+      .panel.sec-disparos .status, .panel.sec-disparos .labels, .panel.sec-disparos .name-note,
+      .panel.sec-disparos .tools, .panel.sec-disparos .banner, .panel.sec-disparos .list { display: none; }
+      .dtab .crmsec { display: flex; flex-direction: column; gap: 7px; }
       .fw-count { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
       .fw-card { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); font-size: 12px; text-align: left; }
       .fw-card.on { border-color: var(--accent); }
@@ -1071,7 +1078,7 @@
           <button type="button" data-sec="etiquetas" title="Etiquetas CRM" aria-pressed="false">${svg('tag')}<span>Etiquetas</span></button>
           <button type="button" class="pboard" title="Abrir o Quadro" aria-pressed="false">${svg('board')}<span>Quadro</span></button>
           <button type="button" data-sec="agendados" title="Agendados" aria-pressed="false">${svg('clock')}<span>Agendados</span></button>
-          <button type="button" aria-disabled="true" title="Chega nas próximas versões">${svg('megaphone')}<span>Disparos</span><span class="psoon">em breve</span></button>
+          <button type="button" data-sec="disparos" title="Disparos (envio para uma etiqueta CRM)" aria-pressed="false">${svg('megaphone')}<span>Disparos</span></button>
           <button type="button" data-sec="follows" title="Follows (réguas automáticas)" aria-pressed="false">${svg('repeat')}<span>Follows</span></button>
         </nav>
         <div class="status warn"><span class="dot"></span><span class="txt"></span></div>
@@ -1137,6 +1144,7 @@
         </div>
         <div class="stab" role="region" aria-label="Agendados"></div>
         <div class="ftab" role="region" aria-label="Follows"></div>
+        <div class="dtab" role="region" aria-label="Disparos"></div>
         <div class="seqbar" role="status" aria-live="polite" hidden><span class="seqtxt"></span><button class="seqstop" type="button">Parar</button></div>
         <div class="toast" role="status" aria-live="polite"></div>
         <footer class="foot"><span class="last">Último usado: <b>—</b></span><button class="foot-pause" type="button" hidden></button><span class="ver"></span></footer>
@@ -1401,12 +1409,13 @@
   }
 
   function setSection(section, { persist = true } = {}) {
-    state.section = ['etiquetas', 'agendados', 'follows'].includes(section) ? section : 'mensagens';
+    state.section = ['etiquetas', 'agendados', 'follows', 'disparos'].includes(section) ? section : 'mensagens';
     const labels = state.section === 'etiquetas';
     panel.classList.toggle('sec-labels', labels);
     panel.classList.toggle('sec-sched', state.section === 'agendados');
     panel.classList.toggle('sec-follows', state.section === 'follows');
-    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados', follows: 'Follows' }[state.section];
+    panel.classList.toggle('sec-disparos', state.section === 'disparos');
+    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados', follows: 'Follows', disparos: 'Disparos' }[state.section];
     panel.setAttribute('aria-label', brandTxt.textContent);
     if (persist) storageSet({ panelSection: state.section }); // só o nome da seção
     setMenuOpen(false);
@@ -1422,6 +1431,7 @@
     else if (!want && crm.open) closeCrm();
     syncSchedActive();
     syncFollowsActive();
+    syncDisparosActive();
   }
 
   navBtns.forEach((b) => b.addEventListener('click', () => {
@@ -2810,11 +2820,15 @@
   const partAsItem = (p, i) => ({ id: p.id || `parte${i}`, file_url: p.file_url, file_name: p.file_name });
 
   // Envia uma parte; erros vêm com stage ('before-send', 'sending' ou 'unknown' quando não houve resposta)
-  async function sendPart(part, i, chatId, firstName, reqId) {
+  // newChat (2.0.0-D2, só disparo com "permitir conversas novas"): a 1ª parte vai pelo pedido
+  // campaignSend da ponte (confere o número com queryExists e cria a conversa), sem "digitando…"
+  async function sendPart(part, i, chatId, firstName, reqId, newChat = false) {
     const typingMs = Number.isInteger(part.typing_seconds) ? Math.min(60, Math.max(0, part.typing_seconds)) * 1000 : null;
+    const campaignSend = (p, transfer = []) => waRequest('campaignSend', { campaign: true, chatId, ...p }, { id: reqId, timeout: 150000, transfer });
     if (part.type === 'texto') {
       const text = fillVars(part.body || '', firstName);
       if (!text.trim()) throw Object.assign(new Error('parte sem texto'), { code: 'empty', stage: 'before-send' });
+      if (newChat) { await campaignSend({ kind: 'texto', text: text.slice(0, SEQ_TEXT_MAX) }); return; }
       await waRequest('sendText', { chatId, text: text.slice(0, SEQ_TEXT_MAX), typingMs: typingMs || 0 }, { id: reqId, timeout: (typingMs || 0) + 20000 });
       return;
     }
@@ -2827,6 +2841,11 @@
     }
     if (part.type === 'audio') {
       const head = new Uint8Array(await blob.slice(0, 64).arrayBuffer());
+      if (isOggOpus(head) && newChat) {
+        const audio = await blob.arrayBuffer();
+        await campaignSend({ kind: 'voz', data: audio }, [audio]);
+        return;
+      }
       if (isOggOpus(head)) {
         // Mensagem de voz: "gravando…" = typing_seconds (0 = na hora; vazio = automático pela duração)
         const recordMs = typingMs != null ? typingMs : Math.min(8000, Math.max(2000, await audioDurationMs(blob).catch(() => 4000)));
@@ -2839,12 +2858,16 @@
     const data = await blob.arrayBuffer();
     const mime = (blob.type || 'application/octet-stream').split(';')[0];
     const caption = part.type === 'audio' ? null : fillVars(part.body || '', firstName).slice(0, SEQ_TEXT_MAX);
+    if (newChat) {
+      await campaignSend({ kind, data, mime, fileName: (part.file_name || 'arquivo').slice(0, 200), caption }, [data]);
+      return;
+    }
     await waRequest('sendMedia', { chatId, kind, data, mime, fileName: (part.file_name || 'arquivo').slice(0, 200), caption, typingMs: typingMs || 0 },
       { id: reqId, timeout: (typingMs || 0) + 120000, transfer: [data] });
   }
 
   // Resultado: { status: 'ok' | 'stopped' | 'failed', sent, failedAt, stage, message }
-  async function runSequence({ parts, chatId, firstName = '', label = '', onStop = null }) {
+  async function runSequence({ parts, chatId, firstName = '', label = '', onStop = null, newChat = false }) {
     if (seq) return { status: 'failed', sent: 0, stage: 'before-send', message: 'já existe um envio em andamento' };
     seq = { total: parts.length, index: 0, phase: 'wait', until: 0, stop: false, reqId: null, label, typingLabel: 'digitando', onStop };
     const ticker = setInterval(renderSeq, 250);
@@ -2863,14 +2886,15 @@
           await waitUnlessStopped(waitMs);
         }
         if (seq.stop) return { status: 'stopped', sent };
-        const typing = Number.isInteger(part.typing_seconds) ? part.typing_seconds : 0;
+        const firstNew = newChat && i === 0;
+        const typing = !firstNew && Number.isInteger(part.typing_seconds) ? part.typing_seconds : 0;
         seq.phase = typing ? 'typing' : 'send';
         seq.typingLabel = part.type === 'audio' ? 'gravando' : 'digitando';
         seq.until = Date.now() + typing * 1000;
         seq.reqId = newRequestId('q');
         renderSeq();
         try {
-          await sendPart(part, i, chatId, firstName, seq.reqId);
+          await sendPart(part, i, chatId, firstName, seq.reqId, firstNew);
         } catch (e) {
           if (e.code === 'cancelled') return { status: 'stopped', sent };
           return { status: 'failed', sent, failedAt: i + 1, stage: e.stage === 'before-send' ? 'before-send' : 'sending', message: e.message, code: e.code };
@@ -3765,9 +3789,396 @@
     runCampaignJob: (job, helpers) => runCampaignJob(job, helpers),
   });
 
-  // Disparos chegam na D2; até lá o motor não tem campanhas para rodar
-  async function campaignJob() { return null; }
-  async function runCampaignJob() { return { attempted: false }; }
+  // ── Disparos (2.0.0-D2): o motor só pega alvos de disparos que o usuário iniciou ──
+
+  async function campaignJob(api) {
+    let r = null;
+    try { r = await api('nextCampaignTarget'); } catch { r = null; }
+    return r && r.target ? { kind: 'disparo', campaign: r.campaign, target: r.target } : null;
+  }
+
+  const finishTarget = (id, status, reason) => call('finishTarget', { id, status, reason }).catch(() => null);
+
+  async function runCampaignJob({ campaign, target }, h) {
+    const entry = { source: 'disparo', source_id: campaign.id, contact_id: target.contact_id || null, chat_id: target.chat_id || null, item_id: campaign.item_id || null };
+    const skip = async (reason) => { await finishTarget(target.id, 'pulado', reason); await h.logSkip(entry, reason); return { attempted: false }; };
+    // "Não enviar" de novo (a etiqueta pode ter sido marcada depois da foto)
+    if (h.noSendLabelId && target.contact_id) {
+      let labels = null;
+      try { labels = await call('contactLabelIds', { contactId: target.contact_id }); } catch { labels = null; }
+      if (Array.isArray(labels) && labels.includes(h.noSendLabelId)) return skip('Não enviar');
+    }
+    if (!target.chat_id) return skip('sem telefone');
+    let item = state.items.find((i) => i.id === campaign.item_id);
+    if (!item) { await reloadLibrary().catch(() => {}); item = state.items.find((i) => i.id === campaign.item_id); }
+    if (!item) return skip('mensagem salva não existe mais');
+    let info = null;
+    try { info = await waRequest('chatsInfo', { chatIds: [target.chat_id], keywords: [] }, { timeout: 8000 }); } catch { info = null; }
+    const loaded = !!(info && info.chats && info.chats[target.chat_id]);
+    let newChat = false;
+    if (!loaded) {
+      // Conversa nova só com a opção ligada e só para número (@c.us); a ponte confere com queryExists
+      if (!campaign.allow_new_chats || !/^\d{8,15}@c\.us$/.test(target.chat_id)) return skip('conversa não carregada');
+      newChat = true;
+    }
+    const claimed = await call('claimTarget', { id: target.id }).catch(() => null);
+    if (!claimed) return { attempted: false }; // outra aba pegou
+    const logId = await h.logStart(entry);
+    let res;
+    try {
+      res = await runSequence({ parts: partsOf(item), chatId: target.chat_id, firstName: E.firstNameOf(target.name), label: 'Disparo', newChat });
+    } catch {
+      res = { status: 'failed', stage: 'sending', sent: 0 };
+    }
+    let out;
+    if (res.status !== 'ok' && res.code === 'no_whatsapp' && !res.sent) out = { status: 'pulado', reason: 'número sem WhatsApp' };
+    else {
+      out = h.outcome(res);
+      if (out.status === 'pulado' && res.status === 'stopped') out = { status: 'pulado', reason: 'parado por você' };
+    }
+    await finishTarget(target.id, out.status, out.reason);
+    await h.logFinish(logId, out.status, out.reason);
+    if (out.status === 'enviado') registerUse(item);
+    if (dp.open) refreshDisparos({ quiet: true });
+    return { attempted: out.status !== 'pulado' };
+  }
+
+  const dtabEl = shadow.querySelector('.dtab');
+  const dp = {
+    open: false, timer: null, view: 'list', list: [], loading: false, error: '', msg: '', msgErr: false,
+    form: null, confirm: null, detail: null, busy: false, confirmAction: null,
+  };
+  const CAMPAIGN_STATUS = { rascunho: 'RASCUNHO', agendada: 'AGENDADO', rodando: 'RODANDO', pausada: 'PAUSADO', concluida: 'CONCLUÍDO', cancelada: 'CANCELADO' };
+  const TARGET_STATUS_LABEL = { pendente: 'pendente', enviando: 'enviando', enviado: 'enviado', falhou: 'falhou', pulado: 'pulado' };
+  const MASS_WARNING = 'Envios em massa podem fazer o WhatsApp bloquear seu número. Use mensagens que o cliente espera receber e respeite os limites.';
+  const campaignsReady = () => motor.state.available === true && motor.state.campaignsAvailable === true;
+  const campaignsLive = () => dp.list.some((c) => c.status === 'rodando' || c.status === 'agendada');
+
+  function syncDisparosActive() {
+    const want = state.open && state.section === 'disparos';
+    clearInterval(dp.timer);
+    dp.timer = null;
+    dp.open = want;
+    if (!want) return;
+    refreshDisparos();
+    dp.timer = setInterval(() => { if (dp.view === 'list') refreshDisparos({ quiet: true }); }, 10 * 1000);
+  }
+
+  async function refreshDisparos({ quiet = false } = {}) {
+    if (!quiet) { dp.loading = true; renderDisparos(); }
+    await motor.loadSettings();
+    if (campaignsReady()) {
+      try {
+        const [list] = await Promise.all([call('fetchCampaigns'), motor.refreshCounts(), motor.ensureNoSendLabel()]);
+        dp.list = Array.isArray(list) ? list : [];
+        dp.error = '';
+      } catch (e) {
+        dp.error = e.message === 'Atualize o banco para usar este recurso' ? '' : 'Não consegui carregar os disparos.';
+        if (e.message === 'Atualize o banco para usar este recurso') motor.state.campaignsAvailable = false;
+      }
+    }
+    dp.loading = false;
+    if (dp.view === 'list') renderDisparos();
+    renderFootPause();
+  }
+
+  function campaignProgress(c) {
+    const n = c.counts || {};
+    return `enviados ${n.enviado || 0} · falhas ${n.falhou || 0} · pulados ${n.pulado || 0} · restantes ${(n.pendente || 0) + (n.enviando || 0)}`;
+  }
+
+  async function doCampaignAction(c, action) {
+    if (dp.busy) return;
+    dp.busy = true;
+    try {
+      await call('campaignAction', { id: c.id, action });
+      dp.msg = { pause: 'Disparo pausado.', resume: 'Disparo retomado.', cancel: 'Disparo cancelado.' }[action];
+      dp.msgErr = false;
+    } catch (e) {
+      dp.msg = e.message;
+      dp.msgErr = true;
+    }
+    dp.busy = false;
+    dp.confirmAction = null;
+    await refreshDisparos({ quiet: true });
+  }
+
+  function campaignCard(c) {
+    const card = el('div', `fw-card${c.status === 'rodando' ? ' on' : ''}`);
+    const head = el('div', 'fw-head');
+    head.append(el('span', 'fw-name', c.name), el('span', `fw-badge${c.status === 'rodando' ? ' on' : ''}`, CAMPAIGN_STATUS[c.status] || c.status));
+    card.append(head);
+    card.append(el('div', 'fw-txt', `Etiqueta CRM: ${c.label_id ? labelName(c.label_id) : 'excluída'} · Mensagem: ${c.item_id ? itemTitle(c.item_id) : 'excluída'}`));
+    const start = c.start_at ? `início ${schedWhen(c.start_at)}` : 'início: agora (ao confirmar)';
+    card.append(el('div', 'fw-txt', `${start}${c.allow_new_chats ? ' · permite conversas novas' : ''}${c.skip_recent_days ? ` · pula quem recebeu nos últimos ${c.skip_recent_days} dias` : ''}`));
+    if (c.status !== 'rascunho') card.append(el('div', 'fw-count', campaignProgress(c)));
+    const row = el('div', 'ed-add');
+    const confirmBtn = (action, text, confirmText) => fbtn('ed-mini', dp.confirmAction === `${action}:${c.id}` ? confirmText : text, () => {
+      if (dp.confirmAction !== `${action}:${c.id}`) { dp.confirmAction = `${action}:${c.id}`; renderDisparos(); return; }
+      if (action === 'delete') deleteCampaignRow(c);
+      else doCampaignAction(c, action);
+    });
+    if (c.status === 'rascunho') {
+      row.append(fbtn('ed-mini', 'Revisar e iniciar', () => openConfirm(c)), fbtn('ed-mini', 'Editar', () => openCampaignForm(c)), confirmBtn('delete', 'Excluir', 'Confirmar exclusão'));
+    } else {
+      if (c.status === 'rodando' || c.status === 'agendada') row.append(fbtn('ed-mini', 'Pausar', () => doCampaignAction(c, 'pause')));
+      if (c.status === 'pausada') row.append(fbtn('ed-mini', 'Retomar', () => doCampaignAction(c, 'resume')));
+      if (['rodando', 'agendada', 'pausada'].includes(c.status)) row.append(confirmBtn('cancel', 'Cancelar', 'Confirmar cancelamento'));
+      row.append(fbtn('ed-mini', 'Ver alvos', () => openDetail(c)));
+      if (['concluida', 'cancelada'].includes(c.status)) row.append(confirmBtn('delete', 'Excluir', 'Confirmar exclusão'));
+    }
+    card.append(row);
+    return card;
+  }
+
+  async function deleteCampaignRow(c) {
+    try {
+      await call('deleteCampaign', { id: c.id });
+      dp.msg = 'Disparo excluído.';
+      dp.msgErr = false;
+    } catch (e) {
+      dp.msg = e.message;
+      dp.msgErr = true;
+    }
+    dp.confirmAction = null;
+    await refreshDisparos({ quiet: true });
+  }
+
+  function renderDisparos() {
+    if (!dtabEl) return;
+    dtabEl.textContent = '';
+    dtabEl.append(el('div', 'crm-intro', 'Disparos mandam uma mensagem salva para todos de uma etiqueta CRM, um por vez, com os mesmos limites e horário dos follows. Só começa quando você confirma "Iniciar disparo".'));
+    if (motor.state.available === false || motor.state.campaignsAvailable === false) {
+      dtabEl.append(el('div', 'ed-note', 'Atualize o banco para usar este recurso.'));
+      return;
+    }
+    if (motor.state.available === null) { dtabEl.append(el('div', 'lt-none', 'Carregando…')); return; }
+    if (dp.view === 'new') { renderCampaignForm(); return; }
+    if (dp.view === 'confirm') { renderConfirm(); return; }
+    if (dp.view === 'detail') { renderDetail(); return; }
+    renderFollowsTop(dtabEl);
+    if (dp.msg) dtabEl.append(el('div', `ed-msg${dp.msgErr ? ' err' : ''}`, dp.msg));
+    if (dp.error) dtabEl.append(el('div', 'ed-msg err', dp.error));
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'DISPAROS'));
+    sec.append(fbtn('fw-card fw-new', '+ Novo disparo', () => openCampaignForm(null)));
+    if (!dp.list.length) sec.append(el('div', 'lt-none', dp.loading ? 'Carregando…' : 'Nenhum disparo ainda.'));
+    dp.list.forEach((c) => sec.append(campaignCard(c)));
+    dtabEl.append(sec);
+  }
+
+  function openCampaignForm(c) {
+    const start = c && c.start_at ? new Date(c.start_at) : null;
+    dp.form = {
+      id: c ? c.id : null, name: c ? c.name : '', label_id: c ? c.label_id || '' : '', item_id: c ? c.item_id || '' : '',
+      when: start ? 'data' : 'agora', date: start ? dateInput(start) : '', time: start ? timeInput(start) : '',
+      allow_new_chats: c ? !!c.allow_new_chats : false, skip_recent_days: c ? c.skip_recent_days : 7, msg: '', err: false, saving: false,
+    };
+    dp.view = 'new';
+    renderDisparos();
+  }
+
+  function renderCampaignForm() {
+    const f = dp.form;
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', f.id ? 'EDITAR DISPARO' : 'NOVO DISPARO'));
+    const name = el('input', 'ed-title');
+    name.maxLength = 60;
+    name.value = f.name;
+    name.placeholder = 'Ex.: Black Friday clientes';
+    name.addEventListener('input', () => { f.name = name.value; });
+    sec.append(schedField('Nome', name));
+    const lab = labelSelect(f.label_id, { empty: 'Escolha a etiqueta CRM…', aria: 'Etiqueta CRM do disparo' });
+    lab.addEventListener('change', () => { f.label_id = lab.value; });
+    sec.append(schedField('Para quem (etiqueta CRM)', lab));
+    const it = itemSelect(f.item_id, { aria: 'Mensagem do disparo' });
+    it.addEventListener('change', () => { f.item_id = it.value; });
+    sec.append(schedField('Mensagem salva ({nome} vira o primeiro nome)', it));
+    const modeRow = el('div', 'sc-row');
+    [['agora', 'Começar ao confirmar'], ['data', 'Data e hora']].forEach(([m, label]) => {
+      const l = el('label', 'sc-radio');
+      const r = el('input');
+      r.type = 'radio';
+      r.name = 'dp-when';
+      r.checked = f.when === m;
+      r.addEventListener('change', () => { f.when = m; renderDisparos(); });
+      l.append(r, label);
+      modeRow.append(l);
+    });
+    sec.append(modeRow);
+    if (f.when === 'data') {
+      const d = el('input', 'ed-title');
+      d.type = 'date';
+      d.value = f.date;
+      d.setAttribute('aria-label', 'Data do início');
+      d.addEventListener('input', () => { f.date = d.value; });
+      const t = el('input', 'ed-title');
+      t.type = 'time';
+      t.value = f.time;
+      t.setAttribute('aria-label', 'Hora do início');
+      t.addEventListener('input', () => { f.time = t.value; });
+      const r = el('div', 'sc-row');
+      r.append(schedField('Data', d), schedField('Hora', t));
+      sec.append(r);
+    }
+    const recent = numberInput(f.skip_recent_days, 0, 90, 'Pular quem recebeu envio automático nos últimos (dias)');
+    recent.addEventListener('input', () => { f.skip_recent_days = Math.floor(Number(recent.value) || 0); });
+    sec.append(schedField('Pular quem recebeu qualquer envio automático nos últimos (dias)', recent));
+    const nl = el('label', 'sc-radio');
+    const nc = el('input');
+    nc.type = 'checkbox';
+    nc.checked = f.allow_new_chats;
+    nc.addEventListener('change', () => { f.allow_new_chats = nc.checked; });
+    nl.append(nc, 'Permitir conversas novas');
+    sec.append(nl, el('div', 'crm-intro', 'Desligado (recomendado): só manda para conversas já carregadas no WhatsApp Web; as outras ficam "pulado". Ligado: manda também para números que nunca falaram com você, depois de conferir que o número tem WhatsApp.'));
+    const actions = el('div', 'ed-add');
+    const save = fbtn('bbtn primary', f.saving ? 'Salvando…' : 'Salvar e revisar', () => saveCampaignForm());
+    save.disabled = f.saving;
+    actions.append(save, fbtn('bbtn', 'Cancelar', () => { dp.view = 'list'; renderDisparos(); }));
+    sec.append(actions, el('div', `ed-msg${f.err ? ' err' : ''}`, f.msg));
+    dtabEl.append(sec);
+  }
+
+  async function saveCampaignForm() {
+    const f = dp.form;
+    if (f.saving) return;
+    const fail = (m) => { f.msg = m; f.err = true; renderDisparos(); };
+    let start_at = null;
+    if (f.when === 'data') {
+      if (!f.date || !f.time) return fail('Escolha a data e a hora do início.');
+      const when = new Date(`${f.date}T${f.time}:00`);
+      if (Number.isNaN(when.getTime())) return fail('Data e hora inválidas.');
+      start_at = when.toISOString();
+    }
+    f.saving = true;
+    renderDisparos();
+    try {
+      const r = await call('saveCampaign', { id: f.id || undefined, campaign: { name: f.name, label_id: f.label_id || null, item_id: f.item_id || null, start_at, allow_new_chats: f.allow_new_chats, skip_recent_days: f.skip_recent_days } });
+      f.saving = false;
+      await refreshDisparos({ quiet: true });
+      const c = dp.list.find((x) => x.id === r.id);
+      if (c) { openConfirm(c); return; }
+      dp.view = 'list';
+      renderDisparos();
+    } catch (e) {
+      f.saving = false;
+      fail(e.message);
+    }
+  }
+
+  // Confirmação: total, pulados (e por quê), tempo estimado e o aviso
+  async function openConfirm(c) {
+    dp.view = 'confirm';
+    dp.confirm = { campaign: c, loading: true };
+    renderDisparos();
+    try {
+      const pv = await call('previewCampaign', { id: c.id });
+      const chatIds = pv.chatIds || [];
+      const loaded = new Set();
+      for (let i = 0; i < chatIds.length; i += 500) {
+        try {
+          const r = await waRequest('chatsInfo', { chatIds: chatIds.slice(i, i + 500), keywords: [] }, { timeout: 8000 });
+          Object.keys((r && r.chats) || {}).forEach((id) => loaded.add(id));
+        } catch { /* sem WhatsApp pronto: conta como não carregada */ }
+      }
+      const notLoaded = chatIds.filter((id) => !loaded.has(id));
+      const newOk = c.allow_new_chats ? notLoaded.filter((id) => /@c\.us$/.test(id)).length : 0;
+      const notLoadedSkip = notLoaded.length - newOk;
+      dp.confirm = { campaign: c, loading: false, pv, loaded: loaded.size, newOk, notLoadedSkip, sending: loaded.size + newOk };
+    } catch (e) {
+      dp.confirm = { campaign: c, loading: false, error: e.message };
+    }
+    if (dp.view === 'confirm') renderDisparos();
+  }
+
+  function renderConfirm() {
+    const cf = dp.confirm;
+    const c = cf.campaign;
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', `CONFIRMAR: ${c.name.toUpperCase()}`));
+    if (cf.loading) { sec.append(el('div', 'lt-none', 'Calculando…')); dtabEl.append(sec); return; }
+    if (cf.error) {
+      sec.append(el('div', 'ed-msg err', cf.error), fbtn('bbtn', 'Voltar', () => { dp.view = 'list'; refreshDisparos(); }));
+      dtabEl.append(sec);
+      return;
+    }
+    const pv = cf.pv;
+    const lines = [
+      `Na etiqueta ${labelName(c.label_id)}: ${pv.total} contato${pv.total === 1 ? '' : 's'}`,
+      `Vão receber: ${cf.sending}${cf.newOk ? ` (${cf.newOk} em conversa nova, se o número tiver WhatsApp)` : ''}`,
+    ];
+    const skips = Object.entries(pv.skipped || {});
+    if (cf.notLoadedSkip) skips.push(['conversa não carregada no WhatsApp Web', cf.notLoadedSkip]);
+    const skipTotal = skips.reduce((a, [, n]) => a + n, 0);
+    lines.push(`Pulados: ${skipTotal}${skips.length ? ` (${skips.map(([r, n]) => `${r}: ${n}`).join('; ')})` : ''}`);
+    lines.push(`Mensagem: ${itemTitle(c.item_id)}`);
+    lines.push(`Tempo estimado pelos limites: ${E.estimateText(cf.sending, motor.state.settings)}`);
+    lines.push(c.start_at && Date.parse(c.start_at) > Date.now() ? `Começa em ${schedWhen(c.start_at)} (no horário comercial)` : 'Começa agora (no horário comercial)');
+    const box = el('div', 'fw-test');
+    lines.forEach((l) => box.append(el('div', null, l)));
+    sec.append(box, el('div', 'ed-note', MASS_WARNING));
+    const actions = el('div', 'ed-add');
+    const go = fbtn('bbtn primary', dp.busy ? 'Iniciando…' : 'Iniciar disparo', () => startCampaignNow(c));
+    go.disabled = dp.busy || !cf.sending;
+    actions.append(go, fbtn('bbtn', 'Voltar', () => { dp.view = 'list'; refreshDisparos(); }));
+    sec.append(actions);
+    dtabEl.append(sec);
+  }
+
+  async function startCampaignNow(c) {
+    if (dp.busy) return;
+    dp.busy = true;
+    renderDisparos();
+    try {
+      const r = await call('startCampaign', { id: c.id });
+      dp.msg = r.status === 'agendada' ? `Disparo agendado: ${r.willSend} para enviar.` : `Disparo iniciado: ${r.willSend} para enviar, um por vez.`;
+      dp.msgErr = false;
+    } catch (e) {
+      dp.msg = `Não consegui iniciar: ${e.message}`;
+      dp.msgErr = true;
+    }
+    dp.busy = false;
+    dp.view = 'list';
+    await refreshDisparos();
+  }
+
+  async function openDetail(c, more = false) {
+    dp.view = 'detail';
+    const prev = more && dp.detail ? dp.detail.targets : [];
+    dp.detail = { campaign: c, loading: true, targets: prev, hasMore: false };
+    renderDisparos();
+    try {
+      const r = await call('campaignTargets', { id: c.id, offset: prev.length, limit: 200 });
+      dp.detail = { campaign: c, loading: false, targets: [...prev, ...r.targets], hasMore: r.hasMore };
+    } catch (e) {
+      dp.detail = { campaign: c, loading: false, targets: prev, error: e.message };
+    }
+    if (dp.view === 'detail') renderDisparos();
+  }
+
+  function renderDetail() {
+    const d = dp.detail;
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', `ALVOS: ${d.campaign.name.toUpperCase()}`));
+    sec.append(el('div', 'fw-count', campaignProgress(dp.list.find((x) => x.id === d.campaign.id) || d.campaign)));
+    if (d.error) sec.append(el('div', 'ed-msg err', d.error));
+    if (!d.loading && !d.targets.length) sec.append(el('div', 'lt-none', 'Nenhum alvo.'));
+    d.targets.forEach((t) => {
+      const line = el('div', `sc-item st-${t.status}`);
+      const main = el('div', 'sc-main');
+      main.append(el('div', 'sc-who', t.name || 'Contato'), el('div', 'sc-prev', t.reason || (t.sent_at ? `enviado ${schedWhen(t.sent_at)}` : '')));
+      const side = el('div', 'sc-side');
+      side.append(el('span', 'sc-status', TARGET_STATUS_LABEL[t.status] || t.status));
+      line.append(main, side);
+      sec.append(line);
+    });
+    if (d.loading) sec.append(el('div', 'lt-none', 'Carregando…'));
+    const actions = el('div', 'ed-add');
+    if (d.hasMore) actions.append(fbtn('bbtn', 'Mostrar mais', () => openDetail(d.campaign, true)));
+    actions.append(fbtn('bbtn', 'Voltar', () => { dp.view = 'list'; refreshDisparos(); }));
+    sec.append(actions);
+    dtabEl.append(sec);
+  }
 
   function startScheduler() {
     motor.start();
@@ -3784,7 +4195,8 @@
   const labelName = (id) => { const l = state.labels.find((x) => x.id === id); return l ? l.name : 'etiqueta excluída'; };
   const itemTitle = (id) => { const i = state.items.find((x) => x.id === id); return i ? i.title : 'mensagem excluída'; };
   const activeFlows = () => motor.state.flows.filter((f) => f.active);
-  const autoActive = () => motor.state.available === true && (activeFlows().length > 0 || !!(motor.state.settings && motor.state.settings.paused_all));
+  const autoActive = () => motor.state.available === true
+    && (activeFlows().length > 0 || campaignsLive() || !!motor.state.current || !!(motor.state.settings && motor.state.settings.paused_all));
 
   function engineRoleText() {
     const m = motor.state;
@@ -3808,6 +4220,7 @@
   function renderEngineUi() {
     renderFootPause();
     if (fl.open && fl.view === 'list') renderFollows();
+    if (dp.open && dp.view === 'list') renderDisparos();
     if (state.view === 'diag') renderDiag();
   }
 
@@ -3815,6 +4228,7 @@
     const paused = !!(motor.state.settings && motor.state.settings.paused_all);
     try {
       await motor.setPaused(!paused);
+      if (dp.open) refreshDisparos({ quiet: true });
       toast(paused ? 'Envios automáticos retomados.' : 'Envios automáticos pausados.', 'ok', 3000);
     } catch (e) {
       toast(e.message === 'Atualize o banco para usar este recurso' ? e.message : 'Não consegui mudar. Tente de novo.', 'error', 5000);
@@ -3947,7 +4361,7 @@
     const paused = !!s.paused_all;
     const p = fbtn(`bbtn${paused ? ' primary' : ''}`, paused ? '▶ Retomar' : '⏸ Pausar tudo', () => togglePauseAll());
     p.classList.add('fw-pause');
-    row.append(p, fbtn('bbtn', 'Limites e horário', () => openSettings()));
+    row.append(p, fbtn('bbtn', 'Limites e horário', () => { if (state.section !== 'follows') setSection('follows'); openSettings(); }));
     top.append(row);
     top.append(el('div', 'fw-count', `Envios na última hora: ${m.counts.hour}/${s.max_per_hour} · hoje: ${m.counts.day}/${s.max_per_day}`));
     top.append(el('div', 'crm-intro', `Motor: ${engineRoleText()}${m.waiting && m.role === 'este' && !paused ? ` · agora: ${m.waiting}` : ''}`));
