@@ -1,5 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows } from '../lib/resumoAnualCalc';
+
+// Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
+const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
+  fetchAllRows<T>(mk).then((data) => ({ data }), () => ({ data: null as T[] | null }));
 import { RefreshCw, AlertCircle, Package, MapPin, Clock, X, DollarSign, Plus, Truck } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
@@ -287,22 +292,25 @@ export default function CorreiosTracking() {
     const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
     const [swRes, pvRes, avRes] = await Promise.all([
-      supabase.from('sales')
+      allRows<any>((f, t) => supabase.from('sales')
         .select('delivery_cost')
         .eq('delivery_type', 'correios')
         .neq('status', 'cancelado')
         .gte('sale_date', startDate)
-        .lte('sale_date', endDate + 'T23:59:59'),
-      supabase.from('small_sales')
+        .lte('sale_date', endDate + 'T23:59:59')
+        .order('id').range(f, t)),
+      allRows<any>((f, t) => supabase.from('small_sales')
         .select('delivery_fee')
         .eq('delivery_type', 'correios')
         .gte('created_at', startDate + 'T00:00:00')
-        .lte('created_at', endDate + 'T23:59:59'),
-      supabase.from('operational_costs_avulsos')
+        .lte('created_at', endDate + 'T23:59:59')
+        .order('id').range(f, t)),
+      allRows<any>((f, t) => supabase.from('operational_costs_avulsos')
         .select('amount')
         .like('description', 'Correios:%')
         .gte('date', startDate)
-        .lte('date', endDate),
+        .lte('date', endDate)
+        .order('id').range(f, t)),
     ]);
 
     const swData = swRes.data || [];
@@ -434,14 +442,15 @@ export default function CorreiosTracking() {
   const loadAndUpdate = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      // Todas as vendas dos Correios, em páginas de 1000 (o Supabase corta cada consulta em 1000)
+      const data = await fetchAllRows((f, t) => supabase
         .from('sales')
         .select('id, customer_name, city, neighborhood, tracking_code, shipping_label_url, shipping_status, sale_date, updated_at, delivered_at')
         .eq('delivery_type', 'correios')
         .not('hide_from_tracking', 'is', true)
-        .order('sale_date', { ascending: false });
-
-      if (error) throw error;
+        .order('sale_date', { ascending: false })
+        .order('id')
+        .range(f, t));
 
       const filtered = (data || []).filter((s: any) => !isOldDelivery(s)) as TrackedSale[];
       setSales(filtered);

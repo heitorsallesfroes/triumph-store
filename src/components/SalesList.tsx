@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows } from '../lib/resumoAnualCalc';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
 import { ChevronDown, Package, FileText, CreditCard as Edit } from 'lucide-react';
 import Receipt from './Receipt';
@@ -32,12 +33,13 @@ export default function SalesList() {
 
   const loadSales = async () => {
     try {
-      const { data, error } = await supabase
+      // Todas as vendas, em páginas de 1000 (o Supabase corta cada consulta em 1000)
+      const data = await fetchAllRows((f, t) => supabase
         .from('sales')
         .select('*')
-        .order('sale_date', { ascending: false });
-
-      if (error) throw error;
+        .order('sale_date', { ascending: false })
+        .order('id')
+        .range(f, t));
 
       const salesWithProducts = await Promise.all(
         (data || []).map(async (sale) => {

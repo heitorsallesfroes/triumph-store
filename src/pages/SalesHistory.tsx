@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows, chunk } from '../lib/resumoAnualCalc';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
 import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers, Link, Pencil } from 'lucide-react';
 import Receipt from '../components/Receipt';
@@ -168,11 +169,11 @@ export default function SalesHistory() {
 
   const loadSales = async () => {
     try {
-      const [{ data: salesData, error: salesError }, { data: motoboysData }] = await Promise.all([
-        supabase.from('sales').select('*').order('sale_date', { ascending: false }),
+      // Todas as vendas, em páginas de 1000 (o Supabase corta cada consulta em 1000)
+      const [salesData, { data: motoboysData }] = await Promise.all([
+        fetchAllRows((f, t) => supabase.from('sales').select('*').order('sale_date', { ascending: false }).order('id').range(f, t)),
         supabase.from('motoboys').select('id, name'),
       ]);
-      if (salesError) throw salesError;
 
       const rawSales: any[] = salesData || [];
       const motoboysMap = new Map((motoboysData || []).map((m: any) => [m.id, m.name]));
@@ -186,19 +187,31 @@ export default function SalesHistory() {
     }
   };
 
+  // Itens e produtos buscados por lotes de ids (lista grande de ids não cabe numa consulta só)
+  const fetchItemsBySaleIds = async (saleIds: string[], cols: string) => {
+    const out: any[] = [];
+    for (const ids of chunk(saleIds, 150)) {
+      out.push(...await fetchAllRows((f, t) => supabase.from('sale_items').select(cols).in('sale_id', ids).order('id').range(f, t)));
+    }
+    return out;
+  };
+
+  const fetchProductsByIds = async (productIds: string[], cols: string) => {
+    const out: any[] = [];
+    for (const ids of chunk(productIds, 150)) {
+      out.push(...await fetchAllRows((f, t) => supabase.from('products').select(cols).in('id', ids).order('id').range(f, t)));
+    }
+    return out;
+  };
+
   const enrichWithProducts = async (rawSales: any[], motoboysMap: Map<string, string> = new Map()): Promise<Sale[]> => {
     if (rawSales.length === 0) return [];
     const saleIds = rawSales.map((s: any) => s.id);
 
-    const { data: itemsData } = await supabase
-      .from('sale_items')
-      .select('sale_id, product_id, quantity')
-      .in('sale_id', saleIds);
+    const itemsData = await fetchItemsBySaleIds(saleIds, 'sale_id, product_id, quantity');
 
     const productIds = [...new Set((itemsData || []).map((i: any) => i.product_id).filter(Boolean))];
-    const { data: productsData } = productIds.length > 0
-      ? await supabase.from('products').select('id, model, color').in('id', productIds)
-      : { data: [] };
+    const productsData = await fetchProductsByIds(productIds, 'id, model, color');
 
     const productMap = new Map((productsData || []).map((p: any) => [p.id, p]));
     const itemsBySale = new Map<string, any[]>();
@@ -254,19 +267,22 @@ export default function SalesHistory() {
         startDate = dateFilter.start; endDate = dateFilter.end;
       }
 
-      let query = supabase
-        .from('sales')
-        .select('*')
-        .order('sale_date', { ascending: false });
-      if (statusFilter !== 'all') query = query.eq('status', statusFilter);
-      if (deliveryTypeFilter !== 'all') query = query.eq('delivery_type', deliveryTypeFilter);
-      if (deliveryTypeFilter === 'motoboy' && motoboyFilter !== 'all') query = query.eq('motoboy_id', motoboyFilter);
-      if (searchTerm) query = query.or(`customer_name.ilike.%${searchTerm}%,neighborhood.ilike.%${searchTerm}%,city.ilike.%${searchTerm}%`);
-      if (startDate) query = query.gte('sale_date', `${startDate}T00:00:00`);
-      if (endDate) query = query.lte('sale_date', `${endDate}T23:59:59`);
-
-      const { data: salesData, error } = await query;
-      if (error) throw error;
+      // Mesmos filtros; a consulta é montada de novo para cada página de 1000
+      const buildQuery = () => {
+        let query = supabase
+          .from('sales')
+          .select('*')
+          .order('sale_date', { ascending: false })
+          .order('id');
+        if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+        if (deliveryTypeFilter !== 'all') query = query.eq('delivery_type', deliveryTypeFilter);
+        if (deliveryTypeFilter === 'motoboy' && motoboyFilter !== 'all') query = query.eq('motoboy_id', motoboyFilter);
+        if (searchTerm) query = query.or(`customer_name.ilike.%${searchTerm}%,neighborhood.ilike.%${searchTerm}%,city.ilike.%${searchTerm}%`);
+        if (startDate) query = query.gte('sale_date', `${startDate}T00:00:00`);
+        if (endDate) query = query.lte('sale_date', `${endDate}T23:59:59`);
+        return query;
+      };
+      const salesData = await fetchAllRows((f, t) => buildQuery().range(f, t));
 
       let rawSales: any[] = salesData || [];
       if (paymentFilter !== 'all') {
@@ -289,16 +305,11 @@ export default function SalesHistory() {
       motoboysMap = new Map((motoboysData || []).map((m: any) => [m.id, m.name]));
 
       if (saleIds.length > 0) {
-        const { data: items } = await supabase
-          .from('sale_items')
-          .select('sale_id, product_id, quantity')
-          .in('sale_id', saleIds);
-        itemsData = items || [];
+        itemsData = await fetchItemsBySaleIds(saleIds, 'sale_id, product_id, quantity');
 
         const productIds = [...new Set(itemsData.map((i: any) => i.product_id).filter(Boolean))];
         if (productIds.length > 0) {
-          const { data: prods } = await supabase.from('products').select('id, model, color, category').in('id', productIds);
-          productsData = prods || [];
+          productsData = await fetchProductsByIds(productIds, 'id, model, color, category');
         }
       }
 

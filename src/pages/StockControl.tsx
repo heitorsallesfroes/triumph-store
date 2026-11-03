@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
 import { supabase, Product } from '../lib/supabase';
+import { fetchAllRows, chunk } from '../lib/resumoAnualCalc';
+
+// Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
+const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
+  fetchAllRows<T>(mk).then((data) => ({ data }), () => ({ data: null as T[] | null }));
 import { AlertTriangle, CheckCircle, Plus, Minus, History, Search, Package, ShoppingCart, X } from 'lucide-react';
 
 const MODEL_ORDER = [
@@ -127,19 +132,26 @@ const [showStockSummary, setShowStockSummary] = useState(false);
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 30);
 
-    const { data: salesData } = await supabase
+    const { data: salesData } = await allRows<any>((f, t) => supabase
       .from('sales')
       .select('id')
-      .gte('sale_date', cutoff.toISOString());
+      .gte('sale_date', cutoff.toISOString())
+      .order('id').range(f, t));
 
     const saleIds = (salesData || []).map((s: any) => s.id);
     if (saleIds.length === 0) { setSalesVelocity(new Map()); return; }
 
-    const { data: itemsData } = await supabase
-      .from('sale_items')
-      .select('product_id, quantity')
-      .in('sale_id', saleIds)
-      .in('product_id', smartwatchIds);
+    // Itens por lotes de ids (lista grande de ids não cabe numa consulta só)
+    const itemsData: any[] = [];
+    for (const ids of chunk(saleIds, 150)) {
+      const { data } = await allRows<any>((f, t) => supabase
+        .from('sale_items')
+        .select('product_id, quantity')
+        .in('sale_id', ids)
+        .in('product_id', smartwatchIds)
+        .order('id').range(f, t));
+      itemsData.push(...(data || []));
+    }
 
     const totals = new Map<string, number>();
     for (const item of (itemsData || [])) {
@@ -387,14 +399,16 @@ const [showStockSummary, setShowStockSummary] = useState(false);
     setShowHistory(true);
     try {
       const [saleItemsRes, movementsRes] = await Promise.all([
-        supabase
+        allRows<any>((f, t) => supabase
           .from('sale_items')
           .select('id, quantity, unit_price, sale_id, sales(id, customer_name, sale_date, status)')
-          .eq('product_id', product.id),
-        supabase
+          .eq('product_id', product.id)
+          .order('id').range(f, t)),
+        allRows<any>((f, t) => supabase
           .from('stock_movements')
           .select('*')
-          .eq('product_id', product.id),
+          .eq('product_id', product.id)
+          .order('id').range(f, t)),
       ]);
 
       const events: any[] = [];

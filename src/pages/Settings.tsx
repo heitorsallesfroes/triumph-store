@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Download, Loader2, Save, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows } from '../lib/resumoAnualCalc';
+
+// Todas as linhas em páginas de 1000, no mesmo formato { data, error } da consulta direta
+const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
+  fetchAllRows<T>(mk).then((data) => ({ data, error: null }), (error) => ({ data: null as T[] | null, error }));
 import { getConfigDefaults, refreshSystemConfig } from '../lib/systemConfig';
 
 const INSTALLMENTS = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -112,12 +117,12 @@ export default function Settings() {
         neighborhoodsResult,
         motoboysResult
       ] = await Promise.all([
-        supabase.from('products').select('*').order('created_at'),
+        allRows<any>((f, t) => supabase.from('products').select('*').order('created_at').order('id').range(f, t)),
         supabase.from('accessories').select('*').order('created_at'),
-        supabase.from('sales').select('*').order('created_at'),
+        allRows<any>((f, t) => supabase.from('sales').select('*').order('created_at').order('id').range(f, t)),
         supabase.from('suppliers').select('*').order('created_at'),
         supabase.from('cities').select('*').order('name'),
-        supabase.from('neighborhoods').select('*').order('name'),
+        allRows<any>((f, t) => supabase.from('neighborhoods').select('*').order('name').order('id').range(f, t)),
         supabase.from('motoboys').select('*').order('created_at')
       ]);
 

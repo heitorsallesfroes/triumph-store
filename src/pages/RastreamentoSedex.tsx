@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows } from '../lib/resumoAnualCalc';
+
+// Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
+const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
+  fetchAllRows<T>(mk).then((data) => ({ data }), () => ({ data: null as T[] | null }));
 import {
   PackageSearch, RefreshCw, Package, Truck, MapPin,
   CheckCircle, Clock, ExternalLink, AlertCircle,
@@ -267,16 +272,18 @@ export default function RastreamentoSedex() {
     const fields = 'id, customer_name, address_street, address_number, address_complement, neighborhood, city, state, tracking_code, shipping_label_url, shipping_status, delivered_at, sale_date, sale_items(quantity, products(model, color))';
 
     const [activeRes, deliveredRes] = await Promise.all([
-      supabase.from('sales').select(fields)
+      allRows<any>((f, t) => supabase.from('sales').select(fields)
         .eq('delivery_type', 'correios')
         .eq('shipping_status', 'Etiqueta gerada')
-        .order('sale_date', { ascending: false }),
-      supabase.from('sales').select(fields)
+        .order('sale_date', { ascending: false })
+        .order('id').range(f, t)),
+      allRows<any>((f, t) => supabase.from('sales').select(fields)
         .eq('delivery_type', 'correios')
         .eq('shipping_status', 'Entregue')
         .not('delivered_at', 'is', null)
         .gte('delivered_at', fiveDaysAgo.toISOString())
-        .order('sale_date', { ascending: false }),
+        .order('sale_date', { ascending: false })
+        .order('id').range(f, t)),
     ]);
 
     const combined = [...(activeRes.data || []), ...(deliveredRes.data || [])]

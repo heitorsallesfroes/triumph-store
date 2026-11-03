@@ -4,6 +4,11 @@ import {
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows } from '../lib/resumoAnualCalc';
+
+// Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
+const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
+  fetchAllRows<T>(mk).then((data) => ({ data }), () => ({ data: null as T[] | null }));
 import { getTodayInBrazil, getYesterdayInBrazil } from '../lib/dateUtils';
 import { toAdSpendReal } from '../lib/adTax';
 import AdTaxBreakdown from '../components/AdTaxBreakdown';
@@ -386,7 +391,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
       supabase.from('small_sales').select('sale_price, quantity, cost, delivery_fee').gte('created_at', `${today}T00:00:00-03:00`).lte('created_at', `${today}T23:59:59-03:00`),
       supabase.from('sales').select('id', { count: 'exact', head: true }).eq('payment_method', 'pix').in('status', ['em_separacao', 'embalar_amanha']),
       supabase.from('ad_spend').select('date, amount').gte('date', sixAgo).lte('date', today),
-      supabase.from('sales').select('sale_date, total_sale_price').neq('status', 'cancelado').neq('status', 'reembolsado').gte('sale_date', `${ninetyDaysAgo}T00:00:00`).lte('sale_date', `${yesterday}T23:59:59`),
+      allRows<{ sale_date: string; total_sale_price: number }>((f, t) => supabase.from('sales').select('sale_date, total_sale_price').neq('status', 'cancelado').neq('status', 'reembolsado').gte('sale_date', `${ninetyDaysAgo}T00:00:00`).lte('sale_date', `${yesterday}T23:59:59`).order('id').range(f, t)),
     ]);
 
     // Round 2: sale_items (needs IDs from round 1)
@@ -535,19 +540,21 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     const rangeEndMonthLastDay    = toDateStr(new Date(reY, reM, 0));
 
     const [salesRes, adRes, opCostsRes, opPaymentsRes, opAvulsosRes, smallSalesRes] = await Promise.all([
-      supabase.from('sales')
+      allRows<any>((f, t) => supabase.from('sales')
         .select('sale_date, total_sale_price, total_cost, delivery_fee, delivery_cost')
         .neq('status', 'cancelado').neq('status', 'reembolsado')
-        .gte('sale_date', `${startStr}T00:00:00`).lte('sale_date', `${endStr}T23:59:59`),
-      supabase.from('ad_spend').select('date, amount').gte('date', startStr).lte('date', endStr),
+        .gte('sale_date', `${startStr}T00:00:00`).lte('sale_date', `${endStr}T23:59:59`)
+        .order('id').range(f, t)),
+      allRows<any>((f, t) => supabase.from('ad_spend').select('date, amount').gte('date', startStr).lte('date', endStr).order('id').range(f, t)),
       supabase.from('operational_costs').select('id, amount, is_active, created_at'),
-      supabase.from('operational_cost_payments').select('cost_id, amount_paid, month')
-        .gte('month', rangeStartMonthStr).lte('month', rangeEndMonthStr),
-      supabase.from('operational_costs_avulsos').select('amount, date')
-        .gte('date', rangeStartMonthFirstDay).lte('date', rangeEndMonthLastDay),
-      supabase.from('small_sales')
+      allRows<{ cost_id: string; amount_paid: number | null; month: string }>((f, t) => supabase.from('operational_cost_payments').select('cost_id, amount_paid, month')
+        .gte('month', rangeStartMonthStr).lte('month', rangeEndMonthStr).order('id').range(f, t)),
+      allRows<{ amount: number; date: string | null }>((f, t) => supabase.from('operational_costs_avulsos').select('amount, date')
+        .gte('date', rangeStartMonthFirstDay).lte('date', rangeEndMonthLastDay).order('id').range(f, t)),
+      allRows<any>((f, t) => supabase.from('small_sales')
         .select('created_at, sale_price, quantity, cost, delivery_fee')
-        .gte('created_at', `${startStr}T00:00:00-03:00`).lte('created_at', `${endStr}T23:59:59-03:00`),
+        .gte('created_at', `${startStr}T00:00:00-03:00`).lte('created_at', `${endStr}T23:59:59-03:00`)
+        .order('id').range(f, t)),
     ]);
 
     const sales      = salesRes.data      || [];

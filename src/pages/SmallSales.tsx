@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows } from '../lib/resumoAnualCalc';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
 import { ShoppingBag, Plus, Trash2, Bike, Truck, ShoppingCart, Pencil, X } from 'lucide-react';
@@ -139,10 +140,12 @@ export default function SmallSales() {
     setLoading(true);
     try {
       const dateRange = getDateRange();
-      let query = supabase.from('small_sales').select('*');
-      if (dateRange) query = query.gte('created_at', dateRange.start).lte('created_at', dateRange.end);
-      const { data, error } = await query.order('created_at', { ascending: false });
-      if (error) throw error;
+      // Todas as linhas, em páginas de 1000 (o Supabase corta cada consulta em 1000)
+      const data = await fetchAllRows((f, t) => {
+        let query = supabase.from('small_sales').select('*');
+        if (dateRange) query = query.gte('created_at', dateRange.start).lte('created_at', dateRange.end);
+        return query.order('created_at', { ascending: false }).order('id').range(f, t);
+      });
       setSales(data || []);
     } catch (err) {
       console.error('Erro ao carregar pequenas vendas:', err);

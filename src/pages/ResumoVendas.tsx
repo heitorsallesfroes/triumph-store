@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows, chunk } from '../lib/resumoAnualCalc';
+
+// Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
+const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
+  fetchAllRows<T>(mk).then((data) => ({ data }), () => ({ data: null as T[] | null }));
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 import { calculateCardFee } from '../lib/cardFees';
 import { toAdSpendReal } from '../lib/adTax';
@@ -143,34 +148,47 @@ export default function ResumoVendas() {
       const { start, end } = getDateRange();
       const isMax = period === 'max';
 
-      let salesQuery = supabase
-        .from('sales')
-        .select('id, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, payment_methods, delivery_type, motoboy_id, city')
-        .neq('status', 'cancelado')
-        .neq('status', 'reembolsado');
-      if (!isMax) salesQuery = salesQuery.gte('sale_date', `${start}T00:00:00`).lte('sale_date', `${end}T23:59:59`);
+      // Mesmos filtros; cada consulta é montada de novo para cada página de 1000
+      const salesQuery = (f: number, t: number) => {
+        let q = supabase
+          .from('sales')
+          .select('id, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, payment_methods, delivery_type, motoboy_id, city')
+          .neq('status', 'cancelado')
+          .neq('status', 'reembolsado');
+        if (!isMax) q = q.gte('sale_date', `${start}T00:00:00`).lte('sale_date', `${end}T23:59:59`);
+        return q.order('id').range(f, t);
+      };
 
-      let adSpendQuery = supabase.from('ad_spend').select('amount');
-      if (!isMax) adSpendQuery = adSpendQuery.gte('date', start).lte('date', end);
+      const adSpendQuery = (f: number, t: number) => {
+        let q = supabase.from('ad_spend').select('amount');
+        if (!isMax) q = q.gte('date', start).lte('date', end);
+        return q.order('id').range(f, t);
+      };
 
-      let smallSalesQuery = supabase
-        .from('small_sales')
-        .select('sale_price, quantity, payment_method, payment_methods, card_brand, installments')
-        .in('payment_method', ['credit_card', 'debit_card', 'payment_link']);
-      if (!isMax) smallSalesQuery = smallSalesQuery.gte('created_at', `${start}T00:00:00-03:00`).lte('created_at', `${end}T23:59:59-03:00`);
+      const smallSalesQuery = (f: number, t: number) => {
+        let q = supabase
+          .from('small_sales')
+          .select('sale_price, quantity, payment_method, payment_methods, card_brand, installments')
+          .in('payment_method', ['credit_card', 'debit_card', 'payment_link']);
+        if (!isMax) q = q.gte('created_at', `${start}T00:00:00-03:00`).lte('created_at', `${end}T23:59:59-03:00`);
+        return q.order('id').range(f, t);
+      };
 
-      let smallSalesAllQuery = supabase
-        .from('small_sales')
-        .select('sale_price, quantity, cost, delivery_fee, delivery_type, payment_method, payment_methods, card_brand, installments');
-      if (!isMax) smallSalesAllQuery = smallSalesAllQuery.gte('created_at', `${start}T00:00:00-03:00`).lte('created_at', `${end}T23:59:59-03:00`);
+      const smallSalesAllQuery = (f: number, t: number) => {
+        let q = supabase
+          .from('small_sales')
+          .select('sale_price, quantity, cost, delivery_fee, delivery_type, payment_method, payment_methods, card_brand, installments');
+        if (!isMax) q = q.gte('created_at', `${start}T00:00:00-03:00`).lte('created_at', `${end}T23:59:59-03:00`);
+        return q.order('id').range(f, t);
+      };
 
       const [{ data: salesRaw }, { data: adSpend }, { data: motoboysList }, { data: products }, { data: smallSalesRaw }, { data: smallSalesAllRaw }] = await Promise.all([
-        salesQuery,
-        adSpendQuery,
+        allRows<any>(salesQuery),
+        allRows<any>(adSpendQuery),
         supabase.from('motoboys').select('id, name'),
         supabase.from('products').select('id, model, color, category').eq('category', 'smartwatch'),
-        smallSalesQuery,
-        smallSalesAllQuery,
+        allRows<any>(smallSalesQuery),
+        allRows<any>(smallSalesAllQuery),
       ]);
 
       if (myId !== loadIdRef.current) return;
@@ -379,10 +397,12 @@ export default function ResumoVendas() {
       // ── Top smartwatches ─────────────────────────────────────────────
       const saleIds = s.map(v => v.id);
       if (saleIds.length > 0 && (products || []).length > 0) {
-        const { data: saleItems } = await supabase
-          .from('sale_items')
-          .select('product_id, quantity')
-          .in('sale_id', saleIds);
+        // Itens por lotes de ids (lista grande de ids não cabe numa consulta só)
+        const saleItems: any[] = [];
+        for (const ids of chunk(saleIds, 150)) {
+          const { data } = await allRows<any>((f, t) => supabase.from('sale_items').select('product_id, quantity').in('sale_id', ids).order('id').range(f, t));
+          saleItems.push(...(data || []));
+        }
         if (myId !== loadIdRef.current) return;
 
         const swMap = new Map<string, SmartWatchRow>();

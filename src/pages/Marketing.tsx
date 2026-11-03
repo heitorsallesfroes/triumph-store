@@ -1,5 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows, chunk } from '../lib/resumoAnualCalc';
+
+// Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
+const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
+  fetchAllRows<T>(mk).then((data) => ({ data }), () => ({ data: null as T[] | null }));
 import {
   TrendingUp, DollarSign, Target, ShoppingCart, Plus, Trash2,
   CreditCard as Edit2, X, Calendar, RefreshCw,
@@ -67,13 +72,17 @@ export default function Marketing() {
     setLoading(true);
     try {
       const dateRange = getDateRange();
-      let salesQuery = supabase.from('sales').select('id, sale_date, total_sale_price, profit, status').neq('status', 'cancelado').neq('status', 'reembolsado');
-      if (dateRange) {
-        salesQuery = salesQuery.gte('sale_date', `${dateRange.start}T00:00:00`).lte('sale_date', `${dateRange.end}T23:59:59`);
-      }
+      // Mesmos filtros; a consulta é montada de novo para cada página de 1000
+      const salesQuery = (f: number, t: number) => {
+        let q = supabase.from('sales').select('id, sale_date, total_sale_price, profit, status').neq('status', 'cancelado').neq('status', 'reembolsado');
+        if (dateRange) {
+          q = q.gte('sale_date', `${dateRange.start}T00:00:00`).lte('sale_date', `${dateRange.end}T23:59:59`);
+        }
+        return q.order('id').range(f, t);
+      };
       const [adSpendResult, salesResult] = await Promise.all([
-        supabase.from('ad_spend').select('*').order('date', { ascending: false }),
-        salesQuery
+        allRows<any>((f, t) => supabase.from('ad_spend').select('*').order('date', { ascending: false }).order('id').range(f, t)),
+        allRows<any>(salesQuery),
       ]);
       const allAd = adSpendResult.data || [];
       const salesData = salesResult.data || [];
@@ -99,10 +108,12 @@ export default function Marketing() {
 
       if (salesData.length > 0) {
         const saleIds = salesData.map(s => s.id);
-        const { data: itemsData } = await supabase
-          .from('sale_items')
-          .select('quantity, products(category)')
-          .in('sale_id', saleIds);
+        // Itens por lotes de ids (lista grande de ids não cabe numa consulta só)
+        const itemsData: any[] = [];
+        for (const ids of chunk(saleIds, 150)) {
+          const { data } = await allRows<any>((f, t) => supabase.from('sale_items').select('quantity, products(category)').in('sale_id', ids).order('id').range(f, t));
+          itemsData.push(...(data || []));
+        }
         const swCount = (itemsData || [])
           .filter((i: any) => i.products?.category === 'smartwatch')
           .reduce((s: number, i: any) => s + Number(i.quantity), 0);

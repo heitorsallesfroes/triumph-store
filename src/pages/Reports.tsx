@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, MotoboyStats } from '../lib/supabase';
+import { fetchAllRows } from '../lib/resumoAnualCalc';
 import { TrendingUp, DollarSign, MapPin, CreditCard, Bike, Download, Calendar, Trophy } from 'lucide-react';
 
 interface ProductSales {
@@ -38,23 +39,29 @@ export default function Reports() {
 
   const loadReports = async () => {
     try {
-      const { data: saleItems } = await supabase
+      // Todas as linhas, em páginas de 1000 (o Supabase corta cada consulta em 1000)
+      const saleItems = await fetchAllRows((f, t) => supabase
         .from('sale_items')
-        .select('product_id, quantity, unit_price, sale_id');
+        .select('product_id, quantity, unit_price, sale_id')
+        .order('id')
+        .range(f, t));
 
-      const { data: products } = await supabase
+      const products = await fetchAllRows((f, t) => supabase
         .from('products')
-        .select('id, model, color, cost, category');
+        .select('id, model, color, cost, category')
+        .order('id')
+        .range(f, t));
 
-      let salesQuery = supabase
-        .from('sales')
-        .select('id, city, payment_method, total_sale_price, motoboy_id, delivery_fee, profit, delivery_type');
-
-      if (deliveryTypeFilter !== 'all') {
-        salesQuery = salesQuery.eq('delivery_type', deliveryTypeFilter);
-      }
-
-      const { data: sales } = await salesQuery;
+      const sales = await fetchAllRows((f, t) => {
+        let salesQuery = supabase
+          .from('sales')
+          .select('id, city, payment_method, total_sale_price, motoboy_id, delivery_fee, profit, delivery_type')
+          .order('id');
+        if (deliveryTypeFilter !== 'all') {
+          salesQuery = salesQuery.eq('delivery_type', deliveryTypeFilter);
+        }
+        return salesQuery.range(f, t);
+      });
 
       if (saleItems && products) {
         const productMap = new Map<string, ProductSales>();
@@ -133,7 +140,7 @@ export default function Reports() {
 
   const exportData = async () => {
     try {
-      const { data: sales } = await supabase
+      const sales = await fetchAllRows((f, t) => supabase
         .from('sales')
         .select(`
           *,
@@ -148,7 +155,9 @@ export default function Reports() {
           motoboys (*),
           suppliers (*)
         `)
-        .order('sale_date', { ascending: false });
+        .order('sale_date', { ascending: false })
+        .order('id')
+        .range(f, t));
 
       const dataStr = JSON.stringify(sales, null, 2);
       const dataBlob = new Blob([dataStr], { type: 'application/json' });
