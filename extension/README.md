@@ -553,6 +553,64 @@ família. **Esc** ou **Fechar** fecha o Quadro.
 
 Nomes, números e prévias ficam só na memória enquanto o Quadro está aberto.
 
+### 📈 Compra para o Facebook (Conversões)
+
+Na conversa de um cliente que comprou (na loja, pelo WhatsApp, etc.), o botão
+**📈 Compra p/ Facebook** (ao lado do 💰) manda o evento de compra
+("Purchase") para o Conjunto de dados (Pixel) do Facebook, com o anúncio de
+onde o cliente veio. É **separado** do 💰 Venda (que lança no ERP) e substitui
+o que hoje é feito pelo Tintim.
+
+- Mostra o anúncio detectado (título, id, Instagram/Facebook) ou "Não achei
+  anúncio nesta conversa (será enviado só com o telefone)".
+- Valor (padrão: total da última venda desta conversa no ERP), data e hora
+  (padrão: agora, até 7 dias atrás) e descrição/produto (opcional).
+- Se já houve um evento para esta conversa nos últimos 7 dias, pergunta
+  "Já enviado em … por R$ … Enviar outro?".
+- **Nada vai ao Facebook sem clicar em "Enviar compra".** O telefone vai só
+  embaralhado (hash SHA-256), nunca em texto. O token do Facebook fica só no
+  Supabase (secret da função), nunca na extensão.
+- Seção **Conversões** no menu: histórico (data, cliente, valor, anúncio,
+  método, status, teste) e o interruptor **Modo teste**.
+- "Detalhes técnicos do anúncio" (recolhido) mostra só os nomes e tamanhos
+  dos campos do anúncio. Mande um print dele se o anúncio não for detectado.
+
+**Configurar (uma vez só):**
+
+1. **ID do Conjunto de dados (Pixel):** em business.facebook.com abra o
+   **Gerenciador de Eventos** → no menu da esquerda, **Fontes de dados** →
+   clique no seu Conjunto de dados. O número embaixo do nome (ou em
+   **Configurações** → "ID do conjunto de dados") é o ID.
+2. **Token da API de Conversões:** no mesmo Conjunto de dados, aba
+   **Configurações** → seção **API de Conversões** → **Gerar token de
+   acesso**. Copie o token (ele só aparece uma vez).
+3. **Código de teste:** aba **Testar eventos** → em "API de Conversões" há um
+   código como `TEST12345`. Copie.
+4. **(Opcional) ID da conta do WhatsApp Business (WABA):** em
+   business.facebook.com → **Configurações** → **Contas** → **Contas do
+   WhatsApp**. Só ajuda quando o WhatsApp entrega o identificador do clique do
+   anúncio. Sem ele, o evento vai pelo telefone (método "chat").
+5. **Colar no Supabase:** em supabase.com abra o projeto → **Edge Functions**
+   → **Secrets** (ou "Manage secrets") → adicione, com estes nomes exatos:
+   - `META_ACCESS_TOKEN` = o token do passo 2
+   - `META_DATASET_ID` = o ID do passo 1
+   - `META_TEST_EVENT_CODE` = o código do passo 3
+   - `META_WABA_ID` = o ID do passo 4 (opcional)
+6. **Publicar a função** (no computador com o projeto, na pasta `project`):
+   ```
+   npx supabase login
+   npx supabase functions deploy meta-purchase-event --project-ref jcnvlqfpmmejtzfhfjix
+   ```
+7. **Aplicar a migration** `supabase/migrations/20261103190000_wa_conversion_events.sql`
+   (SQL Editor do Supabase).
+
+**Testar:** Diagnóstico → linha "Conversões Facebook" deve dizer "função
+publicada; secrets ok". Depois, em **Conversões**, ligue **Modo teste**, abra a
+conversa **"Meu Numero Pessoal"**, clique em 📈, coloque **R$ 1** e clique em
+**Enviar compra**. Deve aparecer "Enviado ✓ (o Facebook recebeu 1 evento)". No
+Gerenciador de Eventos → **Testar eventos**, o evento "Purchase" aparece em
+alguns segundos. Depois desligue o Modo teste.
+
 ### Privacidade da biblioteca WA-JS
 
 A biblioteca WA-JS (código aberto, licença Apache-2.0) vem, por padrão,
@@ -582,6 +640,16 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.4.0
+- **📈 Compra p/ Facebook**: manda o evento de compra ao Conjunto de dados do
+  Facebook pela conversa (Edge Function `meta-purchase-event`; token só nos
+  secrets do Supabase; telefone só em hash). Seção **Conversões** com histórico
+  e Modo teste. Detalhes técnicos do anúncio para diagnóstico.
+- Diagnóstico: linha "Conversões Facebook" (função publicada? secrets? só sim
+  ou não).
+- Precisa da migration `20261103190000_wa_conversion_events.sql` e de publicar
+  a função (ver "Compra para o Facebook").
 
 ### 2.3.0
 - **💰 Vendas pela conversa**: registrar venda no ERP pela conversa (igual à
@@ -864,6 +932,14 @@ Service worker
   `src/lib/addressValidation.ts`, `src/lib/dateUtils.ts`). Se o ERP mudar a
   conta, mude aqui também. O background recalcula a venda com os dados frescos
   do banco antes de gravar.
+- Conversões (2.4.0): a extensão só chama a Edge Function
+  `supabase/functions/meta-purchase-event` (mesmo host do Supabase, com o JWT
+  do usuário; a função recusa quem não está logado) e lê `wa_conversion_events`
+  (gravada só pela função, com a service role). A lógica da função fica em
+  `event.ts` (sem imports, testável fora do Deno); a versão da Graph API é a
+  constante `GRAPH_API_VERSION`. A ponte (`adContext`) só lê o
+  `ctwaContext` das mensagens carregadas e devolve um resumo do
+  `conversionData` (tipo, tamanho, nomes das chaves), nunca o conteúdo.
 - `data/nomes-br.js` (2.1.0): `TSP_NOMES_BR`, um `Set` com os 10 mil
   primeiros nomes mais comuns do Censo 2010 (IBGE, conjunto "genero-nomes" do
   Brasil.IO), sem acento e em minúsculas. Gerado uma vez fora da extensão.

@@ -583,6 +583,68 @@
     return { location, addressText, ad: adOf(msgs) };
   }
 
+  // ── Conversões (2.4.0): diagnóstico do anúncio da conversa (SÓ LEITURA) ──
+  // Devolve os campos do ctwaContext e só um RESUMO do conversionData (tipo, tamanho, nomes das
+  // chaves), nunca o conteúdo. O ctwa_clid só sai se estiver num campo com esse nome (texto).
+
+  const CLID_KEYS = ['ctwa_clid', 'ctwaClid', 'clid'];
+
+  function summarizeData(v) {
+    if (v == null) return null;
+    if (typeof v === 'string') return { type: 'texto', size: v.length, keys: null, looksLikeClid: false };
+    if (v instanceof ArrayBuffer) return { type: 'bytes', size: v.byteLength, keys: null, looksLikeClid: true };
+    if (ArrayBuffer.isView(v)) return { type: 'bytes', size: v.byteLength, keys: null, looksLikeClid: true };
+    if (typeof v === 'object') {
+      const keys = safe(() => Object.keys(v), []).slice(0, 30).map((k) => String(k).slice(0, 40));
+      return { type: 'objeto', size: keys.length, keys, looksLikeClid: keys.some((k) => /clid/i.test(k)) };
+    }
+    return { type: typeof v, size: null, keys: null, looksLikeClid: false };
+  }
+
+  function clidOf(ctx) {
+    for (const k of CLID_KEYS) {
+      const v = safe(() => ctx[k], null);
+      if (typeof v === 'string' && /^[\w.:=+/-]{8,500}$/.test(v)) return v;
+    }
+    const data = safe(() => ctx.conversionData, null);
+    if (data && typeof data === 'object' && !ArrayBuffer.isView(data) && !(data instanceof ArrayBuffer)) {
+      for (const k of CLID_KEYS) {
+        const v = safe(() => data[k], null);
+        if (typeof v === 'string' && /^[\w.:=+/-]{8,500}$/.test(v)) return v;
+      }
+    }
+    return null;
+  }
+
+  async function adContext(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const chat = await individualLoadedChat(payload && payload.chatId);
+    const msgs = (safe(() => chat.msgs.getModelsArray(), null) || []).slice().sort((a, b) => (Number(safe(() => b.t, 0)) || 0) - (Number(safe(() => a.t, 0)) || 0));
+    for (const m of msgs) {
+      const ctx = safe(() => m.ctwaContext, null);
+      if (!ctx || typeof ctx !== 'object') continue;
+      const s = (k, max) => { const v = safe(() => ctx[k], null); return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : (typeof v === 'number' ? String(v) : null); };
+      const app = (s('sourceApp', 40) || s('conversionSource', 40) || '').toLowerCase();
+      const url = s('sourceUrl', 500);
+      return {
+        found: true,
+        title: s('title', 200),
+        description: s('description', 120),
+        sourceUrl: url && /^https?:\/\//.test(url) ? url : null,
+        sourceId: s('sourceId', 100),
+        sourceType: s('sourceType', 40),
+        sourceApp: s('sourceApp', 40),
+        conversionSource: s('conversionSource', 40),
+        mediaType: s('mediaType', 40),
+        platform: /insta/.test(app) || /instagram\.com/.test(url || '') ? 'Instagram' : /face|fb/.test(app) || /facebook\.com|fb\.(me|com)/.test(url || '') ? 'Facebook' : null,
+        conversionData: summarizeData(safe(() => ctx.conversionData, null)),
+        ctwaClid: clidOf(ctx),
+        keys: safe(() => Object.keys(ctx), []).slice(0, 40).map((k) => String(k).slice(0, 40)),
+      };
+    }
+    return { found: false };
+  }
+
   // Conversas individuais carregadas, mais recentes primeiro (para "Enviar para…")
   async function recentChats(payload) {
     if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
@@ -687,6 +749,7 @@
     campaignSend: (payload, requestId) => campaignSend(requestId, payload),
     chatSaleInfo: (payload) => chatSaleInfo(payload),
     recentChats: (payload) => recentChats(payload),
+    adContext: (payload) => adContext(payload),
   };
 
   function reply(request, ok, data, error) {

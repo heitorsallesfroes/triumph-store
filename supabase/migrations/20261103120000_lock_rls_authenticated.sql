@@ -92,7 +92,9 @@ declare
     'wa_settings', 'wa_flows', 'wa_flow_variants', 'wa_send_log',
     'wa_campaigns', 'wa_campaign_targets',
     -- extensão 2.1.0 (automações: migration 20261103150000)
-    'wa_automations', 'wa_automation_runs'
+    'wa_automations', 'wa_automation_runs',
+    -- extensão 2.4.0 (eventos de compra do Facebook: migration 20261103190000)
+    'wa_conversion_events'
   ];
 begin
   foreach t in array tables loop

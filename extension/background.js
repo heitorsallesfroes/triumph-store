@@ -87,6 +87,12 @@ const HANDLERS = {
   fetchChatSales:        ()  => WaApi.fetchChatSales(),
   saleContactLabels:     (m) => WaApi.saleContactLabels({ chatId: m.chatId, name: m.name, phone: m.phone, addLabelId: m.addLabelId, removeLabelIds: m.removeLabelIds }),
   saleTriggerCandidates: (m) => WaApi.saleTriggerCandidates({ sinceDays: m.sinceDays }),
+  // Conversões do Facebook (2.4.0): só sendPurchaseEvent manda algo, e só pelo botão "Enviar compra"
+  metaStatus:            ()  => WaApi.metaStatus(),
+  sendPurchaseEvent:     (m) => WaApi.sendPurchaseEvent({ event: m.event }),
+  fetchConversions:      (m) => WaApi.fetchConversions({ limit: m.limit }),
+  recentConversion:      (m) => WaApi.recentConversion({ chatId: m.chatId }),
+  lastChatSaleValue:     (m) => WaApi.lastChatSaleValue({ chatId: m.chatId, phone: m.phone }),
   // Conta (1.9.1): a senha só segue para o Supabase Auth; o painel recebe só conectada/dica do e-mail
   authStatus:      ()  => WaAuth.status(),
   authSignIn:      (m) => WaAuth.signIn({ email: m.email, password: m.password }),

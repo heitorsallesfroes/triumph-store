@@ -1765,7 +1765,96 @@
       .map((s) => ({ ...info.get(byChat[s.wa_chat_id].id), chat_id: info.get(byChat[s.wa_chat_id].id).chat_id || s.wa_chat_id, sale_id: s.id }));
   }
 
+  // ── Conversões do Facebook (2.4.0): Edge Function meta-purchase-event ──
+  // A extensão só chama a função (mesmo host do Supabase, com o login do usuário). O token do
+  // Facebook fica nos secrets da função; aqui não existe.
+
+  const CONV_TABLE = 'wa_conversion_events';
+  const META_FN = 'meta-purchase-event';
+
+  async function callMetaFunction(body) {
+    const { SUPABASE_URL } = cfg();
+    let res;
+    try {
+      res = await supaFetch(`${SUPABASE_URL}/functions/v1/${META_FN}`, json('POST', 'return=minimal', body));
+    } catch {
+      throw new Error('Sem conexão com o servidor');
+    }
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    return { status: res.status, data };
+  }
+
+  // Função publicada? Secrets configurados? (só sim/não, nunca os valores)
+  async function metaStatus() {
+    const r = await callMetaFunction({ check: true });
+    if (r.status === 404) return { published: false, loggedIn: null, configured: null };
+    if (r.status === 401) return { published: true, loggedIn: false, configured: null };
+    const c = r.data && r.data.configured;
+    return { published: true, loggedIn: true, configured: c ? { token: !!c.token, dataset: !!c.dataset, waba: !!c.waba, test_code: !!c.test_code } : null };
+  }
+
+  async function sendPurchaseEvent({ event }) {
+    const e = event || {};
+    if (typeof e.event_id !== 'string' || !UUID_RE.test(e.event_id)) throw new Error('Identificador do evento inválido');
+    const value = Number(e.value);
+    if (!Number.isFinite(value) || value <= 0 || value > 100000) throw new Error('Valor deve ser maior que 0 e até 100.000');
+    if (typeof e.chat_id !== 'string' || !SCHED_CHAT_RE.test(e.chat_id)) throw new Error('Conversa inválida');
+    const ad = e.ad && typeof e.ad === 'object' ? e.ad : {};
+    const body = {
+      chat_id: e.chat_id, phone: String(e.phone || '').replace(/\D/g, '').slice(0, 15), contact_name: clip(e.contact_name, 100),
+      value: Math.round(value * 100) / 100, currency: 'BRL', event_time: Math.floor(Number(e.event_time)), event_id: e.event_id,
+      description: clip(e.description, 200), test: e.test === true,
+      ad: { title: clip(ad.title, 200), source_id: clip(ad.source_id, 100), source_app: clip(ad.source_app, 40), ctwa_clid: typeof ad.ctwa_clid === 'string' ? ad.ctwa_clid.slice(0, 500) : null },
+    };
+    const r = await callMetaFunction(body);
+    if (r.status === 404) throw new Error('A função meta-purchase-event ainda não foi publicada no Supabase');
+    if (r.status === 401) throw new Error('Entre com sua conta do sistema (aviso no topo do painel)');
+    if (!r.data || !r.data.ok) throw new Error((r.data && r.data.error) || `Erro ${r.status}`);
+    return { events_received: r.data.events_received ?? 0, fbtrace_id: r.data.fbtrace_id || null, duplicate: !!r.data.duplicate, method: r.data.method || null, test: !!r.data.test };
+  }
+
+  async function convRest(path) {
+    try {
+      return await rest(path);
+    } catch (err) {
+      if (tableMissing(err, [CONV_TABLE])) throw new Error(ENGINE_MISSING);
+      throw err;
+    }
+  }
+
+  async function fetchConversions({ limit = 50 } = {}) {
+    const lim = Math.min(200, Math.max(1, Math.floor(Number(limit) || 50)));
+    return convRest(`${CONV_TABLE}?select=event_id,chat_id,contact_name,value,ad_title,ad_id,method,test,status,events_received,error,created_at&order=created_at.desc&limit=${lim}`);
+  }
+
+  // Evento já enviado para esta conversa nos últimos 7 dias (para avisar antes)
+  async function recentConversion({ chatId }) {
+    if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) return { exists: false };
+    const since = encodeURIComponent(new Date(Date.now() - 7 * 86400000).toISOString());
+    try {
+      const rows = await convRest(`${CONV_TABLE}?select=value,created_at,test&chat_id=eq.${encodeURIComponent(chatId)}&status=eq.enviado&created_at=gte.${since}&order=created_at.desc&limit=1`);
+      return rows.length ? { exists: true, value: Number(rows[0].value), at: rows[0].created_at, test: !!rows[0].test } : { exists: false };
+    } catch (err) {
+      if (err.message === ENGINE_MISSING) return { exists: false, missing: true };
+      throw err;
+    }
+  }
+
+  // Valor padrão: total da última venda desta conversa no ERP (pela conversa ou pelo telefone)
+  async function lastChatSaleValue({ chatId, phone }) {
+    const cols = 'total_sale_price,sale_date';
+    let rows = [];
+    if ((await salesOrigin()) && typeof chatId === 'string' && SCHED_CHAT_RE.test(chatId)) {
+      rows = await rest(`sales?select=${cols}&wa_chat_id=eq.${encodeURIComponent(chatId)}&status=neq.cancelado&status=neq.reembolsado&order=created_at.desc&limit=1`);
+    }
+    const p = clip(phone, 30);
+    if (!rows.length && p) rows = await rest(`sales?select=${cols}&customer_phone=eq.${encodeURIComponent(p)}&status=neq.cancelado&status=neq.reembolsado&order=created_at.desc&limit=1`);
+    return rows.length ? { value: Number(rows[0].total_sale_price) || null } : { value: null };
+  }
+
   root.WaApi = {
+    metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,
     erpCatalog, createSaleFromChat, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve,
     automationUnreserve, applySendLabels, getContactName,

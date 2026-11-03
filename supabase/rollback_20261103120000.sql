@@ -21,6 +21,8 @@
 -- foram aplicadas depois da Fase 2 e se registraram nela. Voltam a "public access <tabela>".
 -- ERP → CRM (20261103180000): sem tabela nova e a função do gatilho é SECURITY DEFINER;
 -- nada a desfazer aqui.
+-- Extensão 2.4.0 (20261103190000): wa_conversion_events entra na cópia como as outras wa_*
+-- e volta a "public access wa_conversion_events".
 -- ============================================================================
 
 begin;

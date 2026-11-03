@@ -15,6 +15,7 @@
   const ICONS = {
     zap:       '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
     money:     '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>',
+    trend:     '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
     eye:       '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
     send:      '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
     search:    '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -792,6 +793,16 @@
       .vd-sale { width: 100%; text-align: left; border: none; }
       .sale-quick { margin-left: auto; flex-shrink: 0; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; background: transparent; color: inherit; font-size: 11px; font-weight: 700; }
       .sale-quick[hidden] { display: none; }
+      .conv-quick { margin-left: 4px; }
+      /* Seção Conversões (2.4.0) */
+      .ctab { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 10px; flex-direction: column; gap: 10px; scrollbar-width: thin; }
+      .ctab > * { flex-shrink: 0; }
+      .panel.sec-conversoes .ctab { display: flex; }
+      .panel.sec-conversoes .labels, .panel.sec-conversoes .name-note,
+      .panel.sec-conversoes .tools, .panel.sec-conversoes .banner, .panel.sec-conversoes .list { display: none; }
+      .ctab .crmsec { display: flex; flex-direction: column; gap: 7px; }
+      .cv-tech { font-size: 11px; color: var(--muted); word-break: break-word; }
+      .cv-tech summary { cursor: pointer; font-weight: 600; }
       .fw-count { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
       .fw-card { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); font-size: 12px; text-align: left; }
       .fw-card.on { border-color: var(--accent); }
@@ -1109,9 +1120,10 @@
           <button type="button" data-sec="agendados" title="Agendados" aria-pressed="false">${svg('clock')}<span>Agendados</span></button>
           <button type="button" data-sec="disparos" title="Disparos (envio para uma etiqueta CRM)" aria-pressed="false">${svg('megaphone')}<span>Disparos</span></button>
           <button type="button" data-sec="vendas" title="Vendas pela conversa" aria-pressed="false">${svg('money')}<span>Vendas</span></button>
+          <button type="button" data-sec="conversoes" title="Conversões: compra para o Facebook" aria-pressed="false">${svg('trend')}<span>Conversões</span></button>
           <button type="button" data-sec="follows" title="Automações (Quando → Se → Então)" aria-pressed="false">${svg('repeat')}<span>Automações</span></button>
         </nav>
-        <div class="status warn"><span class="dot"></span><span class="txt"></span><button class="sale-quick" type="button" title="Registrar venda desta conversa" hidden>💰 Venda</button></div>
+        <div class="status warn"><span class="dot"></span><span class="txt"></span><button class="sale-quick" type="button" title="Registrar venda desta conversa" hidden>💰 Venda</button><button class="sale-quick conv-quick" type="button" title="Enviar compra desta conversa para o Facebook" hidden>📈 Compra p/ Facebook</button></div>
         <div class="labels">
           <span class="lbl">Etiquetas CRM</span>
           <div class="chips"></div>
@@ -1176,6 +1188,7 @@
         <div class="ftab" role="region" aria-label="Automações"></div>
         <div class="dtab" role="region" aria-label="Disparos"></div>
         <div class="vtab" role="region" aria-label="Vendas"></div>
+        <div class="ctab" role="region" aria-label="Conversões"></div>
         <div class="seqbar" role="status" aria-live="polite" hidden><span class="seqtxt"></span><button class="seqstop" type="button">Parar</button></div>
         <div class="toast" role="status" aria-live="polite"></div>
         <footer class="foot"><span class="last">Último usado: <b>—</b></span><button class="foot-pause" type="button" hidden></button><span class="ver"></span></footer>
@@ -1440,14 +1453,15 @@
   }
 
   function setSection(section, { persist = true } = {}) {
-    state.section = ['etiquetas', 'agendados', 'follows', 'disparos', 'vendas'].includes(section) ? section : 'mensagens';
+    state.section = ['etiquetas', 'agendados', 'follows', 'disparos', 'vendas', 'conversoes'].includes(section) ? section : 'mensagens';
     const labels = state.section === 'etiquetas';
     panel.classList.toggle('sec-labels', labels);
     panel.classList.toggle('sec-sched', state.section === 'agendados');
     panel.classList.toggle('sec-follows', state.section === 'follows');
     panel.classList.toggle('sec-disparos', state.section === 'disparos');
     panel.classList.toggle('sec-vendas', state.section === 'vendas');
-    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados', follows: 'Automações', disparos: 'Disparos', vendas: 'Vendas' }[state.section];
+    panel.classList.toggle('sec-conversoes', state.section === 'conversoes');
+    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados', follows: 'Automações', disparos: 'Disparos', vendas: 'Vendas', conversoes: 'Conversões' }[state.section];
     panel.setAttribute('aria-label', brandTxt.textContent);
     if (persist) storageSet({ panelSection: state.section }); // só o nome da seção
     setMenuOpen(false);
@@ -1465,6 +1479,7 @@
     syncFollowsActive();
     syncDisparosActive();
     syncVendasActive();
+    syncConversoesActive();
   }
 
   navBtns.forEach((b) => b.addEventListener('click', () => {
@@ -5502,10 +5517,9 @@
 
   // Pode rodar antes da seção existir (updateContext): busca o botão direto no painel
   function renderSaleQuick() {
-    const b = shadow.querySelector('.sale-quick');
-    if (!b) return;
     const id = state.ctx && state.ctx.identity;
-    b.hidden = !(id && (id.kind === 'tel' || id.kind === 'name'));
+    const show = !!(id && (id.kind === 'tel' || id.kind === 'name'));
+    shadow.querySelectorAll('.sale-quick').forEach((b) => { b.hidden = !show; });
   }
 
   const productLabel = (p) => `${p.model}${p.color ? ` · ${p.color}` : ''}`;
@@ -5969,6 +5983,210 @@
     vtabEl.append(sec);
   }
 
+  // ── 📈 Conversões: compra para o Facebook (2.4.0) ───────────────────────
+  // Separado do "💰 Venda". Só envia no clique em "Enviar compra"; o envio é feito pela Edge Function
+  // meta-purchase-event (o token do Facebook nunca passa pela extensão; o telefone vai em hash).
+
+  const ctabEl = shadow.querySelector('.ctab');
+  const cv = { open: false, view: 'list', form: null, history: null, historyError: '', status: null, test: false, busy: false, msg: '', err: false, done: null };
+  try { chrome.storage.local.get(['metaTestMode'], (r) => { cv.test = !!(r && r.metaTestMode); }); } catch { /* extensão recarregada */ }
+
+  shadow.querySelector('.conv-quick').addEventListener('click', () => { if (!state.open) setOpen(true); setSection('conversoes'); openConversionForm(); });
+
+  function syncConversoesActive() {
+    const want = state.open && state.section === 'conversoes';
+    cv.open = want;
+    if (!want) return;
+    if (cv.view === 'list') loadConversions();
+    loadMetaStatus();
+  }
+
+  async function loadMetaStatus() {
+    try { cv.status = await call('metaStatus'); } catch { cv.status = { published: null }; }
+    if (cv.open) renderConversoes();
+    if (state.view === 'diag') renderDiag();
+  }
+
+  async function loadConversions() {
+    try { cv.history = await call('fetchConversions', { limit: 50 }); cv.historyError = ''; } catch (e) { cv.history = []; cv.historyError = e.message; }
+    renderConversoes();
+  }
+
+  const nowLocalInput = () => { const d = new Date(); d.setSeconds(0, 0); return `${dateInput(d)}T${timeInput(d)}`; };
+
+  async function openConversionForm() {
+    cv.view = 'form';
+    cv.msg = '';
+    cv.err = false;
+    cv.done = null;
+    const ctx = getContext();
+    state.ctx = ctx;
+    let chat = null;
+    try { chat = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { chat = null; }
+    const chatId = chat && chat.kind === 'individual' ? chat.chatId : null;
+    const phone = (ctx.identity && ctx.identity.phone) || (chatId && /^\d+@c\.us$/.test(chatId) ? chatId.split('@')[0] : '');
+    cv.form = {
+      chatId, phone, name: (ctx.identity && crmNames.get(ctx.identity.key)) || (ctx.isNumber ? '' : ctx.fullName) || '',
+      value: '', when: nowLocalInput(), description: '', ad: null, adLoaded: false, recent: null, askAgain: false, eventId: crypto.randomUUID(),
+    };
+    renderConversoes();
+    if (!chatId) return;
+    const f = cv.form;
+    const [ad, recent, last] = await Promise.all([
+      waRequest('adContext', { chatId }, { timeout: 4000 }).catch(() => null),
+      call('recentConversion', { chatId }).catch(() => null),
+      call('lastChatSaleValue', { chatId, phone }).catch(() => null),
+    ]);
+    if (cv.form !== f) return;
+    f.ad = ad && ad.found ? ad : null;
+    f.adLoaded = true;
+    f.recent = recent && recent.exists ? recent : null;
+    if (last && last.value && !f.value) f.value = String(last.value.toFixed(2));
+    renderConversoes();
+  }
+
+  function techDetails(ad) {
+    const d = el('details', 'cv-tech');
+    d.append(el('summary', null, 'Detalhes técnicos do anúncio'));
+    const lines = ad ? [
+      ['título', ad.title], ['descrição', ad.description], ['sourceUrl', ad.sourceUrl], ['sourceId (id do anúncio)', ad.sourceId], ['sourceType', ad.sourceType],
+      ['sourceApp', ad.sourceApp], ['conversionSource', ad.conversionSource], ['mediaType', ad.mediaType],
+      ['conversionData', ad.conversionData ? `${ad.conversionData.type}${ad.conversionData.size != null ? `, tamanho ${ad.conversionData.size}` : ''}${ad.conversionData.keys && ad.conversionData.keys.length ? `, chaves: ${ad.conversionData.keys.join(', ')}` : ''}${ad.conversionData.looksLikeClid ? ', parece ter identificador de clique' : ''}` : 'não tem'],
+      ['ctwa_clid', ad.ctwaClid ? 'encontrado' : 'não encontrado'], ['campos do ctwaContext', (ad.keys || []).join(', ')],
+    ] : [['anúncio', 'nenhum ctwaContext nas mensagens carregadas']];
+    lines.forEach(([k, v]) => d.append(el('div', null, `${k}: ${v == null || v === '' ? '—' : v}`)));
+    return d;
+  }
+
+  function renderConversionForm() {
+    const f = cv.form;
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'COMPRA PARA O FACEBOOK'));
+    if (!f.chatId) { sec.append(el('div', 'ed-note', 'Abra uma conversa individual no WhatsApp.')); ctabEl.append(sec); return; }
+    const adBox = el('div', 'fw-test');
+    if (!f.adLoaded) adBox.append(el('div', null, 'Procurando o anúncio da conversa…'));
+    else if (f.ad) adBox.append(el('div', null, `Anúncio: ${f.ad.title || '(sem título)'}${f.ad.sourceId ? ` · id ${f.ad.sourceId}` : ''}${f.ad.platform ? ` · ${f.ad.platform}` : ''}`));
+    else adBox.append(el('div', null, 'Não achei anúncio nesta conversa (será enviado só com o telefone).'));
+    sec.append(adBox);
+    if (f.adLoaded) sec.append(techDetails(f.ad));
+    const r1 = el('div', 'sc-row');
+    r1.append(inputField('Cliente', f.name, (v) => { f.name = v; }, { max: 100, aria: 'Nome do cliente' }), inputField('Telefone', f.phone, (v) => { f.phone = v; }, { max: 20, aria: 'Telefone do cliente' }));
+    sec.append(r1);
+    const val = el('input', 'ed-title');
+    val.type = 'number';
+    val.step = '0.01';
+    val.min = '0.01';
+    val.value = f.value;
+    val.setAttribute('aria-label', 'Valor da compra');
+    val.addEventListener('input', () => { f.value = val.value; });
+    const when = el('input', 'ed-title');
+    when.type = 'datetime-local';
+    when.value = f.when;
+    when.setAttribute('aria-label', 'Data e hora da compra');
+    when.addEventListener('input', () => { f.when = when.value; });
+    const r2 = el('div', 'sc-row');
+    r2.append(schedField('Valor (R$)', val), schedField('Data e hora da compra', when));
+    sec.append(r2, inputField('Descrição / produto (opcional)', f.description, (v) => { f.description = v; }, { max: 200, aria: 'Descrição da compra' }));
+    if (cv.test) sec.append(el('div', 'ed-note', 'Modo teste ligado: o evento aparece em "Testar eventos" no Gerenciador de Eventos.'));
+    if (f.recent && f.askAgain) {
+      const box = el('div', 'fw-test');
+      box.append(el('div', 'ed-note', `Já enviado em ${schedWhen(f.recent.at)} por ${TS.money(f.recent.value)}${f.recent.test ? ' (teste)' : ''}. Enviar outro?`),
+        fbtn('bbtn primary', 'Enviar outro', () => sendPurchase(true)), fbtn('bbtn', 'Cancelar', () => { f.askAgain = false; renderConversoes(); }));
+      sec.append(box);
+    }
+    const actions = el('div', 'ed-add');
+    const go = fbtn('bbtn primary', cv.busy ? 'Enviando…' : 'Enviar compra', () => sendPurchase(false));
+    go.disabled = cv.busy;
+    actions.append(go, fbtn('bbtn', 'Voltar', () => { cv.view = 'list'; loadConversions(); }));
+    sec.append(actions, el('div', `ed-msg${cv.err ? ' err' : ''}`, cv.msg));
+    ctabEl.append(sec);
+  }
+
+  async function sendPurchase(confirmed) {
+    const f = cv.form;
+    if (!f || cv.busy) return;
+    const value = Number(String(f.value).replace(',', '.'));
+    const whenMs = Date.parse(f.when);
+    const fail = (m) => { cv.msg = m; cv.err = true; renderConversoes(); };
+    if (!Number.isFinite(value) || value <= 0 || value > 100000) return fail('Informe o valor (maior que 0 e até 100.000).');
+    if (!Number.isFinite(whenMs)) return fail('Data e hora inválidas.');
+    if (whenMs > Date.now() + 60000) return fail('A data da compra não pode ser no futuro.');
+    if (whenMs < Date.now() - 7 * 86400000) return fail('O Facebook só aceita compras dos últimos 7 dias.');
+    if (f.recent && !confirmed) { f.askAgain = true; renderConversoes(); return; }
+    cv.busy = true;
+    cv.msg = '';
+    renderConversoes();
+    try {
+      const r = await call('sendPurchaseEvent', { event: {
+        event_id: f.eventId, chat_id: f.chatId, phone: f.phone, contact_name: f.name, value, event_time: Math.floor(whenMs / 1000),
+        description: f.description, test: cv.test,
+        ad: f.ad ? { title: f.ad.title, source_id: f.ad.sourceId, source_app: f.ad.platform || f.ad.sourceApp, ctwa_clid: f.ad.ctwaClid || null } : null,
+      } });
+      cv.done = { ...r, value };
+      cv.view = 'done';
+    } catch (e) {
+      cv.msg = e.message;
+      cv.err = true;
+    }
+    cv.busy = false;
+    renderConversoes();
+  }
+
+  function renderConversoes() {
+    if (!ctabEl) return;
+    ctabEl.textContent = '';
+    ctabEl.append(el('div', 'crm-intro', 'Manda o evento de compra (Purchase) para o Conjunto de dados do Facebook, com o anúncio de onde o cliente veio. Separado do 💰 Venda (que lança no ERP).'));
+    if (cv.view === 'form' && cv.form) { renderConversionForm(); return; }
+    if (cv.view === 'done' && cv.done) {
+      const sec = el('section', 'crmsec');
+      sec.append(el('div', 'fw-test', cv.done.duplicate ? 'Esse evento já tinha sido enviado (não mandei de novo).' : `Enviado ✓ (o Facebook recebeu ${cv.done.events_received} evento${cv.done.events_received === 1 ? '' : 's'})${cv.done.test ? ' · modo teste' : ''}`));
+      sec.append(fbtn('bbtn', 'Voltar', () => { cv.view = 'list'; loadConversions(); }));
+      ctabEl.append(sec);
+      return;
+    }
+    const top = el('div', 'ed-add');
+    top.append(fbtn('bbtn primary', '📈 Compra desta conversa', () => openConversionForm()));
+    const tl = el('label', 'sc-radio');
+    const tc = el('input');
+    tc.type = 'checkbox';
+    tc.checked = cv.test;
+    tc.addEventListener('change', () => { cv.test = tc.checked; storageSet({ metaTestMode: cv.test }); });
+    tl.append(tc, 'Modo teste');
+    top.append(tl);
+    ctabEl.append(top);
+    const st = cv.status;
+    if (st && st.published === false) ctabEl.append(el('div', 'ed-note', 'A função meta-purchase-event ainda não foi publicada no Supabase.'));
+    else if (st && st.configured && !(st.configured.token && st.configured.dataset)) ctabEl.append(el('div', 'ed-note', 'Faltam os secrets META_ACCESS_TOKEN e META_DATASET_ID na Edge Function.'));
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'HISTÓRICO'));
+    if (cv.historyError) sec.append(el('div', 'ed-note', cv.historyError === 'Atualize o banco para usar este recurso' ? 'Atualize o banco para usar este recurso (migration 20261103190000).' : cv.historyError));
+    else if (!cv.history) sec.append(el('div', 'lt-none', 'Carregando…'));
+    else if (!cv.history.length) sec.append(el('div', 'lt-none', 'Nenhum evento enviado ainda.'));
+    (cv.history || []).forEach((h) => {
+      const line = el('div', `sc-item st-${h.status === 'enviado' ? 'enviada' : 'falhou'}`);
+      const main = el('div', 'sc-main');
+      main.append(el('div', 'sc-who', `${h.contact_name || 'Cliente'} · ${TS.money(h.value)}`),
+        el('div', 'sc-prev', `${h.ad_title ? `anúncio: ${h.ad_title}` : 'sem anúncio'} · ${h.method === 'business_messaging' ? 'WhatsApp (clique do anúncio)' : 'chat (telefone)'}${h.test ? ' · teste' : ''}${h.error ? ` · ${h.error}` : ''}`));
+      const side = el('div', 'sc-side');
+      side.append(el('span', 'sc-when', schedWhen(h.created_at)), el('span', 'sc-status', h.status));
+      line.append(main, side);
+      sec.append(line);
+    });
+    ctabEl.append(sec);
+  }
+
+  // Diagnóstico: só sim/não (sem valores dos secrets)
+  function conversionDiagRow() {
+    const st = cv.status;
+    if (!st) return { label: 'Conversões Facebook', status: 'warn', screen: 'testando...' };
+    if (st.published === false) return { label: 'Conversões Facebook', status: 'warn', screen: 'função não publicada' };
+    if (st.published == null) return { label: 'Conversões Facebook', status: 'warn', screen: 'não consegui conferir' };
+    if (st.loggedIn === false) return { label: 'Conversões Facebook', status: 'warn', screen: 'função publicada; entre com a conta para conferir os secrets' };
+    const c = st.configured || {};
+    if (c.token && c.dataset) return { label: 'Conversões Facebook', status: 'ok', screen: `função publicada; secrets ok${c.waba ? ' (com WABA)' : ''}${c.test_code ? ' (com código de teste)' : ''}` };
+    return { label: 'Conversões Facebook', status: 'warn', screen: 'função publicada; faltam secrets' };
+  }
+
   // Diagnóstico: só estados (sem nomes nem números)
   function engineDiagRows() {
     const m = motor.state;
@@ -5989,7 +6207,7 @@
     const saleRow = m.available === null ? { label: 'Vendas pela conversa', status: 'warn', screen: 'testando...' }
       : m.salesOrigin === true ? { label: 'Vendas pela conversa', status: 'ok', screen: 'ok' }
         : { label: 'Vendas pela conversa', status: 'warn', screen: 'falta atualizar o banco (migration 20261103170000)' };
-    return [motorRow, flowsRow, autoRow, saleRow];
+    return [motorRow, flowsRow, autoRow, saleRow, conversionDiagRow()];
   }
 
   // ── Diagnóstico (nunca inclui conteúdo de conversa) ────────────────────────
@@ -6229,6 +6447,7 @@
     refreshAuth();
     call('fetchSchedules').then((r) => { sched.available = !!(r && r.available); }, () => {}).then(renderDiag);
     motor.loadSettings().catch(() => {}).then(renderDiag); // 2.3.0: linhas do motor/automações/vendas sem esperar o 1º ciclo
+    loadMetaStatus(); // 2.4.0: função publicada / secrets (só sim ou não)
   }
 
   function showList() {
