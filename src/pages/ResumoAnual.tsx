@@ -9,6 +9,8 @@ import {
 import { supabase } from '../lib/supabase';
 import { calculateCardFee } from '../lib/cardFees';
 import { getAdSpendBreakdown, toAdSpendReal } from '../lib/adTax';
+import { getConfigNumber } from '../lib/systemConfig';
+import { loadYearMonths } from '../lib/resumoAnualCalc';
 
 interface MonthData {
   month: number;
@@ -43,178 +45,34 @@ export default function ResumoAnual() {
   const loadYear = useCallback(async (y: number) => {
     setLoading(true);
     try {
-      const yStart = `${y}-01-01`;
-      const yEnd   = `${y}-12-31`;
-      const yStartUTC = new Date(`${y}-01-01T03:00:00Z`).toISOString();
-      const yEndUTC   = new Date(`${y + 1}-01-01T03:00:00Z`).toISOString();
+      // Mesmas regras do Relatório Mensal, mês a mês (ver src/lib/resumoAnualCalc.ts),
+      // com busca paginada para não cortar em 1000 linhas.
+      const now = new Date();
+      const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const months = await loadYearMonths(supabase, y, {
+        currentMonthStr,
+        calculateCardFee,
+        packagingCost: getConfigNumber('packaging_cost'),
+      });
 
-      const [
-        salesRes, saleItemsRes, adRes,
-        costsPayRes, allCostsRes,
-        motoExtrasRes, motoFeesRes,
-        smallRes, ssMotoRes,
-      ] = await Promise.all([
-        supabase.from('sales')
-          .select('id,sale_date,total_sale_price,net_received,total_cost,delivery_fee,delivery_cost,delivery_type,status')
-          .neq('status', 'cancelado')
-          .neq('status', 'reembolsado')
-          .gte('sale_date', yStart)
-          .lte('sale_date', `${yEnd}T23:59:59`),
-        supabase.from('sale_items')
-          .select('sale_id,quantity,products(category)')
-          .gte('created_at', `${yStart}T00:00:00`)
-          .lte('created_at', `${yEnd}T23:59:59`),
-        supabase.from('ad_spend')
-          .select('amount,date')
-          .gte('date', yStart)
-          .lte('date', yEnd),
-        supabase.from('operational_cost_payments')
-          .select('cost_id,amount_paid,month')
-          .gte('month', `${y}-01`)
-          .lte('month', `${y}-12`),
-        supabase.from('operational_costs').select('id,amount'),
-        supabase.from('motoboy_payments')
-          .select('amount,date')
-          .gte('date', yStart)
-          .lte('date', yEnd),
-        supabase.from('sales')
-          .select('delivery_fee,sale_date')
-          .eq('delivery_type', 'motoboy')
-          .in('status', ['finalizado', 'concluido'])
-          .gte('sale_date', yStart)
-          .lte('sale_date', `${yEnd}T23:59:59`),
-        supabase.from('small_sales')
-          .select('*')
-          .gte('created_at', `${yStart}T00:00:00-03:00`)
-          .lte('created_at', `${yEnd}T23:59:59-03:00`),
-        supabase.from('small_sales')
-          .select('delivery_fee,created_at')
-          .eq('delivery_type', 'motoboy')
-          .not('motoboy_id', 'is', null)
-          .gte('created_at', yStartUTC)
-          .lt('created_at', yEndUTC),
-      ]);
-
-      const sales        = salesRes.data       || [];
-      const saleItems    = (saleItemsRes.data  || []) as any[];
-      const adSpends     = adRes.data           || [];
-      const costPayments = costsPayRes.data     || [];
-      const allCosts     = allCostsRes.data     || [];
-      const motoExtras   = motoExtrasRes.data   || [];
-      const motoFees     = motoFeesRes.data     || [];
-      const smallSales   = smallRes.data        || [];
-      const ssMoto       = ssMotoRes.data       || [];
-
-      const getM = (d: string) => parseInt(d.substring(5, 7), 10);
-      const getMTS = (ts: string) => {
-        const d = new Date(ts);
-        return new Date(d.getTime() - 3 * 60 * 60 * 1000).getUTCMonth() + 1;
-      };
-
-      // Operational costs map: cost_id -> fixed monthly amount
-      const costAmountMap = new Map<string, number>();
-      allCosts.forEach((c: any) => costAmountMap.set(c.id, Number(c.amount)));
-
-      // Build per-month structures
-      const byMonth = Array.from({ length: 12 }, (_, i) => ({
+      const byMonth: MonthData[] = months.map((m, i) => ({
         month: i + 1,
         name: MONTH_NAMES[i],
-        faturamentoBruto: 0,
-        lucro: 0,
-        margem: 0,
-        totalVendas: 0,
-        swCount: 0,
-        adSpend: 0,
-        roas: null as number | null,
-        custoOperacional: 0,
-        hasData: false,
+        faturamentoBruto: m.consolidadoBruto,
+        lucro: m.consolidadoLucro,
+        margem: m.consolidadoBruto > 0 ? (m.consolidadoLucro / m.consolidadoBruto) * 100 : 0,
+        totalVendas: m.swVendas + m.smallVendas,
+        swCount: m.swCount,
+        adSpend: m.adSpend,
+        // ROAS como no Relatório Mensal: faturamento dos smartwatches ÷ ads real
+        roas: m.adSpend > 0 ? m.swBruto / toAdSpendReal(m.adSpend) : null,
+        custoOperacional: m.operationalCosts,
+        hasData: m.hasData,
       }));
 
-      // SW count per sale (for packaging cost)
-      const swCountBySale = new Map<string, number>();
-      saleItems.forEach((item: any) => {
-        if (item.products?.category === 'smartwatch') {
-          swCountBySale.set(item.sale_id, (swCountBySale.get(item.sale_id) || 0) + item.quantity);
-        }
-      });
-
-      // Sales (smartwatch) per month
-      sales.forEach((s: any) => {
-        const m = getM(s.sale_date) - 1;
-        const row = byMonth[m];
-        const revenue   = Number(s.total_sale_price);
-        const netRec    = Number(s.net_received);
-        const cardFee   = calculateCardFee(revenue, netRec);
-        const prodCost  = Number(s.total_cost   || 0);
-        const delFee    = Number(s.delivery_fee  || 0);
-        const delCost   = Number(s.delivery_cost || 0);
-        const swQty     = swCountBySale.get(s.id) || 0;
-        const packaging = swQty * 2;
-
-        row.faturamentoBruto += revenue;
-        row.totalVendas      += 1;
-        row.swCount          += swQty;
-        row.hasData           = true;
-        // gross profit for SW portion (fixed costs added later)
-        row.lucro += revenue - cardFee - prodCost - delFee - delCost - packaging;
-      });
-
-      // Ad spend per month
-      adSpends.forEach((a: any) => {
-        const m = getM(a.date) - 1;
-        byMonth[m].adSpend += Number(a.amount);
-      });
-
-      // Operational costs per month (from payments table)
-      costPayments.forEach((p: any) => {
-        const m = parseInt(p.month.substring(5, 7), 10) - 1;
-        byMonth[m].custoOperacional += Number(p.amount_paid);
-      });
-
-      // Motoboy extras (outgoing payments)
-      motoExtras.forEach((mp: any) => {
-        const m = getM(mp.date) - 1;
-        byMonth[m].lucro -= Number(mp.amount);
-      });
-
-      // Motoboy fees received (delivery_fee from motoboy sales)
-      motoFees.forEach((mf: any) => {
-        const m = getM(mf.sale_date) - 1;
-        byMonth[m].lucro += Number(mf.delivery_fee || 0);
-      });
-
-      // Small sales per month
-      smallSales.forEach((ss: any) => {
-        const m = getMTS(ss.created_at) - 1;
-        const row = byMonth[m];
-        const revenue  = Number(ss.sale_price    || 0);
-        const cost     = Number(ss.product_cost  || 0);
-        const delFee   = Number(ss.delivery_fee  || 0);
-        const delCost  = Number(ss.delivery_cost || 0);
-        const cardFee  = Number(ss.payment_method) === 2
-          ? revenue * 0.0399 : 0; // approximate; use calculateCardFee if available
-        row.faturamentoBruto += revenue;
-        row.totalVendas      += 1;
-        row.lucro            += revenue - cost - delFee - delCost - cardFee;
-        row.hasData           = true;
-      });
-
-      // Small sales motoboy fees received
-      ssMoto.forEach((sm: any) => {
-        const m = getMTS(sm.created_at) - 1;
-        byMonth[m].lucro += Number(sm.delivery_fee || 0);
-      });
-
-      // Subtract ads + operational costs from lucro
-      byMonth.forEach(row => {
-        row.lucro -= row.adSpend + row.custoOperacional;
-        row.margem = row.faturamentoBruto > 0
-          ? (row.lucro / row.faturamentoBruto) * 100 : 0;
-        row.roas = row.adSpend > 0
-          ? row.faturamentoBruto / toAdSpendReal(row.adSpend) : null;
-      });
-
       setRows(byMonth);
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoading(false);
     }

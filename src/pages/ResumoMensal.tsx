@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -12,7 +12,9 @@ import AdTaxBreakdown from '../components/AdTaxBreakdown';
 import {
   TrendingUp, DollarSign, ShoppingCart, Package, Truck,
   Bike, BarChart3, MapPin, Star, ShoppingBag, Target, Zap, FileDown,
+  ChevronLeft, ChevronRight, ChevronDown,
 } from 'lucide-react';
+import { fetchAllRows, monthOfText, monthOfBRT, yearOfBRT } from '../lib/resumoAnualCalc';
 
 const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -22,15 +24,105 @@ const getCurrentMonth = () => {
   return { year: now.getFullYear(), month: now.getMonth() + 1 };
 };
 
-const getMonthOptions = () => {
-  const options = [];
-  const now = new Date();
-  for (let i = -5; i <= 0; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-    options.push({ year: d.getFullYear(), month: d.getMonth() + 1 });
-  }
-  return options.reverse();
+type YM = { year: number; month: number };
+const ymKey = (o: YM) => o.year * 100 + o.month;
+const shiftMonth = (o: YM, delta: number): YM => {
+  const d = new Date(o.year, o.month - 1 + delta, 1);
+  return { year: d.getFullYear(), month: d.getMonth() + 1 };
 };
+
+// Meses que têm vendas (smartwatch ou pequenas vendas), mais o mês atual.
+const loadMonthsWithSales = async (): Promise<YM[]> => {
+  const [salesRows, smallRows] = await Promise.all([
+    fetchAllRows<{ id: string; sale_date: string }>((f, t) => supabase.from('sales')
+      .select('id,sale_date')
+      .neq('status', 'cancelado')
+      .neq('status', 'reembolsado')
+      .order('id').range(f, t)),
+    fetchAllRows<{ id: string; created_at: string }>((f, t) => supabase.from('small_sales')
+      .select('id,created_at')
+      .order('id').range(f, t)),
+  ]);
+  const keys = new Set<number>([ymKey(getCurrentMonth())]);
+  salesRows.forEach(r => {
+    if (r.sale_date) keys.add(Number(r.sale_date.slice(0, 4)) * 100 + monthOfText(r.sale_date));
+  });
+  smallRows.forEach(r => {
+    if (r.created_at) keys.add(yearOfBRT(r.created_at) * 100 + monthOfBRT(r.created_at));
+  });
+  return Array.from(keys).sort((a, b) => b - a).map(k => ({ year: Math.floor(k / 100), month: k % 100 }));
+};
+
+function MonthPicker({ selected, onChange }: { selected: YM; onChange: (o: YM) => void }) {
+  const [open, setOpen] = useState(false);
+  const [months, setMonths] = useState<YM[]>([getCurrentMonth()]);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    loadMonthsWithSales().then(setMonths).catch(e => console.error(e));
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const cur = getCurrentMonth();
+  const oldest = months[months.length - 1];
+  const prev = shiftMonth(selected, -1);
+  const next = shiftMonth(selected, 1);
+  const canPrev = !oldest || ymKey(prev) >= ymKey(oldest);
+  const canNext = ymKey(next) <= ymKey(cur);
+
+  const years = Array.from(new Set(months.map(m => m.year))).sort((a, b) => b - a);
+  const arrowCls = 'p-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors';
+
+  return (
+    <div className="flex items-center gap-2" ref={ref}>
+      <span className="text-gray-400 text-sm">Mês:</span>
+      <button className={arrowCls} disabled={!canPrev} onClick={() => onChange(prev)} title="Mês anterior">
+        <ChevronLeft size={16} />
+      </button>
+      <div className="relative">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-orange-500 text-white min-w-44 justify-between"
+        >
+          {MONTHS[selected.month - 1]} {selected.year}
+          <ChevronDown size={14} />
+        </button>
+        {open && (
+          <div className="absolute left-0 top-full mt-1 z-20 w-56 max-h-80 overflow-y-auto bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1">
+            {years.map(y => (
+              <div key={y}>
+                <p className="px-3 pt-2 pb-1 text-xs font-semibold text-gray-500">{y}</p>
+                {months.filter(m => m.year === y).map(m => {
+                  const isActive = ymKey(m) === ymKey(selected);
+                  return (
+                    <button
+                      key={ymKey(m)}
+                      onClick={() => { onChange(m); setOpen(false); }}
+                      className={`w-full text-left px-4 py-1.5 text-sm transition-colors ${isActive ? 'bg-orange-500/20 text-orange-400 font-medium' : 'text-gray-300 hover:bg-gray-700'}`}
+                    >
+                      {MONTHS[m.month - 1]} {m.year}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <button className={arrowCls} disabled={!canNext} onClick={() => onChange(next)} title="Próximo mês">
+        <ChevronRight size={16} />
+      </button>
+    </div>
+  );
+}
 
 interface SaleData {
   id: string;
@@ -627,18 +719,7 @@ export default function ResumoMensal() {
 
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 mb-6">
         <div className="flex flex-wrap gap-2 items-center justify-between">
-          <div className="flex flex-wrap gap-2 items-center">
-            <span className="text-gray-400 text-sm">Mês:</span>
-            {getMonthOptions().map(opt => {
-              const isActive = opt.year === selected.year && opt.month === selected.month;
-              return (
-                <button key={`${opt.year}-${opt.month}`} onClick={() => setSelected(opt)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
-                  {MONTHS[opt.month - 1]} {opt.year}
-                </button>
-              );
-            })}
-          </div>
+          <MonthPicker selected={selected} onChange={setSelected} />
           <button
             onClick={exportToExcel}
             disabled={loading}
