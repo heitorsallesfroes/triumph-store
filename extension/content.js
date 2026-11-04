@@ -16,6 +16,7 @@
     zap:       '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
     money:     '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>',
     trend:     '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
+    image:     '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
     eye:       '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
     send:      '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
     search:    '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -809,6 +810,30 @@
       .cv-tech { font-size: 11px; color: var(--muted); word-break: break-word; }
       .cv-tech summary { cursor: pointer; font-weight: 600; }
       .ed-title.need { border-color: #ef4444; box-shadow: 0 0 0 1px #ef4444; }
+      /* Seção Mídias (2.7.0) */
+      .mtab { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 10px; flex-direction: column; gap: 10px; scrollbar-width: thin; }
+      .panel.sec-midias .mtab { display: flex; }
+      .panel.sec-midias .labels, .panel.sec-midias .name-note,
+      .panel.sec-midias .tools, .panel.sec-midias .banner, .panel.sec-midias .list { display: none; }
+      .md-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+      .md-card { display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--fg); text-align: left; cursor: pointer; font: inherit; }
+      .md-card:hover { border-color: var(--accent); }
+      .md-thumb { aspect-ratio: 1; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--bg); font-size: 30px; }
+      .md-thumb.big { aspect-ratio: auto; min-height: 120px; max-height: 260px; }
+      .md-thumb img, .md-thumb video { width: 100%; height: 100%; object-fit: cover; }
+      .md-thumb.big img, .md-thumb.big video { object-fit: contain; max-height: 260px; }
+      .md-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .md-size { font-size: 11px; color: var(--muted); }
+      .md-drop { border: 1px dashed var(--border); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+      .md-drop.over { border-color: var(--accent); background: var(--card); }
+      .md-quota { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+      .md-qbar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+      .md-qfill { height: 100%; background: #22c55e; }
+      .md-quota.warn { color: #ca8a04; } .md-quota.warn .md-qfill { background: #eab308; }
+      .md-quota.bad { color: #dc2626; } .md-quota.bad .md-qfill { background: #dc2626; }
+      .md-up { font-size: 12px; } .md-up.err { color: #dc2626; } .md-up.warn { color: #ca8a04; }
+      .ed-lib { cursor: pointer; }
+      .md-pick { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
       .fw-count { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
       .fw-card { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); font-size: 12px; text-align: left; }
       .fw-card.on { border-color: var(--accent); }
@@ -1121,6 +1146,7 @@
         </div>
         <nav class="pnav" aria-label="Seções do painel">
           <button type="button" data-sec="mensagens" title="Mensagens" aria-pressed="false">${svg('zap')}<span>Mensagens</span></button>
+          <button type="button" data-sec="midias" title="Mídias 🖼️ (biblioteca de fotos, vídeos, áudios e PDFs)" aria-pressed="false">${svg('image')}<span>Mídias</span></button>
           <button type="button" data-sec="etiquetas" title="Etiquetas CRM" aria-pressed="false">${svg('tag')}<span>Etiquetas</span></button>
           <button type="button" class="pboard" title="Abrir o Quadro" aria-pressed="false">${svg('board')}<span>Quadro</span></button>
           <button type="button" data-sec="agendados" title="Agendados" aria-pressed="false">${svg('clock')}<span>Agendados</span></button>
@@ -1195,6 +1221,7 @@
         <div class="dtab" role="region" aria-label="Disparos"></div>
         <div class="vtab" role="region" aria-label="Vendas"></div>
         <div class="ctab" role="region" aria-label="Conversões"></div>
+        <div class="mtab" role="region" aria-label="Mídias"></div>
         <div class="seqbar" role="status" aria-live="polite" hidden><span class="seqtxt"></span><button class="seqstop" type="button">Parar</button></div>
         <div class="toast" role="status" aria-live="polite"></div>
         <footer class="foot"><span class="last">Último usado: <b>—</b></span><button class="foot-pause" type="button" hidden></button><span class="ver"></span></footer>
@@ -1460,7 +1487,7 @@
   }
 
   function setSection(section, { persist = true } = {}) {
-    state.section = ['etiquetas', 'agendados', 'follows', 'disparos', 'vendas', 'conversoes'].includes(section) ? section : 'mensagens';
+    state.section = ['etiquetas', 'agendados', 'follows', 'disparos', 'vendas', 'conversoes', 'midias'].includes(section) ? section : 'mensagens';
     const labels = state.section === 'etiquetas';
     panel.classList.toggle('sec-labels', labels);
     panel.classList.toggle('sec-sched', state.section === 'agendados');
@@ -1468,7 +1495,8 @@
     panel.classList.toggle('sec-disparos', state.section === 'disparos');
     panel.classList.toggle('sec-vendas', state.section === 'vendas');
     panel.classList.toggle('sec-conversoes', state.section === 'conversoes');
-    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados', follows: 'Automações', disparos: 'Disparos', vendas: 'Vendas', conversoes: 'Conversões' }[state.section];
+    panel.classList.toggle('sec-midias', state.section === 'midias');
+    brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados', follows: 'Automações', disparos: 'Disparos', vendas: 'Vendas', conversoes: 'Conversões', midias: 'Mídias' }[state.section];
     panel.setAttribute('aria-label', brandTxt.textContent);
     if (persist) storageSet({ panelSection: state.section }); // só o nome da seção
     setMenuOpen(false);
@@ -1487,6 +1515,7 @@
     syncDisparosActive();
     syncVendasActive();
     syncConversoesActive();
+    syncMidiasActive();
   }
 
   navBtns.forEach((b) => b.addEventListener('click', () => {
@@ -1590,6 +1619,8 @@
     // Prévia editada ("Enviar só nesta conversa") e nome digitado: valiam só para a conversa anterior
     pvEdits.clear();
     if (state.previewId) { state.previewId = null; renderList(); }
+    // 2.7.0: legenda digitada para "Enviar nesta conversa" volta à legenda salva
+    if (md.sel) { const m = md.media.find((x) => x.id === md.sel); md.caption = m && m.caption ? m.caption : ''; if (md.open) renderMidias(); }
     // Nota do cliente: relê a da conversa nova (o rascunho da anterior é descartado)
     scheduleNote(true);
     // Redesenha as telas (o formulário antigo não pode ficar escondido no painel)
@@ -3356,6 +3387,21 @@
     };
   }
 
+  // 2.7.0: sobe o arquivo da parte pela biblioteca (entra em "Sem pasta"; o mesmo arquivo já salvo é
+  // reaproveitado, sem subir de novo). Sem as tabelas da biblioteca: o upload de sempre.
+  async function uploadPartFile(p) {
+    const base64 = await fileToBase64(p.file);
+    const mime = edFileMime(p.type, p.file);
+    try {
+      const r = await call('uploadMedia', { mediaType: p.type, base64, mime, fileName: p.file.name, folderId: null, enforceLimits: false });
+      md.loaded = false; // a aba Mídias relê
+      return { file_url: r.media.file_url, file_name: r.media.file_name || p.file.name, file_size: r.media.file_size ?? p.file.size };
+    } catch (e) {
+      if (e.message !== DB_MISSING) throw e;
+    }
+    return call('uploadFile', { partType: p.type, base64, mime, fileName: p.file.name });
+  }
+
   function edFileMime(type, file) {
     let m = (file.type || '').toLowerCase();
     const ext = (file.name.split('.').pop() || '').toLowerCase();
@@ -3471,7 +3517,7 @@
     } else {
       const fileRow = el('div', 'ed-file');
       // <label> abre o seletor de arquivo do próprio navegador (sem clique simulado)
-      const pick = el('label', 'ed-pick', p.file || p.file_url ? 'Trocar arquivo' : 'Escolher arquivo');
+      const pick = el('label', 'ed-pick', p.file || p.file_url ? 'Trocar arquivo' : 'Subir arquivo');
       const input = el('input');
       input.type = 'file';
       input.accept = ED_ACCEPT[p.type];
@@ -3491,9 +3537,21 @@
       });
       pick.append(input);
       fileRow.append(pick);
-      if (p.file_name) fileRow.append(el('span', 'ed-fname', `${p.file_name}${p.file_size != null ? ` · ${formatSize(p.file_size)}` : ''}${p.file ? ' (novo)' : ''}`));
+      // 2.7.0: escolher da biblioteca usa o mesmo arquivo (mesmo file_url; nada é copiado)
+      const lib = el('button', 'ed-mini ed-lib', p.picking ? 'Fechar biblioteca' : 'Escolher da biblioteca');
+      lib.type = 'button';
+      lib.disabled = ctx.saving();
+      lib.setAttribute('aria-label', `Escolher da biblioteca (parte ${i + 1})`);
+      lib.addEventListener('click', () => {
+        p.picking = !p.picking;
+        if (p.picking && !md.loaded) loadMedia({ quiet: true }).then(() => ctx.rerender());
+        ctx.rerender();
+      });
+      fileRow.append(lib);
+      if (p.file_name) fileRow.append(el('span', 'ed-fname', `${p.file_name}${p.file_size != null ? ` · ${formatSize(p.file_size)}` : ''}${p.file ? ' (novo)' : p.fromLibrary ? ' (da biblioteca)' : ''}`));
       else fileRow.append(el('span', 'ed-fname', 'Nenhum arquivo'));
       box.append(fileRow);
+      if (p.picking) box.append(mediaPicker(p, i, ctx));
       if (p.localUrl) {
         const tag = p.type === 'imagem' ? 'img' : p.type;
         const m = document.createElement(tag);
@@ -3655,7 +3713,7 @@
         let file = { file_url: p.file_url, file_name: p.file_name, file_size: p.file_size };
         if (p.type !== 'texto' && p.file) {
           edMsg(`Enviando o arquivo da parte ${i + 1}…`);
-          file = await call('uploadFile', { partType: p.type, base64: await fileToBase64(p.file), mime: edFileMime(p.type, p.file), fileName: p.file.name });
+          file = await uploadPartFile(p);
           Object.assign(p, file, { file: null });
         }
         parts.push({
@@ -4497,7 +4555,7 @@
       let file = { file_url: p.file_url, file_name: p.file_name, file_size: p.file_size };
       if (p.type !== 'texto' && p.file) {
         msg(`Enviando o arquivo da parte ${i + 1}…`);
-        file = await call('uploadFile', { partType: p.type, base64: await fileToBase64(p.file), mime: edFileMime(p.type, p.file), fileName: p.file.name });
+        file = await uploadPartFile(p);
         Object.assign(p, file, { file: null });
       }
       out.push({ type: p.type, body: p.type === 'audio' ? null : p.body, ...(p.type === 'texto' ? {} : file), wait_seconds: p.wait_seconds, typing_seconds: p.typing_seconds });
@@ -6324,6 +6382,430 @@
       sec.append(line);
     });
     vtabEl.append(sec);
+  }
+
+  // ── 🖼️ Mídias (2.7.0): biblioteca de mídias da loja ──────────────────────
+  // Pastas, busca, filtro por tipo, grade com miniaturas, subir (botão ou arrastar, vários de uma vez, sem
+  // duplicar), enviar na conversa aberta (envio manual imediato, como as mensagens rápidas; áudio .ogg vai
+  // como voz), editar, apagar (só sem uso) e importar as mídias das mensagens rápidas.
+
+  const mtabEl = shadow.querySelector('.mtab');
+  const MD_TYPE_LABEL = { imagem: 'Foto', video: 'Vídeo', audio: 'Áudio', documento: 'PDF' };
+  const MD_ICON = { imagem: '🖼️', video: '🎬', audio: '🎵', documento: '📄' };
+  const MD_LIMIT_MB = { imagem: 5, video: 16, audio: 16, documento: 20 };
+  const MD_THUMBS = 60; // miniaturas carregadas por vez (as outras mostram o ícone)
+  const md = {
+    open: false, loaded: false, loading: false, error: '', folders: [], media: [], used: 0, quota: 1024 * 1024 * 1024,
+    folder: 'todas', type: 'todos', q: '', sel: null, caption: '', edit: null, usage: null, confirmDel: false,
+    folderEdit: null, confirmFolderDel: null, msg: '', err: false, busy: false, upMsgs: [],
+  };
+  const mdNorm = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+  function syncMidiasActive() {
+    const want = state.open && state.section === 'midias';
+    md.open = want;
+    if (!want) return;
+    loadMedia();
+  }
+
+  async function loadMedia({ quiet = false } = {}) {
+    if (!quiet && !md.loaded) { md.loading = true; renderMidias(); }
+    try {
+      const r = await call('fetchMediaLibrary');
+      Object.assign(md, { folders: r.folders || [], media: r.media || [], used: Number(r.used) || 0, quota: Number(r.quota) || md.quota, error: '' });
+    } catch (e) {
+      md.error = e.message;
+    }
+    md.loaded = true;
+    md.loading = false;
+    renderMidias();
+  }
+
+  function mdTypeOf(file) {
+    const m = (file.type || '').toLowerCase();
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (/^image\//.test(m) || ['jpg', 'jpeg', 'png', 'webp'].includes(ext)) return 'imagem';
+    if (m === 'video/mp4' || ext === 'mp4') return 'video';
+    if (/^audio\//.test(m) || ['ogg', 'opus', 'mp3', 'm4a', 'wav', 'webm'].includes(ext)) return 'audio';
+    if (m === 'application/pdf' || ext === 'pdf') return 'documento';
+    return null;
+  }
+
+  async function uploadMediaFiles(files) {
+    const list = [...(files || [])];
+    if (!list.length || md.busy) return;
+    md.busy = true;
+    md.upMsgs = [];
+    const folderId = md.folder !== 'todas' && md.folder !== 'sem' ? md.folder : null;
+    renderMidias();
+    for (const f of list) {
+      const type = mdTypeOf(f);
+      const mime = type ? edFileMime(type, f) : '';
+      if (!type || !ED_MIME[type].includes(mime)) { md.upMsgs.push({ cls: 'err', text: `${f.name}: tipo de arquivo não aceito (foto JPG/PNG/WebP, vídeo MP4, áudio ou PDF).` }); renderMidias(); continue; }
+      if (f.size > MD_LIMIT_MB[type] * 1024 * 1024) { md.upMsgs.push({ cls: 'err', text: `${f.name}: acima de ${MD_LIMIT_MB[type]} MB (limite para ${MD_TYPE_LABEL[type].toLowerCase()}).` }); renderMidias(); continue; }
+      const line = { cls: '', text: `Enviando ${f.name}…` };
+      md.upMsgs.push(line);
+      renderMidias();
+      try {
+        const r = await call('uploadMedia', { mediaType: type, base64: await fileToBase64(f), mime, fileName: f.name, folderId });
+        Object.assign(line, r.duplicate ? { cls: 'warn', text: `${f.name}: esse arquivo já está na biblioteca ("${r.media.title}"). Não subi de novo.` } : { cls: '', text: `${f.name}: salvo.` });
+      } catch (e) {
+        Object.assign(line, { cls: 'err', text: `${f.name}: ${e.message === DB_MISSING ? DB_MISSING : e.message}` });
+      }
+      renderMidias();
+    }
+    md.busy = false;
+    await loadMedia({ quiet: true });
+  }
+
+  // Arrastar e soltar em qualquer lugar da aba
+  if (mtabEl) {
+    mtabEl.addEventListener('dragover', (e) => { e.preventDefault(); const z = mtabEl.querySelector('.md-drop'); if (z) z.classList.add('over'); });
+    mtabEl.addEventListener('dragleave', () => { const z = mtabEl.querySelector('.md-drop'); if (z) z.classList.remove('over'); });
+    mtabEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const z = mtabEl.querySelector('.md-drop');
+      if (z) z.classList.remove('over');
+      if (md.sel) return;
+      uploadMediaFiles(e.dataTransfer && e.dataTransfer.files);
+    });
+  }
+
+  const mdVisible = () => md.media.filter((m) => (md.folder === 'todas' || (md.folder === 'sem' ? !m.folder_id : m.folder_id === md.folder))
+    && (md.type === 'todos' || m.type === md.type) && (!md.q || mdNorm(m.title).includes(mdNorm(md.q))));
+  const mdFileItem = (m) => ({ id: `midia:${m.id}`, file_url: m.file_url, file_name: m.file_name });
+
+  // Miniatura: a foto, o primeiro quadro do vídeo ou o ícone do tipo (o arquivo vem pelo background, em cache)
+  function mdThumb(m, { big = false, load = true } = {}) {
+    const box = el('div', `md-thumb${big ? ' big' : ''}`);
+    box.append(el('span', 'md-ico', MD_ICON[m.type] || '📎'));
+    const wants = load && (m.type === 'imagem' || m.type === 'video' || (big && m.type === 'audio'));
+    if (wants) {
+      getBlobUrl(mdFileItem(m)).then((url) => {
+        let tag;
+        if (m.type === 'imagem') { tag = document.createElement('img'); tag.alt = ''; }
+        else if (m.type === 'video') { tag = document.createElement('video'); tag.muted = true; tag.preload = 'metadata'; if (big) tag.controls = true; }
+        else { tag = document.createElement('audio'); tag.controls = true; tag.preload = 'metadata'; }
+        tag.src = url;
+        if (m.type === 'audio') box.append(tag);
+        else { box.textContent = ''; box.append(tag); }
+      }).catch(() => { /* fica o ícone */ });
+    }
+    return box;
+  }
+
+  function renderMidias() {
+    if (!mtabEl) return;
+    mtabEl.textContent = '';
+    mtabEl.append(el('div', 'crm-intro', 'Biblioteca de mídias da loja: fotos, vídeos, áudios e PDFs em pastas. Envie na conversa aberta com um clique ou escolha daqui ao montar uma mensagem rápida ou a mensagem de um disparo (o arquivo não é subido de novo).'));
+    if (md.error) {
+      mtabEl.append(el('div', 'ed-note', md.error === DB_MISSING ? 'Atualize o banco para usar este recurso (migration 20261105090000).' : `Não consegui carregar a biblioteca: ${md.error}`));
+      return;
+    }
+    if (!md.loaded) { mtabEl.append(el('div', 'lt-none', 'Carregando…')); return; }
+    if (md.sel) { renderMediaDetail(); return; }
+
+    // Pastas
+    const fsec = el('section', 'crmsec');
+    fsec.append(el('div', 'wt-head', 'PASTAS'));
+    const chips = el('div', 'ed-add');
+    const count = (pred) => md.media.filter(pred).length;
+    const chip = (id, label) => {
+      const b = fbtn(`ed-mini${md.folder === id ? ' on' : ''}`, label, () => { md.folder = id; md.folderEdit = null; md.confirmFolderDel = null; renderMidias(); });
+      b.setAttribute('aria-pressed', String(md.folder === id));
+      return b;
+    };
+    chips.append(chip('todas', `Todas (${md.media.length})`), chip('sem', `Sem pasta (${count((m) => !m.folder_id)})`));
+    md.folders.forEach((f) => chips.append(chip(f.id, `${f.name} (${count((m) => m.folder_id === f.id)})`)));
+    fsec.append(chips);
+    const fact = el('div', 'ed-add');
+    fact.append(fbtn('ed-mini', '+ Pasta', () => { md.folderEdit = { id: null, name: '' }; renderMidias(); }));
+    const cur = md.folders.find((f) => f.id === md.folder);
+    if (cur) {
+      const idx = md.folders.indexOf(cur);
+      const move = (d) => async () => {
+        const ids = md.folders.map((f) => f.id);
+        ids.splice(idx + d, 0, ids.splice(idx, 1)[0]);
+        try { await call('reorderMediaFolders', { ids }); } catch (e) { md.msg = `Não consegui mudar a ordem: ${e.message}`; md.err = true; }
+        await loadMedia({ quiet: true });
+      };
+      const up = fbtn('ed-mini', '↑', move(-1)); up.disabled = idx === 0; up.setAttribute('aria-label', 'Subir a pasta');
+      const down = fbtn('ed-mini', '↓', move(1)); down.disabled = idx === md.folders.length - 1; down.setAttribute('aria-label', 'Descer a pasta');
+      fact.append(fbtn('ed-mini', 'Renomear', () => { md.folderEdit = { id: cur.id, name: cur.name }; renderMidias(); }), up, down,
+        fbtn('ed-mini', md.confirmFolderDel === cur.id ? 'Confirmar: apagar a pasta' : 'Apagar pasta', async () => {
+          if (md.confirmFolderDel !== cur.id) { md.confirmFolderDel = cur.id; renderMidias(); return; }
+          md.confirmFolderDel = null;
+          try { await call('deleteMediaFolder', { id: cur.id }); md.folder = 'todas'; md.msg = 'Pasta apagada (as mídias dela ficaram em "Sem pasta").'; md.err = false; } catch (e) { md.msg = `Não consegui apagar: ${e.message}`; md.err = true; }
+          await loadMedia({ quiet: true });
+        }));
+    }
+    fsec.append(fact);
+    if (md.folderEdit) {
+      const fe = md.folderEdit;
+      const row = el('div', 'sc-row');
+      const inp = el('input', 'ed-title');
+      inp.maxLength = 60;
+      inp.value = fe.name;
+      inp.placeholder = 'Nome da pasta';
+      inp.setAttribute('aria-label', 'Nome da pasta');
+      inp.addEventListener('input', () => { fe.name = inp.value; });
+      row.append(inp, fbtn('bbtn primary', 'Salvar pasta', async () => {
+        try {
+          if (fe.id) await call('renameMediaFolder', { id: fe.id, name: fe.name });
+          else { const f = await call('createMediaFolder', { name: fe.name }); md.folder = f.id; }
+          md.folderEdit = null;
+          md.msg = '';
+        } catch (e) { md.msg = `Não consegui salvar a pasta: ${e.message}`; md.err = true; }
+        await loadMedia({ quiet: true });
+      }), fbtn('bbtn', 'Cancelar', () => { md.folderEdit = null; renderMidias(); }));
+      fsec.append(row);
+    }
+    mtabEl.append(fsec);
+
+    // Busca e tipo
+    const filt = el('div', 'sc-row');
+    const q = el('input', 'ed-title');
+    q.type = 'search';
+    q.value = md.q;
+    q.placeholder = 'Buscar pelo título';
+    q.setAttribute('aria-label', 'Buscar mídia');
+    q.addEventListener('input', () => { md.q = q.value; renderMidiaGrid(); });
+    const ty = el('select', 'ed-cat');
+    ty.setAttribute('aria-label', 'Tipo de mídia');
+    [['todos', 'Todos os tipos'], ['imagem', 'Fotos'], ['video', 'Vídeos'], ['audio', 'Áudios'], ['documento', 'PDFs']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = md.type === v; ty.append(o); });
+    ty.addEventListener('change', () => { md.type = ty.value; renderMidiaGrid(); });
+    filt.append(q, ty);
+    mtabEl.append(filt);
+
+    // Subir (botão ou arrastar)
+    const drop = el('div', 'md-drop');
+    const pick = el('label', 'ed-pick', md.busy ? 'Enviando…' : 'Subir arquivos');
+    const input = el('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = 'image/jpeg,image/png,image/webp,video/mp4,audio/ogg,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/webm,.ogg,.opus,.mp3,.m4a,.wav,.webm,application/pdf,.pdf';
+    input.disabled = md.busy;
+    input.setAttribute('aria-label', 'Subir arquivos para a biblioteca');
+    input.addEventListener('change', () => { uploadMediaFiles(input.files); });
+    pick.append(input);
+    drop.append(pick, el('div', 'crm-intro', `ou arraste os arquivos para cá (vários de uma vez). Limites: foto ${MD_LIMIT_MB.imagem} MB, vídeo ${MD_LIMIT_MB.video} MB, áudio ${MD_LIMIT_MB.audio} MB, PDF ${MD_LIMIT_MB.documento} MB. Vai para a pasta escolhida acima.`));
+    md.upMsgs.forEach((u) => drop.append(el('div', `md-up${u.cls ? ` ${u.cls}` : ''}`, u.text)));
+    mtabEl.append(drop);
+    if (md.msg) mtabEl.append(el('div', `ed-msg${md.err ? ' err' : ''}`, md.msg));
+
+    // Grade
+    const gsec = el('section', 'crmsec md-gsec');
+    mtabEl.append(gsec);
+    renderMidiaGrid(gsec);
+
+    // Importar e espaço usado
+    const tools = el('div', 'ed-add');
+    tools.append(fbtn('bbtn', md.importing ? 'Importando…' : 'Importar mídias das mensagens rápidas', () => importMedia()));
+    mtabEl.append(tools);
+    const pct = md.quota ? md.used / md.quota : 0;
+    const quota = el('div', `md-quota${pct > 0.9 ? ' bad' : pct > 0.7 ? ' warn' : ''}`);
+    quota.append(el('div', null, `Espaço usado no wa-media: ${formatSize(md.used)} de 1 GB (${(pct * 100).toFixed(1).replace('.', ',')}%)${pct > 0.9 ? ' — quase cheio' : pct > 0.7 ? ' — atenção' : ''}`));
+    const bar = el('div', 'md-qbar');
+    const fill = el('div', 'md-qfill');
+    fill.style.width = `${Math.min(100, pct * 100).toFixed(1)}%`;
+    bar.append(fill);
+    quota.append(bar);
+    mtabEl.append(quota);
+  }
+
+  function renderMidiaGrid(target = mtabEl && mtabEl.querySelector('.md-gsec')) {
+    if (!target) return;
+    target.textContent = '';
+    const list = mdVisible();
+    target.append(el('div', 'wt-head', `MÍDIAS (${list.length})`));
+    if (!list.length) { target.append(el('div', 'lt-none', md.media.length ? 'Nenhuma mídia com esse filtro.' : 'Nenhuma mídia ainda. Suba arquivos ou importe das mensagens rápidas.')); return; }
+    const grid = el('div', 'md-grid');
+    list.forEach((m, i) => {
+      const card = el('button', 'md-card');
+      card.type = 'button';
+      card.title = m.title;
+      card.dataset.id = m.id;
+      card.append(mdThumb(m, { load: i < MD_THUMBS }), el('span', 'md-name', m.title), el('span', 'md-size', `${MD_TYPE_LABEL[m.type] || m.type}${m.file_size != null ? ` · ${formatSize(m.file_size)}` : ''}`));
+      card.addEventListener('click', () => openMediaDetail(m));
+      grid.append(card);
+    });
+    target.append(grid);
+  }
+
+  function openMediaDetail(m) {
+    Object.assign(md, { sel: m.id, caption: m.caption || '', edit: null, usage: null, confirmDel: false, msg: '', err: false });
+    renderMidias();
+  }
+
+  function renderMediaDetail() {
+    const m = md.media.find((x) => x.id === md.sel);
+    if (!m) { md.sel = null; renderMidias(); return; }
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', m.title.toUpperCase()));
+    sec.append(mdThumb(m, { big: true }));
+    sec.append(el('div', 'md-size', `${MD_TYPE_LABEL[m.type]}${m.file_size != null ? ` · ${formatSize(m.file_size)}` : ''}${m.file_name ? ` · ${m.file_name}` : ''} · usada ${m.usage_count || 0} vez${(m.usage_count || 0) === 1 ? '' : 'es'}`));
+    if (md.edit) {
+      const f = md.edit;
+      const t = el('input', 'ed-title');
+      t.maxLength = 120;
+      t.value = f.title;
+      t.setAttribute('aria-label', 'Título da mídia');
+      t.addEventListener('input', () => { f.title = t.value; });
+      sec.append(schedField('Título', t));
+      if (m.type !== 'audio') {
+        const c = el('textarea', 'ed-caption');
+        c.maxLength = 4096;
+        c.rows = 3;
+        c.value = f.caption;
+        c.setAttribute('aria-label', 'Legenda padrão da mídia');
+        c.addEventListener('input', () => { f.caption = c.value; });
+        sec.append(schedField('Legenda padrão (opcional)', c));
+      }
+      const fs = el('select', 'ed-cat');
+      fs.setAttribute('aria-label', 'Pasta da mídia');
+      const none = el('option', null, 'Sem pasta');
+      none.value = '';
+      fs.append(none);
+      md.folders.forEach((x) => { const o = el('option', null, x.name); o.value = x.id; o.selected = x.id === f.folderId; fs.append(o); });
+      fs.addEventListener('change', () => { f.folderId = fs.value; });
+      sec.append(schedField('Pasta', fs));
+      const a = el('div', 'ed-add');
+      a.append(fbtn('bbtn primary', 'Salvar', async () => {
+        try {
+          const row = await call('updateMedia', { id: m.id, title: f.title, caption: m.type === 'audio' ? undefined : f.caption, folderId: f.folderId || null });
+          Object.assign(m, row);
+          md.edit = null;
+          md.caption = m.caption || '';
+          md.msg = 'Mídia salva.';
+          md.err = false;
+        } catch (e) { md.msg = `Não consegui salvar: ${e.message}`; md.err = true; }
+        renderMidias();
+      }), fbtn('bbtn', 'Cancelar', () => { md.edit = null; renderMidias(); }));
+      sec.append(a);
+    } else {
+      if (m.type !== 'audio') {
+        const c = el('textarea', 'ed-caption');
+        c.maxLength = 4096;
+        c.rows = 3;
+        c.value = md.caption;
+        c.placeholder = 'Legenda (opcional; {nome} vira o primeiro nome)';
+        c.setAttribute('aria-label', 'Legenda do envio');
+        c.addEventListener('input', () => { md.caption = c.value; });
+        sec.append(schedField('Legenda do envio (só desta vez)', c));
+      } else sec.append(el('div', 'crm-intro', 'Áudio .ogg vai como mensagem de voz; outros formatos vão como arquivo de áudio.'));
+      const a = el('div', 'ed-add');
+      const send = fbtn('bbtn primary', md.busy ? 'Enviando…' : 'Enviar nesta conversa', () => sendMediaHere(m));
+      send.disabled = md.busy;
+      a.append(send, fbtn('bbtn', 'Editar', () => { md.edit = { title: m.title, caption: m.caption || '', folderId: m.folder_id || '' }; md.usage = null; md.confirmDel = false; renderMidias(); }),
+        fbtn('bbtn', md.confirmDel ? 'Confirmar: apagar' : 'Apagar', () => deleteMediaClick(m)));
+      sec.append(a);
+      if (md.usage && md.usage.inUse) {
+        const u = el('div', 'fw-test');
+        u.append(el('div', 'ed-note', 'Em uso: não dá para apagar. Tire o arquivo destes lugares antes:'));
+        if (md.usage.items.length) u.append(el('div', null, `Mensagens rápidas: ${md.usage.items.join(', ')}`));
+        if (md.usage.campaigns.length) u.append(el('div', null, `Disparos: ${md.usage.campaigns.join(', ')}`));
+        if (md.usage.automations.length) u.append(el('div', null, `Automações: ${md.usage.automations.join(', ')}`));
+        sec.append(u);
+      }
+    }
+    if (md.msg) sec.append(el('div', `ed-msg${md.err ? ' err' : ''}`, md.msg));
+    sec.append(fbtn('bbtn', 'Voltar', () => { md.sel = null; md.msg = ''; md.usage = null; renderMidias(); }));
+    mtabEl.append(sec);
+  }
+
+  // Envio manual na conversa aberta: imediato (como a seta das mensagens rápidas), pelo mesmo caminho seguro
+  async function sendMediaHere(m) {
+    if (md.busy) return;
+    if (state.busyId || seq) { toast('Já tem um envio em andamento. Espere terminar ou clique em Parar.', 'warn', 5000); return; }
+    const st = await waStatusForSend();
+    if (!st || !st.ready) { toast('O WhatsApp ainda não está pronto para enviar. Tente de novo em instantes.', 'warn', 6000); return; }
+    const chatId = await openIndividualChat();
+    if (!chatId) return;
+    const ctx = getContext();
+    state.ctx = ctx;
+    const part = {
+      id: `midia:${m.id}`, type: m.type, body: m.type === 'audio' ? '' : md.caption, file_url: m.file_url, file_name: m.file_name, file_size: m.file_size,
+      wait_seconds: 0, typing_seconds: m.type === 'audio' ? null : 0, // áudio: "gravando…" automático pela duração
+    };
+    md.busy = true;
+    md.msg = '';
+    renderMidias();
+    try {
+      const res = await runSequence({ parts: [part], chatId, firstName: ctx.firstName });
+      sequenceToast(res, 1);
+      if (res.status === 'ok') {
+        try { m.usage_count = await call('incrementMediaUsage', { id: m.id }); } catch { /* contador */ }
+      }
+    } finally {
+      md.busy = false;
+      renderMidias();
+    }
+  }
+
+  async function deleteMediaClick(m) {
+    md.msg = '';
+    if (!md.confirmDel) {
+      try { md.usage = await call('mediaUsage', { id: m.id }); } catch (e) { md.msg = `Não consegui conferir o uso: ${e.message}`; md.err = true; renderMidias(); return; }
+      if (md.usage.inUse) { renderMidias(); return; }
+      md.confirmDel = true;
+      renderMidias();
+      return;
+    }
+    md.confirmDel = false;
+    try {
+      const r = await call('deleteMedia', { id: m.id });
+      if (!r.deleted) { md.usage = r.usage; renderMidias(); return; }
+      md.sel = null;
+      md.msg = `"${m.title}" apagada.`;
+      md.err = false;
+    } catch (e) { md.msg = `Não consegui apagar: ${e.message}`; md.err = true; }
+    await loadMedia({ quiet: true });
+  }
+
+  async function importMedia() {
+    if (md.importing) return;
+    md.importing = true;
+    renderMidias();
+    try {
+      const r = await call('importMediaFromItems');
+      md.msg = r.added ? `${r.added} mídia${r.added === 1 ? '' : 's'} importada${r.added === 1 ? '' : 's'} das mensagens rápidas (sem subir de novo).` : 'Nada novo para importar: as mídias das mensagens rápidas já estão na biblioteca.';
+      md.err = false;
+    } catch (e) { md.msg = `Não consegui importar: ${e.message}`; md.err = true; }
+    md.importing = false;
+    await loadMedia({ quiet: true });
+  }
+
+  // Editor de partes: lista da biblioteca do mesmo tipo da parte
+  function mediaPicker(p, i, ctx) {
+    const box = el('div', 'fw-test md-pick');
+    if (!md.loaded) { box.append(el('div', 'lt-none', 'Carregando a biblioteca…')); return box; }
+    if (md.error) { box.append(el('div', 'ed-note', md.error === DB_MISSING ? 'Atualize o banco para usar a biblioteca de mídias.' : md.error)); return box; }
+    const q = el('input', 'ed-title');
+    q.type = 'search';
+    q.value = p.pickQ || '';
+    q.placeholder = 'Buscar na biblioteca';
+    q.setAttribute('aria-label', `Buscar na biblioteca (parte ${i + 1})`);
+    const list = el('div', 'md-pick');
+    const fill = () => {
+      list.textContent = '';
+      const items = md.media.filter((m) => m.type === p.type && (!p.pickQ || mdNorm(m.title).includes(mdNorm(p.pickQ)))).slice(0, 50);
+      if (!items.length) list.append(el('div', 'lt-none', `Nenhum${p.type === 'imagem' ? 'a foto' : p.type === 'video' ? ' vídeo' : p.type === 'audio' ? ' áudio' : ' PDF'} na biblioteca.`));
+      items.forEach((m) => {
+        const b = fbtn('ed-mini', `${m.title}${m.file_size != null ? ` · ${formatSize(m.file_size)}` : ''}`, () => {
+          if (p.localUrl) URL.revokeObjectURL(p.localUrl);
+          Object.assign(p, { file: null, localUrl: null, file_url: m.file_url, file_name: m.file_name || m.title, file_size: m.file_size ?? null, picking: false, fromLibrary: m.id });
+          if (p.type !== 'audio' && !String(p.body || '').trim() && m.caption) p.body = m.caption;
+          ctx.msg('');
+          ctx.rerender();
+        });
+        b.dataset.media = m.id;
+        list.append(b);
+      });
+    };
+    q.addEventListener('input', () => { p.pickQ = q.value; fill(); });
+    fill();
+    box.append(q, list);
+    return box;
   }
 
   // ── 📈 Conversões: compra para o Facebook (2.4.0) ───────────────────────

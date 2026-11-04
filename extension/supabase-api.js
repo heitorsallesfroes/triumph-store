@@ -679,6 +679,11 @@
     if (base64.length > Math.ceil(MAX_FILE_BYTES / 3) * 4 + 4) throw new Error('Arquivo acima de 40 MB');
     const bytes = fromBase64(base64);
     if (!bytes.length || bytes.length > MAX_FILE_BYTES) throw new Error('Arquivo acima de 40 MB');
+    return storeBytes(bytes, m, fileName);
+  }
+
+  // Grava os bytes no bucket wa-media (o mesmo upload de sempre) e devolve o endereço público
+  async function storeBytes(bytes, m, fileName) {
     const { SUPABASE_URL } = cfg();
     const path = `${crypto.randomUUID()}/${sanitizeFileName(fileName)}`;
     const res = await supaFetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`, {
@@ -695,6 +700,205 @@
       file_name: typeof fileName === 'string' && fileName.trim() ? fileName.trim().slice(0, 200) : 'arquivo',
       file_size: bytes.length,
     };
+  }
+
+  // ── 2.7.0: Biblioteca de mídias (wa_media_folders + wa_media; migration 20261105090000) ──
+  // Os arquivos ficam no mesmo bucket wa-media. sha256 (calculado aqui, dos bytes) evita subir o mesmo
+  // arquivo duas vezes. Sem as tabelas: "Atualize o banco para usar este recurso".
+  const MEDIA_TABLES = ['wa_media', 'wa_media_folders'];
+  const MEDIA_TYPES = ['imagem', 'video', 'audio', 'documento'];
+  const MB = 1024 * 1024;
+  const MEDIA_LIMITS = { imagem: 5 * MB, audio: 16 * MB, video: 16 * MB, documento: 20 * MB };
+  const MEDIA_COLS = 'id,folder_id,type,title,caption,file_url,file_name,file_size,mime,sha256,usage_count,position,created_at';
+  const MEDIA_QUOTA_BYTES = 1024 * MB; // 1 GB (só para o aviso de espaço)
+
+  async function mediaRest(path, init) {
+    try {
+      return await rest(path, init);
+    } catch (err) {
+      if (tableMissing(err, MEDIA_TABLES)) throw new Error(ENGINE_MISSING);
+      throw err;
+    }
+  }
+  async function mediaRestAll(path) {
+    try {
+      return await restAll(path);
+    } catch (err) {
+      if (tableMissing(err, MEDIA_TABLES)) throw new Error(ENGINE_MISSING);
+      throw err;
+    }
+  }
+
+  async function sha256Of(bytes) {
+    const buf = await crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(buf)].map((x) => x.toString(16).padStart(2, '0')).join('');
+  }
+  const mediaTitleOf = (fileName) => String(fileName || 'arquivo').replace(/\.[^.]+$/, '').replace(/\s+/g, ' ').trim().slice(0, 120) || 'arquivo';
+
+  async function fetchMediaLibrary() {
+    const [folders, media] = await Promise.all([
+      mediaRestAll('wa_media_folders?select=id,name,position,created_at&order=position.asc,created_at.asc'),
+      mediaRestAll(`wa_media?select=${MEDIA_COLS}&order=created_at.desc,id.asc`),
+    ]);
+    const used = media.reduce((sum, m) => sum + (Number(m.file_size) || 0), 0);
+    return { folders, media, used, quota: MEDIA_QUOTA_BYTES };
+  }
+
+  async function createMediaFolder({ name }) {
+    const n = cleanText(name, 60, 'Nome da pasta');
+    const last = await mediaRest('wa_media_folders?select=position&order=position.desc&limit=1');
+    const rows = await mediaRest('wa_media_folders', json('POST', 'return=representation', { name: n, position: last.length ? (Number(last[0].position) || 0) + 1 : 0 }));
+    return rows[0];
+  }
+  async function renameMediaFolder({ id, name }) {
+    checkUuid(id, 'Pasta inválida');
+    await mediaRest(`wa_media_folders?id=eq.${id}`, json('PATCH', 'return=minimal', { name: cleanText(name, 60, 'Nome da pasta') }));
+    return true;
+  }
+  // Apagar a pasta não apaga as mídias: elas ficam "sem pasta" (on delete set null)
+  async function deleteMediaFolder({ id }) {
+    checkUuid(id, 'Pasta inválida');
+    await mediaRest(`wa_media?folder_id=eq.${id}`, json('PATCH', 'return=minimal', { folder_id: null }));
+    await mediaRest(`wa_media_folders?id=eq.${id}`, { method: 'DELETE' });
+    return true;
+  }
+  async function reorderMediaFolders({ ids }) {
+    if (!Array.isArray(ids) || ids.length > 200) throw new Error('Lista inválida');
+    for (let i = 0; i < ids.length; i++) {
+      checkUuid(ids[i], 'Pasta inválida');
+      await mediaRest(`wa_media_folders?id=eq.${ids[i]}`, json('PATCH', 'return=minimal', { position: i }));
+    }
+    return true;
+  }
+
+  // Sobe um arquivo para a biblioteca. Mesmo arquivo (sha256) já salvo: não sobe de novo e devolve o que existe.
+  // enforceLimits=false: arquivo vindo do editor de mensagens (vale o limite de sempre, 40 MB).
+  async function uploadMedia({ type, base64, mime, fileName, title, caption, folderId, enforceLimits = true }) {
+    if (!MEDIA_TYPES.includes(type)) throw new Error('Tipo de mídia inválido');
+    const m = typeof mime === 'string' ? mime.toLowerCase().split(';')[0].trim() : '';
+    if (!UPLOAD_MIME[type].includes(m)) throw new Error('Tipo de arquivo não aceito');
+    if (typeof base64 !== 'string' || !base64) throw new Error('Arquivo vazio');
+    const limit = enforceLimits === false ? MAX_FILE_BYTES : MEDIA_LIMITS[type];
+    if (base64.length > Math.ceil(limit / 3) * 4 + 4) throw new Error(`Arquivo acima de ${Math.round(limit / MB)} MB`);
+    const bytes = fromBase64(base64);
+    if (!bytes.length) throw new Error('Arquivo vazio');
+    if (bytes.length > limit) throw new Error(`Arquivo acima de ${Math.round(limit / MB)} MB`);
+    const folder = folderId == null || folderId === '' ? null : checkUuid(folderId, 'Pasta inválida');
+    const sha = await sha256Of(bytes);
+    const same = await mediaRest(`wa_media?select=${MEDIA_COLS}&sha256=eq.${sha}`);
+    if (same.length) return { duplicate: true, media: same[0] };
+    const file = await storeBytes(bytes, m, fileName);
+    const last = await mediaRest('wa_media?select=position&order=position.desc&limit=1');
+    const row = {
+      folder_id: folder, type, title: title ? cleanText(title, 120, 'Título') : mediaTitleOf(file.file_name), caption: clip(caption, 4096),
+      file_url: file.file_url, file_name: file.file_name, file_size: file.file_size, mime: m, sha256: sha, usage_count: 0,
+      position: last.length ? (Number(last[0].position) || 0) + 1 : 0,
+    };
+    try {
+      const rows = await mediaRest('wa_media', json('POST', 'return=representation', row));
+      return { duplicate: false, media: rows[0] };
+    } catch (err) {
+      // Outra aba subiu o mesmo arquivo no mesmo instante (índice único do sha256)
+      if (/^Supabase 409:/.test(err.message)) {
+        const again = await mediaRest(`wa_media?select=${MEDIA_COLS}&sha256=eq.${sha}`);
+        if (again.length) return { duplicate: true, media: again[0] };
+      }
+      throw err;
+    }
+  }
+
+  async function updateMedia({ id, title, caption, folderId }) {
+    checkUuid(id, 'Mídia inválida');
+    const patch = {};
+    if (title !== undefined) patch.title = cleanText(title, 120, 'Título');
+    if (caption !== undefined) patch.caption = typeof caption === 'string' && caption.trim() ? caption.slice(0, 4096) : null;
+    if (folderId !== undefined) patch.folder_id = folderId == null || folderId === '' ? null : checkUuid(folderId, 'Pasta inválida');
+    if (!Object.keys(patch).length) throw new Error('Nada para mudar');
+    const rows = await mediaRest(`wa_media?id=eq.${id}`, json('PATCH', 'return=representation', patch));
+    if (!rows.length) throw new Error('Mídia não encontrada');
+    return rows[0];
+  }
+
+  async function incrementMediaUsage({ id }) {
+    checkUuid(id, 'Mídia inválida');
+    const rows = await mediaRest(`wa_media?select=usage_count&id=eq.${id}`);
+    if (!rows.length) return 0;
+    const n = (Number(rows[0].usage_count) || 0) + 1;
+    await mediaRest(`wa_media?id=eq.${id}`, json('PATCH', 'return=minimal', { usage_count: n }));
+    return n;
+  }
+
+  // Onde o arquivo está em uso: mensagens rápidas (item ou parte), disparos (mensagem exclusiva) e
+  // automações que enviam essas mensagens rápidas
+  async function mediaUsage({ id }) {
+    checkUuid(id, 'Mídia inválida');
+    const rows = await mediaRest(`wa_media?select=id,file_url&id=eq.${id}`);
+    if (!rows.length) throw new Error('Mídia não encontrada');
+    const url = rows[0].file_url;
+    const enc = encodeURIComponent(url);
+    const itemIds = new Set();
+    (await rest(`wa_items?select=id&file_url=eq.${enc}`)).forEach((r) => itemIds.add(r.id));
+    try { (await rest(`wa_item_parts?select=item_id&file_url=eq.${enc}`)).forEach((r) => itemIds.add(r.item_id)); } catch (err) { if (!missingTable(err, 'wa_item_parts')) throw err; }
+    const items = itemIds.size ? await rest(`wa_items?select=id,title&id=in.${inList([...itemIds])}`) : [];
+    let campaigns = [];
+    if ((await campaignsTables()) && (await campaignsV2())) {
+      campaigns = await rest(`wa_campaigns?select=id,name&parts=cs.${encodeURIComponent(JSON.stringify([{ file_url: url }]))}`);
+    }
+    let automations = [];
+    if (itemIds.size && (await automationTables())) {
+      const all = await autoRestAll(`wa_automations?select=id,name,actions&order=id.asc`);
+      automations = all.filter((a) => [...itemIds].some((iid) => JSON.stringify(a.actions || []).includes(iid))).map((a) => ({ id: a.id, name: a.name }));
+    }
+    return {
+      inUse: items.length + campaigns.length + automations.length > 0,
+      items: items.map((x) => x.title), campaigns: campaigns.map((x) => x.name), automations: automations.map((x) => x.name),
+    };
+  }
+
+  // Apagar: só se nada estiver usando. O arquivo sai do bucket se nenhuma outra mídia apontar para ele.
+  async function deleteMedia({ id }) {
+    const usage = await mediaUsage({ id });
+    if (usage.inUse) return { deleted: false, usage };
+    const rows = await mediaRest(`wa_media?select=id,file_url&id=eq.${id}`);
+    if (!rows.length) return { deleted: true };
+    const url = rows[0].file_url;
+    await mediaRest(`wa_media?id=eq.${id}`, { method: 'DELETE' });
+    const others = await mediaRest(`wa_media?select=id&file_url=eq.${encodeURIComponent(url)}&limit=1`);
+    if (!others.length && isAllowedFileUrl(url)) {
+      const { SUPABASE_URL } = cfg();
+      const path = url.slice(`${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/`.length);
+      try { await supaFetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`, { method: 'DELETE' }); } catch { /* o registro já saiu; o arquivo fica */ }
+    }
+    return { deleted: true };
+  }
+
+  // Importa as mídias que já estão nas mensagens rápidas (sem subir de novo: mesmo file_url; sha256 vazio).
+  // Não muda nada nas mensagens.
+  const MIME_OF_EXT = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', mp4: 'video/mp4', ogg: 'audio/ogg', opus: 'audio/ogg', mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', webm: 'audio/webm', pdf: 'application/pdf' };
+  async function importMediaFromItems() {
+    const have = new Set((await mediaRestAll('wa_media?select=file_url&order=id.asc')).map((r) => r.file_url));
+    const items = await restAll('wa_items?select=id,title,type,file_url,file_name,file_size&order=id.asc');
+    const titleOf = new Map(items.map((i) => [i.id, i.title]));
+    const found = [];
+    items.forEach((i) => { if (MEDIA_TYPES.includes(i.type) && i.file_url) found.push({ type: i.type, file_url: i.file_url, file_name: i.file_name, file_size: i.file_size, title: i.title, caption: null }); });
+    try {
+      const parts = await restAll('wa_item_parts?select=id,item_id,type,body,file_url,file_name,file_size,position&file_url=not.is.null&order=id.asc');
+      parts.forEach((p) => { if (MEDIA_TYPES.includes(p.type) && p.file_url) found.push({ type: p.type, file_url: p.file_url, file_name: p.file_name, file_size: p.file_size, title: titleOf.get(p.item_id) || p.file_name, caption: p.type === 'audio' ? null : p.body || null }); });
+    } catch (err) { if (!missingTable(err, 'wa_item_parts')) throw err; }
+    const rows = [];
+    const seen = new Set(have);
+    found.forEach((f) => {
+      if (!isAllowedFileUrl(f.file_url) || seen.has(f.file_url)) return;
+      seen.add(f.file_url);
+      const ext = String(f.file_name || f.file_url).split('.').pop().toLowerCase();
+      rows.push({
+        folder_id: null, type: f.type, title: mediaTitleOf(f.title || f.file_name), caption: f.caption ? String(f.caption).slice(0, 4096) : null,
+        file_url: f.file_url, file_name: f.file_name ? String(f.file_name).slice(0, 200) : null, file_size: Number.isFinite(Number(f.file_size)) ? Number(f.file_size) : null,
+        mime: MIME_OF_EXT[ext] || null, sha256: null, usage_count: 0, position: 0,
+      });
+    });
+    for (let i = 0; i < rows.length; i += 200) await mediaRest('wa_media', json('POST', 'return=minimal', rows.slice(i, i + 200)));
+    return { added: rows.length, already: found.length - rows.length };
   }
 
   // ── Agendamentos (1.9.0): criados por um clique; enviados pelo executor do painel na hora marcada ──
@@ -2399,6 +2603,8 @@
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,
     saveItem, deleteItem, createCategory, renameCategory, deleteCategory, uploadFile, partsTableExists,
+    fetchMediaLibrary, createMediaFolder, renameMediaFolder, deleteMediaFolder, reorderMediaFolders, uploadMedia, updateMedia,
+    incrementMediaUsage, mediaUsage, deleteMedia, importMediaFromItems,
     fetchLibrary, incrementUsage, fetchFile, isAllowedFileUrl, MAX_FILE_BYTES,
     fetchLabels, getContactLabels, setContactLabel,
     fetchLabelCounts, fetchLabelClients,

@@ -128,6 +128,39 @@ Se o painel mostrar "A extensão foi atualizada. Recarregue o WhatsApp (F5).",
   funciona só com **1 parte** e mostra "Atualize o banco para usar este
   recurso" nas opções de várias partes, esperar e digitando.
 
+### 🖼️ Mídias (biblioteca de mídias) — 2.7.0
+
+Um lugar único com as fotos, vídeos, áudios e PDFs da loja, em pastas, para
+enviar na conversa com um clique e reaproveitar sem subir o mesmo arquivo de
+novo.
+
+- **Pastas:** criar, renomear, apagar (as mídias dela vão para "Sem pasta") e
+  mudar a ordem (↑ ↓). Busca pelo título e filtro por tipo.
+- **Grade** com miniatura (a foto, o primeiro quadro do vídeo ou um ícone),
+  título e tamanho.
+- **Subir:** botão "Subir arquivos" ou arrastar e soltar, vários de uma vez.
+  Limites: foto 5 MB, vídeo 16 MB, áudio 16 MB, PDF 20 MB. O mesmo arquivo
+  não entra duas vezes: se já estiver na biblioteca, avisa e não sobe de novo.
+- **Clicar numa mídia:** prévia e os botões **Enviar nesta conversa** (com a
+  legenda editável; o padrão é a legenda salva), **Editar** (título, legenda e
+  pasta) e **Apagar**. Apagar só funciona se nenhuma mensagem rápida, disparo
+  ou automação estiver usando o arquivo; se estiver, mostra onde.
+- O envio é manual e imediato na conversa aberta, igual à seta das mensagens
+  rápidas (não passa pelos limites/horário do motor). Áudio .ogg vai como
+  mensagem de voz.
+- **Reaproveitar:** no editor das mensagens rápidas e na mensagem exclusiva do
+  disparo, cada parte com arquivo tem **Subir arquivo** e **Escolher da
+  biblioteca** (usa o mesmo arquivo, nada é copiado). Arquivo subido pelo
+  editor também entra na biblioteca ("Sem pasta"). As automações enviam
+  mensagens rápidas, então usam a biblioteca por elas.
+- **Importar mídias das mensagens rápidas:** cria na biblioteca as mídias que
+  já estão nas mensagens rápidas, sem subir de novo e sem mudar as mensagens.
+- **Rodapé:** espaço usado no wa-media (soma dos arquivos da biblioteca) de
+  1 GB; amarelo acima de 70% e vermelho acima de 90%.
+- Precisa da migration `supabase/migrations/20261105090000_wa_media_library.sql`.
+  Sem ela, a aba mostra "Atualize o banco para usar este recurso" e o editor
+  continua subindo arquivos como antes.
+
 ### 💰 Vendas pela conversa — 2.3.0
 
 Registra a venda da conversa aberta **direto no ERP**, do mesmo jeito que a tela
@@ -751,6 +784,12 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.7.0
+- Aba **Mídias**: biblioteca de mídias em pastas (subir sem duplicar, enviar na
+  conversa, editar, apagar só sem uso, importar das mensagens rápidas, espaço
+  usado). "Escolher da biblioteca" no editor das mensagens rápidas e dos
+  disparos. Migration `20261105090000_wa_media_library.sql`.
 
 ### 2.6.3
 - 📈/💰: nome e telefone só da conversa aberta (corrige o formulário que

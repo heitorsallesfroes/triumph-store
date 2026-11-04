@@ -26,6 +26,7 @@
 -- Extensão 2.5.0 (20261104120000): wa_native_label_seen e wa_automation_enrollments entram na cópia
 -- como as outras wa_* e voltam a "public access <tabela>".
 -- Extensão 2.6.2 (20261104160000): wa_ad_attribution entra na cópia do mesmo jeito.
+-- Extensão 2.7.0 (20261105090000): wa_media_folders e wa_media entram na cópia do mesmo jeito.
 -- ============================================================================
 
 begin;

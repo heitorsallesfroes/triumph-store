@@ -89,6 +89,18 @@ const HANDLERS = {
   saleTriggerCandidates: (m) => WaApi.saleTriggerCandidates({ sinceDays: m.sinceDays }),
   // 2.4.1: "tem algo ativo?" do motor (leituras mínimas)
   engineActivity:        (m) => WaApi.engineActivity({ automations: m.automations !== false, campaigns: m.campaigns !== false }),
+  // 2.7.0: Biblioteca de mídias (cada uma valida a entrada em supabase-api.js)
+  fetchMediaLibrary:     ()  => WaApi.fetchMediaLibrary(),
+  createMediaFolder:     (m) => WaApi.createMediaFolder({ name: m.name }),
+  renameMediaFolder:     (m) => WaApi.renameMediaFolder({ id: m.id, name: m.name }),
+  deleteMediaFolder:     (m) => WaApi.deleteMediaFolder({ id: m.id }),
+  reorderMediaFolders:   (m) => WaApi.reorderMediaFolders({ ids: m.ids }),
+  uploadMedia:           (m) => WaApi.uploadMedia({ type: m.mediaType, base64: m.base64, mime: m.mime, fileName: m.fileName, title: m.title, caption: m.caption, folderId: m.folderId, enforceLimits: m.enforceLimits !== false }),
+  updateMedia:           (m) => WaApi.updateMedia({ id: m.id, title: m.title, caption: m.caption, folderId: m.folderId }),
+  incrementMediaUsage:   (m) => WaApi.incrementMediaUsage({ id: m.id }),
+  mediaUsage:            (m) => WaApi.mediaUsage({ id: m.id }),
+  deleteMedia:           (m) => WaApi.deleteMedia({ id: m.id }),
+  importMediaFromItems:  ()  => WaApi.importMediaFromItems(),
   // 2.5.0: etiqueta do WhatsApp no gatilho ("primeira vez que viu") e "Adicionar à automação"
   nativeLabelEvents:     (m) => WaApi.nativeLabelEvents({ events: m.events }),
   nativeLabelSweep:      (m) => WaApi.nativeLabelSweep({ labelId: m.labelId, chats: m.chats, complete: m.complete }),

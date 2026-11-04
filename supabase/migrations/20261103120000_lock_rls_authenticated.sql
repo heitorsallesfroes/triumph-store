@@ -100,7 +100,9 @@ declare
     -- extensão 2.5.0 (etiqueta do WhatsApp no gatilho e inscrição manual: migration 20261104120000)
     'wa_native_label_seen', 'wa_automation_enrollments',
     -- extensão 2.6.2 (anúncio de onde o lead veio: migration 20261104160000)
-    'wa_ad_attribution'
+    'wa_ad_attribution',
+    -- extensão 2.7.0 (biblioteca de mídias: migration 20261105090000)
+    'wa_media_folders', 'wa_media'
   ];
 begin
   foreach t in array tables loop
