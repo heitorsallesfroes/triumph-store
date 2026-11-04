@@ -258,6 +258,10 @@
 
   const INVALIDATED_MSG = 'A extensão foi atualizada. Recarregue o WhatsApp (F5).';
 
+  // 2.4.1: pedidos que criam/ativam trabalho do motor → ele confere já (sem esperar a verificação de 2 min)
+  const ENGINE_POKE = new Set(['createSchedule', 'saveFlow', 'setFlowActive', 'saveCampaign', 'startCampaign', 'campaignAction', 'saveAutomation', 'setAutomationActive', 'updateEngineSettings']);
+  let enginePoke = null;
+
   function call(type, payload = {}) {
     return new Promise((resolve, reject) => {
       const fail = (msg) => reject(new Error(/context invalidated/i.test(msg) ? INVALIDATED_MSG : msg));
@@ -266,6 +270,7 @@
           const err = chrome.runtime.lastError;
           if (err) return fail(err.message);
           if (!res) return fail('Sem resposta da extensão');
+          if (res.ok && enginePoke && ENGINE_POKE.has(type)) { try { enginePoke(); } catch { /* motor */ } }
           res.ok ? resolve(res.data) : fail(res.error);
         });
       } catch (e) {
@@ -1425,10 +1430,11 @@
       state.convKey = undefined; // força buscar as etiquetas da conversa de novo
       updateContext();
       contextTimer = setInterval(updateContext, 1000);
-      refreshTimer = setInterval(() => sync(), REFRESH_MS);
+      refreshTimer = setInterval(() => { if (!document.hidden) sync(); }, REFRESH_MS); // 2.4.1: só com a aba visível
       sync();
       pingBridge();
       refreshWaStatus();
+      try { barTick(); } catch { /* 2.4.1: contagens do CRM ao abrir o painel (se tiverem mais de 5 min) */ }
     } else {
       clearTimeout(convTimer);
       setMenuOpen(false);
@@ -1704,7 +1710,8 @@
 
   function restartLabelsTabTimer() {
     clearInterval(lt.timer);
-    if (labelsTabActive()) lt.timer = setInterval(refreshLabelsTab, 60 * 1000);
+    // 2.4.1: no máximo a cada 5 min e só com a aba visível
+    if (labelsTabActive()) lt.timer = setInterval(() => { if (!document.hidden) refreshLabelsTab(); }, 5 * 60 * 1000);
   }
 
   async function refreshLabelsTab() {
@@ -3617,7 +3624,7 @@
   // no Supabase (pendente → enviando, só uma aba consegue) e usa o mesmo motor de sequência.
   // Atraso acima de 24 h = 'expirada' (não envia). Erro no envio = 'falhou' (nunca reenvia).
 
-  const SCHED_TICK_MS = 30 * 1000;
+  const SCHED_TICK_MS = 60 * 1000; // 2.4.1: lista da seção Agendados (era 30 s)
   const SCHED_FIRST_MS = 5 * 1000;
   const SCHED_MAX_LATE_MS = 24 * 3600 * 1000;
   const SCHED_GAP_MIN_MS = 15 * 1000;
@@ -3702,7 +3709,7 @@
     if (!want) return;
     loadSchedules();
     loadSchedTarget();
-    sched.timer = setInterval(() => { loadSchedules(); loadSchedTarget(); }, SCHED_TICK_MS);
+    sched.timer = setInterval(() => { if (document.hidden) return; loadSchedules(); loadSchedTarget(); }, SCHED_TICK_MS);
   }
 
   // "Agendar nesta conversa" no menu do item
@@ -3970,6 +3977,7 @@
   const E = globalThis.TspEngine;
   const AUTO_LABELS = ['Agendado', 'Follow', 'Disparo'];
 
+  enginePoke = () => motor.poke();
   const motor = E.createMotor({
     api: (type, payload) => call(type, payload),
     wa: {
@@ -4091,7 +4099,7 @@
     dp.open = want;
     if (!want) return;
     refreshDisparos();
-    dp.timer = setInterval(() => { if (dp.view === 'list') refreshDisparos({ quiet: true }); }, 10 * 1000);
+    dp.timer = setInterval(() => { if (dp.view === 'list' && !document.hidden) refreshDisparos({ quiet: true }); }, 60 * 1000); // 2.4.1: era 10 s
   }
 
   async function refreshDisparos({ quiet = false } = {}) {
@@ -4756,7 +4764,7 @@
     fl.open = want;
     if (!want) return;
     refreshFollows();
-    fl.timer = setInterval(() => { if (fl.view === 'list') refreshFollows({ quiet: true }); }, 15 * 1000);
+    fl.timer = setInterval(() => { if (fl.view === 'list' && !document.hidden) refreshFollows({ quiet: true }); }, 60 * 1000); // 2.4.1: era 15 s
   }
 
   async function refreshFollows({ quiet = false } = {}) {
@@ -6467,7 +6475,7 @@
   const BOARD_MAX_COLS = 6;
   const BOARD_PAGE = 50;
   const BAR_REFRESH_MS = 30 * 1000;
-  const CRM_REFRESH_MS = 60 * 1000;
+  const CRM_REFRESH_MS = 5 * 60 * 1000; // 2.4.1: etiquetas e contagens do CRM (era 1 min)
   const PREVIEW_ICON = { audio: '🎤', foto: '📷', video: '🎬', documento: '📄', figurinha: '😀', localizacao: '📍' };
   const PREVIEW_LABEL = { audio: 'Áudio', foto: 'Foto', video: 'Vídeo', documento: 'Documento', figurinha: 'Figurinha', localizacao: 'Localização', outro: 'Mensagem' };
   const FAMILY_NAME = { whatsapp: 'WhatsApp', crm: 'CRM' };
@@ -6582,7 +6590,8 @@
     if (state.barHiddenByUser && !board.open && !crm.open) return;
     const now = Date.now();
     if (!Array.isArray(state.waLabels) || now - bar.lastAt >= BAR_REFRESH_MS) refreshBar();
-    if (now - bar.crmAt >= CRM_REFRESH_MS) refreshCrmLabels();
+    // 2.4.1: contagens do CRM só com o painel (ou o Quadro) aberto
+    if ((state.open || board.open) && now - bar.crmAt >= CRM_REFRESH_MS) refreshCrmLabels();
   }
 
   function setBarHidden(hidden) {

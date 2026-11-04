@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/resumoAnualCalc';
+import { startVisibleInterval } from '../lib/visibleInterval';
 
 // Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
 const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
@@ -471,8 +472,8 @@ export default function CorreiosTracking() {
   useEffect(() => {
     loadAndUpdate(); // eslint-disable-line @typescript-eslint/no-floating-promises
     loadMetrics(); // eslint-disable-line @typescript-eslint/no-floating-promises
-    const interval = setInterval(loadAndUpdate, AUTO_REFRESH_MS); // eslint-disable-line @typescript-eslint/no-floating-promises
-    return () => clearInterval(interval);
+    // Desempenho: a atualização automática (30 min) só roda com a aba visível
+    return startVisibleInterval(() => { loadAndUpdate(); }, AUTO_REFRESH_MS); // eslint-disable-line @typescript-eslint/no-floating-promises
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUpdateAll = async () => {

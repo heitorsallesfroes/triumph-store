@@ -471,9 +471,16 @@
 
   // ── Motor ────────────────────────────────────────────────────────────────
 
+  // 2.4.1 (desempenho): o relógio local bate a cada 10 s, mas só consulta o banco quando vence um prazo:
+  //  - trava: a dona renova a cada 60 s; as outras abas só tentam pegar a cada 2 min;
+  //  - "tem algo ativo?" (agendados, disparos, automações): 1 verificação leve a cada 2 min;
+  //  - com algo ativo: procura trabalho no máximo a cada 60 s; contagens de envio a cada 5 min.
   const TICK_MS = 10 * 1000;
-  const LEASE_MS = 30 * 1000;
-  const LEASE_TTL_S = 90;
+  const LEASE_MS = 60 * 1000;
+  const LEASE_TTL_S = 150;
+  const ACTIVITY_MS = 2 * 60 * 1000;
+  const WORK_MS = 60 * 1000;
+  const COUNTS_MS = 5 * 60 * 1000;
   const FOLLOW_EVAL_MS = 60 * 1000;
   const PROBE_MS = 5 * 60 * 1000;
   const FIRST_MS = 5 * 1000;
@@ -506,6 +513,14 @@
       noSendLabelId: null,
       current: null,           // { source } enquanto envia
       probeAt: 0,
+      // 2.4.1: prazos das consultas (ms) e o que está ativo
+      leaseAt: 0,              // última renovação da nossa trava
+      claimAt: 0,              // última tentativa de pegar a trava (sem tê-la)
+      activityAt: 0,           // última verificação "tem algo ativo?"
+      workAt: 0,               // próxima busca de trabalho permitida
+      countsAt: 0,             // última contagem de envios no banco
+      active: null,            // { schedules, campaigns, automations: [...], flows }
+      activeAutomations: [],
     };
     const failedRecently = new Map(); // `${flowId}:${contactId}` → até quando não tentar
     let busy = false;
@@ -552,17 +567,24 @@
     async function ensureLease({ force = false } = {}) {
       if (st.available !== true) return false;
       const holding = st.leaseUntil > now();
-      // Renovada há menos de 30 s: não precisa pedir de novo
-      if (!force && holding && st.leaseUntil - now() > (LEASE_TTL_S * 1000) - LEASE_MS) return true;
+      // 2.4.1: renovada há menos de 60 s: não precisa pedir de novo
+      if (!force && holding && now() - st.leaseAt < LEASE_MS) return true;
+      // Sem a trava: só tenta pegar a cada 2 min (as outras abas não consultam mais nada)
+      if (!force && !holding && st.claimAt && now() - st.claimAt < ACTIVITY_MS) return false;
       // Sem o WhatsApp pronto nesta aba: não pega nem renova (outra aba pronta assume quando vencer)
       if (!(await waReady())) {
         if (!holding) st.role = pausedNow() ? 'pausado' : null;
         return holding;
       }
+      st.claimAt = now();
       let r = null;
       try { r = await api('claimLease', { runnerId, ttlS: LEASE_TTL_S }); } catch { r = null; }
       if (r && r.held) {
         st.leaseUntil = Date.parse(r.lease_until) || now() + LEASE_TTL_S * 1000;
+        st.leaseAt = now();
+        if (!holding) st.activityAt = 0; // acabou de pegar: confere logo o que está ativo
+        // A renovação já traz as configurações (sem outra consulta)
+        if (r.settings && typeof r.settings.max_per_hour === 'number') st.settings = r.settings;
         st.role = pausedNow() ? 'pausado' : 'este';
         return true;
       }
@@ -571,8 +593,23 @@
       return r ? false : holding;
     }
 
+    // 2.4.1: "tem algo ativo?" — agendados vencendo, disparos rodando/começando, automações (ou réguas) ativas
+    async function refreshActivity() {
+      st.activityAt = now();
+      let a = null;
+      try { a = await api('engineActivity', { automations: st.automationsAvailable === true, campaigns: st.campaignsAvailable === true }); } catch { a = null; }
+      if (!a) return st.active; // erro: mantém o que sabia
+      const list = Array.isArray(a.automations) ? a.automations : [];
+      if (JSON.stringify(list) !== JSON.stringify(st.activeAutomations)) st.lastEvalAt = 0;
+      st.activeAutomations = list;
+      st.active = { schedules: !!a.schedules, campaigns: !!a.campaigns, automations: list.length > 0, flows: !!a.flows };
+      return st.active;
+    }
+    const anyActive = () => !!(st.active && (st.active.schedules || st.active.campaigns || st.active.automations || st.active.flows));
+
     async function refreshCounts() {
       const t = now();
+      st.countsAt = t;
       try {
         const c = await api('sendCounts', { hourSince: new Date(t - 3600 * 1000).toISOString(), daySince: new Date(midnightOf(t)).toISOString() });
         if (c && Number.isFinite(c.hour) && Number.isFinite(c.day)) st.counts = { hour: c.hour, day: c.day };
@@ -782,8 +819,8 @@
     }
 
     // Avalia as automações ativas para os contatos das etiquetas dos gatilhos (só leitura)
-    async function evaluateAutomations() {
-      const list = st.automations.filter((a) => a.active).sort((a, b) => (a.position || 0) - (b.position || 0));
+    async function evaluateAutomations(source) {
+      const list = (Array.isArray(source) ? source : st.automations).filter((a) => a.active).sort((a, b) => (a.position || 0) - (b.position || 0));
       if (!list.length) return [];
       const labelList = list.filter((a) => a.trigger_type !== 'venda_registrada');
       const saleList = list.filter((a) => a.trigger_type === 'venda_registrada');
@@ -796,7 +833,9 @@
       if (!Array.isArray(buyers)) buyers = [];
       if (!people.length && !buyers.length) return [];
       let ran = [];
-      try { ran = await api('automationRuns', { automationIds: list.map((a) => a.id) }); } catch { ran = null; }
+      // 2.4.1: só as execuções destes contatos (filtro no banco)
+      const contactIds = [...new Set([...people, ...buyers].map((c) => c.id).filter(Boolean))];
+      try { ran = await api('automationRuns', { automationIds: list.map((a) => a.id), contactIds }); } catch { ran = null; }
       if (!Array.isArray(ran)) return []; // sem saber o que já rodou, não executa nada
       const ranKeys = new Set(ran);
       const chatIds = [...new Set([...people, ...buyers].map(chatIdOfContact).filter(Boolean))];
@@ -829,10 +868,10 @@
     }
 
     async function refreshAutomationQueue() {
-      await loadAutomations();
+      // 2.4.1: a lista de automações ativas já vem da verificação de atividade (sem consulta extra)
       st.lastEvalAt = now();
       let rows;
-      try { rows = await evaluateAutomations(); } catch { return; }
+      try { rows = await evaluateAutomations(st.activeAutomations); } catch { return; }
       const t = now();
       const sending = new Set();
       st.queue = rows.filter((r) => {
@@ -934,28 +973,46 @@
         if (deps.legacyTick) await deps.legacyTick();
         return;
       }
-      if (!(await loadSettings())) {
-        if (deps.legacyTick) await deps.legacyTick();
+      // 2.4.1: configurações só na 1ª vez (depois vêm junto com a renovação da trava)
+      if (st.available !== true || !st.settings) {
+        if (!(await loadSettings())) {
+          if (deps.legacyTick) await deps.legacyTick();
+          return;
+        }
+      }
+      // Só a aba com a trava continua; as outras não consultam mais nada (tentam a trava a cada 2 min)
+      const holding = await ensureLease();
+      if (!holding) {
+        if (st.settings.paused_all) { st.role = 'pausado'; st.waiting = 'pausado'; return; }
+        st.waiting = st.role === 'outro' ? 'outro computador executa' : 'WhatsApp não pronto';
         return;
       }
       await ensureNoSendLabel();
-      const holding = await ensureLease();
       if (st.settings.paused_all) { st.role = 'pausado'; st.waiting = 'pausado'; return; }
-      if (!holding) { st.waiting = st.role === 'outro' ? 'outro computador executa' : 'WhatsApp não pronto'; return; }
       st.role = 'este';
       if (deps.isManualBusy && deps.isManualBusy()) { st.waiting = 'envio manual em andamento'; return; }
       if (!isBusinessTime(now(), st.settings)) { st.waiting = 'fora do horário'; return; }
+      // Tem algo ativo? (1 verificação leve a cada 2 min; sem nada ativo, não faz mais nada)
+      if (!st.active || now() - st.activityAt >= ACTIVITY_MS) await refreshActivity();
+      if (!anyActive()) { st.waiting = 'nada ativo'; return; }
+      if (now() < st.nextAllowedAt) { st.waiting = 'intervalo entre contatos'; return; }
+      // Com algo ativo: no máximo uma busca de trabalho a cada 60 s (depois de um envio, segue direto)
+      if (now() < st.workAt) return;
       if (!(await waReady())) { st.waiting = 'WhatsApp não pronto'; return; }
-      await refreshCounts();
+      if (!st.countsAt || now() - st.countsAt >= COUNTS_MS) await refreshCounts();
       const lim = limitCheck(st.counts, st.settings);
       if (!lim.ok) { st.waiting = lim.reason; return; }
-      if (now() < st.nextAllowedAt) { st.waiting = 'intervalo entre contatos'; return; }
       st.waiting = '';
-      // Ordem: agendados (hora marcada) → disparos → follows
-      let job = await scheduleJob();
-      if (!job && st.campaignsAvailable && deps.campaignJob) job = await deps.campaignJob(api);
-      if (!job) job = st.automationsAvailable ? await automationJob() : await followJob();
+      st.workAt = now() + WORK_MS;
+      // Ordem: agendados (hora marcada) → disparos → follows. Só procura o que está ativo.
+      let job = st.active.schedules ? await scheduleJob() : null;
+      if (!job && st.campaignsAvailable && st.active.campaigns && deps.campaignJob) job = await deps.campaignJob(api);
+      if (!job) {
+        if (st.automationsAvailable) job = st.active.automations ? await automationJob() : null;
+        else job = st.active.flows ? await followJob() : null;
+      }
       if (!job) return false;
+      st.workAt = 0; // achou trabalho: o próximo ciclo pode procurar de novo (o intervalo entre envios continua valendo)
       // A trava ainda é nossa? (renova antes de enviar)
       if (!(await ensureLease({ force: st.leaseUntil - now() < 45 * 1000 }))) return false;
       if (st.settings.paused_all) return false;
@@ -992,13 +1049,17 @@
       if (didJob && st.role === 'este') wakeAt(Math.max(st.nextAllowedAt, now()) + 100);
     }
 
+    // Renovação forçada da trava (a renovação normal acontece no próprio ciclo, a cada 60 s)
     async function leaseTick() {
       if (busy || st.available !== true) return;
-      try {
-        if (!(await loadSettings())) return;
-        await ensureLease({ force: true });
-      } catch { /* próximo */ }
+      try { await ensureLease({ force: true }); } catch { /* próximo */ }
       changed();
+    }
+
+    // Algo foi criado/ativado neste painel (agendado, disparo, automação): confere já no próximo ciclo
+    function poke() {
+      st.activityAt = 0;
+      st.workAt = 0;
     }
 
     function start() {
@@ -1006,7 +1067,6 @@
       const set = deps.setTimer || ((fn, ms, repeat) => (repeat ? setInterval(fn, ms) : setTimeout(fn, ms)));
       timers.push(set(() => tick(), FIRST_MS, false));
       timers.push(set(() => tick(), TICK_MS, true));
-      timers.push(set(() => leaseTick(), LEASE_MS, true));
     }
 
     function stop() {
@@ -1048,7 +1108,7 @@
     }
 
     return {
-      state: st, runnerId, start, stop, tick, leaseTick, setPaused, saveSettings, simulate, loadSettings, loadFlows,
+      state: st, runnerId, start, stop, tick, leaseTick, poke, refreshActivity, setPaused, saveSettings, simulate, loadSettings, loadFlows,
       refreshCounts, evaluate, ensureNoSendLabel, loadAutomations, evaluateAutomations,
     };
   }

@@ -641,6 +641,24 @@ guardada.
 
 ## O que mudou
 
+### 2.4.1 (desempenho do banco)
+- Só a aba com a trava trabalha em segundo plano; as outras só tentam pegar a
+  trava a cada 2 min. A trava é renovada a cada 60 s (era 30 s) e a renovação
+  já traz as configurações.
+- O motor confere "tem algo ativo?" (agendados, disparos, automações) a cada
+  2 min. Sem nada ativo, não consulta mais nada. Com algo ativo, busca trabalho
+  no máximo a cada 60 s, e as contagens de envio são lidas a cada 5 min.
+- As execuções das automações são filtradas pelos contatos no banco. As
+  listas grandes vêm em páginas de 1000 (sem `limit=10000`).
+- Contagens das etiquetas CRM só com o painel (ou o Quadro) aberto, a cada
+  5 min. Listas das seções Agendados, Disparos e Automações: a cada 60 s e só
+  com a aba visível. Biblioteca: a cada 5 min, só com a aba visível.
+- Leituras iguais ao mesmo tempo viram uma só, e etiquetas, biblioteca e
+  configurações ficam 45 s em memória (qualquer gravação, entrar ou sair da
+  conta limpa a memória).
+- Criar ou ativar um agendado, disparo ou automação pelo painel faz o motor
+  conferir na hora.
+
 ### 2.4.0
 - **📈 Compra p/ Facebook**: manda o evento de compra ao Conjunto de dados do
   Facebook pela conversa (Edge Function `meta-purchase-event`; token só nos

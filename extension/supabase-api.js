@@ -25,12 +25,52 @@
     return fetch(url, { ...init, headers: { ...(init.headers || {}), apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } });
   }
 
-  async function rest(path, init = {}) {
+  async function restRaw(path, init = {}) {
     const { SUPABASE_URL } = cfg();
     const res = await supaFetch(`${SUPABASE_URL}/rest/v1/${path}`, init);
     const text = await res.text().catch(() => '');
     if (!res.ok) throw new Error(`Supabase ${res.status}: ${text.slice(0, 200)}`);
     return text ? JSON.parse(text) : null;
+  }
+
+  // 2.4.1 (desempenho): duas leituras iguais ao mesmo tempo viram uma só (inclusive de abas
+  // diferentes, porque tudo passa por este background) e as listas que mudam pouco (etiquetas,
+  // biblioteca, configurações) ficam 45 s em memória. Qualquer gravação limpa a memória.
+  const READ_CACHE_MS = 45 * 1000;
+  const CACHED_READ = /^(wa_labels|wa_categories|wa_items|wa_item_parts|wa_settings|system_config)\?/;
+  const readCache = new Map();
+  const inflight = new Map();
+  const copy = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
+  function clearReadCache() { readCache.clear(); }
+
+  async function rest(path, init = {}) {
+    const method = String(init.method || 'GET').toUpperCase();
+    if (method !== 'GET' || init.body !== undefined) {
+      readCache.clear();
+      try { return await restRaw(path, init); } finally { readCache.clear(); }
+    }
+    const hit = readCache.get(path);
+    if (hit && Date.now() - hit.at < READ_CACHE_MS) return copy(hit.data);
+    let p = inflight.get(path);
+    if (!p) {
+      p = restRaw(path, init).then((data) => {
+        if (CACHED_READ.test(path)) readCache.set(path, { data, at: Date.now() });
+        return data;
+      }).finally(() => inflight.delete(path));
+      inflight.set(path, p);
+    }
+    return copy(await p);
+  }
+
+  // Todas as linhas, em páginas de 1000 (o Supabase corta cada resposta em 1000). path com order.
+  async function restAll(path, max = 50000) {
+    const out = [];
+    for (let off = 0; off < max; off += 1000) {
+      const rows = await rest(`${path}&limit=1000&offset=${off}`);
+      out.push(...rows);
+      if (rows.length < 1000) break;
+    }
+    return out;
   }
 
   const ITEM_COLUMNS = 'id,category_id,type,title,body,file_url,file_name,file_size,usage_count,position,created_at';
@@ -232,7 +272,17 @@
   // ── Aba Etiquetas (só leitura) ─────────────────────────────────────────────
 
   // Total de linhas sem baixá-las (HEAD + Prefer: count=exact → Content-Range "*/N")
-  async function countRows(path) {
+  const countInflight = new Map();
+  function countRows(path) {
+    let p = countInflight.get(path);
+    if (!p) {
+      p = countRowsRaw(path).finally(() => countInflight.delete(path));
+      countInflight.set(path, p);
+    }
+    return p;
+  }
+
+  async function countRowsRaw(path) {
     const { SUPABASE_URL } = cfg();
     const res = await supaFetch(`${SUPABASE_URL}/rest/v1/${path}`, {
       method: 'HEAD',
@@ -846,16 +896,17 @@
   // Trava: só assume se ninguém tem, se venceu, ou se já é nossa
   async function claimLease({ runnerId, ttlS }) {
     if (typeof runnerId !== 'string' || !RUNNER_RE.test(runnerId)) throw new Error('Identificador inválido');
-    const ttl = intIn(ttlS, 30, 120, 'Tempo da trava');
+    const ttl = intIn(ttlS, 30, 300, 'Tempo da trava');
     const now = new Date();
     const nowIso = now.toISOString();
     const until = new Date(now.getTime() + ttl * 1000).toISOString();
     const cond = encodeURIComponent(`(lease_until.is.null,lease_until.lt."${nowIso}",runner_id.eq."${runnerId}")`);
-    const rows = await engineRest(`wa_settings?id=eq.1&or=${cond}&select=runner_id,lease_until`,
+    // 2.4.1: a renovação devolve as configurações (o motor não precisa lê-las de novo) e, sem a
+    // trava, não faz a segunda leitura
+    const rows = await engineRest(`wa_settings?id=eq.1&or=${cond}&select=${SETTINGS_COLUMNS}`,
       json('PATCH', 'return=representation', { runner_id: runnerId, lease_until: until }));
-    if (rows.length && rows[0].runner_id === runnerId) return { held: true, lease_until: rows[0].lease_until };
-    const cur = await engineRest('wa_settings?id=eq.1&select=lease_until');
-    return { held: false, lease_until: cur.length ? cur[0].lease_until : null };
+    if (rows.length && rows[0].runner_id === runnerId) return { held: true, lease_until: rows[0].lease_until, settings: rows[0] };
+    return { held: false, lease_until: null };
   }
 
   async function countRows2(path) {
@@ -989,7 +1040,7 @@
   async function fetchFlows() {
     const [flows, variants] = await Promise.all([
       engineRest(`wa_flows?select=${FLOW_COLUMNS}&order=position.asc,created_at.asc`),
-      engineRest(`wa_flow_variants?select=${VARIANT_COLUMNS}&order=flow_id.asc,position.asc&limit=10000`),
+      engineRest(`wa_flow_variants?select=${VARIANT_COLUMNS}&order=flow_id.asc,position.asc,id.asc&limit=1000`),
     ]);
     return flows.map((f) => ({ ...f, variants: variants.filter((v) => v.flow_id === f.id).sort((a, b) => a.position - b.position) }));
   }
@@ -1057,7 +1108,7 @@
     if (!Array.isArray(labelIds) || !labelIds.length || labelIds.length > 50) throw new Error('Lista inválida');
     labelIds.forEach((l) => checkUuid(l));
     const cols = (await chatIdColumn()) ? 'id,name,phone,chat_id' : 'id,name,phone';
-    const rows = await rest(`wa_contact_labels?select=contact_id,contact:wa_contacts!inner(${cols})&label_id=in.${inList(labelIds)}&limit=5000`);
+    const rows = await restAll(`wa_contact_labels?select=contact_id,contact:wa_contacts!inner(${cols})&label_id=in.${inList(labelIds)}&order=contact_id.asc,label_id.asc`, 5000);
     const byId = new Map();
     rows.forEach((r) => {
       if (r.contact && !byId.has(r.contact.id)) byId.set(r.contact.id, { id: r.contact.id, name: r.contact.name || null, phone: r.contact.phone || null, chat_id: r.contact.chat_id || null, labelIds: [], links: [] });
@@ -1065,7 +1116,7 @@
     const ids = [...byId.keys()];
     for (let i = 0; i < ids.length; i += 100) {
       // 2.1.0: created_at = quando o contato entrou na etiqueta (gatilho "entrou na etiqueta" e run_key)
-      const links = await rest(`wa_contact_labels?select=contact_id,label_id,created_at&contact_id=in.${inList(ids.slice(i, i + 100))}&limit=10000`);
+      const links = await restAll(`wa_contact_labels?select=contact_id,label_id,created_at&contact_id=in.${inList(ids.slice(i, i + 100))}&order=contact_id.asc,label_id.asc`);
       links.forEach((l) => {
         const c = byId.get(l.contact_id);
         if (c) { c.labelIds.push(l.label_id); c.links.push({ label_id: l.label_id, created_at: l.created_at || null }); }
@@ -1117,6 +1168,15 @@
   const CAMPAIGN_FILTERS = ['tem_etiqueta', 'nao_tem_etiqueta', 'respondeu_recente'];
   const campaignsV2 = () => probe('wa_campaigns.v2', () => hasColumn('wa_campaigns', 'after_actions'));
   const campCols = async () => ((await campaignsV2()) ? `${CAMPAIGN_COLUMNS},${CAMPAIGN_V2_COLUMNS}` : CAMPAIGN_COLUMNS);
+
+  async function campRestAll(path) {
+    try {
+      return await restAll(path);
+    } catch (err) {
+      if (tableMissing(err, CAMPAIGN_TABLES)) throw new Error(ENGINE_MISSING);
+      throw err;
+    }
+  }
 
   async function campRest(path, init) {
     try {
@@ -1179,7 +1239,7 @@
     const list = await campRest(`wa_campaigns?select=${await campCols()}&order=created_at.desc&limit=30`);
     const counts = Object.fromEntries(list.map((c) => [c.id, { pendente: 0, enviando: 0, enviado: 0, falhou: 0, pulado: 0 }]));
     if (list.length) {
-      const rows = await campRest(`wa_campaign_targets?select=campaign_id,status&campaign_id=in.${inList(list.map((c) => c.id))}&limit=50000`);
+      const rows = await campRestAll(`wa_campaign_targets?select=campaign_id,status&campaign_id=in.${inList(list.map((c) => c.id))}&order=id.asc`);
       rows.forEach((r) => { if (counts[r.campaign_id] && r.status in counts[r.campaign_id]) counts[r.campaign_id][r.status]++; });
     }
     return list.map((c) => ({ ...c, counts: counts[c.id] }));
@@ -1392,6 +1452,33 @@
     }
   }
 
+  async function autoRestAll(path) {
+    try {
+      return await restAll(path);
+    } catch (err) {
+      if (tableMissing(err, AUTOMATION_TABLES)) throw new Error(ENGINE_MISSING);
+      throw err;
+    }
+  }
+
+  // 2.4.1: "tem algo ativo?" para o motor: leituras mínimas (id / poucas linhas), juntas
+  async function engineActivity({ automations = true, campaigns = true } = {}) {
+    const nowMs = Date.now();
+    const soon = encodeURIComponent(new Date(nowMs + 2 * 60 * 1000).toISOString());
+    const none = () => [];
+    const [sch, camp, auto] = await Promise.all([
+      rest(`wa_schedules?select=id&status=eq.pendente&send_at=lte.${soon}&limit=1`).catch(none),
+      campaigns ? rest('wa_campaigns?select=id,status,start_at&status=in.(agendada,rodando)&order=created_at.asc&limit=20').catch(none) : [],
+      automations
+        ? autoRest(`wa_automations?select=${AUTOMATION_COLUMNS}&active=eq.true&order=position.asc,created_at.asc`)
+        : rest('wa_flows?select=id&active=eq.true&limit=1').catch(none),
+    ]);
+    const campaignOn = camp.some((c) => c.status === 'rodando' || (c.start_at && Date.parse(c.start_at) <= nowMs + 2 * 60 * 1000));
+    return automations
+      ? { schedules: sch.length > 0, campaigns: campaignOn, automations: auto, flows: false }
+      : { schedules: sch.length > 0, campaigns: campaignOn, automations: null, flows: auto.length > 0 };
+  }
+
   const cleanKeyword = (v, what) => {
     const kw = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '';
     if (!kw || kw.length > 60) throw new Error(`${what}: palavra do anúncio de 1 a 60 caracteres`);
@@ -1493,11 +1580,23 @@
   }
 
   // Execuções já feitas das automações (para não repetir): "automação:contato:run_key"
-  async function automationRuns({ automationIds }) {
+  async function automationRuns({ automationIds, contactIds }) {
     if (!Array.isArray(automationIds) || automationIds.length > 100) throw new Error('Lista inválida');
     automationIds.forEach((a) => checkUuid(a, 'Automação inválida'));
     if (!automationIds.length) return [];
-    const rows = await autoRest(`wa_automation_runs?select=automation_id,contact_id,run_key&automation_id=in.${inList(automationIds)}&limit=50000`);
+    // 2.4.1: com a lista de contatos, só as execuções deles (filtro no banco, em lotes de 100)
+    const base = `wa_automation_runs?select=automation_id,contact_id,run_key&automation_id=in.${inList(automationIds)}`;
+    let rows = [];
+    if (Array.isArray(contactIds)) {
+      if (contactIds.length > 5000) throw new Error('Lista inválida');
+      contactIds.forEach((c) => checkUuid(c, 'Contato inválido'));
+      const ids = [...new Set(contactIds)];
+      for (let i = 0; i < ids.length; i += 100) {
+        rows.push(...await autoRestAll(`${base}&contact_id=in.${inList(ids.slice(i, i + 100))}&order=id.asc`));
+      }
+    } else {
+      rows = await autoRestAll(`${base}&order=id.asc`);
+    }
     return rows.map((r) => `${r.automation_id}:${r.contact_id}:${r.run_key}`);
   }
 
@@ -1758,7 +1857,7 @@
     if (!ids.length) return [];
     const cols = (await chatIdColumn()) ? 'id,name,phone,chat_id' : 'id,name,phone';
     const contacts = await rest(`wa_contacts?select=${cols}&id=in.${inList(ids)}`);
-    const links = await rest(`wa_contact_labels?select=contact_id,label_id,created_at&contact_id=in.${inList(ids)}&limit=10000`);
+    const links = await restAll(`wa_contact_labels?select=contact_id,label_id,created_at&contact_id=in.${inList(ids)}&order=contact_id.asc,label_id.asc`);
     const info = new Map(contacts.map((c) => [c.id, { id: c.id, name: c.name || null, phone: c.phone || null, chat_id: c.chat_id || null, labelIds: [], links: [] }]));
     links.forEach((l) => { const c = info.get(l.contact_id); if (c) { c.labelIds.push(l.label_id); c.links.push({ label_id: l.label_id, created_at: l.created_at }); } });
     return sales.filter((s) => byChat[s.wa_chat_id] && info.has(byChat[s.wa_chat_id].id))
@@ -1854,6 +1953,7 @@
   }
 
   root.WaApi = {
+    engineActivity, clearReadCache,
     metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,
     erpCatalog, createSaleFromChat, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve,

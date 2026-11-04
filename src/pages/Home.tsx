@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/resumoAnualCalc';
+import { startVisibleInterval, AUTO_REFRESH_5_MIN } from '../lib/visibleInterval';
 
 // Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
 const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
@@ -511,8 +512,8 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
 
   useEffect(() => {
     load();
-    const iv = setInterval(() => load(true), 60_000);
-    return () => clearInterval(iv);
+    // Desempenho: atualiza sozinho a cada 5 min e só com a aba visível (antes: a cada 1 min)
+    return startVisibleInterval(() => load(true), AUTO_REFRESH_5_MIN);
   }, [load]);
 
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>('7d');
@@ -628,8 +629,8 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
 
   useEffect(() => {
     loadChartData(chartPeriod);
-    const iv = setInterval(() => loadChartData(chartPeriod), 60_000);
-    return () => clearInterval(iv);
+    // Desempenho: a cada 5 min e só com a aba visível (antes: a cada 1 min)
+    return startVisibleInterval(() => loadChartData(chartPeriod), AUTO_REFRESH_5_MIN);
   }, [chartPeriod, loadChartData]);
 
   if (loading) {

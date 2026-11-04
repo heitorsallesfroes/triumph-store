@@ -251,6 +251,7 @@ export default function RastreamentoSedex() {
       setCountdown(prev => {
         if (prev <= 1) {
           setTimeout(() => {
+            if (document.visibilityState !== 'visible') return; // desempenho: aba escondida não atualiza
             const ids = salesRef.current
               .filter(s => s.status !== 'entregue' && !!s.tracking_code?.trim())
               .map(s => s.id);

@@ -75,7 +75,7 @@ const HANDLERS = {
   saveAutomation:       (m) => WaApi.saveAutomation({ id: m.id, automation: m.automation }),
   setAutomationActive:  (m) => WaApi.setAutomationActive({ id: m.id, active: m.active }),
   deleteAutomation:     (m) => WaApi.deleteAutomation({ id: m.id }),
-  automationRuns:       (m) => WaApi.automationRuns({ automationIds: m.automationIds }),
+  automationRuns:       (m) => WaApi.automationRuns({ automationIds: m.automationIds, contactIds: m.contactIds }),
   automationReserve:    (m) => WaApi.automationReserve({ automationId: m.automationId, contactId: m.contactId, runKey: m.runKey }),
   automationUnreserve:  (m) => WaApi.automationUnreserve({ id: m.id }),
   applySendLabels:      (m) => WaApi.applySendLabels({ addLabelId: m.addLabelId, removeLabelId: m.removeLabelId, contactId: m.contactId, identity: m.identity, chatId: m.chatId, name: m.name }),
@@ -87,6 +87,8 @@ const HANDLERS = {
   fetchChatSales:        ()  => WaApi.fetchChatSales(),
   saleContactLabels:     (m) => WaApi.saleContactLabels({ chatId: m.chatId, name: m.name, phone: m.phone, addLabelId: m.addLabelId, removeLabelIds: m.removeLabelIds }),
   saleTriggerCandidates: (m) => WaApi.saleTriggerCandidates({ sinceDays: m.sinceDays }),
+  // 2.4.1: "tem algo ativo?" do motor (leituras mínimas)
+  engineActivity:        (m) => WaApi.engineActivity({ automations: m.automations !== false, campaigns: m.campaigns !== false }),
   // Conversões do Facebook (2.4.0): só sendPurchaseEvent manda algo, e só pelo botão "Enviar compra"
   metaStatus:            ()  => WaApi.metaStatus(),
   sendPurchaseEvent:     (m) => WaApi.sendPurchaseEvent({ event: m.event }),
@@ -95,8 +97,9 @@ const HANDLERS = {
   lastChatSaleValue:     (m) => WaApi.lastChatSaleValue({ chatId: m.chatId, phone: m.phone }),
   // Conta (1.9.1): a senha só segue para o Supabase Auth; o painel recebe só conectada/dica do e-mail
   authStatus:      ()  => WaAuth.status(),
-  authSignIn:      (m) => WaAuth.signIn({ email: m.email, password: m.password }),
-  authSignOut:     ()  => WaAuth.signOut(),
+  // 2.4.1: trocar de conta limpa as leituras guardadas em memória
+  authSignIn:      (m) => { WaApi.clearReadCache(); return WaAuth.signIn({ email: m.email, password: m.password }).finally(() => WaApi.clearReadCache()); },
+  authSignOut:     ()  => { WaApi.clearReadCache(); return WaAuth.signOut().finally(() => WaApi.clearReadCache()); },
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
