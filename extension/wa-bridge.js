@@ -896,7 +896,11 @@
     const phone = await pnOfChat(chatId);
     let name = null;
     const chat = safe(() => wpp.chat.get(chatId), null);
-    if (chat) name = realName(chatCard(chat, false).name);
+    // 2.6.3: nome DESTA conversa: título salvo; senão o nome/pushname do contato desta conversa
+    if (chat) {
+      name = realName(safe(() => chat.formattedTitle, null)) || realName(safe(() => chat.name, null)) || realName(safe(() => chat.contact.name, null))
+        || realName(safe(() => chat.contact.pushname, null)) || realName(safe(() => chat.contact.verifiedName, null));
+    }
     if (!name && /@lid$/.test(chatId) && wpp.contact && typeof wpp.contact.getPnLidEntry === 'function') {
       try {
         const e = await withTimeout(wpp.contact.getPnLidEntry(chatId), 2000);
@@ -904,6 +908,22 @@
       } catch { /* sem nome */ }
     }
     return { phone, name, via: /@c\.us$/.test(chatId) ? 'numero' : phone ? 'lid' : null };
+  }
+
+  // ── 2.6.3: trava do telefone (antes de enviar Compra/Contato e de lançar a venda) ──
+  // O telefone tem que ser DESTA conversa: @c.us → os dígitos do próprio id; @lid → o que
+  // contact.getPnLidEntry devolve agora para ESTE @lid. requireActive: a conversa ainda é a aberta.
+  // Devolve só sim/não (nunca o número).
+  const normPhone = (v) => { const d = String(v == null ? '' : v).replace(/\D/g, ''); return d.length === 10 || d.length === 11 ? `55${d}` : d; };
+  async function verifyChatPhone(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const p = payload || {};
+    const chatId = p.chatId;
+    if (typeof chatId !== 'string' || !/^[0-9]+@(c\.us|lid)$/.test(chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida', 'before-send');
+    const act = activeChat();
+    const expected = await pnOfChat(chatId);
+    const given = normPhone(p.phone);
+    return { active: act.chatId === chatId, known: !!expected, match: !!expected && !!given && given === normPhone(expected) };
   }
 
   // ── 2.6.0: leads novos de anúncio (evento chat.new_message), só na memória desta aba ──
@@ -1091,6 +1111,7 @@
     adContext: (payload) => adContext(payload),
     labelEvents: () => labelEvents(),
     chatPhone: (payload) => chatPhone(payload),
+    verifyChatPhone: (payload) => verifyChatPhone(payload),
     adLeads: () => adLeads(),
     adAttributions: (payload) => adAttributions(payload),
     labelChatIds: (payload) => labelChatIds(payload),

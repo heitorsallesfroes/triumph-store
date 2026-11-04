@@ -2140,10 +2140,12 @@
     if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
     const add = addLabelId ? checkUuid(addLabelId, 'Etiqueta inválida') : null;
     const remove = Array.isArray(removeLabelIds) ? removeLabelIds.slice(0, 50).map((l) => checkUuid(l, 'Etiqueta inválida')) : [];
-    let found = (await contactsByChats([chatId]))[chatId];
+    const ph = phoneOfChat(chatId) || (typeof phone === 'string' && /^\d{8,15}$/.test(phone.replace(/\D/g, '')) ? phone.replace(/\D/g, '') : null);
+    let found = (await contactRowsByChats([chatId]))[chatId];
+    // 2.6.3: contato com o chat_id desta conversa mas telefone de outra pessoa: não usa (evita etiquetar a pessoa errada)
+    if (found && found.phone && ph && found.phone !== ph) found = null;
     let contactId = found && found.id;
     if (!contactId) {
-      const ph = phoneOfChat(chatId) || (typeof phone === 'string' && /^\d{8,15}$/.test(phone.replace(/\D/g, '')) ? phone.replace(/\D/g, '') : null);
       const nm = clip(name, 100);
       const c = ph ? await ensureContact({ key: `tel:${ph}`, phone: ph, name: nm }) : nm ? await ensureContact({ key: nameKey(nm), phone: null, name: nm }) : null;
       if (!c) return { contactId: null, labelIds: [] };

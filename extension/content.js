@@ -1535,6 +1535,69 @@
     if (prevFirst !== null && prevFirst !== state.ctx.firstName) refreshOpenBubble();
     onConversationIdentity(state.ctx.identity);
     renderSaleQuick();
+    scheduleChatCheck();
+  }
+
+  // 2.6.3: trocou de conversa → fecha as telas ligadas à conversa (📈, 💰, agendar com algo digitado,
+  // 🔁 da conversa), descarta o que foi digitado e não enviado (inclusive a prévia editada e a nota) e
+  // volta para Mensagens se uma dessas telas estava aberta. As telas gerais ficam onde estavam.
+  const convWatch = { chatId: undefined, timer: null, busy: false };
+  function scheduleChatCheck() {
+    if (convWatch.timer || convWatch.busy) return;
+    convWatch.timer = setTimeout(() => { convWatch.timer = null; checkActiveChat(); }, 150);
+  }
+  async function checkActiveChat() {
+    convWatch.busy = true;
+    let c = null;
+    try { c = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { c = null; }
+    convWatch.busy = false;
+    if (!c) return;
+    const id = chatKeyOf(c);
+    if (convWatch.chatId === undefined) { convWatch.chatId = id; return; }
+    if (id === convWatch.chatId) return;
+    convWatch.chatId = id;
+    closeConversationScreens();
+  }
+  const chatKeyOf = (c) => (c && c.kind === 'individual' ? c.chatId : `(${c ? c.kind : 'nenhuma'})`);
+
+  // Um formulário da conversa está abrindo agora (com a conversa ativa da WA-JS em mãos): se ela não é a
+  // conversa que o painel conhecia, descarta as telas da anterior (menos a que está abrindo) e passa a valer esta.
+  function adoptChat(c, keep) {
+    const id = chatKeyOf(c);
+    if (convWatch.chatId !== undefined && convWatch.chatId !== id) closeConversationScreens({ keep, stay: true });
+    convWatch.chatId = id;
+  }
+
+  function closeConversationScreens({ keep = null, stay = false } = {}) {
+    let leave = false;
+    if (keep !== 'cv' && (cv.form || cv.view !== 'list')) {
+      if (state.section === 'conversoes') leave = true;
+      cv.form = null; cv.view = 'list'; cv.done = null; cv.msg = ''; cv.err = false;
+    }
+    if (keep !== 'vs' && (vs.form || vs.view !== 'list')) {
+      if (state.section === 'vendas') leave = true;
+      vs.form = null; vs.view = 'list'; vs.done = null; vs.msg = ''; vs.err = false; vs.courier = null;
+    }
+    if (keep !== 'fl' && fl.view === 'conversa') {
+      if (state.section === 'follows') leave = true;
+      fl.conv = null; fl.view = 'list';
+    }
+    const sf = sched.form;
+    if (!sf.saving) {
+      if ((sf.body || sf.itemId) && state.section === 'agendados') leave = true;
+      Object.assign(sf, { mode: 'texto', itemId: '', body: '', date: '', time: '', msg: '', error: false });
+    }
+    // Prévia editada ("Enviar só nesta conversa") e nome digitado: valiam só para a conversa anterior
+    pvEdits.clear();
+    if (state.previewId) { state.previewId = null; renderList(); }
+    // Nota do cliente: relê a da conversa nova (o rascunho da anterior é descartado)
+    scheduleNote(true);
+    // Redesenha as telas (o formulário antigo não pode ficar escondido no painel)
+    if (keep !== 'cv') renderConversoes();
+    if (keep !== 'vs') renderVendas();
+    if (keep !== 'fl') renderFollows();
+    renderSched();
+    if (leave && !stay) setSection('mensagens');
   }
 
   // ── Etiquetas da conversa ──────────────────────────────────────────────────
@@ -5579,6 +5642,7 @@
     if (!c) return;
     const open = await openChatContact();
     c.open = open;
+    if (open) adoptChat({ kind: 'individual', chatId: open.chatId }, 'fl'); // 2.6.3
     if (open) {
       try {
         if (!motor.state.automations.length) await motor.loadAutomations();
@@ -5771,13 +5835,13 @@
     let chat = null;
     try { chat = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { chat = null; }
     const chatId = chat && chat.kind === 'individual' ? chat.chatId : null;
-    const phone = ctx.identity && ctx.identity.phone ? ctx.identity.phone : (chatId && /^\d+@c\.us$/.test(chatId) ? chatId.split('@')[0] : '');
-    const fullName = ctx.fullName && !ctx.isNumber ? ctx.fullName : '';
+    // 2.6.3: nada da tela (cabeçalho/CRM do contato da tela): só desta conversa (chatId da WA-JS)
+    const phone = chatId && /^\d+@c\.us$/.test(chatId) ? chatId.split('@')[0] : '';
     // Etiquetas de gatilho das automações ativas (carrega se o motor ainda não leu)
     if (!motor.state.automations.length) await motor.loadAutomations();
     const autoLabels = activeAutomations().map((a) => a.trigger_label_id).filter(Boolean);
     vs.form = {
-      chatId, customer_name: (ctx.identity && crmNames.get(ctx.identity.key)) || fullName || '', customer_phone: phone || '',
+      chatId, customer_name: '', customer_phone: phone || '',
       items: [], search: '', accessories: [], payment_method: 'credit_card', card_brand: 'visa_mastercard', installments: 10, payment_status: 'a_cobrar',
       delivery_type: 'motoboy', motoboy_id: '', delivery_fee: TS.DEFAULT_DELIVERY_FEE, delivery_cost: 0,
       city: '', neighborhood: '', address_street: '', address_number: '', address_complement: '', reference: '', zip_code: '', schedule: '', notes: '',
@@ -5785,16 +5849,18 @@
       moveLabels: true, clientLabel: labelRef('Cliente'), removeLabels: state.convLabelIds.filter((l) => autoLabels.includes(l)),
       dupAsk: false,
     };
+    const f = vs.form;
+    adoptChat(chat, 'vs');
     if (!vs.catalog) await loadSaleCatalog();
+    if (vs.form !== f) return; // trocou de conversa no meio: descarta
     renderVendas();
     if (chatId) {
       try {
         const info = await waRequest('chatSaleInfo', { chatId }, { timeout: 4000 });
-        if (info && info.ad) { vs.form.ad = info.ad; vs.form.origin = 'anuncio'; }
-        if (info) vs.form.saleInfo = info;
+        if (vs.form === f && info && info.ad) { f.ad = info.ad; f.origin = 'anuncio'; }
+        if (vs.form === f && info) f.saleInfo = info;
       } catch { /* sem origem detectada */ }
-      // 2.6.0: telefone verdadeiro de conversa @lid (ou o do CRM) e nome do CRM/WhatsApp
-      const f = vs.form;
+      // 2.6.0/2.6.3: telefone verdadeiro desta conversa (@lid pelo WhatsApp) e o nome desta conversa
       const pn = await chatPhoneName(chatId);
       if (vs.form === f) {
         if (!f.customer_phone && pn.phone) f.customer_phone = pn.phone;
@@ -5805,16 +5871,34 @@
     }
   }
 
-  // 2.6.0: telefone e nome automáticos da conversa (📈, 💰). @lid: o WhatsApp diz o número verdadeiro (cache
-  // local); senão o telefone salvo no contato do CRM. Nome: CRM, depois o do WhatsApp. Nada: fica vazio.
+  // 2.6.3: telefone e nome SÓ desta conversa (📈, 💰). Telefone: @c.us = os dígitos do id; @lid = o que o
+  // WhatsApp diz para este @lid. Nunca o telefone do CRM (o chat_id salvo no CRM pode estar em outro contato).
+  // Nome: o desta conversa (nome salvo/pushname); o do CRM só se o telefone do CRM for o desta conversa.
+  const samePhone = (a, b) => { const n = (v) => { const d = String(v || '').replace(/\D/g, ''); return d.length === 10 || d.length === 11 ? `55${d}` : d; }; return !!n(a) && n(a) === n(b); };
   async function chatPhoneName(chatId) {
     let wa = null;
     let crm = null;
     try { wa = await waRequest('chatPhone', { chatId }, { timeout: 4000 }); } catch { wa = null; }
-    try { crm = await call('chatContactInfo', { chatId }); } catch { crm = null; }
-    const phone = (wa && wa.phone) || (crm && crm.phone) || '';
-    const name = (crm && crm.name) || (wa && wa.name) || '';
-    return { phone: String(phone).replace(/\D/g, ''), name };
+    const phone = String((wa && wa.phone) || '').replace(/\D/g, '');
+    let name = (wa && wa.name) || '';
+    if (!name && phone) {
+      try { crm = await call('chatContactInfo', { chatId }); } catch { crm = null; }
+      if (crm && crm.name && samePhone(crm.phone, phone)) name = crm.name;
+    }
+    return { phone, name };
+  }
+
+  // 2.6.3: trava antes de enviar/lançar: o telefone tem que ser desta conversa (e a conversa ainda a aberta)
+  const PHONE_LOCK_MSG = 'O telefone não é desta conversa. Confira antes de enviar.';
+  async function phoneLock(chatId, phone, { requireActive = true, allowEmpty = false } = {}) {
+    if (!chatId) return 'Abra uma conversa individual no WhatsApp.';
+    let r = null;
+    try { r = await waRequest('verifyChatPhone', { chatId, phone: phone || '' }, { timeout: 5000 }); } catch { r = null; }
+    if (!r) return 'Não consegui conferir o telefone desta conversa no WhatsApp. Tente de novo.';
+    if (requireActive && !r.active) return 'A conversa mudou. Abra o formulário de novo na conversa certa.';
+    if (!String(phone || '').replace(/\D/g, '')) return allowEmpty ? null : PHONE_LOCK_MSG;
+    if (!r.match) return PHONE_LOCK_MSG;
+    return null;
   }
 
   function saleTotals(f) {
@@ -6117,6 +6201,9 @@
     vs.busy = true;
     vs.msg = '';
     renderVendas();
+    // 2.6.3: trava: telefone desta conversa (vazio pode) e a conversa ainda é a aberta
+    const lock = await phoneLock(f.chatId, f.customer_phone, { allowEmpty: true });
+    if (lock || vs.form !== f) { vs.busy = false; if (vs.form === f) { vs.msg = lock; vs.err = true; } renderVendas(); return; }
     try {
       if (!confirmedDup) {
         const dup = await call('recentChatSale', { chatId: f.chatId, phone: f.customer_phone });
@@ -6312,11 +6399,10 @@
     const l = ca.queue.shift();
     ca.lastSentAt = Date.now();
     ca.sent.add(l.chatId);
-    let phone = l.phone || '';
-    let name = l.name || '';
-    if (!phone || !name) {
-      try { const c = await call('chatContactInfo', { chatId: l.chatId }); phone = phone || (c && c.phone) || ''; name = (c && c.name) || name; } catch { /* sem CRM */ }
-    }
+    // 2.6.3: telefone só o do WhatsApp para ESTA conversa (conferido); nome desta conversa
+    const phone = l.phone || '';
+    const name = l.name || '';
+    if (phone && (await phoneLock(l.chatId, phone, { requireActive: false }))) return; // não bate: não envia
     const ad = l.ad || {};
     try {
       await call('sendContactEvent', { event: {
@@ -6350,9 +6436,11 @@
     let chat = null;
     try { chat = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { chat = null; }
     const chatId = chat && chat.kind === 'individual' ? chat.chatId : null;
-    const phone = (ctx.identity && ctx.identity.phone) || (chatId && /^\d+@c\.us$/.test(chatId) ? chatId.split('@')[0] : '');
+    // 2.6.3: nada da tela (cabeçalho/CRM do contato da tela): só desta conversa (chatId da WA-JS)
+    const phone = chatId && /^\d+@c\.us$/.test(chatId) ? chatId.split('@')[0] : '';
+    adoptChat(chat, 'cv');
     cv.form = {
-      chatId, phone, name: (ctx.identity && crmNames.get(ctx.identity.key)) || (ctx.isNumber ? '' : ctx.fullName) || '',
+      chatId, phone, name: '',
       value: '', when: nowLocalInput(), description: '', ad: null, adLoaded: false, recent: null, askAgain: false, eventId: crypto.randomUUID(),
     };
     renderConversoes();
@@ -6495,17 +6583,18 @@
     cv.busy = true;
     cv.msg = '';
     renderConversoes();
+    // 2.6.3: trava: o telefone tem que ser desta conversa (e a conversa ainda a aberta)
+    const lock = await phoneLock(f.chatId, f.phone);
+    if (lock || cv.form !== f) { cv.busy = false; if (cv.form === f) { cv.msg = lock; cv.err = true; } renderConversoes(); return; }
     try {
       const r = await call('sendPurchaseEvent', { event: {
         event_id: f.eventId, chat_id: f.chatId, phone: f.phone, contact_name: f.name, value, event_time: Math.floor(whenMs / 1000),
         description: f.description, test: cv.test,
         ad: f.ad ? { title: f.ad.title, source_id: f.ad.sourceId, source_app: f.ad.platform || f.ad.sourceApp, conversion_source: f.ad.conversionSource || null, ctwa_clid: f.ad.ctwaClid || null } : null,
       } });
-      cv.done = { ...r, value };
-      cv.view = 'done';
+      if (cv.form === f) { cv.done = { ...r, value }; cv.view = 'done'; }
     } catch (e) {
-      cv.msg = e.message;
-      cv.err = true;
+      if (cv.form === f) { cv.msg = e.message; cv.err = true; }
     }
     cv.busy = false;
     renderConversoes();

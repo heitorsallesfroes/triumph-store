@@ -667,6 +667,25 @@ o que hoje é feito pelo Tintim.
 - Precisa da migration `supabase/migrations/20261104160000_wa_ad_attribution.sql`.
   Sem ela, o 📈 continua procurando nas mensagens (carregadas e antigas).
 
+**2.6.3 — nome e telefone sempre DESTA conversa:**
+
+- No 📈 e no 💰, o telefone vem só da própria conversa: em conversa com número,
+  os dígitos dela; em conversa `@lid`, o número que o WhatsApp dá para ela.
+  Nunca o telefone salvo no CRM nem o que aparece na tela de outra conversa.
+  O nome é o desta conversa (nome salvo ou o nome que o cliente usa); o do CRM
+  só entra se o telefone do CRM for o desta conversa.
+- **Trava antes de enviar** (Compra, Contato automático e 💰 Venda): se o
+  telefone não for desta conversa, nada sai e aparece "O telefone não é desta
+  conversa. Confira antes de enviar.". Se a conversa mudou no meio, também
+  não envia.
+- **Trocou de conversa:** as telas ligadas à conversa fecham (📈 Compra, 💰
+  Venda, 🔁 "Esta conversa nas automações" e o Agendar com algo digitado) e o
+  painel volta para **Mensagens**. O que estava digitado e não foi enviado é
+  descartado sem perguntar (inclusive a prévia editada e a nota do cliente).
+  Respostas de buscas da conversa anterior que chegam depois são ignoradas. As
+  telas gerais (Disparos, Quadro, Automações, Etiquetas, lista de agendados)
+  ficam onde estavam.
+
 **Configurar (uma vez só):**
 
 1. **ID do Conjunto de dados (Pixel):** em business.facebook.com abra o
@@ -732,6 +751,11 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.6.3
+- 📈/💰: nome e telefone só da conversa aberta (corrige o formulário que
+  mostrava dados de outra conversa); trava do telefone antes de enviar.
+- Trocar de conversa fecha as telas da conversa e volta para Mensagens.
 
 ### 2.6.2
 - Anúncio do lead salvo no banco (`wa_ad_attribution`) na chegada e na abertura
