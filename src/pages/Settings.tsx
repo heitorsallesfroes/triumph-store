@@ -103,6 +103,7 @@ export default function Settings() {
         nextFeeForm[`fee_${brand}_debit`] = toPercentDisplay(map[`fee_${brand}_debit`]);
         INSTALLMENTS.forEach(n => {
           nextFeeForm[`fee_${brand}_credit_${n}`] = toPercentDisplay(map[`fee_${brand}_credit_${n}`]);
+          nextFeeForm[`fee_link_${brand}_credit_${n}`] = toPercentDisplay(map[`fee_link_${brand}_credit_${n}`]);
         });
       });
       setFeeForm(nextFeeForm);
@@ -129,6 +130,7 @@ export default function Settings() {
         rows.push({ key: `fee_${brand}_debit`, value: fromPercentDisplay(feeForm[`fee_${brand}_debit`]) });
         INSTALLMENTS.forEach(n => {
           rows.push({ key: `fee_${brand}_credit_${n}`, value: fromPercentDisplay(feeForm[`fee_${brand}_credit_${n}`]) });
+          rows.push({ key: `fee_link_${brand}_credit_${n}`, value: fromPercentDisplay(feeForm[`fee_link_${brand}_credit_${n}`]) });
         });
       });
 
@@ -317,9 +319,43 @@ export default function Settings() {
                     </tbody>
                   </table>
                 </div>
-                <p className="text-gray-500 text-xs mt-3">
-                  Link de pagamento usa a mesma taxa do crédito, conforme o parcelamento escolhido na venda.
-                </p>
+              </div>
+
+              {/* Taxas do Link de Pagamento */}
+              <div>
+                <h3 className="text-lg font-medium text-white mb-1">Link de pagamento</h3>
+                <p className="text-gray-500 text-xs mb-4">Percentual cobrado no link de pagamento, por bandeira e parcelamento (na Rede, 1 ponto a mais que a maquininha).</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-gray-400 border-b border-gray-700">
+                        <th className="py-2 pr-3 font-medium">Forma</th>
+                        <th className="py-2 px-3 font-medium">Visa / Mastercard</th>
+                        <th className="py-2 px-3 font-medium">Elo / Amex</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {INSTALLMENTS.map(n => (
+                        <tr key={n} className="border-b border-gray-700/50">
+                          <td className="py-2 pr-3 text-gray-300">Link {n}x</td>
+                          {(['vm', 'ea'] as const).map(brand => (
+                            <td key={brand} className="py-2 px-3">
+                              <div className="relative w-28">
+                                <input
+                                  type="number" step="0.01" min="0"
+                                  value={feeForm[`fee_link_${brand}_credit_${n}`] ?? ''}
+                                  onChange={e => setFeeForm({ ...feeForm, [`fee_link_${brand}_credit_${n}`]: e.target.value })}
+                                  className={inputClass + ' pr-6'}
+                                />
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
+                              </div>
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
               {/* Outros */}

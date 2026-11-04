@@ -15,6 +15,13 @@
     fee_ea_debit: '0.0179', fee_ea_credit_1: '0.0400', fee_ea_credit_2: '0.0486', fee_ea_credit_3: '0.0546', fee_ea_credit_4: '0.0606',
     fee_ea_credit_5: '0.0666', fee_ea_credit_6: '0.0726', fee_ea_credit_7: '0.0833', fee_ea_credit_8: '0.0893', fee_ea_credit_9: '0.0953',
     fee_ea_credit_10: '0.1013', fee_ea_credit_11: '0.1073', fee_ea_credit_12: '0.1133',
+    // 2.6.1: link de pagamento (Rede) = crédito da maquininha + 1 ponto percentual
+    fee_link_vm_credit_1: '0.0420', fee_link_vm_credit_2: '0.0506', fee_link_vm_credit_3: '0.0566', fee_link_vm_credit_4: '0.0626', fee_link_vm_credit_5: '0.0686',
+    fee_link_vm_credit_6: '0.0746', fee_link_vm_credit_7: '0.0853', fee_link_vm_credit_8: '0.0913', fee_link_vm_credit_9: '0.0973', fee_link_vm_credit_10: '0.1033',
+    fee_link_vm_credit_11: '0.1093', fee_link_vm_credit_12: '0.1153',
+    fee_link_ea_credit_1: '0.0500', fee_link_ea_credit_2: '0.0586', fee_link_ea_credit_3: '0.0646', fee_link_ea_credit_4: '0.0706', fee_link_ea_credit_5: '0.0766',
+    fee_link_ea_credit_6: '0.0826', fee_link_ea_credit_7: '0.0933', fee_link_ea_credit_8: '0.0993', fee_link_ea_credit_9: '0.1053', fee_link_ea_credit_10: '0.1113',
+    fee_link_ea_credit_11: '0.1173', fee_link_ea_credit_12: '0.1233',
   };
   // Mesmas opções e rótulos da tela do ERP
   const PAYMENT_METHODS = [['pix', 'PIX (Sem taxa)'], ['cash', 'Dinheiro (Sem taxa)'], ['debit_card', 'Débito'], ['credit_card', 'Crédito'], ['payment_link', 'Link de Pagamento'], ['outros', 'Outros']];
@@ -34,7 +41,12 @@
   function cardFeeRate(cfg, method, brand, installments) {
     const prefix = brand === 'elo_amex' ? 'fee_ea' : 'fee_vm';
     if (method === 'debit_card') return configNumber(cfg, `${prefix}_debit`);
-    if ((method === 'credit_card' || method === 'payment_link') && installments > 0) {
+    // 2.6.1: link de pagamento com taxas próprias (fee_link_vm_credit_N / fee_link_ea_credit_N)
+    if (method === 'payment_link' && installments > 0) {
+      const n = Math.min(Math.max(installments, 1), 12);
+      return configNumber(cfg, `${prefix.replace('fee_', 'fee_link_')}_credit_${n}`);
+    }
+    if (method === 'credit_card' && installments > 0) {
       const n = Math.min(Math.max(installments, 1), 12);
       return configNumber(cfg, `${prefix}_credit_${n}`);
     }

@@ -22,7 +22,14 @@ export function getCardFeeRate(
     return getConfigNumber(`${prefix}_debit`);
   }
 
-  if ((paymentMethod === 'credit_card' || paymentMethod === 'payment_link') && installments > 0) {
+  // Link de pagamento: taxas próprias (fee_link_vm_credit_N / fee_link_ea_credit_N)
+  if (paymentMethod === 'payment_link' && installments > 0) {
+    const numInstallments = Math.min(Math.max(installments, 1), 12);
+    const linkPrefix = prefix.replace('fee_', 'fee_link_');
+    return getConfigNumber(`${linkPrefix}_credit_${numInstallments}`);
+  }
+
+  if (paymentMethod === 'credit_card' && installments > 0) {
     const numInstallments = Math.min(Math.max(installments, 1), 12);
     return getConfigNumber(`${prefix}_credit_${numInstallments}`);
   }

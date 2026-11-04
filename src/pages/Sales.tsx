@@ -1614,7 +1614,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                           <option value="0">Parcelas (definir depois)</option>
                           {pm.card_brand && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
                             <option key={n} value={n}>
-                              {n}x ({getFeePercentageLabel('credit_card', pm.card_brand, n)})
+                              {n}x ({getFeePercentageLabel(pm.method, pm.card_brand, n)})
                             </option>
                           ))}
                         </select>
