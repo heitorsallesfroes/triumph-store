@@ -104,6 +104,11 @@ const HANDLERS = {
   fetchConversions:      (m) => WaApi.fetchConversions({ limit: m.limit }),
   recentConversion:      (m) => WaApi.recentConversion({ chatId: m.chatId }),
   lastChatSaleValue:     (m) => WaApi.lastChatSaleValue({ chatId: m.chatId, phone: m.phone }),
+  // 2.6.0: "Contato" automático (lead novo de anúncio) e nome/telefone do CRM da conversa
+  sendContactEvent:      (m) => WaApi.sendContactEvent({ event: m.event }),
+  metaContactConfig:     ()  => WaApi.metaContactConfig(),
+  setMetaContactConfig:  (m) => WaApi.setMetaContactConfig({ on: m.on, test: m.test }),
+  chatContactInfo:       (m) => WaApi.chatContactInfo({ chatId: m.chatId }),
   // Conta (1.9.1): a senha só segue para o Supabase Auth; o painel recebe só conectada/dica do e-mail
   authStatus:      ()  => WaAuth.status(),
   // 2.4.1: trocar de conta limpa as leituras guardadas em memória

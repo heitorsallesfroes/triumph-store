@@ -1107,6 +1107,8 @@
       if (st.settings.paused_all) { st.role = 'pausado'; st.waiting = 'pausado'; return; }
       st.role = 'este';
       await trackNativeLabels();
+      // 2.6.0: trabalho leve só da aba com a trava (ex.: "Contato" automático de lead novo de anúncio)
+      if (deps.leaseWork) { try { await deps.leaseWork(); } catch { /* próximo ciclo */ } }
       if (deps.isManualBusy && deps.isManualBusy()) { st.waiting = 'envio manual em andamento'; return; }
       if (!isBusinessTime(now(), st.settings)) { st.waiting = 'fora do horário'; return; }
       // Tem algo ativo? (1 verificação leve a cada 2 min; sem nada ativo, não faz mais nada)

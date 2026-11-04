@@ -310,8 +310,10 @@
   }
   try { if (wpp && typeof wpp.on === 'function') wpp.on('chat.update_label', onLabelUpdate); } catch { /* sem eventos: a varredura cobre */ }
 
-  function labelEvents() {
-    return { events: labelEventQueue.splice(0, labelEventQueue.length) };
+  async function labelEvents() {
+    const events = labelEventQueue.splice(0, labelEventQueue.length);
+    if (isReady()) for (const e of events) if (/@lid$/.test(e.chatId)) { const pn = await pnOfChat(e.chatId); if (pn) e.phone = pn; }
+    return { events };
   }
 
   async function labelChatIds(payload) {
@@ -337,6 +339,8 @@
       out.push({ id: card.id, name: card.name });
       if (out.length >= 5000) break;
     }
+    // 2.6.0: @lid → telefone verdadeiro (cache local), para o contato do CRM ganhar o número
+    for (const c of out) if (/@lid$/.test(c.id)) { const pn = await pnOfChat(c.id); if (pn) c.phone = pn; }
     return { count: known.count, chats: out };
   }
 
@@ -667,6 +671,141 @@
     return null;
   }
 
+  // 2.6.0: o código de clique costuma vir DENTRO do conversionData (bytes em protobuf). Leitura genérica
+  // de protobuf (varint e length-delimited, até 3 níveis, sem biblioteca), procurando textos que pareçam
+  // um click id da Meta. Só o painel recebe o valor (para mandar à Edge Function); a tela mostra só um
+  // resumo mascarado (campo, número do campo, tamanho, 6 primeiros + 4 últimos caracteres).
+  const CLID_CHARS = /^[A-Za-z0-9_\-.=+/]+$/;
+  const MAX_PROTO_BYTES = 16384;
+
+  function b64Bytes(v) {
+    if (typeof v !== 'string' || v.length < 16 || v.length > 20000 || !/^[A-Za-z0-9+/_-]+={0,2}$/.test(v)) return null;
+    try {
+      const bin = atob(v.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(v.length / 4) * 4, '='));
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    } catch { return null; }
+  }
+
+  function toBytes(v) {
+    if (v == null) return null;
+    if (v instanceof Uint8Array) return v;
+    if (v instanceof ArrayBuffer) return new Uint8Array(v);
+    if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+    if (typeof v === 'string') return b64Bytes(v);
+    const arr = Array.isArray(v) ? v : (v && typeof v === 'object' && Array.isArray(v.data) ? v.data : null);
+    if (arr && arr.length <= MAX_PROTO_BYTES && arr.every((x) => Number.isInteger(x) && x >= 0 && x <= 255)) return Uint8Array.from(arr);
+    return null;
+  }
+
+  function printable(bytes) {
+    if (!bytes.length || bytes.length > 1000) return null;
+    for (const c of bytes) if (c < 0x20 || c > 0x7e) return null;
+    let t = '';
+    for (const c of bytes) t += String.fromCharCode(c);
+    return t;
+  }
+
+  function readVarint(b, pos) {
+    let x = 0;
+    let mul = 1;
+    for (let i = 0; i < 10 && pos < b.length; i++) {
+      const c = b[pos++];
+      x += (c & 0x7f) * mul;
+      if (!(c & 0x80)) return [x, pos];
+      mul *= 128;
+    }
+    return null;
+  }
+
+  // Mensagem protobuf válida inteira → textos imprimíveis (com o caminho de números de campo, ex. "3.1")
+  function protoTexts(b, depth, path, out) {
+    if (!b || !b.length || b.length > MAX_PROTO_BYTES) return false;
+    const subs = [];
+    let pos = 0;
+    while (pos < b.length) {
+      const k = readVarint(b, pos);
+      if (!k) return false;
+      pos = k[1];
+      const field = Math.floor(k[0] / 8);
+      const wire = k[0] % 8;
+      if (field < 1) return false;
+      if (wire === 0) { const v = readVarint(b, pos); if (!v) return false; pos = v[1]; }
+      else if (wire === 1) pos += 8;
+      else if (wire === 5) pos += 4;
+      else if (wire === 2) {
+        const l = readVarint(b, pos);
+        if (!l) return false;
+        pos = l[1];
+        if (pos + l[0] > b.length) return false;
+        subs.push({ field, bytes: b.subarray(pos, pos + l[0]) });
+        pos += l[0];
+      } else return false;
+      if (pos > b.length) return false;
+    }
+    for (const f of subs) {
+      const p = path ? `${path}.${f.field}` : String(f.field);
+      const text = printable(f.bytes);
+      if (text) out.push({ path: p, text });
+      else if (depth < 3) protoTexts(f.bytes, depth + 1, p, out);
+    }
+    return true;
+  }
+
+  // Nota do candidato: 3 = começa como click id da Meta (ARA/Af/Ab); 2 = base64url longo; 0 = não serve
+  function clidScore(t, sourceId) {
+    if (typeof t !== 'string' || t.length < 20 || t.length > 500 || !CLID_CHARS.test(t)) return 0;
+    if (/^\d+$/.test(t) || t === sourceId || /^https?\//i.test(t) || /\.(jpe?g|png|webp|mp4)$/i.test(t)) return 0;
+    if (/^(ARA|Af|Ab)/.test(t)) return 3;
+    if (t.length >= 40 && /[A-Z]/.test(t) && /[a-z]/.test(t) && /\d/.test(t)) return 2;
+    return 0;
+  }
+
+  // Todos os candidatos de um campo do ctwaContext (bytes, base64, texto ou objeto)
+  function clidCandidates(fieldName, v, sourceId) {
+    const found = [];
+    const add = (path, text) => { const score = clidScore(text, sourceId); if (score) found.push({ field: fieldName, path, text, score }); };
+    const scan = (val, prefix) => {
+      if (typeof val === 'string' && /^(ARA|Af|Ab)/.test(val)) add(prefix || '-', val); // padrão Meta: vale como está
+      const bytes = toBytes(val);
+      const texts = [];
+      // base64/bytes que são uma mensagem protobuf válida: valem os textos de DENTRO (não o base64 inteiro)
+      if (bytes && protoTexts(bytes, 1, '', texts)) { texts.forEach((x) => add(prefix ? `${prefix}.${x.path}` : x.path, x.text)); return; }
+      if (typeof val === 'string') { add(prefix || '-', val); return; }
+      const t = bytes ? printable(bytes) : null;
+      if (t) add(prefix || '-', t);
+    };
+    if (v && typeof v === 'object' && !ArrayBuffer.isView(v) && !(v instanceof ArrayBuffer) && !Array.isArray(v) && !Array.isArray(v.data)) {
+      safe(() => Object.keys(v), []).slice(0, 30).forEach((k) => scan(safe(() => v[k], null), String(k).slice(0, 30)));
+    } else scan(v, '');
+    return found;
+  }
+
+  const maskClid = (t) => `${t.slice(0, 6)}…${t.slice(-4)}`;
+
+  // Escolhe o mais provável: padrão Meta > base64url; conversionData > ctwaSignals; caminho mais raso; mais longo
+  function extractClid(ctx) {
+    const sourceId = (() => { const v = safe(() => ctx.sourceId, null); return v == null ? null : String(v); })();
+    const all = [...clidCandidates('conversionData', safe(() => ctx.conversionData, null), sourceId), ...clidCandidates('ctwaSignals', safe(() => ctx.ctwaSignals, null), sourceId)];
+    const seen = new Set();
+    const list = all.filter((c) => (seen.has(c.text) ? false : seen.add(c.text)))
+      .sort((a, b) => b.score - a.score || (a.field === 'conversionData' ? 0 : 1) - (b.field === 'conversionData' ? 0 : 1)
+        || a.path.split('.').length - b.path.split('.').length || b.text.length - a.text.length);
+    if (!list.length) return { clid: null, info: null, candidates: [] };
+    const pick = list[0];
+    const pub = (c) => ({ field: c.field, path: c.path, length: c.text.length, mask: maskClid(c.text), score: c.score });
+    return { clid: pick.text, info: pub(pick), candidates: list.slice(0, 5).map(pub) };
+  }
+
+  // Campo com o nome (texto) vale primeiro; senão, o que a leitura do protobuf achar
+  function clidFields(ctx) {
+    const named = clidOf(ctx);
+    if (named) return { ctwaClid: named, clidInfo: { field: 'campo ctwa_clid', path: '-', length: named.length, mask: maskClid(named), score: 3 }, clidCandidates: [] };
+    const x = extractClid(ctx);
+    return { ctwaClid: x.clid, clidInfo: x.info, clidCandidates: x.candidates };
+  }
+
   async function adContext(payload) {
     if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
     const chat = await individualLoadedChat(payload && payload.chatId);
@@ -689,11 +828,79 @@
         mediaType: s('mediaType', 40),
         platform: /insta/.test(app) || /instagram\.com/.test(url || '') ? 'Instagram' : /face|fb/.test(app) || /facebook\.com|fb\.(me|com)/.test(url || '') ? 'Facebook' : null,
         conversionData: summarizeData(safe(() => ctx.conversionData, null)),
-        ctwaClid: clidOf(ctx),
+        ...clidFields(ctx),
         keys: safe(() => Object.keys(ctx), []).slice(0, 40).map((k) => String(k).slice(0, 40)),
       };
     }
     return { found: false };
+  }
+
+  // ── 2.6.0: telefone verdadeiro de conversas @lid ──
+  // contact.getPnLidEntry (WA-JS 4.7.2) para @lid só lê o cache lidPnCache do WhatsApp Web (não consulta
+  // o servidor). Para @c.us o número já está no id (não chama nada).
+  async function pnOfChat(chatId) {
+    const m = /^(\d{8,15})@c\.us$/.exec(chatId || '');
+    if (m) return m[1];
+    if (!/^\d+@lid$/.test(chatId || '') || !wpp.contact || typeof wpp.contact.getPnLidEntry !== 'function') return null;
+    try {
+      const e = await withTimeout(wpp.contact.getPnLidEntry(chatId), 2000);
+      const pn = String(safe(() => e.phoneNumber.id, '') || '');
+      return /^\d{8,15}$/.test(pn) ? pn : null;
+    } catch { return null; }
+  }
+
+  const realName = (v) => (typeof v === 'string' && v.trim() && !/^[+\d\s().-]+$/.test(v) ? v.trim().replace(/\s+/g, ' ').slice(0, 100) : null);
+
+  async function chatPhone(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const chatId = payload && payload.chatId;
+    if (typeof chatId !== 'string' || !/^[0-9]+@(c\.us|lid)$/.test(chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida', 'before-send');
+    const phone = await pnOfChat(chatId);
+    let name = null;
+    const chat = safe(() => wpp.chat.get(chatId), null);
+    if (chat) name = realName(chatCard(chat, false).name);
+    if (!name && /@lid$/.test(chatId) && wpp.contact && typeof wpp.contact.getPnLidEntry === 'function') {
+      try {
+        const e = await withTimeout(wpp.contact.getPnLidEntry(chatId), 2000);
+        name = realName(safe(() => e.contact.name, null)) || realName(safe(() => e.contact.pushname, null)) || realName(safe(() => e.contact.verifiedName, null));
+      } catch { /* sem nome */ }
+    }
+    return { phone, name, via: /@c\.us$/.test(chatId) ? 'numero' : phone ? 'lid' : null };
+  }
+
+  // ── 2.6.0: leads novos de anúncio (evento chat.new_message), só na memória desta aba ──
+  // Entra na fila só a mensagem do CLIENTE com ctwaContext que é a primeira dele na conversa (nada do
+  // cliente antes, nas mensagens carregadas). O painel decide se manda o "Contato" (interruptor + data).
+  const LEADS_MAX = 200;
+  const leadQueue = [];
+  function onNewMessage(m) {
+    try {
+      if (safe(() => m.id.fromMe, true)) return;
+      const ctx = safe(() => m.ctwaContext, null);
+      if (!ctx || typeof ctx !== 'object') return;
+      const chatId = safe(() => m.id.remote._serialized, '') || String(safe(() => m.id.remote, '') || '');
+      if (!/^[0-9]+@(c\.us|lid)$/.test(chatId)) return;
+      const t = Number(safe(() => m.t, 0)) || Math.floor(Date.now() / 1000);
+      const chat = safe(() => wpp.chat.get(chatId), null);
+      const msgs = (chat && safe(() => chat.msgs.getModelsArray(), null)) || [];
+      if (msgs.some((x) => x !== m && !safe(() => x.id.fromMe, true) && (Number(safe(() => x.t, 0)) || 0) < t)) return;
+      if (leadQueue.some((l) => l.chatId === chatId)) return;
+      const s2 = (k, max) => { const v = safe(() => ctx[k], null); return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : (typeof v === 'number' ? String(v) : null); };
+      const app = (s2('sourceApp', 40) || '').toLowerCase();
+      leadQueue.push({
+        chatId, t, name: chat ? realName(chatCard(chat, false).name) : null,
+        ad: { title: s2('title', 200), sourceId: s2('sourceId', 100), sourceApp: s2('sourceApp', 40), conversionSource: s2('conversionSource', 40),
+          platform: /insta/.test(app) ? 'Instagram' : /face|fb/.test(app) ? 'Facebook' : null, ctwaClid: clidFields(ctx).ctwaClid },
+      });
+      if (leadQueue.length > LEADS_MAX) leadQueue.splice(0, leadQueue.length - LEADS_MAX);
+    } catch { /* mensagem estranha: ignora */ }
+  }
+  try { if (wpp && typeof wpp.on === 'function') wpp.on('chat.new_message', onNewMessage); } catch { /* sem eventos: sem Contato automático */ }
+
+  async function adLeads() {
+    const leads = leadQueue.splice(0, leadQueue.length);
+    for (const l of leads) l.phone = await pnOfChat(l.chatId);
+    return { leads };
   }
 
   // Conversas individuais carregadas, mais recentes primeiro (para "Enviar para…")
@@ -802,6 +1009,8 @@
     recentChats: (payload) => recentChats(payload),
     adContext: (payload) => adContext(payload),
     labelEvents: () => labelEvents(),
+    chatPhone: (payload) => chatPhone(payload),
+    adLeads: () => adLeads(),
     labelChatIds: (payload) => labelChatIds(payload),
   };
 

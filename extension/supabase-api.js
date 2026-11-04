@@ -1659,7 +1659,8 @@
     return list.map((c) => {
       const chatId = c && (c.chatId || c.id);
       if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
-      return { chatId, name: clipName(c.name) };
+      const phone = typeof c.phone === 'string' && /^\d{8,15}$/.test(c.phone) ? c.phone : null; // 2.6.0: telefone de conversa @lid
+      return { chatId, name: clipName(c.name), phone };
     });
   }
 
@@ -1673,7 +1674,7 @@
     const keys = new Set();
     chats.forEach((c) => {
       if (found[c.chatId]) return;
-      const phone = phoneOfChat(c.chatId);
+      const phone = phoneOfChat(c.chatId) || c.phone || null;
       const key = phone ? `tel:${phone}` : c.name ? nameKey(c.name) : null;
       if (!key || keys.has(key)) return;
       keys.add(key);
@@ -2202,6 +2203,12 @@
     return { published: true, loggedIn: true, configured: c ? { token: !!c.token, dataset: !!c.dataset, waba: !!c.waba, test_code: !!c.test_code } : null };
   }
 
+  // 2.6.0: anúncio que vai junto (Compra e Contato): id, título, app, conversionSource e o código de clique
+  const adBody = (ad) => ({
+    title: clip(ad.title, 200), source_id: clip(ad.source_id, 100), source_app: clip(ad.source_app, 40), conversion_source: clip(ad.conversion_source, 40),
+    ctwa_clid: typeof ad.ctwa_clid === 'string' && /^[\w.:=+/-]{8,500}$/.test(ad.ctwa_clid) ? ad.ctwa_clid : null,
+  });
+
   async function sendPurchaseEvent({ event }) {
     const e = event || {};
     if (typeof e.event_id !== 'string' || !UUID_RE.test(e.event_id)) throw new Error('Identificador do evento inválido');
@@ -2213,13 +2220,55 @@
       chat_id: e.chat_id, phone: String(e.phone || '').replace(/\D/g, '').slice(0, 15), contact_name: clip(e.contact_name, 100),
       value: Math.round(value * 100) / 100, currency: 'BRL', event_time: Math.floor(Number(e.event_time)), event_id: e.event_id,
       description: clip(e.description, 200), test: e.test === true,
-      ad: { title: clip(ad.title, 200), source_id: clip(ad.source_id, 100), source_app: clip(ad.source_app, 40), ctwa_clid: typeof ad.ctwa_clid === 'string' ? ad.ctwa_clid.slice(0, 500) : null },
+      ad: adBody(ad),
     };
     const r = await callMetaFunction(body);
     if (r.status === 404) throw new Error('A função meta-purchase-event ainda não foi publicada no Supabase');
     if (r.status === 401) throw new Error('Entre com sua conta do sistema (aviso no topo do painel)');
     if (!r.data || !r.data.ok) throw new Error((r.data && r.data.error) || `Erro ${r.status}`);
-    return { events_received: r.data.events_received ?? 0, fbtrace_id: r.data.fbtrace_id || null, duplicate: !!r.data.duplicate, method: r.data.method || null, test: !!r.data.test };
+    return { events_received: r.data.events_received ?? 0, fbtrace_id: r.data.fbtrace_id || null, duplicate: !!r.data.duplicate, method: r.data.method || null, test: !!r.data.test, retried_without_clid: !!r.data.retried_without_clid };
+  }
+
+  // 2.6.0: "Contato" (lead novo de anúncio). Sem valor; a Edge Function gera o event_id pela conversa
+  // (um por conversa, nunca duplica). Precisa do telefone ou do código de clique.
+  async function sendContactEvent({ event }) {
+    const e = event || {};
+    if (typeof e.chat_id !== 'string' || !SCHED_CHAT_RE.test(e.chat_id)) throw new Error('Conversa inválida');
+    const ad = e.ad && typeof e.ad === 'object' ? e.ad : {};
+    const body = {
+      event_name: 'Contact', chat_id: e.chat_id, phone: String(e.phone || '').replace(/\D/g, '').slice(0, 15), contact_name: clip(e.contact_name, 100),
+      currency: 'BRL', event_time: Math.floor(Number(e.event_time)), test: e.test === true, ad: adBody(ad),
+    };
+    const r = await callMetaFunction(body);
+    if (r.status === 404) throw new Error('A função meta-purchase-event ainda não foi publicada no Supabase');
+    if (r.status === 401) throw new Error('Entre com sua conta do sistema (aviso no topo do painel)');
+    if (!r.data || !r.data.ok) throw new Error((r.data && r.data.error) || `Erro ${r.status}`);
+    return { events_received: r.data.events_received ?? 0, duplicate: !!r.data.duplicate, method: r.data.method || null, test: !!r.data.test };
+  }
+
+  // 2.6.0: interruptor do "Contato" automático, guardado em system_config (vale para todos os computadores;
+  // sem migration). since = quando foi ligado: só leads que chegarem depois disso.
+  const META_CONTACT_KEY = 'wa_meta_contact';
+  async function metaContactConfig() {
+    const rows = await rest(`system_config?select=key,value&key=eq.${META_CONTACT_KEY}`);
+    let v = null;
+    try { v = rows.length ? JSON.parse(rows[0].value) : null; } catch { v = null; }
+    return { on: !!(v && v.on === true), since: v && typeof v.since === 'string' ? v.since : null, test: !!(v && v.test === true) };
+  }
+  async function setMetaContactConfig({ on, test }) {
+    if (typeof on !== 'boolean' || typeof test !== 'boolean') throw new Error('Valor inválido');
+    const cur = await metaContactConfig();
+    const since = on ? (cur.on && cur.since ? cur.since : new Date().toISOString()) : null;
+    const value = JSON.stringify({ on, since, test });
+    await rest('system_config?on_conflict=key', json('POST', 'resolution=merge-duplicates,return=minimal', { key: META_CONTACT_KEY, value, updated_at: new Date().toISOString() }));
+    return { on, since, test };
+  }
+
+  // 2.6.0: nome e telefone salvos no CRM para a conversa (sem criar nada)
+  async function chatContactInfo({ chatId }) {
+    if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) return { name: null, phone: null };
+    const c = (await contactRowsByChats([chatId]))[chatId];
+    return { name: c && c.name ? c.name : null, phone: c && c.phone ? c.phone : null };
   }
 
   async function convRest(path) {
@@ -2231,9 +2280,17 @@
     }
   }
 
+  // 2.6.0: event_name, se a coluna existir; senão o "Contato" vem marcado no error ("evento: Contact")
+  const convEventName = () => probe('wa_conversion_events.event_name', () => hasColumn(CONV_TABLE, 'event_name'), 30 * 60 * 1000);
   async function fetchConversions({ limit = 50 } = {}) {
     const lim = Math.min(200, Math.max(1, Math.floor(Number(limit) || 50)));
-    return convRest(`${CONV_TABLE}?select=event_id,chat_id,contact_name,value,ad_title,ad_id,method,test,status,events_received,error,created_at&order=created_at.desc&limit=${lim}`);
+    const cols = `event_id,chat_id,contact_name,value,ad_title,ad_id,method,test,status,events_received,error,created_at${(await convEventName()) ? ',event_name' : ''}`;
+    const rows = await convRest(`${CONV_TABLE}?select=${cols}&order=created_at.desc&limit=${lim}`);
+    return rows.map((r) => {
+      const marked = typeof r.error === 'string' && /^evento: Contact/.test(r.error);
+      const error = marked ? r.error.replace(/^evento: Contact( · )?/, '') || null : r.error;
+      return { ...r, event_name: r.event_name || (marked ? 'Contact' : 'Purchase'), error };
+    });
   }
 
   // Evento já enviado para esta conversa nos últimos 7 dias (para avisar antes)
@@ -2241,7 +2298,7 @@
     if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) return { exists: false };
     const since = encodeURIComponent(new Date(Date.now() - 7 * 86400000).toISOString());
     try {
-      const rows = await convRest(`${CONV_TABLE}?select=value,created_at,test&chat_id=eq.${encodeURIComponent(chatId)}&status=eq.enviado&created_at=gte.${since}&order=created_at.desc&limit=1`);
+      const rows = await convRest(`${CONV_TABLE}?select=value,created_at,test&chat_id=eq.${encodeURIComponent(chatId)}&status=eq.enviado&value=not.is.null&created_at=gte.${since}&order=created_at.desc&limit=1`);
       return rows.length ? { exists: true, value: Number(rows[0].value), at: rows[0].created_at, test: !!rows[0].test } : { exists: false };
     } catch (err) {
       if (err.message === ENGINE_MISSING) return { exists: false, missing: true };
@@ -2266,6 +2323,7 @@
     nativeLabelEvents, nativeLabelSweep, nativeLabelCandidates, activeEnrollments, enrollmentCandidates, enrollContact,
     leaveAutomation, chatAutomationState,
     metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,
+    sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo,
     erpCatalog, createSaleFromChat, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve,
     automationUnreserve, applySendLabels, getContactName,

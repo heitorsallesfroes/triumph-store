@@ -808,6 +808,7 @@
       .ctab .crmsec { display: flex; flex-direction: column; gap: 7px; }
       .cv-tech { font-size: 11px; color: var(--muted); word-break: break-word; }
       .cv-tech summary { cursor: pointer; font-weight: 600; }
+      .ed-title.need { border-color: #ef4444; box-shadow: 0 0 0 1px #ef4444; }
       .fw-count { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
       .fw-card { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); font-size: 12px; text-align: left; }
       .fw-card.on { border-color: var(--accent); }
@@ -4005,6 +4006,7 @@
     stopRunning: () => { if (seq && AUTO_LABELS.includes(seq.label)) stopSequence(); },
     campaignJob: (api) => campaignJob(api),
     runCampaignJob: (job, helpers) => runCampaignJob(job, helpers),
+    leaseWork: () => contactAutoTick(),
   });
 
   // ── Disparos (2.0.0-D2): o motor só pega alvos de disparos que o usuário iniciou ──
@@ -5791,8 +5793,28 @@
         if (info && info.ad) { vs.form.ad = info.ad; vs.form.origin = 'anuncio'; }
         if (info) vs.form.saleInfo = info;
       } catch { /* sem origem detectada */ }
+      // 2.6.0: telefone verdadeiro de conversa @lid (ou o do CRM) e nome do CRM/WhatsApp
+      const f = vs.form;
+      const pn = await chatPhoneName(chatId);
+      if (vs.form === f) {
+        if (!f.customer_phone && pn.phone) f.customer_phone = pn.phone;
+        if (!f.customer_name && pn.name) f.customer_name = pn.name;
+        f.phoneChecked = true;
+      }
       renderVendas();
     }
+  }
+
+  // 2.6.0: telefone e nome automáticos da conversa (📈, 💰). @lid: o WhatsApp diz o número verdadeiro (cache
+  // local); senão o telefone salvo no contato do CRM. Nome: CRM, depois o do WhatsApp. Nada: fica vazio.
+  async function chatPhoneName(chatId) {
+    let wa = null;
+    let crm = null;
+    try { wa = await waRequest('chatPhone', { chatId }, { timeout: 4000 }); } catch { wa = null; }
+    try { crm = await call('chatContactInfo', { chatId }); } catch { crm = null; }
+    const phone = (wa && wa.phone) || (crm && crm.phone) || '';
+    const name = (crm && crm.name) || (wa && wa.name) || '';
+    return { phone: String(phone).replace(/\D/g, ''), name };
   }
 
   function saleTotals(f) {
@@ -5812,8 +5834,8 @@
     return lines.join('\n');
   }
 
-  const inputField = (label, value, onInput, { type = 'text', max = 200, aria, list } = {}) => {
-    const i = el('input', 'ed-title');
+  const inputField = (label, value, onInput, { type = 'text', max = 200, aria, list, need = false } = {}) => {
+    const i = el('input', `ed-title${need ? ' need' : ''}`);
     i.type = type;
     i.maxLength = max;
     i.value = value;
@@ -5841,7 +5863,7 @@
 
     sec.append(el('div', 'crm-sub', '1. Cliente'));
     const r1 = el('div', 'sc-row');
-    r1.append(inputField('Nome', f.customer_name, (v) => { f.customer_name = v; }, { max: 100, aria: 'Nome do cliente' }), inputField('Telefone', f.customer_phone, (v) => { f.customer_phone = v; }, { max: 30, aria: 'Telefone do cliente' }));
+    r1.append(inputField('Nome', f.customer_name, (v) => { f.customer_name = v; }, { max: 100, aria: 'Nome do cliente' }), inputField('Telefone', f.customer_phone, (v) => { f.customer_phone = v; }, { max: 30, aria: 'Telefone do cliente', need: !!f.phoneChecked && !f.customer_phone }));
     sec.append(r1);
 
     // Produtos
@@ -6222,7 +6244,7 @@
   // meta-purchase-event (o token do Facebook nunca passa pela extensão; o telefone vai em hash).
 
   const ctabEl = shadow.querySelector('.ctab');
-  const cv = { open: false, view: 'list', form: null, history: null, historyError: '', status: null, test: false, busy: false, msg: '', err: false, done: null };
+  const cv = { open: false, view: 'list', form: null, history: null, historyError: '', status: null, test: false, busy: false, msg: '', err: false, done: null, contactCfg: null, contactBusy: false, contactMsg: '', contactErr: false };
   try { chrome.storage.local.get(['metaTestMode'], (r) => { cv.test = !!(r && r.metaTestMode); }); } catch { /* extensão recarregada */ }
 
   shadow.querySelector('.conv-quick').addEventListener('click', () => { if (!state.open) setOpen(true); setSection('conversoes'); openConversionForm(); });
@@ -6235,6 +6257,74 @@
     if (!want) return;
     if (cv.view === 'list') loadConversions();
     loadMetaStatus();
+    loadContactCfg();
+  }
+
+  // ── 2.6.0: "Contato" automático ──
+  async function loadContactCfg() {
+    try { cv.contactCfg = await call('metaContactConfig'); } catch { cv.contactCfg = { on: false, since: null, test: false }; }
+    ca.cfg = cv.contactCfg;
+    ca.cfgAt = Date.now();
+    if (cv.open && cv.view === 'list') renderConversoes();
+  }
+
+  async function saveContactCfg(next) {
+    cv.contactBusy = true;
+    cv.contactMsg = '';
+    renderConversoes();
+    try {
+      cv.contactCfg = await call('setMetaContactConfig', next);
+      ca.cfg = cv.contactCfg;
+      ca.cfgAt = Date.now();
+      cv.contactMsg = next.on ? 'Contato automático ligado.' : 'Contato automático desligado.';
+      cv.contactErr = false;
+    } catch (e) {
+      cv.contactMsg = `Não consegui salvar: ${e.message}`;
+      cv.contactErr = true;
+    }
+    cv.contactBusy = false;
+    renderConversoes();
+  }
+
+  // Aba com a trava (chamado pelo motor a cada ciclo): pega da ponte os leads novos de anúncio (memória) e,
+  // se o interruptor estiver ligado, manda 1 "Contato" por conversa, no máximo 1 a cada 10 s. Sem lead novo,
+  // nenhuma consulta ao banco; o interruptor é relido no máximo a cada 5 min (e na hora em que é mudado aqui).
+  const ca = { cfg: null, cfgAt: 0, lastSentAt: 0, sent: new Set(), queue: [] };
+  const CONTACT_GAP_MS = 10 * 1000;
+  async function contactAutoTick() {
+    let got = null;
+    try { got = await waRequest('adLeads', {}, { timeout: 4000 }); } catch { got = null; }
+    const leads = got && Array.isArray(got.leads) ? got.leads : [];
+    if (!leads.length && !ca.queue.length) return;
+    if (!ca.cfg || Date.now() - ca.cfgAt >= 5 * 60 * 1000) {
+      ca.cfgAt = Date.now();
+      try { ca.cfg = await call('metaContactConfig'); } catch { /* fica com o que sabia */ }
+    }
+    const cfg = ca.cfg;
+    if (!cfg || !cfg.on || !cfg.since) { ca.queue = []; return; }
+    const since = Date.parse(cfg.since);
+    leads.forEach((l) => {
+      if (!l || !l.chatId || !(Number(l.t) * 1000 >= since)) return; // só leads que chegaram depois de ligar
+      if (ca.sent.has(l.chatId) || ca.queue.some((q) => q.chatId === l.chatId)) return;
+      ca.queue.push(l);
+    });
+    if (!ca.queue.length || Date.now() - ca.lastSentAt < CONTACT_GAP_MS) return;
+    const l = ca.queue.shift();
+    ca.lastSentAt = Date.now();
+    ca.sent.add(l.chatId);
+    let phone = l.phone || '';
+    let name = l.name || '';
+    if (!phone || !name) {
+      try { const c = await call('chatContactInfo', { chatId: l.chatId }); phone = phone || (c && c.phone) || ''; name = (c && c.name) || name; } catch { /* sem CRM */ }
+    }
+    const ad = l.ad || {};
+    try {
+      await call('sendContactEvent', { event: {
+        chat_id: l.chatId, phone, contact_name: name || null, event_time: Math.floor(Number(l.t)), test: !!cfg.test,
+        ad: { title: ad.title, source_id: ad.sourceId, source_app: ad.platform || ad.sourceApp, conversion_source: ad.conversionSource, ctwa_clid: ad.ctwaClid || null },
+      } });
+    } catch { /* falhou: fica no histórico (Edge Function); não tenta de novo nesta aba */ }
+    if (cv.open && cv.view === 'list') loadConversions();
   }
 
   async function loadMetaStatus() {
@@ -6268,18 +6358,25 @@
     renderConversoes();
     if (!chatId) return;
     const f = cv.form;
-    const [ad, recent, last] = await Promise.all([
+    const [ad, recent, last, pn] = await Promise.all([
       waRequest('adContext', { chatId }, { timeout: 4000 }).catch(() => null),
       call('recentConversion', { chatId }).catch(() => null),
       call('lastChatSaleValue', { chatId, phone }).catch(() => null),
+      chatPhoneName(chatId),
     ]);
     if (cv.form !== f) return;
+    if (!f.phone && pn.phone) f.phone = pn.phone;
+    if (!f.name && pn.name) f.name = pn.name;
+    f.phoneChecked = true;
     f.ad = ad && ad.found ? ad : null;
     f.adLoaded = true;
     f.recent = recent && recent.exists ? recent : null;
     if (last && last.value && !f.value) f.value = String(last.value.toFixed(2));
     renderConversoes();
   }
+
+  // Onde o código de clique foi achado — nunca o valor inteiro (6 primeiros + 4 últimos)
+  const clidWhere = (c) => `${c.field}${c.path && c.path !== '-' ? `, campo protobuf ${c.path}` : ''}, tamanho ${c.length}, ${c.mask}`;
 
   function techDetails(ad) {
     const d = el('details', 'cv-tech');
@@ -6288,7 +6385,9 @@
       ['título', ad.title], ['descrição', ad.description], ['sourceUrl', ad.sourceUrl], ['sourceId (id do anúncio)', ad.sourceId], ['sourceType', ad.sourceType],
       ['sourceApp', ad.sourceApp], ['conversionSource', ad.conversionSource], ['mediaType', ad.mediaType],
       ['conversionData', ad.conversionData ? `${ad.conversionData.type}${ad.conversionData.size != null ? `, tamanho ${ad.conversionData.size}` : ''}${ad.conversionData.keys && ad.conversionData.keys.length ? `, chaves: ${ad.conversionData.keys.join(', ')}` : ''}${ad.conversionData.looksLikeClid ? ', parece ter identificador de clique' : ''}` : 'não tem'],
-      ['ctwa_clid', ad.ctwaClid ? 'encontrado' : 'não encontrado'], ['campos do ctwaContext', (ad.keys || []).join(', ')],
+      ['ctwa_clid', ad.clidInfo ? `encontrado em ${clidWhere(ad.clidInfo)}` : ad.ctwaClid ? 'encontrado' : 'não encontrado'],
+      ...((ad.clidCandidates || []).length > 1 ? [['outros candidatos', ad.clidCandidates.slice(1).map(clidWhere).join(' | ')]] : []),
+      ['campos do ctwaContext', (ad.keys || []).join(', ')],
     ] : [['anúncio', 'nenhum ctwaContext nas mensagens carregadas']];
     lines.forEach(([k, v]) => d.append(el('div', null, `${k}: ${v == null || v === '' ? '—' : v}`)));
     return d;
@@ -6306,8 +6405,9 @@
     sec.append(adBox);
     if (f.adLoaded) sec.append(techDetails(f.ad));
     const r1 = el('div', 'sc-row');
-    r1.append(inputField('Cliente', f.name, (v) => { f.name = v; }, { max: 100, aria: 'Nome do cliente' }), inputField('Telefone', f.phone, (v) => { f.phone = v; }, { max: 20, aria: 'Telefone do cliente' }));
+    r1.append(inputField('Cliente', f.name, (v) => { f.name = v; }, { max: 100, aria: 'Nome do cliente' }), inputField('Telefone', f.phone, (v) => { f.phone = v; }, { max: 20, aria: 'Telefone do cliente', need: !!f.phoneChecked && !f.phone }));
     sec.append(r1);
+    if (f.phoneChecked && !f.phone) sec.append(el('div', 'ed-note', 'Não achei o telefone desta conversa: preencha o campo.'));
     const val = el('input', 'ed-title');
     val.type = 'number';
     val.step = '0.01';
@@ -6356,7 +6456,7 @@
       const r = await call('sendPurchaseEvent', { event: {
         event_id: f.eventId, chat_id: f.chatId, phone: f.phone, contact_name: f.name, value, event_time: Math.floor(whenMs / 1000),
         description: f.description, test: cv.test,
-        ad: f.ad ? { title: f.ad.title, source_id: f.ad.sourceId, source_app: f.ad.platform || f.ad.sourceApp, ctwa_clid: f.ad.ctwaClid || null } : null,
+        ad: f.ad ? { title: f.ad.title, source_id: f.ad.sourceId, source_app: f.ad.platform || f.ad.sourceApp, conversion_source: f.ad.conversionSource || null, ctwa_clid: f.ad.ctwaClid || null } : null,
       } });
       cv.done = { ...r, value };
       cv.view = 'done';
@@ -6371,7 +6471,7 @@
   function renderConversoes() {
     if (!ctabEl) return;
     ctabEl.textContent = '';
-    ctabEl.append(el('div', 'crm-intro', 'Manda o evento de compra (Purchase) para o Conjunto de dados do Facebook, com o anúncio de onde o cliente veio. Separado do 💰 Venda (que lança no ERP).'));
+    ctabEl.append(el('div', 'crm-intro', 'Manda o evento de compra (Purchase) para o Conjunto de dados do Facebook, com o anúncio de onde o cliente veio e o código de clique quando o WhatsApp tiver. Separado do 💰 Venda (que lança no ERP). Opcional: "Contato" automático para leads novos de anúncio.'));
     if (cv.view === 'form' && cv.form) { renderConversionForm(); return; }
     if (cv.view === 'done' && cv.done) {
       const sec = el('section', 'crmsec');
@@ -6390,6 +6490,31 @@
     tl.append(tc, 'Modo teste');
     top.append(tl);
     ctabEl.append(top);
+    ctabEl.append(el('div', 'ed-note', 'Se o Tintim ainda estiver ativo, não envie a mesma compra pelos dois (o Facebook conta duas vezes). Use o modo teste até desligar o Tintim.'));
+    // 2.6.0: "Contato" automático (vale para todos os computadores; a aba que executa os envios manda)
+    const auto = el('section', 'crmsec');
+    auto.append(el('div', 'wt-head', 'CONTATO AUTOMÁTICO'));
+    const cc = cv.contactCfg;
+    if (!cc) auto.append(el('div', 'lt-none', 'Carregando…'));
+    else {
+      const mk = (label, checked, onChange) => {
+        const l = el('label', 'sc-radio');
+        const i = el('input');
+        i.type = 'checkbox';
+        i.checked = checked;
+        i.disabled = !!cv.contactBusy;
+        i.addEventListener('change', () => onChange(i.checked));
+        l.append(i, label);
+        return l;
+      };
+      auto.append(mk('Enviar \'Contato\' ao Facebook quando um lead novo de anúncio chamar', cc.on, (v) => saveContactCfg({ on: v, test: cc.test })));
+      auto.append(mk('Modo teste (só para o Contato)', cc.test, (v) => saveContactCfg({ on: cc.on, test: v })));
+      auto.append(el('div', 'crm-intro', cc.on
+        ? `Ligado${cc.since ? ` desde ${schedWhen(cc.since)}` : ''}: só conversas novas que chegarem de anúncio depois disso, uma vez por conversa (no máximo 1 a cada 10 s), pela aba que executa os envios.`
+        : 'Desligado. Ao ligar, vale só para os leads que chegarem depois (nunca para conversas antigas).'));
+      if (cv.contactMsg) auto.append(el('div', `ed-msg${cv.contactErr ? ' err' : ''}`, cv.contactMsg));
+    }
+    ctabEl.append(auto);
     const st = cv.status;
     if (st && st.published === false) ctabEl.append(el('div', 'ed-note', 'A função meta-purchase-event ainda não foi publicada no Supabase.'));
     else if (st && st.configured && !(st.configured.token && st.configured.dataset)) ctabEl.append(el('div', 'ed-note', 'Faltam os secrets META_ACCESS_TOKEN e META_DATASET_ID na Edge Function.'));
@@ -6401,7 +6526,7 @@
     (cv.history || []).forEach((h) => {
       const line = el('div', `sc-item st-${h.status === 'enviado' ? 'enviada' : 'falhou'}`);
       const main = el('div', 'sc-main');
-      main.append(el('div', 'sc-who', `${h.contact_name || 'Cliente'} · ${TS.money(h.value)}`),
+      main.append(el('div', 'sc-who', `${h.contact_name || 'Cliente'} · ${h.event_name === 'Contact' ? 'Contato (lead de anúncio)' : TS.money(h.value)}`),
         el('div', 'sc-prev', `${h.ad_title ? `anúncio: ${h.ad_title}` : 'sem anúncio'} · ${h.method === 'business_messaging' ? 'WhatsApp (clique do anúncio)' : 'chat (telefone)'}${h.test ? ' · teste' : ''}${h.error ? ` · ${h.error}` : ''}`));
       const side = el('div', 'sc-side');
       side.append(el('span', 'sc-when', schedWhen(h.created_at)), el('span', 'sc-status', h.status));

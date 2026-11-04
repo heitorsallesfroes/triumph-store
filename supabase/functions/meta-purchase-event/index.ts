@@ -1,4 +1,4 @@
-// Edge Function: evento de compra (Purchase) para o Facebook pela API de Conversões.
+// Edge Function: eventos de compra (Purchase) e contato (Contact, 2.6.0) para o Facebook pela API de Conversões.
 // Só para usuário LOGADO (o JWT do Authorization é conferido no Supabase Auth; a chave anon sozinha
 // é recusada). Secrets: META_ACCESS_TOKEN, META_DATASET_ID e, opcionais, META_WABA_ID e
 // META_TEST_EVENT_CODE. A lógica fica em event.ts.
@@ -34,8 +34,10 @@ Deno.serve(async (req: Request) => {
       const { data } = await admin.from("wa_conversion_events").select("status, events_received").eq("event_id", eventId).maybeSingle();
       return data || null;
     },
+    // 2.6.0: erro do banco volta como exceção (ex.: coluna event_name ainda não existe → grava sem ela)
     insertRow: async (row) => {
-      await admin.from("wa_conversion_events").upsert(row, { onConflict: "event_id" });
+      const { error } = await admin.from("wa_conversion_events").upsert(row, { onConflict: "event_id" });
+      if (error) throw new Error(error.message);
     },
     fetch: (url, init) => fetch(url, init),
     now: () => Date.now(),

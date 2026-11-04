@@ -616,6 +616,37 @@ o que hoje é feito pelo Tintim.
 - "Detalhes técnicos do anúncio" (recolhido) mostra só os nomes e tamanhos
   dos campos do anúncio. Mande um print dele se o anúncio não for detectado.
 
+**2.6.0 — o que faltava para fechar o Tintim:**
+
+- **Código de clique (ctwa_clid):** o WhatsApp guarda o identificador do
+  clique dentro do `conversionData` (em bytes). A extensão lê esses bytes
+  (protobuf, até 3 níveis) e o `ctwaSignals` e usa o código mais provável.
+  Em "Detalhes técnicos" aparece só onde foi achado (campo, número do campo,
+  tamanho e os 6 primeiros + 4 últimos caracteres), nunca o código inteiro.
+  O evento leva também o id do anúncio, a origem (`FB_Ads`) e o app
+  (Instagram/Facebook).
+- **Com o código de clique o evento vai sempre com ele.** Com o WABA
+  configurado: método "WhatsApp" (business_messaging). Sem o WABA: método
+  "chat" com o código + telefone. Se o Facebook recusar o código no método
+  "chat", a função tenta de novo uma vez sem ele e anota isso no histórico.
+- **Telefone e nome automáticos** (📈 e 💰 Venda): em conversas sem número
+  aparente (`@lid`), o telefone vem do próprio WhatsApp Web; se não der, do
+  contato do CRM. Se nada achar, o campo fica vazio e destacado em vermelho.
+  Nas automações por etiqueta do WhatsApp, o contato novo do CRM também ganha
+  o número verdadeiro.
+- **Contato automático:** em Conversões → **CONTATO AUTOMÁTICO**, o
+  interruptor "Enviar 'Contato' ao Facebook quando um lead novo de anúncio
+  chamar" (**desligado** por padrão) e um **Modo teste** só para ele. Ligado,
+  a aba que executa os envios manda **1 evento "Contact" por conversa** nova
+  que chegar de anúncio **depois de ligar** (nunca para conversas antigas), no
+  máximo 1 a cada 10 s. A detecção usa só o WhatsApp Web aberto (sem consultar
+  o banco); o interruptor vale para todos os computadores. Os Contatos
+  aparecem no histórico como "Contato (lead de anúncio)".
+- **Tintim:** se ainda estiver ativo, não envie a mesma compra pelos dois (o
+  Facebook conta duas vezes). Use o modo teste até desligar o Tintim.
+- **Publique a função de novo** depois de atualizar (passo 6 abaixo): a 2.6.0
+  mudou `supabase/functions/meta-purchase-event/`. Sem migration nova.
+
 **Configurar (uma vez só):**
 
 1. **ID do Conjunto de dados (Pixel):** em business.facebook.com abra o
@@ -681,6 +712,17 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.6.0
+- Compra para o Facebook com o código de clique lido do `conversionData`
+  (protobuf) e do `ctwaSignals`; id do anúncio, origem e app no evento.
+- Evento "Contato" automático para leads novos de anúncio (desligado por
+  padrão, com modo teste próprio), um por conversa.
+- Telefone verdadeiro de conversas `@lid` (WhatsApp Web, depois CRM) no 📈 e
+  no 💰; campo destacado quando não acha.
+- Edge Function `meta-purchase-event` atualizada (publicar de novo): aceita
+  "Contact", manda sempre o ctwa_clid quando houver, tenta sem ele se o
+  Facebook recusar no método "chat" e grava o tipo de evento no histórico.
 
 ### 2.5.0
 - Automações com etiqueta do WhatsApp no gatilho (além da CRM), com a data de
