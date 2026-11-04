@@ -259,7 +259,7 @@
   const INVALIDATED_MSG = 'A extensão foi atualizada. Recarregue o WhatsApp (F5).';
 
   // 2.4.1: pedidos que criam/ativam trabalho do motor → ele confere já (sem esperar a verificação de 2 min)
-  const ENGINE_POKE = new Set(['createSchedule', 'saveFlow', 'setFlowActive', 'saveCampaign', 'startCampaign', 'campaignAction', 'saveAutomation', 'setAutomationActive', 'updateEngineSettings']);
+  const ENGINE_POKE = new Set(['createSchedule', 'saveFlow', 'setFlowActive', 'saveCampaign', 'startCampaign', 'campaignAction', 'saveAutomation', 'setAutomationActive', 'updateEngineSettings', 'enrollContact', 'leaveAutomation']);
   let enginePoke = null;
 
   function call(type, payload = {}) {
@@ -1128,7 +1128,7 @@
           <button type="button" data-sec="conversoes" title="Conversões: compra para o Facebook" aria-pressed="false">${svg('trend')}<span>Conversões</span></button>
           <button type="button" data-sec="follows" title="Automações (Quando → Se → Então)" aria-pressed="false">${svg('repeat')}<span>Automações</span></button>
         </nav>
-        <div class="status warn"><span class="dot"></span><span class="txt"></span><button class="sale-quick" type="button" title="Registrar venda desta conversa" hidden>💰 Venda</button><button class="sale-quick conv-quick" type="button" title="Enviar compra desta conversa para o Facebook" hidden>📈 Compra p/ Facebook</button></div>
+        <div class="status warn"><span class="dot"></span><span class="txt"></span><button class="sale-quick" type="button" title="Registrar venda desta conversa" hidden>💰 Venda</button><button class="sale-quick conv-quick" type="button" title="Enviar compra desta conversa para o Facebook" hidden>📈 Compra p/ Facebook</button><button class="sale-quick conv-quick auto-quick" type="button" title="Adicionar esta conversa a uma automação" hidden>🔁 Automação</button></div>
         <div class="labels">
           <span class="lbl">Etiquetas CRM</span>
           <div class="chips"></div>
@@ -3983,6 +3983,10 @@
     wa: {
       ready: async () => { const st = await refreshWaStatus(); return !!(st && st.ready); },
       chatsInfo: (p) => waRequest('chatsInfo', p, { timeout: 8000 }),
+      // 2.5.0: etiquetas nativas (fila de trocas e conversas da etiqueta: só memória do WhatsApp Web)
+      labelEvents: () => waRequest('labelEvents', {}, { timeout: 2000 }),
+      labelChatIds: (p) => waRequest('labelChatIds', p, { timeout: 8000 }),
+      setChatLabels: (p) => waRequest('setChatLabels', p, { timeout: 15000 }),
     },
     sendParts: (o) => runSequence(o),
     partsOf: (item) => partsOf(item),
@@ -4868,12 +4872,17 @@
     sem_resposta: 'Ficou sem responder (tempo útil)', entrou_etiqueta: 'Entrou na etiqueta há (tempo corrido)',
     respondeu: 'Respondeu', dia_hora: 'Dia e hora fixos', venda_registrada: 'Venda registrada pela conversa',
   };
-  const ACTION_LABEL = { enviar: 'Enviar mensagem salva', adicionar_etiqueta: 'Adicionar etiqueta CRM', remover_etiqueta: 'Remover etiqueta CRM', mover: 'Mover (tira a do gatilho e põe outra)', parar: 'Parar' };
+  const ACTION_LABEL = {
+    enviar: 'Enviar mensagem salva', adicionar_etiqueta: 'Adicionar etiqueta CRM', remover_etiqueta: 'Remover etiqueta CRM', mover: 'Mover (tira a do gatilho e põe outra)',
+    adicionar_etiqueta_wa: 'Adicionar etiqueta do WhatsApp', remover_etiqueta_wa: 'Remover etiqueta do WhatsApp', parar: 'Parar',
+  };
   const COND_LABEL = { tem_etiqueta: 'tem a etiqueta CRM', nao_tem_etiqueta: 'não tem a etiqueta CRM', anuncio: 'veio do anúncio com a palavra', parada_max_dias: 'conversa parada há no máximo (dias)' };
   const NEW_LABEL = 'new:';
   const automationsReady = () => motor.state.available === true && motor.state.automationsAvailable === true;
   const activeAutomations = () => motor.state.automations.filter((a) => a.active);
-  const summaryOf = (a) => E.automationSummary(a, { labelName: (id) => (String(id).startsWith(NEW_LABEL) ? String(id).slice(NEW_LABEL.length) : labelName(id)), itemTitle, settings: motor.state.settings });
+  // 2.5.0: etiquetas do WhatsApp (nativas) no gatilho e nas ações
+  const waLabelName = (id) => { const l = waLabelById(String(id)); return l ? l.name : `etiqueta ${id}`; };
+  const summaryOf = (a) => E.automationSummary(a, { labelName: (id) => (String(id).startsWith(NEW_LABEL) ? String(id).slice(NEW_LABEL.length) : labelName(id)), waLabelName, itemTitle, settings: motor.state.settings });
 
   function automationCard(a) {
     const card = el('div', `fw-card${a.active ? ' on' : ''}`);
@@ -4918,7 +4927,7 @@
   function renderFollows() {
     if (!ftabEl) return;
     ftabEl.textContent = '';
-    ftabEl.append(el('div', 'crm-intro', 'Automações: QUANDO acontece algo com um contato de uma etiqueta CRM → SE as condições batem → ENTÃO a extensão faz as ações, uma vez por entrada na etiqueta. Só no horário comercial, com o WhatsApp Web aberto e nunca para quem tem "Não enviar".'));
+    ftabEl.append(el('div', 'crm-intro', 'Automações: QUANDO acontece algo com um contato de uma etiqueta (CRM ou do WhatsApp) ou com quem você adicionou pelo 🔁 → SE as condições batem → ENTÃO a extensão faz as ações, uma vez por entrada. Só no horário comercial, com o WhatsApp Web aberto e nunca para quem tem "Não enviar".'));
     if (motor.state.available === null) { ftabEl.append(el('div', 'lt-none', 'Carregando…')); return; }
     if (!automationsReady()) {
       ftabEl.append(el('div', 'ed-note', 'Atualize o banco para usar este recurso.'));
@@ -4930,6 +4939,7 @@
     if (fl.view === 'settings') { renderSettings(); return; }
     if (fl.view === 'simulate') { renderSimulation(); return; }
     if (fl.view === 'history') { renderHistory(); return; }
+    if (fl.view === 'conversa') { renderChatAutomations(); return; }
 
     renderFollowsTop(ftabEl);
     if (fl.msg) ftabEl.append(el('div', `ed-msg${fl.msgErr ? ' err' : ''}`, fl.msg));
@@ -4951,22 +4961,8 @@
       fl.test.forEach((line) => t.append(el('div', null, line)));
       tools.append(t);
     }
-    tools.append(el('div', 'crm-sub', 'Colocar a conversa aberta numa automação (marca a etiqueta do gatilho)'));
-    const r2 = el('div', 'sc-row');
-    const sel = el('select', 'ed-cat');
-    sel.setAttribute('aria-label', 'Automação');
-    const none = el('option', null, 'Escolha a automação…');
-    none.value = '';
-    sel.append(none);
-    items.forEach((a) => {
-      const o = el('option', null, `${a.name}${a.active ? '' : ' (desligada)'}`);
-      o.value = a.id;
-      o.selected = a.id === fl.putFlowId;
-      sel.append(o);
-    });
-    sel.addEventListener('change', () => { fl.putFlowId = sel.value; });
-    r2.append(sel, fbtn('bbtn primary', 'Colocar', () => putOpenChatInFlow()));
-    tools.append(r2);
+    tools.append(el('div', 'crm-sub', 'Conversa aberta: em quais automações ela está, adicionar a partir de agora ou tirar'));
+    tools.append(fbtn('bbtn primary', '🔁 Adicionar à automação', () => openChatAutomations()));
     ftabEl.append(tools);
   }
 
@@ -5006,11 +5002,13 @@
   function openAutomationEditor(a, { template = null } = {}) {
     fl.view = 'edit';
     fl.confirmDelete = false;
+    if (!Array.isArray(state.waLabels)) refreshBar().then(() => { if (fl.view === 'edit') renderFollows(); }).catch(() => {});
     const src = a || { id: null, name: '', active: false, trigger_type: 'sem_resposta', trigger_label_id: '', wait_minutes: 120, schedule_days: [1, 2, 3, 4, 5], schedule_time: '10:00', ignore_older_days: 15, conditions: [], actions: [{ type: 'enviar', item_id: '', variants: [] }] };
     const wait = Number(src.wait_minutes) || 60;
     const unit = wait % 1440 === 0 ? 'dias' : wait % 60 === 0 ? 'horas' : 'minutos';
     fl.edit = {
       id: src.id || null, name: src.name || '', active: !!src.active, trigger_type: src.trigger_type || 'sem_resposta', trigger_label_id: src.trigger_label_id || '',
+      trigger_label_source: src.trigger_label_source === 'whatsapp' ? 'whatsapp' : 'crm', trigger_wa_label_id: src.trigger_wa_label_id || '',
       wait_minutes: wait, wait_unit: unit, schedule_days: [...(src.schedule_days || [1, 2, 3, 4, 5])], schedule_time: String(src.schedule_time || '10:00').slice(0, 5),
       ignore_older_days: src.ignore_older_days || 15,
       conditions: (src.conditions || []).map((c) => ({ ...c })),
@@ -5053,12 +5051,102 @@
 
   function editorToAutomation(f) {
     return {
-      name: f.name, active: f.active, trigger_type: f.trigger_type, trigger_label_id: f.trigger_label_id || null,
+      name: f.name, active: f.active, trigger_type: f.trigger_type, trigger_label_id: f.trigger_label_source === 'whatsapp' ? null : f.trigger_label_id || null,
+      trigger_label_source: f.trigger_label_source, trigger_wa_label_id: f.trigger_label_source === 'whatsapp' ? f.trigger_wa_label_id || null : null,
       wait_minutes: f.wait_minutes,
       schedule_days: f.schedule_days, schedule_time: f.schedule_time, ignore_older_days: f.ignore_older_days,
       conditions: f.conditions.map((c) => ({ ...c })),
-      actions: f.actions.map((x) => (x.type === 'enviar' ? { type: 'enviar', item_id: x.item_id || null, variants: x.variants.map((v) => ({ ...v })) } : { type: x.type, label_id: x.label_id || null })),
+      actions: f.actions.map((x) => (x.type === 'enviar' ? { type: 'enviar', item_id: x.item_id || null, variants: x.variants.map((v) => ({ ...v })) }
+        : E.WA_LABEL_ACTIONS.includes(x.type) ? { type: x.type, wa_label_id: x.wa_label_id || null } : { type: x.type, label_id: x.label_id || null })),
     };
+  }
+
+  // 2.5.0: etiqueta do gatilho em duas famílias: "CRM: …" e "WhatsApp: …"
+  function setTrigger(f, v) {
+    if (v.startsWith('wa:')) {
+      f.trigger_label_source = 'whatsapp';
+      f.trigger_wa_label_id = v.slice(3);
+      f.trigger_label_id = '';
+    } else {
+      f.trigger_label_source = 'crm';
+      f.trigger_wa_label_id = '';
+      f.trigger_label_id = v;
+    }
+    // "remover a etiqueta do gatilho" (modelo) acompanha a família escolhida
+    f.actions.forEach((x) => {
+      if (!x.followsTrigger || !['remover_etiqueta', 'remover_etiqueta_wa'].includes(x.type)) return;
+      if (f.trigger_label_source === 'whatsapp') { x.type = 'remover_etiqueta_wa'; x.wa_label_id = f.trigger_wa_label_id; x.label_id = ''; }
+      else { x.type = 'remover_etiqueta'; x.label_id = f.trigger_label_id; x.wa_label_id = ''; }
+    });
+  }
+
+  function triggerPicker(f) {
+    const wrap = el('div', 'sc-row');
+    const sel = el('select', 'ed-cat');
+    sel.setAttribute('aria-label', 'Etiqueta do gatilho');
+    const pending = String(f.trigger_label_id || '').startsWith(NEW_LABEL);
+    const cur = f.trigger_label_source === 'whatsapp' ? `wa:${f.trigger_wa_label_id || ''}` : pending ? f.trigger_label_id : f.trigger_label_id || ''; // CRM: id puro; WhatsApp: 'wa:<id>'
+    const opt = (parent, value, text, disabled = false) => {
+      const o = el('option', null, text);
+      o.value = value;
+      o.selected = value === cur;
+      o.disabled = disabled;
+      parent.append(o);
+    };
+    opt(sel, '', 'Escolha a etiqueta…');
+    const crm = el('optgroup');
+    crm.label = 'Etiquetas CRM';
+    state.labels.forEach((l) => opt(crm, l.id, `CRM: ${l.name}`));
+    if (pending) opt(crm, f.trigger_label_id, `CRM: ${f.trigger_label_id.slice(NEW_LABEL.length)} (ainda não existe)`);
+    else if (f.trigger_label_source !== 'whatsapp' && f.trigger_label_id && !state.labels.some((l) => l.id === f.trigger_label_id)) opt(crm, cur, 'CRM: etiqueta excluída');
+    const wa = el('optgroup');
+    const v25 = motor.state.automationsV25 === true;
+    wa.label = v25 ? 'Etiquetas do WhatsApp' : 'Etiquetas do WhatsApp (atualize o banco)';
+    const waList = Array.isArray(state.waLabels) ? state.waLabels : [];
+    waList.forEach((l) => opt(wa, `wa:${l.id}`, `WhatsApp: ${l.name}`, !v25));
+    if (f.trigger_label_source === 'whatsapp' && f.trigger_wa_label_id && !waList.some((l) => l.id === f.trigger_wa_label_id)) opt(wa, cur, `WhatsApp: etiqueta ${f.trigger_wa_label_id} (não encontrada)`);
+    if (!waList.length) opt(wa, 'wa:', Array.isArray(state.waLabels) ? 'WhatsApp: nenhuma etiqueta nesta conta' : 'WhatsApp: carregando…', true);
+    sel.append(crm, wa);
+    sel.addEventListener('change', () => { setTrigger(f, sel.value); renderFollows(); });
+    wrap.append(sel);
+    if (pending) {
+      const name = f.trigger_label_id.slice(NEW_LABEL.length);
+      wrap.append(fbtn('ed-mini', 'Criar agora', async () => {
+        try {
+          const created = await call('createLabel', { name, color: '#3b82f6' });
+          await syncLabels().catch(() => {});
+          setTrigger(f, created.id);
+        } catch (e) {
+          const existing = labelIdByName(name);
+          if (existing) setTrigger(f, existing);
+          else { f.msg = `Não consegui criar a etiqueta: ${e.message}`; f.err = true; }
+        }
+        renderFollows();
+      }));
+    }
+    return wrap;
+  }
+
+  // Etiqueta do WhatsApp das ações "adicionar/remover etiqueta do WhatsApp" (só as que existem)
+  function waLabelSelect(value, aria) {
+    const sel = el('select', 'ed-cat');
+    sel.setAttribute('aria-label', aria);
+    const none = el('option', null, Array.isArray(state.waLabels) ? 'Escolha a etiqueta do WhatsApp…' : 'Carregando as etiquetas do WhatsApp…');
+    none.value = '';
+    sel.append(none);
+    (state.waLabels || []).forEach((l) => {
+      const o = el('option', null, l.name);
+      o.value = l.id;
+      o.selected = l.id === value;
+      sel.append(o);
+    });
+    if (value && !(state.waLabels || []).some((l) => l.id === value)) {
+      const o = el('option', null, `etiqueta ${value} (não encontrada)`);
+      o.value = value;
+      o.selected = true;
+      sel.append(o);
+    }
+    return sel;
   }
 
   function renderAutomationEditor() {
@@ -5100,11 +5188,19 @@
       trig.append(o);
     });
     E.FUTURE_TRIGGERS.forEach((t) => { const o = el('option', null, `${t.label} (${t.note})`); o.value = t.type; o.disabled = true; trig.append(o); });
-    trig.addEventListener('change', () => { f.trigger_type = trig.value; renderFollows(); });
+    trig.addEventListener('change', () => {
+      f.trigger_type = trig.value;
+      if (f.trigger_type === 'venda_registrada' && f.trigger_label_source === 'whatsapp') setTrigger(f, '');
+      renderFollows();
+    });
     q.append(trig);
     // Ações "remover a etiqueta do gatilho" (do modelo) acompanham a etiqueta escolhida aqui
     const saleTrig = f.trigger_type === 'venda_registrada';
-    q.append(schedField(saleTrig ? 'Só para quem está na etiqueta CRM (opcional)' : 'Etiqueta CRM do gatilho', labelPicker(f.trigger_label_id, (v) => { f.trigger_label_id = v; f.actions.forEach((x) => { if (x.followsTrigger) x.label_id = v; }); }, { aria: 'Etiqueta do gatilho', empty: saleTrig ? '(qualquer contato)' : 'Escolha a etiqueta CRM…' })));
+    if (saleTrig) q.append(schedField('Só para quem está na etiqueta CRM (opcional)', labelPicker(f.trigger_label_id, (v) => { f.trigger_label_id = v; f.actions.forEach((x) => { if (x.followsTrigger) x.label_id = v; }); }, { aria: 'Etiqueta do gatilho', empty: '(qualquer contato)' })));
+    else {
+      q.append(schedField('Etiqueta do gatilho (CRM ou WhatsApp)', triggerPicker(f)));
+      if (f.trigger_label_source === 'whatsapp') q.append(el('div', 'crm-intro', 'Etiqueta do WhatsApp: a entrada conta a partir da primeira vez que a extensão viu a conversa nela (o WhatsApp não guarda essa data). Tirou e colocou de novo: conta como nova entrada.'));
+    }
     if (saleTrig) q.append(el('div', 'crm-intro', 'Roda uma vez para cada venda registrada pela conversa (botão 💰 Venda).'));
     if (f.trigger_type === 'sem_resposta') {
       const hours = numberInput(Math.floor(f.wait_minutes / 60), 0, 8760, 'Horas');
@@ -5193,7 +5289,11 @@
       const type = el('select', 'ed-cat');
       type.setAttribute('aria-label', `Ação ${i + 1}`);
       Object.entries(ACTION_LABEL).forEach(([k, t]) => { const o = el('option', null, `${i + 1}. ${t}`); o.value = k; o.selected = x.type === k; type.append(o); });
-      type.addEventListener('change', () => { f.actions[i] = type.value === 'enviar' ? { type: 'enviar', item_id: '', variants: [] } : { type: type.value, label_id: '' }; renderFollows(); });
+      Object.keys(ACTION_LABEL).forEach((k, j) => { if (E.WA_LABEL_ACTIONS.includes(k) && motor.state.automationsV25 !== true) type.options[j].disabled = x.type !== k; });
+      type.addEventListener('change', () => {
+        f.actions[i] = type.value === 'enviar' ? { type: 'enviar', item_id: '', variants: [] } : E.WA_LABEL_ACTIONS.includes(type.value) ? { type: type.value, wa_label_id: '' } : { type: type.value, label_id: '' };
+        renderFollows();
+      });
       row.append(type);
       if (x.type === 'enviar') {
         const it = itemSelect(x.item_id, { empty: x.variants.length ? '(nenhuma se nenhuma variante bater)' : 'Escolha a mensagem salva…', aria: `Mensagem da ação ${i + 1}` });
@@ -5224,6 +5324,11 @@
         const addV = fbtn('ed-mini', '+ Variante "se tem etiqueta X, manda Y"', () => { x.variants.push({ when: 'etiqueta', label_id: '', item_id: '' }); renderFollows(); });
         addV.disabled = x.variants.length >= 10;
         row.append(addV);
+      } else if (E.WA_LABEL_ACTIONS.includes(x.type)) {
+        const ws = waLabelSelect(x.wa_label_id, `Etiqueta do WhatsApp da ação ${i + 1}`);
+        ws.addEventListener('change', () => { x.wa_label_id = ws.value; x.followsTrigger = false; updateSummary(); });
+        row.append(ws);
+        if (x.followsTrigger) row.append(el('div', 'crm-intro', 'Acompanha a etiqueta do gatilho.'));
       } else if (x.type !== 'parar') {
         row.append(labelPicker(x.label_id, (v) => { x.label_id = v; x.followsTrigger = false; }, { aria: `Etiqueta da ação ${i + 1}` }));
         if (x.followsTrigger) row.append(el('div', 'crm-intro', 'Acompanha a etiqueta do gatilho.'));
@@ -5356,6 +5461,8 @@
     return plan.map((p) => {
       if (p.type === 'enviar') return `envia "${itemTitle(p.itemId)}"${p.pick && p.pick.kind === 'etiqueta' ? ` (variante: etiqueta ${labelName(p.pick.variant.label_id)})` : p.pick && p.pick.kind === 'anuncio' ? ` (variante: anúncio "${p.pick.variant.keyword}")` : ''}`;
       if (p.type === 'adicionar_etiqueta') return `adiciona ${labelName(p.label_id)}`;
+      if (p.type === 'adicionar_etiqueta_wa') return `adiciona ${waLabelName(p.wa_label_id)} (WhatsApp)`;
+      if (p.type === 'remover_etiqueta_wa') return `tira ${waLabelName(p.wa_label_id)} (WhatsApp)`;
       if (p.type === 'remover_etiqueta') return `tira ${labelName(p.label_id)}`;
       if (p.type === 'mover') return `move para ${labelName(p.label_id)}`;
       return p.type;
@@ -5365,7 +5472,7 @@
   function evText(ev) {
     if (ev.action === 'run') return { kind: 'ok', text: `rodaria agora: ${planText(ev.plan)}` };
     if (ev.action === 'wait') return { kind: 'wait', text: ev.leftMs == null ? 'aguardando (sem horário configurado)' : `aguardando: falta ${E.formatLeft(ev.leftMs)}` };
-    if (ev.action === 'done') return { kind: 'wait', text: 'já rodou para esta entrada na etiqueta' };
+    if (ev.action === 'done') return { kind: 'wait', text: ev.entry && ev.entry.via === 'inscricao' ? 'já rodou para esta inscrição' : 'já rodou para esta entrada na etiqueta' };
     if (ev.action === 'none') return { kind: 'wait', text: ev.reason };
     if (ev.reason === 'condição não bateu' && ev.condition) {
       const c = ev.condition;
@@ -5423,38 +5530,157 @@
     renderFollows();
     const open = await openChatContact();
     if (!open) { fl.test = ['Abra uma conversa individual no WhatsApp.']; renderFollows(); return; }
-    const list = activeAutomations();
-    let people = [];
-    try { people = list.length ? await call('flowCandidates', { labelIds: [...new Set(list.map((a) => a.trigger_label_id))] }) : []; } catch { people = []; }
-    const contact = people.find((c) => c.chat_id === open.chatId || (open.identity.phone && c.phone === open.identity.phone));
-    const mine = contact ? list.filter((a) => contact.labelIds.includes(a.trigger_label_id)) : [];
+    let res = null;
+    try { res = await chatAutomationRows(open, activeAutomations()); } catch { res = null; }
+    const mine = res ? res.rows : [];
     if (!mine.length) { fl.test = ['Esta conversa não está em nenhuma automação ativa.']; renderFollows(); return; }
-    let ran = [];
-    try { ran = await call('automationRuns', { automationIds: mine.map((a) => a.id) }); } catch { ran = []; }
-    const keywords = [...new Set(mine.flatMap(E.automationKeywords))].slice(0, 20);
-    let info = null;
-    try { info = await waRequest('chatsInfo', { chatIds: [open.chatId], keywords }, { timeout: 8000 }); } catch { info = null; }
-    const chat = info && info.chats ? info.chats[open.chatId] : null;
-    fl.test = mine.map((automation) => {
-      const ev = E.evaluateAutomation({ automation, contact: { ...contact, chat_id: contact.chat_id || open.chatId }, chat, settings: motor.state.settings, now: Date.now(), noSendLabelId: motor.state.noSendLabelId, ranKeys: new Set(ran) });
-      return `${automation.name}: ${evText(ev).text}`;
-    });
+    fl.test = mine.map((r) => `${r.automation.name}: ${evText(r.ev).text}`);
     renderFollows();
   }
 
-  async function putOpenChatInFlow() {
-    const a = motor.state.automations.find((x) => x.id === fl.putFlowId);
-    if (!a) { flash('Escolha a automação.', true); renderFollows(); return; }
-    const open = await openChatContact();
-    if (!open) { flash('Abra uma conversa individual no WhatsApp.', true); renderFollows(); return; }
-    try {
-      await call('setContactLabel', { identity: open.identity, labelId: a.trigger_label_id, on: true });
-      afterLabelChange();
-      flash(`Conversa colocada na automação "${a.name}" (etiqueta CRM ${labelName(a.trigger_label_id)}).`);
-    } catch (e) {
-      flash(`Não consegui colocar: ${e.message}`, true);
+  // ── 2.5.0: "Adicionar à automação" (botão 🔁 e seção Automações) ──
+  // A conversa entra a partir de AGORA (inscrição manual, sem marcar etiqueta). A tela mostra em quais
+  // automações a conversa está (pela inscrição ou pela etiqueta CRM/do WhatsApp) e quanto falta.
+
+  // Leitura (não grava nada): contato, etiquetas, inscrições, execuções e a última mensagem carregada
+  async function chatAutomationRows(open, automations) {
+    const st = await call('chatAutomationState', { identity: open.identity, chatId: open.chatId });
+    const contact = st.contact || { id: null, name: null, phone: open.identity.phone || null, chat_id: open.chatId, labelIds: [], links: [], waSeen: st.waSeen || {}, enrolled: {}, enrollmentIds: {} };
+    if (!contact.chat_id) contact.chat_id = open.chatId;
+    const ranKeys = new Set(st.ranKeys || []);
+    const mine = automations.filter((a) => a.trigger_type !== 'venda_registrada' && E.automationEntry(a, contact));
+    let chat = null;
+    if (mine.length) {
+      const keywords = [...new Set(mine.flatMap(E.automationKeywords))].slice(0, 20);
+      let info = null;
+      try { info = await waRequest('chatsInfo', { chatIds: [open.chatId], keywords }, { timeout: 8000 }); } catch { info = null; }
+      chat = info && info.chats ? info.chats[open.chatId] : null;
     }
+    const rows = mine.map((automation) => ({
+      automation,
+      entry: E.automationEntry(automation, contact),
+      labelEntry: E.automationEntry(automation, contact, { ignoreEnrollment: true }),
+      ev: E.evaluateAutomation({ automation, contact: { ...contact, id: contact.id || '?' }, chat, settings: motor.state.settings, now: Date.now(), noSendLabelId: motor.state.noSendLabelId, ranKeys }),
+    })).filter((r) => r.ev.reason !== 'tirado da automação');
+    return { v25: st.v25 === true, contact: st.contact ? contact : null, rows };
+  }
+
+  async function openChatAutomations() {
+    fl.view = 'conversa';
+    fl.conv = { loading: true, open: null, rows: [], contact: null, v25: motor.state.automationsV25 === true, msg: '', err: false, pick: fl.conv ? fl.conv.pick : '', busy: false };
     renderFollows();
+    await loadChatAutomations();
+  }
+
+  async function loadChatAutomations() {
+    const c = fl.conv;
+    if (!c) return;
+    const open = await openChatContact();
+    c.open = open;
+    if (open) {
+      try {
+        if (!motor.state.automations.length) await motor.loadAutomations();
+        Object.assign(c, await chatAutomationRows(open, motor.state.automations));
+      } catch (e) { c.msg = `Não consegui ler as automações: ${e.message}`; c.err = true; }
+    }
+    c.loading = false;
+    if (fl.view === 'conversa') renderFollows();
+  }
+
+  function viaText(a, entry) {
+    if (entry.via === 'inscricao') return 'adicionada por você (🔁)';
+    if (entry.via === 'whatsapp') return `pela etiqueta do WhatsApp "${waLabelName(a.trigger_wa_label_id)}"`;
+    return `pela etiqueta CRM "${labelName(a.trigger_label_id)}"`;
+  }
+
+  function renderChatAutomations() {
+    const c = fl.conv || { loading: true };
+    const sec = el('section', 'crmsec');
+    sec.append(el('div', 'wt-head', 'ESTA CONVERSA NAS AUTOMAÇÕES'));
+    if (c.loading) { sec.append(el('div', 'lt-none', 'Carregando…')); ftabEl.append(sec); return; }
+    if (!c.open) {
+      sec.append(el('div', 'lt-none', 'Abra uma conversa individual no WhatsApp.'), fbtn('bbtn', 'Voltar', () => backToList()));
+      ftabEl.append(sec);
+      return;
+    }
+    if (!c.v25) sec.append(el('div', 'ed-note', 'Atualize o banco para usar este recurso.'));
+    sec.append(el('div', 'crm-sub', 'Esta conversa está em:'));
+    if (!c.rows.length) sec.append(el('div', 'lt-none', 'Nenhuma automação.'));
+    c.rows.forEach((r) => {
+      const line = el('div', 'fw-card');
+      line.append(el('div', 'fw-name', `${r.automation.name}${r.automation.active ? '' : ' (desligada: não roda)'}`));
+      line.append(el('div', 'fw-txt', `${viaText(r.automation, r.entry)} · ${evText(r.ev).text}`));
+      if (c.contact && c.v25) {
+        const b = fbtn('ed-mini', 'Tirar desta automação', () => leaveChatAutomation(r));
+        b.disabled = c.busy;
+        line.append(b);
+      }
+      sec.append(line);
+    });
+    sec.append(el('div', 'crm-sub', 'Adicionar à automação'));
+    sec.append(el('div', 'crm-intro', 'A conversa entra a partir de AGORA: o tempo da automação começa a contar neste momento, sem marcar etiqueta. Em "dia e hora fixos", entra na lista daquela automação.'));
+    const row = el('div', 'sc-row');
+    const sel = el('select', 'ed-cat');
+    sel.setAttribute('aria-label', 'Automação');
+    const none = el('option', null, 'Escolha a automação…');
+    none.value = '';
+    sel.append(none);
+    [...motor.state.automations].filter((a) => a.trigger_type !== 'venda_registrada').sort((a, b) => (a.position || 0) - (b.position || 0)).forEach((a) => {
+      const o = el('option', null, `${a.name}${a.active ? '' : ' (desligada)'}`);
+      o.value = a.id;
+      o.selected = a.id === c.pick;
+      sel.append(o);
+    });
+    sel.addEventListener('change', () => { c.pick = sel.value; });
+    const add = fbtn('bbtn primary', c.busy ? 'Adicionando…' : 'Adicionar', () => enrollOpenChat());
+    add.disabled = c.busy || !c.v25;
+    row.append(sel, add);
+    sec.append(row);
+    if (c.msg) sec.append(el('div', `ed-msg${c.err ? ' err' : ''}`, c.msg));
+    sec.append(fbtn('bbtn', 'Voltar', () => { fl.conv = null; backToList(); }));
+    ftabEl.append(sec);
+  }
+
+  async function enrollOpenChat() {
+    const c = fl.conv;
+    if (!c || c.busy) return;
+    const a = motor.state.automations.find((x) => x.id === c.pick);
+    if (!a) { c.msg = 'Escolha a automação.'; c.err = true; renderFollows(); return; }
+    const open = await openChatContact();
+    if (!open) { c.msg = 'Abra uma conversa individual no WhatsApp.'; c.err = true; renderFollows(); return; }
+    c.busy = true;
+    renderFollows();
+    try {
+      const r = await call('enrollContact', { automationId: a.id, identity: open.identity, chatId: open.chatId, name: state.ctx && !state.ctx.isNumber ? state.ctx.fullName : null });
+      c.msg = r.already ? `Esta conversa já está em "${a.name}".` : `Conversa adicionada a "${a.name}" a partir de agora.${a.active ? '' : ' A automação está desligada: ligue para rodar.'}`;
+      c.err = false;
+    } catch (e) {
+      c.msg = `Não consegui adicionar: ${e.message}`;
+      c.err = true;
+    }
+    c.busy = false;
+    await loadChatAutomations();
+  }
+
+  async function leaveChatAutomation(r) {
+    const c = fl.conv;
+    if (!c || c.busy || !c.contact) return;
+    c.busy = true;
+    renderFollows();
+    try {
+      await call('leaveAutomation', {
+        automationId: r.automation.id, contactId: c.contact.id,
+        enrollmentId: r.entry.via === 'inscricao' ? c.contact.enrollmentIds[r.automation.id] : undefined,
+        entryKey: r.labelEntry ? r.labelEntry.key : undefined,
+      });
+      c.msg = `Conversa tirada de "${r.automation.name}".`;
+      c.err = false;
+    } catch (e) {
+      c.msg = `Não consegui tirar: ${e.message}`;
+      c.err = true;
+    }
+    c.busy = false;
+    await loadChatAutomations();
   }
 
   // ── Histórico ──
@@ -6000,6 +6226,8 @@
   try { chrome.storage.local.get(['metaTestMode'], (r) => { cv.test = !!(r && r.metaTestMode); }); } catch { /* extensão recarregada */ }
 
   shadow.querySelector('.conv-quick').addEventListener('click', () => { if (!state.open) setOpen(true); setSection('conversoes'); openConversionForm(); });
+  // 2.5.0: 🔁 abre "Esta conversa nas automações" (seção Automações)
+  shadow.querySelector('.auto-quick').addEventListener('click', () => { if (!state.open) setOpen(true); setSection('follows'); openChatAutomations(); });
 
   function syncConversoesActive() {
     const want = state.open && state.section === 'conversoes';

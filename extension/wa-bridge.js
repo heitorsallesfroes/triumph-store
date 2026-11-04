@@ -289,6 +289,57 @@
     };
   }
 
+  // ── 2.5.0: etiquetas nativas para as automações (SÓ LEITURA) ──
+  // labelChatIds: todas as conversas individuais que estão numa etiqueta (inclusive arquivadas), só id e nome,
+  // sem olhar mensagens. labelEvents: trocas de etiqueta (evento chat.update_label) guardadas só na memória
+  // desta aba até o painel pedir; o painel só grava no banco as das etiquetas usadas por automações ativas.
+  const LABEL_EVENTS_MAX = 500;
+  const labelEventQueue = [];
+
+  function onLabelUpdate(e) {
+    try {
+      const chat = e && e.chat;
+      const id = chatIdOf(chat);
+      if (!/^[0-9]+@(c\.us|lid)$/.test(id)) return; // só conversas individuais
+      const type = e.type === 'add' || e.type === 'remove' ? e.type : null;
+      const ids = (Array.isArray(e.ids) ? e.ids : []).map(String).filter((x) => x && x.length <= 40);
+      if (!type || !ids.length) return;
+      labelEventQueue.push({ chatId: id, name: chatCard(chat, false).name, type, labelIds: ids.slice(0, 20), t: Date.now() });
+      if (labelEventQueue.length > LABEL_EVENTS_MAX) labelEventQueue.splice(0, labelEventQueue.length - LABEL_EVENTS_MAX);
+    } catch { /* evento estranho: ignora */ }
+  }
+  try { if (wpp && typeof wpp.on === 'function') wpp.on('chat.update_label', onLabelUpdate); } catch { /* sem eventos: a varredura cobre */ }
+
+  function labelEvents() {
+    return { events: labelEventQueue.splice(0, labelEventQueue.length) };
+  }
+
+  async function labelChatIds(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const labelId = payload && payload.labelId;
+    if (typeof labelId !== 'string' || !labelId || labelId.length > 40) throw new BridgeError('invalid_label', 'Etiqueta inválida', 'before-send');
+    const known = (await labels()).find((l) => l.id === labelId);
+    if (!known) throw new BridgeError('invalid_label', 'Etiqueta inválida', 'before-send');
+    let chats;
+    try {
+      chats = await withTimeout(wpp.chat.list({ withLabels: [labelId], ignoreGroupMetadata: true }), LIST_TIMEOUT_MS);
+    } catch (err) {
+      if (err instanceof BridgeError) throw err;
+      throw new BridgeError('chats_failed', 'Não consegui ler as conversas', 'before-send');
+    }
+    if (!Array.isArray(chats)) throw new BridgeError('chats_failed', 'Não consegui ler as conversas', 'before-send');
+    const out = [];
+    for (const c of chats) {
+      const ids = safe(() => c.labels, null);
+      if (Array.isArray(ids) && !ids.map(String).includes(labelId)) continue;
+      const card = chatCard(c, false);
+      if (card.kind !== 'individual' || !/^[0-9]+@(c\.us|lid)$/.test(card.id)) continue;
+      out.push({ id: card.id, name: card.name });
+      if (out.length >= 5000) break;
+    }
+    return { count: known.count, chats: out };
+  }
+
   // Só conversas que já estão carregadas no WhatsApp Web (nunca cria conversa)
   async function loadedChat(chatId) {
     if (typeof chatId !== 'string' || !CHAT_ID_RE.test(chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida', 'before-send');
@@ -316,7 +367,7 @@
     return { opened: true };
   }
 
-  // ── Etiquetas nativas: trocar (SÓ a pedido do usuário, uma conversa por vez) ──
+  // ── Etiquetas nativas: trocar (a pedido do usuário ou de uma automação que ele criou; uma conversa por vez) ──
   // A única escrita é labels.addOrRemoveLabels, chamada uma vez por pedido. Nunca cria, apaga,
   // renomeia ou muda a cor de etiquetas.
 
@@ -750,6 +801,8 @@
     chatSaleInfo: (payload) => chatSaleInfo(payload),
     recentChats: (payload) => recentChats(payload),
     adContext: (payload) => adContext(payload),
+    labelEvents: () => labelEvents(),
+    labelChatIds: (payload) => labelChatIds(payload),
   };
 
   function reply(request, ok, data, error) {

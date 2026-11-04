@@ -276,6 +276,47 @@ entrar de novo, vale de novo).
   para quem tinha "Se responder vai para"). Antes disso, a seção mostra
   "Atualize o banco para usar este recurso" e as réguas continuam rodando.
 
+#### Etiqueta do WhatsApp no gatilho — 2.5.0
+
+- Nos gatilhos **Ficou sem responder**, **Entrou na etiqueta há**,
+  **Respondeu** e **Dia e hora fixos**, a etiqueta pode ser **CRM: …** ou
+  **WhatsApp: …** (etiquetas nativas do WhatsApp Business).
+- O WhatsApp não guarda quando a etiqueta foi colocada. Por isso a extensão
+  anota a **primeira vez que viu** cada conversa em cada etiqueta do WhatsApp
+  usada por automações **ativas**, e essa data vale como "entrou em":
+  - na hora em que a etiqueta é colocada ou tirada no WhatsApp Web aberto;
+  - e numa conferência leve a cada 10 min (só a aba que executa, só essas
+    etiquetas, sem ler mensagens).
+  - Quem já estava na etiqueta quando a automação foi ligada conta como
+    "entrou agora".
+  - Tirou a etiqueta: sai. Colocou de novo depois: é uma entrada nova (roda de
+    novo).
+- Ações novas: **Adicionar etiqueta do WhatsApp** e **Remover etiqueta do
+  WhatsApp** (só etiquetas que já existem; a extensão nunca cria, apaga ou
+  renomeia etiquetas do WhatsApp). Com gatilho do WhatsApp, **Mover** tira a
+  etiqueta do WhatsApp do gatilho e põe a etiqueta CRM escolhida.
+- Conversa sem contato no CRM: a extensão cria o contato (telefone pelo número
+  da conversa, ou o nome) e liga a conversa a ele, como já fazia.
+
+#### 🔁 Adicionar à automação — 2.5.0
+
+- Botão **🔁 Automação** no topo da conversa (ao lado do 💰 e do 📈) e
+  **🔁 Adicionar à automação** em Automações → Ferramentas.
+- A tela mostra **"Esta conversa está em:"** cada automação em que a conversa
+  está (adicionada por você, pela etiqueta CRM ou pela etiqueta do WhatsApp),
+  com quanto falta para o próximo passo, e o botão **Tirar desta automação**.
+- Escolha uma automação e clique em **Adicionar**: a conversa entra a partir
+  de **agora**, sem marcar etiqueta. Em "Entrou na etiqueta há" o tempo conta
+  desde agora; em "Ficou sem responder" e "Respondeu", só vale o que acontecer
+  depois de agora; em "Dia e hora fixos", entra na lista daquela automação. A
+  mesma conversa não entra duas vezes na mesma automação.
+- **Tirar desta automação**: encerra a inscrição e, se a conversa também está
+  pela etiqueta, essa entrada não roda mais (entrar de novo na etiqueta vale).
+- Automação desligada não roda para ninguém, nem para quem foi adicionado.
+- Precisa da migration `20261104120000_automations_wa_labels.sql`. Sem ela, as
+  automações de etiqueta CRM continuam como antes e a tela mostra "Atualize o
+  banco para usar este recurso".
+
 ### {nome} inteligente (2.1.0)
 
 - Ordem: o nome salvo no CRM; senão a primeira palavra do nome do WhatsApp.
@@ -640,6 +681,18 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.5.0
+- Automações com etiqueta do WhatsApp no gatilho (além da CRM), com a data de
+  "entrou na etiqueta" anotada pela extensão; ações para pôr e tirar etiqueta
+  do WhatsApp.
+- Botão 🔁 na conversa: ver em quais automações ela está, adicionar a partir
+  de agora e tirar. Substitui o "Colocar" das Ferramentas (que marcava a
+  etiqueta CRM do gatilho).
+- Migration `20261104120000_automations_wa_labels.sql` (aplicar no Supabase).
+- Desempenho: com automação ativa, +1 leitura a cada 2 min (inscrições). As
+  etiquetas do WhatsApp só geram consultas se alguma automação ativa usar uma
+  delas (a conferência é a cada 10 min). Sem automação ativa, nada muda.
 
 ### 2.4.1 (desempenho do banco)
 - Só a aba com a trava trabalha em segundo plano; as outras só tentam pegar a

@@ -89,6 +89,15 @@ const HANDLERS = {
   saleTriggerCandidates: (m) => WaApi.saleTriggerCandidates({ sinceDays: m.sinceDays }),
   // 2.4.1: "tem algo ativo?" do motor (leituras mínimas)
   engineActivity:        (m) => WaApi.engineActivity({ automations: m.automations !== false, campaigns: m.campaigns !== false }),
+  // 2.5.0: etiqueta do WhatsApp no gatilho ("primeira vez que viu") e "Adicionar à automação"
+  nativeLabelEvents:     (m) => WaApi.nativeLabelEvents({ events: m.events }),
+  nativeLabelSweep:      (m) => WaApi.nativeLabelSweep({ labelId: m.labelId, chats: m.chats, complete: m.complete }),
+  nativeLabelCandidates: (m) => WaApi.nativeLabelCandidates({ waLabelIds: m.waLabelIds }),
+  activeEnrollments:     (m) => WaApi.activeEnrollments({ automationIds: m.automationIds }),
+  enrollmentCandidates:  (m) => WaApi.enrollmentCandidates({ enrollments: m.enrollments }),
+  enrollContact:         (m) => WaApi.enrollContact({ automationId: m.automationId, identity: m.identity, chatId: m.chatId, name: m.name }),
+  leaveAutomation:       (m) => WaApi.leaveAutomation({ automationId: m.automationId, contactId: m.contactId, enrollmentId: m.enrollmentId, entryKey: m.entryKey }),
+  chatAutomationState:   (m) => WaApi.chatAutomationState({ identity: m.identity, chatId: m.chatId }),
   // Conversões do Facebook (2.4.0): só sendPurchaseEvent manda algo, e só pelo botão "Enviar compra"
   metaStatus:            ()  => WaApi.metaStatus(),
   sendPurchaseEvent:     (m) => WaApi.sendPurchaseEvent({ event: m.event }),

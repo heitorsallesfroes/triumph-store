@@ -23,6 +23,8 @@
 -- nada a desfazer aqui.
 -- Extensão 2.4.0 (20261103190000): wa_conversion_events entra na cópia como as outras wa_*
 -- e volta a "public access wa_conversion_events".
+-- Extensão 2.5.0 (20261104120000): wa_native_label_seen e wa_automation_enrollments entram na cópia
+-- como as outras wa_* e voltam a "public access <tabela>".
 -- ============================================================================
 
 begin;

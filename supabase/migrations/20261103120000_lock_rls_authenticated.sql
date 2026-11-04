@@ -36,6 +36,8 @@
 -- migrations 20261103130000/20261103140000/20261103150000 forem
 -- aplicadas DEPOIS desta, elas mesmas criam essas tabelas só para authenticated e se registram
 -- na cópia rls_backup_20261103 (o rollback abre todas do mesmo jeito).
+-- Extensão 2.5.0 (20261104120000): wa_native_label_seen e wa_automation_enrollments também entram;
+-- aplicada depois desta, a migration 2.5.0 cria as duas só para authenticated e se registra na cópia.
 -- ERP → CRM (20261103180000): sem tabela nova; o gatilho de pós-venda usa uma função
 -- SECURITY DEFINER (passa por cima do RLS de propósito), então nada muda aqui.
 -- ============================================================================
@@ -94,7 +96,9 @@ declare
     -- extensão 2.1.0 (automações: migration 20261103150000)
     'wa_automations', 'wa_automation_runs',
     -- extensão 2.4.0 (eventos de compra do Facebook: migration 20261103190000)
-    'wa_conversion_events'
+    'wa_conversion_events',
+    -- extensão 2.5.0 (etiqueta do WhatsApp no gatilho e inscrição manual: migration 20261104120000)
+    'wa_native_label_seen', 'wa_automation_enrollments'
   ];
 begin
   foreach t in array tables loop

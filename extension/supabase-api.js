@@ -809,9 +809,9 @@
 
   // Colunas/tabelas novas: "sim" fica guardado; "não" é testado de novo depois de 5 min
   const probeCache = new Map();
-  async function probe(key, fn) {
+  async function probe(key, fn, retryMs = 5 * 60 * 1000) {
     const hit = probeCache.get(key);
-    if (hit && (hit.value || Date.now() - hit.at < 5 * 60 * 1000)) return hit.value;
+    if (hit && (hit.value || Date.now() - hit.at < retryMs)) return hit.value;
     let value = false;
     try { value = await fn(); } catch { value = false; }
     probeCache.set(key, { value, at: Date.now() });
@@ -853,6 +853,7 @@
     return {
       available: true, settings: rows[0], campaigns, campaignsV2: campaigns && (await campaignsV2()), automations: await automationTables(),
       salesOrigin: await salesOrigin(),
+      automationsV25: await automationsV25(),
     };
   }
 
@@ -1113,6 +1114,12 @@
     rows.forEach((r) => {
       if (r.contact && !byId.has(r.contact.id)) byId.set(r.contact.id, { id: r.contact.id, name: r.contact.name || null, phone: r.contact.phone || null, chat_id: r.contact.chat_id || null, labelIds: [], links: [] });
     });
+    await addContactLinks(byId);
+    return [...byId.values()];
+  }
+
+  // Todas as etiquetas CRM de cada contato (labelIds) e quando entrou em cada uma (links)
+  async function addContactLinks(byId) {
     const ids = [...byId.keys()];
     for (let i = 0; i < ids.length; i += 100) {
       // 2.1.0: created_at = quando o contato entrou na etiqueta (gatilho "entrou na etiqueta" e run_key)
@@ -1122,7 +1129,7 @@
         if (c) { c.labelIds.push(l.label_id); c.links.push({ label_id: l.label_id, created_at: l.created_at || null }); }
       });
     }
-    return [...byId.values()];
+    return byId;
   }
 
   async function contactLabelIds({ contactId }) {
@@ -1429,7 +1436,15 @@
   const AUTOMATION_COLUMNS = 'id,name,active,position,trigger_type,trigger_label_id,wait_minutes,schedule_days,schedule_time,conditions,actions,ignore_older_days,created_at';
   const TRIGGERS = ['sem_resposta', 'entrou_etiqueta', 'respondeu', 'dia_hora', 'venda_registrada'];
   const CONDITIONS = ['tem_etiqueta', 'nao_tem_etiqueta', 'anuncio', 'parada_max_dias'];
-  const ACTIONS = ['enviar', 'adicionar_etiqueta', 'remover_etiqueta', 'mover', 'parar'];
+  const ACTIONS = ['enviar', 'adicionar_etiqueta', 'remover_etiqueta', 'mover', 'parar', 'adicionar_etiqueta_wa', 'remover_etiqueta_wa'];
+  const WA_ACTIONS = ['adicionar_etiqueta_wa', 'remover_etiqueta_wa'];
+  // 2.5.0 (migration 20261104120000): etiqueta do WhatsApp no gatilho, "primeira vez que viu" e inscrição manual
+  const WA_LABEL_RE = /^[\w.:-]{1,40}$/;
+  const AUTOMATION_V25_COLUMNS = 'trigger_label_source,trigger_wa_label_id';
+  // "não" é testado de novo só a cada 30 min (2.4.1: poucas consultas); recarregar o WhatsApp testa na hora
+  const automationsV25 = () => probe('automations.v25', () => hasColumn('wa_automations', 'trigger_label_source'), 30 * 60 * 1000);
+  const autoCols = async () => ((await automationsV25()) ? `${AUTOMATION_COLUMNS},${AUTOMATION_V25_COLUMNS}` : AUTOMATION_COLUMNS);
+  const checkWaLabel = (v, what) => { if (typeof v !== 'string' || !WA_LABEL_RE.test(v)) throw new Error(what); return v; };
   const RUN_KEY_RE = /^[\w:@.+-]{1,120}$/;
 
   const automationTables = () => probe('automations', async () => {
@@ -1466,16 +1481,20 @@
     const nowMs = Date.now();
     const soon = encodeURIComponent(new Date(nowMs + 2 * 60 * 1000).toISOString());
     const none = () => [];
+    const cols = automations ? await autoCols() : '';
     const [sch, camp, auto] = await Promise.all([
       rest(`wa_schedules?select=id&status=eq.pendente&send_at=lte.${soon}&limit=1`).catch(none),
       campaigns ? rest('wa_campaigns?select=id,status,start_at&status=in.(agendada,rodando)&order=created_at.asc&limit=20').catch(none) : [],
       automations
-        ? autoRest(`wa_automations?select=${AUTOMATION_COLUMNS}&active=eq.true&order=position.asc,created_at.asc`)
+        ? autoRest(`wa_automations?select=${cols}&active=eq.true&order=position.asc,created_at.asc`)
         : rest('wa_flows?select=id&active=eq.true&limit=1').catch(none),
     ]);
     const campaignOn = camp.some((c) => c.status === 'rodando' || (c.start_at && Date.parse(c.start_at) <= nowMs + 2 * 60 * 1000));
+    // 2.5.0: inscrições manuais ativas nas automações ativas (1 leitura, só se houver automação ativa)
+    let enrollments = [];
+    if (automations && auto.length && (await automationsV25())) enrollments = await activeEnrollments({ automationIds: auto.map((a) => a.id) }).catch(none);
     return automations
-      ? { schedules: sch.length > 0, campaigns: campaignOn, automations: auto, flows: false }
+      ? { schedules: sch.length > 0, campaigns: campaignOn, automations: auto, flows: false, enrollments }
       : { schedules: sch.length > 0, campaigns: campaignOn, automations: null, flows: auto.length > 0 };
   }
 
@@ -1493,10 +1512,11 @@
     return { type: 'parada_max_dias', days: intIn(c.days, 1, 365, `${what}: dias`) };
   }
 
-  function checkAction(a, i, triggerLabel) {
+  function checkAction(a, i, triggerLabel, waTrigger = false) {
     const what = `Ação ${i + 1}`;
     if (!a || typeof a !== 'object' || !ACTIONS.includes(a.type)) throw new Error(`${what}: tipo inválido`);
     if (a.type === 'parar') return { type: 'parar' };
+    if (WA_ACTIONS.includes(a.type)) return { type: a.type, wa_label_id: checkWaLabel(a.wa_label_id, `${what}: escolha a etiqueta do WhatsApp`) };
     if (a.type === 'enviar') {
       const variants = Array.isArray(a.variants) ? a.variants : [];
       if (variants.length > 10) throw new Error(`${what}: no máximo 10 variantes`);
@@ -1512,19 +1532,24 @@
     }
     const label_id = checkUuid(a.label_id, `${what}: escolha a etiqueta`);
     if (a.type === 'mover' && label_id === triggerLabel) throw new Error(`${what}: mover para uma etiqueta diferente da do gatilho`);
-    if (a.type === 'mover' && !triggerLabel) throw new Error(`${what}: sem etiqueta no gatilho, use "adicionar etiqueta"`);
+    if (a.type === 'mover' && !triggerLabel && !waTrigger) throw new Error(`${what}: sem etiqueta no gatilho, use "adicionar etiqueta"`);
     return { type: a.type, label_id };
   }
 
   function checkAutomation(input) {
     const a = input || {};
     if (!TRIGGERS.includes(a.trigger_type)) throw new Error('Escolha o gatilho (Quando)');
+    // 2.5.0: etiqueta do gatilho do CRM (padrão) ou do WhatsApp
+    const source = a.trigger_label_source === 'whatsapp' ? 'whatsapp' : 'crm';
+    if (source === 'whatsapp' && a.trigger_type === 'venda_registrada') throw new Error('"Venda registrada" usa só etiqueta CRM');
     const row = {
       name: cleanText(a.name, 60, 'Nome da automação'),
       active: a.active === true,
       trigger_type: a.trigger_type,
+      trigger_label_source: source,
+      trigger_wa_label_id: source === 'whatsapp' ? checkWaLabel(a.trigger_wa_label_id, 'Escolha a etiqueta do WhatsApp do gatilho') : null,
       // 2.3.0: "venda registrada" não precisa de etiqueta (vale para quem teve a venda registrada pela conversa)
-      trigger_label_id: a.trigger_type === 'venda_registrada' && (a.trigger_label_id == null || a.trigger_label_id === '')
+      trigger_label_id: source === 'whatsapp' ? null : a.trigger_type === 'venda_registrada' && (a.trigger_label_id == null || a.trigger_label_id === '')
         ? null : checkUuid(a.trigger_label_id, 'Escolha a etiqueta CRM do gatilho'),
       wait_minutes: null, schedule_days: null, schedule_time: null,
       ignore_older_days: intIn(a.ignore_older_days ?? 15, 1, 365, 'Ignorar conversas paradas há (dias)'),
@@ -1542,18 +1567,24 @@
     row.conditions = conditions.map(checkCondition);
     const actions = Array.isArray(a.actions) ? a.actions : [];
     if (!actions.length || actions.length > 10) throw new Error('De 1 a 10 ações');
-    row.actions = actions.map((x, i) => checkAction(x, i, row.trigger_label_id));
+    row.actions = actions.map((x, i) => checkAction(x, i, row.trigger_label_id, source === 'whatsapp'));
     if (!row.actions.some((x) => x.type !== 'parar')) throw new Error('Escolha pelo menos uma ação');
     return row;
   }
 
   async function fetchAutomations() {
-    return autoRest(`wa_automations?select=${AUTOMATION_COLUMNS}&order=position.asc,created_at.asc`);
+    return autoRest(`wa_automations?select=${await autoCols()}&order=position.asc,created_at.asc`);
   }
 
   async function saveAutomation({ id, automation }) {
     const row = checkAutomation(automation);
     if (row.trigger_type === 'venda_registrada' && !(await salesOrigin())) throw new Error(ENGINE_MISSING);
+    // 2.5.0: sem a migration 20261104120000, etiqueta do WhatsApp não dá; o resto salva como antes
+    if (!(await automationsV25())) {
+      if (row.trigger_label_source === 'whatsapp' || row.actions.some((x) => WA_ACTIONS.includes(x.type))) throw new Error(ENGINE_MISSING);
+      delete row.trigger_label_source;
+      delete row.trigger_wa_label_id;
+    }
     if (id !== undefined && id !== null) {
       checkUuid(id, 'Automação inválida');
       const rows = await autoRest(`wa_automations?id=eq.${id}`, json('PATCH', 'return=representation', row));
@@ -1615,6 +1646,284 @@
     checkUuid(id, 'Execução inválida');
     await autoRest(`wa_automation_runs?id=eq.${id}`, { method: 'DELETE' });
     return true;
+  }
+
+  // ── 2.5.0: etiqueta do WhatsApp no gatilho ("primeira vez que viu") e "Adicionar à automação" ──
+  // wa_native_label_seen: uma linha por conversa + etiqueta nativa. Saiu: removed_at. Voltou depois:
+  // a mesma linha recomeça (first_seen_at novo, removed_at vazio) e conta como entrada nova.
+
+  const v25OrMissing = async () => { if (!(await automationsV25())) throw new Error(ENGINE_MISSING); };
+  const clipName = (v) => (typeof v === 'string' && v.trim() && !/^[+\d\s().-]+$/.test(v) ? v.trim().replace(/\s+/g, ' ').slice(0, 100) : null);
+  function checkChats(list, max) {
+    if (!Array.isArray(list) || list.length > max) throw new Error('Lista inválida');
+    return list.map((c) => {
+      const chatId = c && (c.chatId || c.id);
+      if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
+      return { chatId, name: clipName(c.name) };
+    });
+  }
+
+  // Conversa sem contato no CRM: cria (telefone pelo id @c.us, ou o nome) e grava chat_id, como já é feito
+  async function ensureChatContacts(chats) {
+    if (!chats.length) return;
+    const found = await contactsByChats(chats.map((c) => c.chatId));
+    const hasCol = await chatIdColumn();
+    const at = new Date().toISOString();
+    const rows = [];
+    const keys = new Set();
+    chats.forEach((c) => {
+      if (found[c.chatId]) return;
+      const phone = phoneOfChat(c.chatId);
+      const key = phone ? `tel:${phone}` : c.name ? nameKey(c.name) : null;
+      if (!key || keys.has(key)) return;
+      keys.add(key);
+      rows.push({ key, name: c.name, phone: phone || null, updated_at: at, ...(hasCol ? { chat_id: c.chatId } : {}) });
+    });
+    for (let i = 0; i < rows.length; i += 200) {
+      await rest('wa_contacts?on_conflict=key', json('POST', 'resolution=ignore-duplicates,return=minimal', rows.slice(i, i + 200)));
+    }
+    // Já existia só pelo nome (sem telefone e sem conversa): liga a conversa a ele
+    if (hasCol) {
+      for (const r of rows.filter((x) => !x.phone)) {
+        await rest(`wa_contacts?key=${eq(r.key)}&phone=is.null&chat_id=is.null`, json('PATCH', 'return=minimal', { chat_id: r.chat_id }));
+      }
+    }
+  }
+
+  async function upsertSeen(labelId, chats) {
+    const at = new Date().toISOString();
+    for (let i = 0; i < chats.length; i += 500) {
+      await rest('wa_native_label_seen?on_conflict=chat_id,wa_label_id', json('POST', 'resolution=merge-duplicates,return=minimal',
+        chats.slice(i, i + 500).map((c) => ({ chat_id: c.chatId, wa_label_id: labelId, first_seen_at: at, last_seen_at: at, removed_at: null }))));
+    }
+  }
+  async function markGone(labelId, chatIds) {
+    const at = new Date().toISOString();
+    for (let i = 0; i < chatIds.length; i += 100) {
+      await rest(`wa_native_label_seen?wa_label_id=eq.${encodeURIComponent(labelId)}&chat_id=in.${inList(chatIds.slice(i, i + 100))}&removed_at=is.null`,
+        json('PATCH', 'return=minimal', { removed_at: at, last_seen_at: at }));
+    }
+  }
+
+  // Eventos chat.update_label (add/remove) que a aba com a trava juntou. Vale o último de cada conversa+etiqueta.
+  async function nativeLabelEvents({ events }) {
+    await v25OrMissing();
+    if (!Array.isArray(events) || events.length > 200) throw new Error('Lista inválida');
+    const last = new Map();
+    events.forEach((e) => {
+      const [c] = checkChats([e], 1);
+      const labelId = checkWaLabel(e && e.labelId, 'Etiqueta inválida');
+      if (!['add', 'remove'].includes(e.type)) throw new Error('Evento inválido');
+      last.set(`${labelId}|${c.chatId}`, { ...c, labelId, type: e.type });
+    });
+    let added = 0;
+    let removed = 0;
+    const labels = [...new Set([...last.values()].map((e) => e.labelId))];
+    for (const labelId of labels) {
+      const evs = [...last.values()].filter((e) => e.labelId === labelId);
+      const adds = evs.filter((e) => e.type === 'add');
+      const gone = evs.filter((e) => e.type === 'remove').map((e) => e.chatId);
+      if (adds.length) {
+        const active = new Set();
+        for (let i = 0; i < adds.length; i += 100) {
+          const rows = await rest(`wa_native_label_seen?select=chat_id&wa_label_id=eq.${encodeURIComponent(labelId)}&removed_at=is.null&chat_id=in.${inList(adds.slice(i, i + 100).map((a) => a.chatId))}`);
+          rows.forEach((r) => active.add(r.chat_id));
+        }
+        const fresh = adds.filter((a) => !active.has(a.chatId)); // já estava: não muda a data de entrada
+        if (fresh.length) {
+          await ensureChatContacts(fresh);
+          await upsertSeen(labelId, fresh);
+          added += fresh.length;
+        }
+      }
+      if (gone.length) { await markGone(labelId, gone); removed += gone.length; }
+    }
+    return { added, removed };
+  }
+
+  // Varredura de uma etiqueta nativa: quem está nela agora (lista do WhatsApp Web). Novos entram com a data
+  // de agora; quem já estava fica como está (sem duplicar); quem saiu ganha removed_at (só com a lista completa).
+  async function nativeLabelSweep({ labelId, chats, complete }) {
+    await v25OrMissing();
+    checkWaLabel(labelId, 'Etiqueta inválida');
+    const list = checkChats(chats, 5000);
+    const current = new Map(list.map((c) => [c.chatId, c]));
+    const rows = await restAll(`wa_native_label_seen?select=chat_id&wa_label_id=eq.${encodeURIComponent(labelId)}&removed_at=is.null&order=chat_id.asc`);
+    const active = new Set(rows.map((r) => r.chat_id));
+    const fresh = [...current.values()].filter((c) => !active.has(c.chatId));
+    const gone = complete === true ? [...active].filter((id) => !current.has(id)) : [];
+    if (fresh.length) {
+      await ensureChatContacts(fresh);
+      await upsertSeen(labelId, fresh);
+    }
+    if (gone.length) await markGone(labelId, gone);
+    return { added: fresh.length, removed: gone.length, total: current.size };
+  }
+
+  const contactCols = async () => ((await chatIdColumn()) ? 'id,name,phone,chat_id' : 'id,name,phone');
+  const blankCandidate = (r, chatId = null) => ({ id: r.id, name: r.name || null, phone: r.phone || null, chat_id: r.chat_id || chatId || null, labelIds: [], links: [], waSeen: {}, enrolled: {}, enrollmentIds: {} });
+  async function contactsById(ids) {
+    const out = [];
+    const cols = await contactCols();
+    for (let i = 0; i < ids.length; i += 100) out.push(...await rest(`wa_contacts?select=${cols}&id=in.${inList(ids.slice(i, i + 100))}`));
+    return out;
+  }
+
+  // Contatos completos (id, nome, telefone, chat_id) de um lote de conversas, numa leitura (+ telefone se faltar)
+  async function contactRowsByChats(chatIds) {
+    const out = {};
+    const ids = [...new Set(chatIds.filter((c) => typeof c === 'string' && SCHED_CHAT_RE.test(c)))];
+    const hasCol = await chatIdColumn();
+    const cols = await contactCols();
+    for (let i = 0; i < ids.length; i += 100) {
+      const part = ids.slice(i, i + 100);
+      if (hasCol) (await rest(`wa_contacts?select=${cols}&chat_id=in.${inList(part)}`)).forEach((r) => { out[r.chat_id] = r; });
+      const phones = part.filter((c) => !out[c]).map(phoneOfChat).filter(Boolean);
+      if (phones.length) (await rest(`wa_contacts?select=${cols}&phone=in.${inList(phones)}`)).forEach((r) => { const k = `${r.phone}@c.us`; if (!out[k]) out[k] = r; });
+    }
+    return out;
+  }
+
+  // Contatos das conversas que estão nas etiquetas nativas dos gatilhos (com waSeen = "entrou em")
+  async function nativeLabelCandidates({ waLabelIds }) {
+    await v25OrMissing();
+    if (!Array.isArray(waLabelIds) || !waLabelIds.length || waLabelIds.length > 50) throw new Error('Lista inválida');
+    waLabelIds.forEach((l) => checkWaLabel(l, 'Etiqueta inválida'));
+    const seen = await restAll(`wa_native_label_seen?select=chat_id,wa_label_id,first_seen_at&wa_label_id=in.${inList(waLabelIds)}&removed_at=is.null&order=chat_id.asc,wa_label_id.asc`, 20000);
+    const chatIds = [...new Set(seen.map((r) => r.chat_id))];
+    if (!chatIds.length) return [];
+    let byChat = await contactRowsByChats(chatIds);
+    const missing = chatIds.filter((c) => !byChat[c]);
+    if (missing.length) {
+      await ensureChatContacts(missing.map((chatId) => ({ chatId, name: null })));
+      byChat = { ...byChat, ...(await contactRowsByChats(missing)) };
+    }
+    const byId = new Map();
+    seen.forEach((r) => {
+      const c = byChat[r.chat_id];
+      if (!c) return;
+      if (!byId.has(c.id)) byId.set(c.id, blankCandidate(c, r.chat_id));
+      const x = byId.get(c.id);
+      x.waSeen[r.wa_label_id] = r.first_seen_at;
+      if (!x.chat_id) x.chat_id = r.chat_id;
+    });
+    await addContactLinks(byId);
+    return [...byId.values()];
+  }
+
+  async function activeEnrollments({ automationIds }) {
+    await v25OrMissing();
+    if (!Array.isArray(automationIds) || automationIds.length > 100) throw new Error('Lista inválida');
+    automationIds.forEach((a) => checkUuid(a, 'Automação inválida'));
+    if (!automationIds.length) return [];
+    return restAll(`wa_automation_enrollments?select=id,automation_id,contact_id,chat_id,enrolled_at&removed_at=is.null&automation_id=in.${inList(automationIds)}&order=id.asc`, 20000);
+  }
+
+  // Contatos inscritos à mão (enrolled = { automação: enrolled_at })
+  async function enrollmentCandidates({ enrollments }) {
+    await v25OrMissing();
+    if (!Array.isArray(enrollments) || enrollments.length > 20000) throw new Error('Lista inválida');
+    const list = enrollments.map((e) => ({
+      id: checkUuid(e && e.id, 'Inscrição inválida'), automation_id: checkUuid(e.automation_id, 'Automação inválida'),
+      contact_id: checkUuid(e.contact_id, 'Contato inválido'), enrolled_at: typeof e.enrolled_at === 'string' ? e.enrolled_at : null,
+      chat_id: typeof e.chat_id === 'string' && SCHED_CHAT_RE.test(e.chat_id) ? e.chat_id : null,
+    }));
+    if (!list.length) return [];
+    const byId = new Map((await contactsById([...new Set(list.map((e) => e.contact_id))])).map((c) => [c.id, blankCandidate(c)]));
+    list.forEach((e) => {
+      const c = byId.get(e.contact_id);
+      if (!c || !e.enrolled_at) return;
+      c.enrolled[e.automation_id] = e.enrolled_at;
+      c.enrollmentIds[e.automation_id] = e.id;
+      if (!c.chat_id && e.chat_id) c.chat_id = e.chat_id;
+    });
+    await addContactLinks(byId);
+    return [...byId.values()];
+  }
+
+  // "Adicionar à automação" (botão 🔁): o contato da conversa entra a partir de AGORA. Cria o contato se preciso.
+  async function enrollContact({ automationId, identity, chatId, name }) {
+    await v25OrMissing();
+    checkUuid(automationId, 'Automação inválida');
+    const chat = typeof chatId === 'string' && SCHED_CHAT_RE.test(chatId) ? chatId : null;
+    let contactId = null;
+    if (identity) {
+      const id = checkIdentity({ ...identity, chatId: identity.chatId || chat });
+      const contact = await ensureContact(id);
+      if (id.chatId) await rememberChatId(contact, id.chatId).catch(() => {});
+      contactId = contact && contact.id;
+    } else if (chat) {
+      await ensureChatContacts([{ chatId: chat, name: clipName(name) }]);
+      const found = (await contactsByChats([chat]))[chat];
+      contactId = found ? found.id : null;
+    }
+    if (!contactId) throw new Error('Não achei o contato desta conversa');
+    const autos = await autoRest(`wa_automations?select=id,trigger_type&id=eq.${automationId}`);
+    if (!autos.length) throw new Error('Automação não encontrada');
+    if (autos[0].trigger_type === 'venda_registrada') throw new Error('"Venda registrada" não aceita inscrição manual');
+    const open = await rest(`wa_automation_enrollments?select=id,enrolled_at&automation_id=eq.${automationId}&contact_id=eq.${contactId}&removed_at=is.null`);
+    if (open.length) return { enrolled: false, already: true, contactId, id: open[0].id, enrolled_at: open[0].enrolled_at };
+    try {
+      const rows = await rest('wa_automation_enrollments', json('POST', 'return=representation',
+        { automation_id: automationId, contact_id: contactId, chat_id: chat, enrolled_at: new Date().toISOString() }));
+      return { enrolled: true, contactId, id: rows[0].id, enrolled_at: rows[0].enrolled_at };
+    } catch (err) {
+      // Outra aba inscreveu no mesmo instante (índice único das inscrições ativas)
+      if (/^Supabase 409:/.test(err.message)) return { enrolled: false, already: true, contactId };
+      throw err;
+    }
+  }
+
+  // "Tirar desta automação": encerra a inscrição e/ou marca a entrada atual pela etiqueta como "não rodar"
+  async function leaveAutomation({ automationId, contactId, enrollmentId, entryKey }) {
+    await v25OrMissing();
+    checkUuid(automationId, 'Automação inválida');
+    checkUuid(contactId, 'Contato inválido');
+    let done = false;
+    if (enrollmentId) {
+      checkUuid(enrollmentId, 'Inscrição inválida');
+      await rest(`wa_automation_enrollments?id=eq.${enrollmentId}&automation_id=eq.${automationId}&removed_at=is.null`,
+        json('PATCH', 'return=minimal', { removed_at: new Date().toISOString() }));
+      done = true;
+    }
+    if (entryKey !== undefined && entryKey !== null) {
+      const runKey = `fora@${entryKey}`;
+      if (typeof entryKey !== 'string' || !RUN_KEY_RE.test(runKey)) throw new Error('Entrada inválida');
+      await autoRest('wa_automation_runs?on_conflict=automation_id,contact_id,run_key',
+        json('POST', 'resolution=ignore-duplicates,return=minimal', { automation_id: automationId, contact_id: contactId, run_key: runKey }));
+      done = true;
+    }
+    if (!done) throw new Error('Nada para tirar');
+    return { left: true };
+  }
+
+  // Tela da conversa: o contato (sem criar), etiquetas CRM, etiquetas nativas vistas, inscrições e execuções
+  async function chatAutomationState({ identity, chatId }) {
+    const chat = typeof chatId === 'string' && SCHED_CHAT_RE.test(chatId) ? chatId : null;
+    const v25 = await automationsV25();
+    let ref = null;
+    if (identity) {
+      const found = await findContact(checkIdentity(identity));
+      if (found && !found.promotable) ref = found;
+    }
+    if (!ref && chat) ref = (await contactsByChats([chat]))[chat] || null;
+    const waSeen = {};
+    if (v25 && chat) {
+      const rows = await rest(`wa_native_label_seen?select=wa_label_id,first_seen_at&chat_id=eq.${encodeURIComponent(chat)}&removed_at=is.null`);
+      rows.forEach((r) => { waSeen[r.wa_label_id] = r.first_seen_at; });
+    }
+    if (!ref) return { v25, contact: null, waSeen, ranKeys: [] };
+    const [c] = await contactsById([ref.id]);
+    if (!c) return { v25, contact: null, waSeen, ranKeys: [] };
+    const byId = await addContactLinks(new Map([[c.id, blankCandidate(c, chat)]]));
+    const contact = byId.get(c.id);
+    contact.waSeen = waSeen;
+    if (v25) {
+      const enr = await rest(`wa_automation_enrollments?select=id,automation_id,enrolled_at&contact_id=eq.${c.id}&removed_at=is.null`);
+      enr.forEach((e) => { contact.enrolled[e.automation_id] = e.enrolled_at; contact.enrollmentIds[e.automation_id] = e.id; });
+    }
+    const runs = await autoRestAll(`wa_automation_runs?select=automation_id,contact_id,run_key&contact_id=eq.${c.id}&order=id.asc`);
+    return { v25, contact, waSeen, ranKeys: runs.map((r) => `${r.automation_id}:${r.contact_id}:${r.run_key}`) };
   }
 
   // ── Mensagem rápida que etiqueta (2.1.0) ──
@@ -1954,6 +2263,8 @@
 
   root.WaApi = {
     engineActivity, clearReadCache,
+    nativeLabelEvents, nativeLabelSweep, nativeLabelCandidates, activeEnrollments, enrollmentCandidates, enrollContact,
+    leaveAutomation, chatAutomationState,
     metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,
     erpCatalog, createSaleFromChat, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve,

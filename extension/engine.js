@@ -266,11 +266,40 @@
   const dateKey = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`; };
   const linkOf = (contact, labelId) => (contact.links || []).find((l) => l.label_id === labelId) || null;
 
+  // 2.5.0: gatilho com etiqueta do WhatsApp (nativa) em vez da etiqueta CRM
+  const isWaTrigger = (a) => !!a && a.trigger_label_source === 'whatsapp';
+  const WA_LABEL_ACTIONS = ['adicionar_etiqueta_wa', 'remover_etiqueta_wa'];
+
   function automationNeedsChat(a) {
     return a.trigger_type === 'sem_resposta' || a.trigger_type === 'respondeu'
       || (a.conditions || []).some((c) => c.type === 'anuncio' || c.type === 'parada_max_dias')
-      || (a.actions || []).some((x) => x.type === 'enviar');
+      || (a.actions || []).some((x) => x.type === 'enviar' || WA_LABEL_ACTIONS.includes(x.type) || (x.type === 'mover' && isWaTrigger(a)));
   }
+
+  // 2.5.0: como o contato está na automação (null = não está).
+  //   inscricao: "Adicionar à automação" na conversa — conta a partir de enrolled_at (vale mais que a etiqueta)
+  //   whatsapp : etiqueta nativa — "entrou em" = primeira vez que a extensão viu a conversa nela (first_seen_at)
+  //   crm      : etiqueta CRM — "entrou em" = created_at da ligação contato↔etiqueta
+  // key identifica ESTA entrada (run_key): sair e entrar de novo gera outra key.
+  function automationEntry(a, contact, { ignoreEnrollment = false } = {}) {
+    const enrolled = !ignoreEnrollment && contact.enrolled ? contact.enrolled[a.id] : null;
+    if (enrolled) {
+      const t = Date.parse(enrolled);
+      return { via: 'inscricao', at: Number.isFinite(t) ? t : null, key: `insc@${Number.isFinite(t) ? t : 0}` };
+    }
+    if (isWaTrigger(a)) {
+      const seen = a.trigger_wa_label_id && contact.waSeen ? contact.waSeen[a.trigger_wa_label_id] : null;
+      if (!seen) return null;
+      const t = Date.parse(seen);
+      return { via: 'whatsapp', at: Number.isFinite(t) ? t : null, key: `wa${a.trigger_wa_label_id}@${Number.isFinite(t) ? t : 0}` };
+    }
+    if (!a.trigger_label_id || !(contact.labelIds || []).includes(a.trigger_label_id)) return null;
+    const link = linkOf(contact, a.trigger_label_id);
+    const t = link && link.created_at ? Date.parse(link.created_at) : null;
+    return { via: 'crm', at: Number.isFinite(t) ? t : null, key: `${a.trigger_label_id}@${Number.isFinite(t) ? t : 0}` };
+  }
+  // "Tirar desta automação" grava esta run_key: a entrada atual não roda mais (entrar de novo vale)
+  const leaveKey = (entryKey) => `fora@${entryKey}`;
 
   // Palavras de anúncio que a ponte precisa procurar (condições + variantes)
   function automationKeywords(a) {
@@ -312,16 +341,19 @@
     const saleTrigger = a.trigger_type === 'venda_registrada';
     if (saleTrigger && !contact.sale_id) return { action: 'skip', reason: 'sem venda registrada' };
     if (saleTrigger && a.trigger_label_id && !labels.includes(a.trigger_label_id)) return { action: 'skip', reason: 'fora da etiqueta do gatilho' };
-    if (!saleTrigger && !labels.includes(a.trigger_label_id)) return { action: 'skip', reason: 'fora da etiqueta do gatilho' };
+    const entry = saleTrigger ? null : automationEntry(a, contact);
+    if (!saleTrigger && !entry) return { action: 'skip', reason: 'fora da etiqueta do gatilho' };
+    if (entry && ranKeys && ranKeys.has(`${a.id}:${contact.id}:${leaveKey(entry.key)}`)) return { action: 'done', reason: 'tirado da automação', entry };
     if (noSendLabelId && labels.includes(noSendLabelId)) return { action: 'skip', reason: 'Não enviar' };
     const needsChat = automationNeedsChat(a);
     const chatId = chatIdOfContact(contact);
     if (needsChat && !chatId) return { action: 'skip', reason: 'sem telefone' };
     if (needsChat && (!chat || !chat.loaded)) return { action: 'skip', reason: 'conversa não carregada', chatId };
     const last = chat && chat.last && Number(chat.last.t) ? chat.last : null;
-    const link = linkOf(contact, a.trigger_label_id);
-    const enteredAt = link && link.created_at ? Date.parse(link.created_at) : null;
-    const labelKey = `${a.trigger_label_id}@${Number.isFinite(enteredAt) ? enteredAt : 0}`;
+    const enteredAt = entry ? entry.at : null;
+    const labelKey = entry ? entry.key : '';
+    // Inscrição manual: conta a partir de AGORA (enrolled_at), nunca do que aconteceu antes
+    const manual = !!entry && entry.via === 'inscricao' && Number.isFinite(enteredAt);
     let runKey;
     if (a.trigger_type === 'sem_resposta') {
       if (!last) return { action: 'skip', reason: 'conversa sem mensagens carregadas', chatId };
@@ -329,19 +361,21 @@
       const lastMs = Number(last.t) * 1000;
       if (now - lastMs > (Number(a.ignore_older_days) || 15) * DAY_MS) return { action: 'skip', reason: 'conversa parada', chatId };
       const need = (Number(a.wait_minutes) || 0) * MIN_MS;
-      if (businessMsBetween(lastMs, now, settings) < need) {
-        const dueAt = addBusinessMs(lastMs, need, settings);
-        return { action: 'wait', reason: 'aguardando', chatId, dueAt, leftMs: dueAt == null ? null : Math.max(0, dueAt - now) };
+      const fromMs = manual ? Math.max(lastMs, enteredAt) : lastMs;
+      if (businessMsBetween(fromMs, now, settings) < need) {
+        const dueAt = addBusinessMs(fromMs, need, settings);
+        return { action: 'wait', reason: 'aguardando', chatId, dueAt, leftMs: dueAt == null ? null : Math.max(0, dueAt - now), entry };
       }
       runKey = labelKey;
     } else if (a.trigger_type === 'entrou_etiqueta') {
       if (!Number.isFinite(enteredAt)) return { action: 'skip', reason: 'sem data de entrada na etiqueta', chatId };
       const dueAt = enteredAt + (Number(a.wait_minutes) || 0) * MIN_MS;
-      if (now < dueAt) return { action: 'wait', reason: 'aguardando', chatId, dueAt, leftMs: dueAt - now };
+      if (now < dueAt) return { action: 'wait', reason: 'aguardando', chatId, dueAt, leftMs: dueAt - now, entry };
       runKey = labelKey;
     } else if (a.trigger_type === 'respondeu') {
       if (!last) return { action: 'skip', reason: 'conversa sem mensagens carregadas', chatId };
       if (last.fromMe) return { action: 'none', reason: 'ainda não respondeu', chatId };
+      if (manual && Number(last.t) * 1000 < enteredAt) return { action: 'none', reason: 'ainda não respondeu', chatId };
       runKey = labelKey;
     } else if (saleTrigger) {
       runKey = `venda@${contact.sale_id}`; // uma vez por venda
@@ -349,15 +383,15 @@
       const t = parseHM(a.schedule_time);
       const d = new Date(now);
       const todayAt = t == null ? null : atMinute(d.getFullYear(), d.getMonth(), d.getDate(), t);
-      if (todayAt == null || !(a.schedule_days || []).includes(d.getDay()) || now < todayAt) {
-        const dueAt = nextScheduleAt(a, now);
-        return { action: 'wait', reason: 'aguardando o dia/hora', chatId, dueAt, leftMs: dueAt == null ? null : dueAt - now };
+      if (todayAt == null || !(a.schedule_days || []).includes(d.getDay()) || now < todayAt || (manual && todayAt < enteredAt)) {
+        const dueAt = nextScheduleAt(a, manual ? Math.max(now, enteredAt) : now);
+        return { action: 'wait', reason: 'aguardando o dia/hora', chatId, dueAt, leftMs: dueAt == null ? null : dueAt - now, entry };
       }
       runKey = `dia@${dateKey(now)}`;
     } else {
       return { action: 'skip', reason: 'gatilho desativado' };
     }
-    if (ranKeys && ranKeys.has(`${a.id}:${contact.id}:${runKey}`)) return { action: 'done', reason: 'já rodou', chatId, runKey };
+    if (ranKeys && ranKeys.has(`${a.id}:${contact.id}:${runKey}`)) return { action: 'done', reason: 'já rodou', chatId, runKey, entry };
     for (const c of a.conditions || []) {
       let okC = true;
       if (c.type === 'tem_etiqueta') okC = labels.includes(c.label_id);
@@ -373,10 +407,11 @@
         const pick = resolveSendItem(x, labels, chat ? chat.ad : []);
         if (!pick) return { action: 'skip', reason: 'sem mensagem', chatId };
         plan.push({ type: 'enviar', itemId: pick.itemId, pick });
-      } else plan.push({ type: x.type, label_id: x.label_id });
+      } else if (WA_LABEL_ACTIONS.includes(x.type)) plan.push({ type: x.type, wa_label_id: x.wa_label_id });
+      else plan.push({ type: x.type, label_id: x.label_id });
     }
     if (!plan.length) return { action: 'skip', reason: 'nenhuma ação', chatId };
-    return { action: 'run', reason: '', chatId, runKey, plan };
+    return { action: 'run', reason: '', chatId, runKey, plan, entry };
   }
 
   // Frase-resumo "QUANDO … → SE … → ENTÃO …"
@@ -386,14 +421,16 @@
     return formatWait(m);
   }
 
-  function automationSummary(a, { labelName = (id) => id, itemTitle = (id) => id, settings } = {}) {
+  function automationSummary(a, { labelName = (id) => id, waLabelName = (id) => id, itemTitle = (id) => id, settings } = {}) {
     const lab = (id) => `"${id ? labelName(id) : '?'}"`;
+    const wlab = (id) => `do WhatsApp "${id ? waLabelName(id) : '?'}"`;
+    const trig = isWaTrigger(a) && a.trigger_type !== 'venda_registrada' ? wlab(a.trigger_wa_label_id) : lab(a.trigger_label_id);
     let quando;
-    if (a.trigger_type === 'sem_resposta') quando = `Quando o contato da etiqueta ${lab(a.trigger_label_id)} fica ${formatWait(a.wait_minutes)} úteis sem responder (${scheduleText(settings)})`;
-    else if (a.trigger_type === 'entrou_etiqueta') quando = `Quando faz ${waitPhrase(a.wait_minutes)} que o contato entrou na etiqueta ${lab(a.trigger_label_id)}`;
-    else if (a.trigger_type === 'respondeu') quando = `Quando o contato da etiqueta ${lab(a.trigger_label_id)} responde`;
+    if (a.trigger_type === 'sem_resposta') quando = `Quando o contato da etiqueta ${trig} fica ${formatWait(a.wait_minutes)} úteis sem responder (${scheduleText(settings)})`;
+    else if (a.trigger_type === 'entrou_etiqueta') quando = `Quando faz ${waitPhrase(a.wait_minutes)} que o contato entrou na etiqueta ${trig}`;
+    else if (a.trigger_type === 'respondeu') quando = `Quando o contato da etiqueta ${trig} responde`;
     else if (a.trigger_type === 'venda_registrada') quando = `Quando uma venda for registrada pela conversa${a.trigger_label_id ? ` (só quem está na etiqueta ${lab(a.trigger_label_id)})` : ''}`;
-    else if (a.trigger_type === 'dia_hora') quando = `Toda ${formatDays(a.schedule_days || [])} às ${String(a.schedule_time || '').slice(0, 5) || '?'}, para quem está na etiqueta ${lab(a.trigger_label_id)}`;
+    else if (a.trigger_type === 'dia_hora') quando = `Toda ${formatDays(a.schedule_days || [])} às ${String(a.schedule_time || '').slice(0, 5) || '?'}, para quem está na etiqueta ${trig}`;
     else quando = 'Quando (gatilho não escolhido)';
     const conds = (a.conditions || []).map((c) => {
       if (c.type === 'tem_etiqueta') return `tem a etiqueta ${lab(c.label_id)}`;
@@ -412,7 +449,9 @@
         acts.push(`envia ${base}${vs.length ? ` (${vs.join('; ')})` : ''}`);
       } else if (x.type === 'adicionar_etiqueta') acts.push(`adiciona a etiqueta ${lab(x.label_id)}`);
       else if (x.type === 'remover_etiqueta') acts.push(`tira a etiqueta ${lab(x.label_id)}`);
-      else if (x.type === 'mover') acts.push(`move para ${lab(x.label_id)}`);
+      else if (x.type === 'mover') acts.push(`move para ${lab(x.label_id)}${isWaTrigger(a) ? ` (tira a etiqueta ${trig})` : ''}`);
+      else if (x.type === 'adicionar_etiqueta_wa') acts.push(`adiciona a etiqueta ${wlab(x.wa_label_id)}`);
+      else if (x.type === 'remover_etiqueta_wa') acts.push(`tira a etiqueta ${wlab(x.wa_label_id)}`);
     }
     const entao = acts.length ? `Então ${acts.join(', depois ')}` : 'Então (nenhuma ação)';
     return { quando, se, entao, text: `${quando} → ${se} → ${entao}` };
@@ -486,6 +525,7 @@
   const FIRST_MS = 5 * 1000;
   const SCHED_MAX_LATE_MS = 24 * 3600 * 1000;
   const RETRY_AFTER_FAIL_MS = 30 * 60 * 1000;
+  const NATIVE_SWEEP_MS = 10 * 60 * 1000; // 2.5.0: varredura das etiquetas nativas usadas por automações ativas
   const SKIP_REASON = {
     invalid_chat: 'conversa não carregada', not_ready: 'WhatsApp não estava pronto', empty: 'mensagem vazia',
     download: 'arquivo não baixou', no_whatsapp: 'número sem WhatsApp', item_not_found: 'mensagem salva não existe mais',
@@ -521,6 +561,11 @@
       countsAt: 0,             // última contagem de envios no banco
       active: null,            // { schedules, campaigns, automations: [...], flows }
       activeAutomations: [],
+      // 2.5.0: etiqueta do WhatsApp no gatilho + inscrição manual (migration 20261104120000)
+      automationsV25: false,
+      activeEnrollments: [],   // inscrições ativas nas automações ativas (vêm com a verificação de atividade)
+      sweepAt: 0,              // última varredura das etiquetas nativas
+      sweepIds: '',            // etiquetas nativas varridas da última vez
     };
     const failedRecently = new Map(); // `${flowId}:${contactId}` → até quando não tentar
     let busy = false;
@@ -544,6 +589,7 @@
       st.campaignsV2 = s.campaignsV2 === true; // 2.2.0: mensagem exclusiva, filtros e ações depois de enviar
       st.automationsAvailable = s.automations === true;
       st.salesOrigin = s.salesOrigin === true; // 2.3.0: colunas de origem da venda + gatilho "venda registrada"
+      st.automationsV25 = s.automationsV25 === true; // 2.5.0: etiqueta do WhatsApp no gatilho + inscrição manual
       return true;
     }
 
@@ -600,12 +646,49 @@
       try { a = await api('engineActivity', { automations: st.automationsAvailable === true, campaigns: st.campaignsAvailable === true }); } catch { a = null; }
       if (!a) return st.active; // erro: mantém o que sabia
       const list = Array.isArray(a.automations) ? a.automations : [];
-      if (JSON.stringify(list) !== JSON.stringify(st.activeAutomations)) st.lastEvalAt = 0;
+      const enr = Array.isArray(a.enrollments) ? a.enrollments : [];
+      if (JSON.stringify(list) !== JSON.stringify(st.activeAutomations) || JSON.stringify(enr) !== JSON.stringify(st.activeEnrollments)) st.lastEvalAt = 0;
       st.activeAutomations = list;
+      st.activeEnrollments = enr;
       st.active = { schedules: !!a.schedules, campaigns: !!a.campaigns, automations: list.length > 0, flows: !!a.flows };
       return st.active;
     }
     const anyActive = () => !!(st.active && (st.active.schedules || st.active.campaigns || st.active.automations || st.active.flows));
+
+    // 2.5.0: registra a "primeira vez que viu" cada conversa nas etiquetas nativas usadas por automações
+    // ativas. Eventos: fila local da ponte (sem banco se nada mudou). Varredura: a cada 10 min (ou quando
+    // muda a lista de etiquetas), lendo só o que o WhatsApp Web já tem na memória (sem ler mensagens).
+    const nativeTriggerIds = () => [...new Set(st.activeAutomations
+      .filter((a) => isWaTrigger(a) && a.trigger_type !== 'venda_registrada' && a.trigger_wa_label_id).map((a) => String(a.trigger_wa_label_id)))].sort();
+    async function trackNativeLabels() {
+      if (!deps.wa || typeof deps.wa.labelEvents !== 'function') return;
+      let got = null;
+      try { got = await deps.wa.labelEvents(); } catch { got = null; } // esvazia a fila da ponte sempre (só memória)
+      const ids = st.automationsV25 ? nativeTriggerIds() : [];
+      if (!ids.length) return;
+      const events = [];
+      ((got && Array.isArray(got.events)) ? got.events : []).forEach((e) => {
+        (e.labelIds || []).forEach((l) => { if (ids.includes(String(l))) events.push({ chatId: e.chatId, name: e.name || null, labelId: String(l), type: e.type, at: e.t }); });
+      });
+      if (events.length) {
+        try { await api('nativeLabelEvents', { events: events.slice(-200) }); } catch { /* a varredura corrige */ }
+        st.lastEvalAt = 0;
+      }
+      const key = ids.join(',');
+      if (key === st.sweepIds && now() - st.sweepAt < NATIVE_SWEEP_MS) return;
+      if (typeof deps.wa.labelChatIds !== 'function') return;
+      st.sweepAt = now();
+      st.sweepIds = key;
+      for (const labelId of ids) {
+        let r = null;
+        try { r = await deps.wa.labelChatIds({ labelId }); } catch { r = null; }
+        if (!r || !Array.isArray(r.chats)) continue; // WhatsApp não respondeu: não marca ninguém como "saiu"
+        // Lista vazia com a etiqueta mostrando conversas = WhatsApp ainda carregando: só acrescenta
+        const complete = r.chats.length > 0 || Number(r.count) === 0;
+        try { await api('nativeLabelSweep', { labelId, chats: r.chats.slice(0, 5000), complete }); } catch { /* próxima varredura */ }
+      }
+      st.lastEvalAt = 0;
+    }
 
     async function refreshCounts() {
       const t = now();
@@ -824,9 +907,27 @@
       if (!list.length) return [];
       const labelList = list.filter((a) => a.trigger_type !== 'venda_registrada');
       const saleList = list.filter((a) => a.trigger_type === 'venda_registrada');
-      const labelIds = [...new Set(labelList.map((a) => a.trigger_label_id).filter(Boolean))];
+      const labelIds = [...new Set(labelList.filter((a) => !isWaTrigger(a)).map((a) => a.trigger_label_id).filter(Boolean))];
       const contacts = labelIds.length ? await api('flowCandidates', { labelIds }) : [];
       const people = Array.isArray(contacts) ? contacts : [];
+      // 2.5.0: quem está nas etiquetas nativas dos gatilhos e quem foi inscrito à mão
+      if (st.automationsV25) {
+        const merge = (more) => (Array.isArray(more) ? more : []).forEach((c) => {
+          const have = people.find((p) => p.id === c.id);
+          if (!have) { people.push(c); return; }
+          have.waSeen = { ...(have.waSeen || {}), ...(c.waSeen || {}) };
+          have.enrolled = { ...(have.enrolled || {}), ...(c.enrolled || {}) };
+          have.enrollmentIds = { ...(have.enrollmentIds || {}), ...(c.enrollmentIds || {}) };
+          if (!have.chat_id && c.chat_id) have.chat_id = c.chat_id;
+        });
+        const waIds = [...new Set(labelList.filter((a) => isWaTrigger(a) && a.trigger_wa_label_id).map((a) => String(a.trigger_wa_label_id)))];
+        if (waIds.length) { try { merge(await api('nativeLabelCandidates', { waLabelIds: waIds })); } catch { /* sem a lista, só os outros */ } }
+        const ids = new Set(labelList.map((a) => a.id));
+        let enr = Array.isArray(source) ? st.activeEnrollments : null;
+        if (!enr) { try { enr = await api('activeEnrollments', { automationIds: [...ids] }); } catch { enr = []; } }
+        enr = (Array.isArray(enr) ? enr : []).filter((e) => ids.has(e.automation_id));
+        if (enr.length) { try { merge(await api('enrollmentCandidates', { enrollments: enr })); } catch { /* próximo ciclo */ } }
+      }
       // 2.3.0: "venda registrada": um candidato por venda registrada pela conversa (últimos 2 dias)
       let buyers = [];
       if (saleList.length) { try { buyers = await api('saleTriggerCandidates', { sinceDays: 2 }); } catch { buyers = []; } }
@@ -858,7 +959,7 @@
         });
       });
       labelList.forEach((automation) => {
-        people.filter((c) => (c.labelIds || []).includes(automation.trigger_label_id)).forEach((contact) => {
+        people.filter((c) => !!automationEntry(automation, c)).forEach((contact) => {
           const chatId = chatIdOfContact(contact);
           const ev = evaluateAutomation({ automation, contact, chat: chatId ? chats[chatId] : null, settings: st.settings, now: t, noSendLabelId: st.noSendLabelId, ranKeys });
           rows.push({ automation, contact, ev });
@@ -908,6 +1009,15 @@
       return null;
     }
 
+    // 2.5.0: põe/tira UMA etiqueta nativa que já existe (a ponte recusa etiqueta desconhecida)
+    async function setWaLabel(chatId, { add = null, remove = null }) {
+      if (!chatId || !deps.wa || typeof deps.wa.setChatLabels !== 'function') return false;
+      try {
+        const r = await deps.wa.setChatLabels({ chatId, add: add ? [String(add)] : [], remove: remove ? [String(remove)] : [] });
+        return !!(r && r.confirmed);
+      } catch { return false; }
+    }
+
     async function runAutomationJob({ automation, contact, ev }) {
       let res0 = null;
       try { res0 = await api('automationReserve', { automationId: automation.id, contactId: contact.id, runKey: ev.runKey }); } catch { res0 = null; }
@@ -954,9 +1064,15 @@
           try { await api('followReserve', { contactId: contact.id, labelId: step.label_id }); } catch { /* segue */ }
         } else if (step.type === 'mover') {
           try {
-            await api('followReserve', { contactId: contact.id, labelId: trigger });
+            // 2.5.0: gatilho do WhatsApp: tira a etiqueta nativa do gatilho (pela ponte) e põe a CRM
+            if (isWaTrigger(automation)) await setWaLabel(ev.chatId, { remove: automation.trigger_wa_label_id });
+            else await api('followReserve', { contactId: contact.id, labelId: trigger });
             await api('followAdd', { contactId: contact.id, labelId: step.label_id });
           } catch { /* segue */ }
+        } else if (step.type === 'adicionar_etiqueta_wa') {
+          await setWaLabel(ev.chatId, { add: step.wa_label_id });
+        } else if (step.type === 'remover_etiqueta_wa') {
+          await setWaLabel(ev.chatId, { remove: step.wa_label_id });
         }
       }
       if (!ev.plan.some((p) => p.type === 'enviar')) {
@@ -990,6 +1106,7 @@
       await ensureNoSendLabel();
       if (st.settings.paused_all) { st.role = 'pausado'; st.waiting = 'pausado'; return; }
       st.role = 'este';
+      await trackNativeLabels();
       if (deps.isManualBusy && deps.isManualBusy()) { st.waiting = 'envio manual em andamento'; return; }
       if (!isBusinessTime(now(), st.settings)) { st.waiting = 'fora do horário'; return; }
       // Tem algo ativo? (1 verificação leve a cada 2 min; sem nada ativo, não faz mais nada)
@@ -1120,6 +1237,7 @@
     firstNameOf, chatIdOfContact, pickVariant, evaluateFollow,
     smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
     TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,
+    automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
     limitCheck, randomGapMs, estimateDuration, estimateText,
     createMotor,
