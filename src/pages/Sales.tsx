@@ -430,7 +430,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
     if (pm.method === 'outros') {
       return Math.max(0, (pm.amount || 0) - (pm.net_amount || 0));
     }
-    return calculateCardFee(amount, pm.method, pm.card_brand || '', pm.installments || 0);
+    return calculateCardFee(amount, pm.method, pm.card_brand || '', pm.installments || 0, saleDate);
   };
 
   const calculateTotals = () => {
@@ -1614,7 +1614,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                           <option value="0">Parcelas (definir depois)</option>
                           {pm.card_brand && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
                             <option key={n} value={n}>
-                              {n}x ({getFeePercentageLabel(pm.method, pm.card_brand, n)})
+                              {n}x ({getFeePercentageLabel(pm.method, pm.card_brand, n, saleDate)})
                             </option>
                           ))}
                         </select>
@@ -1624,7 +1624,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
                   {(pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link') && pm.amount > 0 && pm.card_brand && (
                     <div className="text-xs text-red-400">
-                      Taxa: R$ {calculateCardFee(pm.amount, pm.method, pm.card_brand, pm.installments).toFixed(2)} ({getFeePercentageLabel(pm.method, pm.card_brand, pm.installments)})
+                      Taxa: R$ {calculateCardFee(pm.amount, pm.method, pm.card_brand, pm.installments, saleDate).toFixed(2)} ({getFeePercentageLabel(pm.method, pm.card_brand, pm.installments, saleDate)})
                     </div>
                   )}
 

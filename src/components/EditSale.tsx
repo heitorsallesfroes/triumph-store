@@ -38,6 +38,7 @@ interface SaleData {
   city?: string | null;
   state?: string | null;
   zip_code?: string | null;
+  sale_date?: string | null;
 }
 
 // ── Product types ────────────────────────────────────────────────────────────
@@ -248,6 +249,9 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
 
   // ── Calculations ─────────────────────────────────────────────────────────
 
+  // Data original da venda (a mesma que os relatórios usam): decide a taxa do link de pagamento
+  const saleFeeDate = sale?.sale_date ? String(sale.sale_date).slice(0, 10) : null;
+
   const calculateUpdatedValues = () => {
     if (!sale) return null;
 
@@ -256,8 +260,8 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
 
     const allAmountsZero = paymentMethods.every(pm => pm.amount === 0);
     const cardFee = allAmountsZero
-      ? calculateCardFee(editData.totalSalePrice, paymentMethods[0]?.method || 'pix', paymentMethods[0]?.card_brand || '', paymentMethods[0]?.installments || 0)
-      : paymentMethods.reduce((sum, pm) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0), 0);
+      ? calculateCardFee(editData.totalSalePrice, paymentMethods[0]?.method || 'pix', paymentMethods[0]?.card_brand || '', paymentMethods[0]?.installments || 0, saleFeeDate)
+      : paymentMethods.reduce((sum, pm) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0, saleFeeDate), 0);
 
     const deliveryFee  = editData.delivery_type === 'motoboy'  ? editData.delivery_fee  : 0;
     const deliveryCost = editData.delivery_type === 'correios' ? editData.delivery_cost : 0;
@@ -650,7 +654,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
                           <option value="0">Parcelas (definir depois)</option>
                           {pm.card_brand && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => (
                             <option key={n} value={n}>
-                              {n}x ({getFeePercentageLabel('credit_card', pm.card_brand, n)})
+                              {n}x ({getFeePercentageLabel(pm.method, pm.card_brand, n, saleFeeDate)})
                             </option>
                           ))}
                         </select>
@@ -660,7 +664,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
 
                   {(pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link') && pm.amount > 0 && pm.card_brand && (
                     <div className="text-xs text-red-400">
-                      Taxa: R$ {calculateCardFee(pm.amount, pm.method, pm.card_brand, pm.installments).toFixed(2)} ({getFeePercentageLabel(pm.method, pm.card_brand, pm.installments)})
+                      Taxa: R$ {calculateCardFee(pm.amount, pm.method, pm.card_brand, pm.installments, saleFeeDate).toFixed(2)} ({getFeePercentageLabel(pm.method, pm.card_brand, pm.installments, saleFeeDate)})
                     </div>
                   )}
                 </div>

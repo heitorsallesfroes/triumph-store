@@ -38,7 +38,7 @@ export const monthOfBRT = (ts: string) =>
 export const yearOfBRT = (ts: string) =>
   new Date(new Date(ts).getTime() - 3 * 60 * 60 * 1000).getUTCFullYear();
 
-export type CardFeeFn = (amount: number, method: string, brand: string | null, installments: number) => number;
+export type CardFeeFn = (amount: number, method: string, brand: string | null, installments: number, saleDate?: string | null) => number;
 
 export interface MonthInput {
   monthStr: string;          // 'YYYY-MM'
@@ -225,10 +225,10 @@ export function computeMonth(i: MonthInput): MonthResult {
     if (pms && Array.isArray(pms) && pms.length > 1) {
       return s + pms
         .filter(pm => CARD_METHODS.includes(pm.method))
-        .reduce((sum, pm) => sum + i.calculateCardFee(Number(pm.amount), pm.method, pm.card_brand || '', pm.installments || 0), 0);
+        .reduce((sum, pm) => sum + i.calculateCardFee(Number(pm.amount), pm.method, pm.card_brand || '', pm.installments || 0, v.created_at), 0);
     }
     if (CARD_METHODS.includes(v.payment_method)) {
-      return s + i.calculateCardFee(Number(v.sale_price) * Number(v.quantity), v.payment_method, v.card_brand || '', v.installments || 0);
+      return s + i.calculateCardFee(Number(v.sale_price) * Number(v.quantity), v.payment_method, v.card_brand || '', v.installments || 0, v.created_at);
     }
     return s;
   }, 0);

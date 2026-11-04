@@ -99,11 +99,13 @@ export default function SmallSales() {
   const editIsCredit = editDeliveryForm.payment_method === 'credit_card' || editDeliveryForm.payment_method === 'payment_link';
 
   const saleTotal = (parseFloat(form.sale_price) || 0) * (parseInt(form.quantity) || 1);
+  // Data da venda do formulário (padrão: hoje): decide a taxa do link de pagamento
+  const formFeeDate = form.sale_date || getTodayInBrazil();
   const allAmountsZero = paymentMethods.every(pm => pm.amount === 0);
 
   const totalCardFeePreview = allAmountsZero
-    ? calculateCardFee(saleTotal, paymentMethods[0]?.method || 'pix', paymentMethods[0]?.card_brand || '', paymentMethods[0]?.installments || 0)
-    : paymentMethods.reduce((sum, pm) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0), 0);
+    ? calculateCardFee(saleTotal, paymentMethods[0]?.method || 'pix', paymentMethods[0]?.card_brand || '', paymentMethods[0]?.installments || 0, formFeeDate)
+    : paymentMethods.reduce((sum, pm) => sum + calculateCardFee(pm.amount, pm.method, pm.card_brand || '', pm.installments || 0, formFeeDate), 0);
 
   const netPreview = saleTotal - totalCardFeePreview;
 
@@ -185,14 +187,14 @@ export default function SmallSales() {
       const allZero = methods.every(pm => pm.amount === 0);
       return methods.reduce((sum, pm) => {
         const amt = allZero ? revenue : pm.amount;
-        return sum + calculateCardFee(amt, pm.method, pm.card_brand || null, pm.installments || 0);
+        return sum + calculateCardFee(amt, pm.method, pm.card_brand || null, pm.installments || 0, sale.created_at);
       }, 0);
     }
     if (
       (sale.payment_method === 'credit_card' || sale.payment_method === 'debit_card' || sale.payment_method === 'payment_link')
       && sale.card_brand
     ) {
-      return calculateCardFee(revenue, sale.payment_method, sale.card_brand, sale.installments || 0);
+      return calculateCardFee(revenue, sale.payment_method, sale.card_brand, sale.installments || 0, sale.created_at);
     }
     return 0;
   };
@@ -422,7 +424,7 @@ export default function SmallSales() {
               const isCard   = pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link';
               const isCredit = pm.method === 'credit_card' || pm.method === 'payment_link';
               const pmAmt    = pm.amount > 0 ? pm.amount : (allAmountsZero && paymentMethods.length === 1 ? saleTotal : 0);
-              const pmFee    = calculateCardFee(pmAmt, pm.method, pm.card_brand || null, pm.installments || 0);
+              const pmFee    = calculateCardFee(pmAmt, pm.method, pm.card_brand || null, pm.installments || 0, formFeeDate);
               return (
                 <div key={idx} className="bg-gray-900 rounded-lg p-3 space-y-3">
                   <div className="flex gap-3 items-start flex-wrap">
@@ -486,7 +488,7 @@ export default function SmallSales() {
                           >
                             {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
                               <option key={n} value={n}>
-                                {n}x — {getFeePercentageLabel(pm.method, pm.card_brand || 'visa_mastercard', n)}
+                                {n}x — {getFeePercentageLabel(pm.method, pm.card_brand || 'visa_mastercard', n, formFeeDate)}
                               </option>
                             ))}
                           </select>

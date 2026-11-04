@@ -338,10 +338,10 @@ export default function ResumoMensal() {
     if (pms && Array.isArray(pms) && pms.length > 1) {
       return s + pms
         .filter(pm => CARD_METHODS.includes(pm.method))
-        .reduce((sum, pm) => sum + calculateCardFee(Number(pm.amount), pm.method, pm.card_brand || '', pm.installments || 0), 0);
+        .reduce((sum, pm) => sum + calculateCardFee(Number(pm.amount), pm.method, pm.card_brand || '', pm.installments || 0, v.created_at), 0);
     }
     if (CARD_METHODS.includes(v.payment_method)) {
-      return s + calculateCardFee(Number(v.sale_price) * Number(v.quantity), v.payment_method, v.card_brand || '', v.installments || 0);
+      return s + calculateCardFee(Number(v.sale_price) * Number(v.quantity), v.payment_method, v.card_brand || '', v.installments || 0, v.created_at);
     }
     return s;
   }, 0);

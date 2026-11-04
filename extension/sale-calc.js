@@ -16,6 +16,8 @@
     fee_ea_credit_5: '0.0666', fee_ea_credit_6: '0.0726', fee_ea_credit_7: '0.0833', fee_ea_credit_8: '0.0893', fee_ea_credit_9: '0.0953',
     fee_ea_credit_10: '0.1013', fee_ea_credit_11: '0.1073', fee_ea_credit_12: '0.1133',
     // 2.6.1: link de pagamento (Rede) = crédito da maquininha + 1 ponto percentual
+    // 2.6.2: só para vendas a partir de fee_link_start_date (AAAA-MM-DD); antes, a taxa do crédito
+    fee_link_start_date: '2099-01-01',
     fee_link_vm_credit_1: '0.0420', fee_link_vm_credit_2: '0.0506', fee_link_vm_credit_3: '0.0566', fee_link_vm_credit_4: '0.0626', fee_link_vm_credit_5: '0.0686',
     fee_link_vm_credit_6: '0.0746', fee_link_vm_credit_7: '0.0853', fee_link_vm_credit_8: '0.0913', fee_link_vm_credit_9: '0.0973', fee_link_vm_credit_10: '0.1033',
     fee_link_vm_credit_11: '0.1093', fee_link_vm_credit_12: '0.1153',
@@ -38,13 +40,20 @@
     return Number.isFinite(n) ? n : 0;
   }
 
-  function cardFeeRate(cfg, method, brand, installments) {
+  // saleDate: AAAA-MM-DD (venda pelo chat é sempre nova: hoje em São Paulo)
+  function cardFeeRate(cfg, method, brand, installments, saleDate = todayInBrazil()) {
     const prefix = brand === 'elo_amex' ? 'fee_ea' : 'fee_vm';
     if (method === 'debit_card') return configNumber(cfg, `${prefix}_debit`);
-    // 2.6.1: link de pagamento com taxas próprias (fee_link_vm_credit_N / fee_link_ea_credit_N)
+    // 2.6.1: link de pagamento com taxas próprias (fee_link_vm_credit_N / fee_link_ea_credit_N),
+    // 2.6.2: só a partir de fee_link_start_date; antes dessa data, a taxa do crédito
     if (method === 'payment_link' && installments > 0) {
       const n = Math.min(Math.max(installments, 1), 12);
-      return configNumber(cfg, `${prefix.replace('fee_', 'fee_link_')}_credit_${n}`);
+      const startRaw = cfg && Object.prototype.hasOwnProperty.call(cfg, 'fee_link_start_date') ? cfg.fee_link_start_date : FEE_DEFAULTS.fee_link_start_date;
+      const start = String(startRaw || '');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(start) && /^\d{4}-\d{2}-\d{2}$/.test(String(saleDate || '')) && saleDate >= start) {
+        return configNumber(cfg, `${prefix.replace('fee_', 'fee_link_')}_credit_${n}`);
+      }
+      return configNumber(cfg, `${prefix}_credit_${n}`);
     }
     if (method === 'credit_card' && installments > 0) {
       const n = Math.min(Math.max(installments, 1), 12);

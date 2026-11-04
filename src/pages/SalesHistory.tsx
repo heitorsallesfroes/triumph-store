@@ -604,7 +604,7 @@ export default function SalesHistory() {
     try {
       const { data: freshSale, error: fetchError } = await supabase
         .from('sales')
-        .select('total_sale_price, card_brand, total_cost, payment_methods, installments')
+        .select('total_sale_price, card_brand, total_cost, payment_methods, installments, sale_date')
         .eq('id', sale.id)
         .single();
       if (fetchError) throw fetchError;
@@ -613,6 +613,7 @@ export default function SalesHistory() {
 
       let updatedPaymentMethods = freshSale.payment_methods;
       let cardFee: number;
+      const saleFeeDate = freshSale.sale_date ? String(freshSale.sale_date).slice(0, 10) : null; // taxa do link pela data da venda
       console.log('[debug] params calculateCardFee:', {
         total: freshSale.total_sale_price,
         method: 'credit_card',
@@ -628,10 +629,10 @@ export default function SalesHistory() {
         );
         cardFee = updatedPaymentMethods.reduce((sum: number, pm: { method: string; card_brand: string; installments: number; amount: number }) => {
           const amount = pm.amount > 0 ? pm.amount : freshSale.total_sale_price;
-          return sum + calculateCardFee(amount, pm.method, pm.card_brand || '', pm.installments || 0);
+          return sum + calculateCardFee(amount, pm.method, pm.card_brand || '', pm.installments || 0, saleFeeDate);
         }, 0);
       } else {
-        cardFee = calculateCardFee(freshSale.total_sale_price, 'credit_card', freshSale.card_brand || '', newInstallments);
+        cardFee = calculateCardFee(freshSale.total_sale_price, 'credit_card', freshSale.card_brand || '', newInstallments, saleFeeDate);
       }
       const netReceived = freshSale.total_sale_price - cardFee;
       const profit = netReceived - (freshSale.total_cost || 0);

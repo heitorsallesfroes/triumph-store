@@ -1974,7 +1974,7 @@
 
   const SALE = () => root.TspSale;
   const salesOrigin = () => probe('sales.wa_chat_id', () => hasColumn('sales', 'wa_chat_id'));
-  const FEE_KEY_RE = /^fee_(vm|ea)_(debit|credit_\d{1,2})$|^fee_link_(vm|ea)_credit_\d{1,2}$/; // 2.6.1: + taxas do link
+  const FEE_KEY_RE = /^fee_(vm|ea)_(debit|credit_\d{1,2})$|^fee_link_(vm|ea)_credit_\d{1,2}$|^fee_link_start_date$/; // 2.6.1/2.6.2: + taxas e data do link
   const clip = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().replace(/\s+/g, ' ').slice(0, max) : null);
   const clipText = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
   const numIn = (v, min, max, what) => {

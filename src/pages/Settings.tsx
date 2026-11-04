@@ -83,6 +83,7 @@ export default function Settings() {
   const [feeForm, setFeeForm] = useState<Record<string, string>>({});
   const [packagingCost, setPackagingCost] = useState('2.00');
   const [adTaxPercent, setAdTaxPercent] = useState('13.83');
+  const [linkStartDate, setLinkStartDate] = useState('2099-01-01');
 
   useEffect(() => { loadConfig(); }, []);
 
@@ -110,6 +111,7 @@ export default function Settings() {
 
       setPackagingCost(Number(map.packaging_cost).toFixed(2));
       setAdTaxPercent(toPercentDisplay(map.ad_tax_rate));
+      setLinkStartDate(map.fee_link_start_date || '2099-01-01');
     } catch (e) {
       console.error(e);
       alert('Erro ao carregar configurações');
@@ -136,6 +138,7 @@ export default function Settings() {
 
       rows.push({ key: 'packaging_cost', value: Number(packagingCost).toFixed(2) });
       rows.push({ key: 'ad_tax_rate', value: fromPercentDisplay(adTaxPercent) });
+      if (/^\d{4}-\d{2}-\d{2}$/.test(linkStartDate)) rows.push({ key: 'fee_link_start_date', value: linkStartDate });
 
       const { error } = await supabase.from('system_config').upsert(rows, { onConflict: 'key' });
       if (error) throw error;
@@ -325,6 +328,16 @@ export default function Settings() {
               <div>
                 <h3 className="text-lg font-medium text-white mb-1">Link de pagamento</h3>
                 <p className="text-gray-500 text-xs mb-4">Percentual cobrado no link de pagamento, por bandeira e parcelamento (na Rede, 1 ponto a mais que a maquininha).</p>
+                <div className="mb-4 max-w-xs">
+                  <label className="block text-sm font-medium text-gray-300 mb-1.5">Taxas do link valem a partir de</label>
+                  <input
+                    type="date"
+                    value={linkStartDate}
+                    onChange={e => setLinkStartDate(e.target.value)}
+                    className={inputClass}
+                  />
+                  <p className="text-gray-500 text-xs mt-1">Vendas por link antes dessa data continuam com a taxa do crédito.</p>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>

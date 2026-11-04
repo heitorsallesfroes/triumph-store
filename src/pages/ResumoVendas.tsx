@@ -152,7 +152,7 @@ export default function ResumoVendas() {
       const salesQuery = (f: number, t: number) => {
         let q = supabase
           .from('sales')
-          .select('id, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, payment_methods, delivery_type, motoboy_id, city')
+          .select('id, sale_date, total_sale_price, net_received, card_fee, total_cost, delivery_fee, delivery_cost, payment_method, payment_methods, delivery_type, motoboy_id, city')
           .neq('status', 'cancelado')
           .neq('status', 'reembolsado');
         if (!isMax) q = q.gte('sale_date', `${start}T00:00:00`).lte('sale_date', `${end}T23:59:59`);
@@ -168,7 +168,7 @@ export default function ResumoVendas() {
       const smallSalesQuery = (f: number, t: number) => {
         let q = supabase
           .from('small_sales')
-          .select('sale_price, quantity, payment_method, payment_methods, card_brand, installments')
+          .select('sale_price, quantity, payment_method, payment_methods, card_brand, installments, created_at')
           .in('payment_method', ['credit_card', 'debit_card', 'payment_link']);
         if (!isMax) q = q.gte('created_at', `${start}T00:00:00-03:00`).lte('created_at', `${end}T23:59:59-03:00`);
         return q.order('id').range(f, t);
@@ -177,7 +177,7 @@ export default function ResumoVendas() {
       const smallSalesAllQuery = (f: number, t: number) => {
         let q = supabase
           .from('small_sales')
-          .select('sale_price, quantity, cost, delivery_fee, delivery_type, payment_method, payment_methods, card_brand, installments');
+          .select('sale_price, quantity, cost, delivery_fee, delivery_type, payment_method, payment_methods, card_brand, installments, created_at');
         if (!isMax) q = q.gte('created_at', `${start}T00:00:00-03:00`).lte('created_at', `${end}T23:59:59-03:00`);
         return q.order('id').range(f, t);
       };
@@ -254,7 +254,7 @@ export default function ResumoVendas() {
           pms.filter(pm => CARD_METHODS.includes(pm.method)).forEach(pm => {
             const bucket = getBucket(pm.method);
             const bruto = Number(pm.amount);
-            const fee = calculateCardFee(bruto, pm.method, pm.card_brand, pm.installments || 1);
+            const fee = calculateCardFee(bruto, pm.method, pm.card_brand, pm.installments || 1, v.sale_date ? String(v.sale_date).slice(0, 10) : null);
             bucket.count  += 1;
             bucket.bruto  += bruto;
             bucket.fees   += fee;
@@ -280,7 +280,7 @@ export default function ResumoVendas() {
           pms.filter(pm => CARD_METHODS.includes(pm.method)).forEach(pm => {
             const bucket = getBucket(pm.method);
             const bruto = Number(pm.amount);
-            const fee = calculateCardFee(bruto, pm.method, pm.card_brand, pm.installments || 1);
+            const fee = calculateCardFee(bruto, pm.method, pm.card_brand, pm.installments || 1, v.created_at);
             bucket.count  += 1;
             bucket.bruto  += bruto;
             bucket.fees   += fee;
@@ -289,7 +289,7 @@ export default function ResumoVendas() {
         } else {
           const bucket = getBucket(v.payment_method);
           const bruto = Number(v.sale_price) * Number(v.quantity);
-          const fee = calculateCardFee(bruto, v.payment_method, v.card_brand, v.installments || 1);
+          const fee = calculateCardFee(bruto, v.payment_method, v.card_brand, v.installments || 1, v.created_at);
           bucket.count  += 1;
           bucket.bruto  += bruto;
           bucket.fees   += fee;
@@ -311,10 +311,10 @@ export default function ResumoVendas() {
         if (pms && pms.length > 1) {
           return sum + pms
             .filter(pm => CARD_METHODS.includes(pm.method))
-            .reduce((pmSum, pm) => pmSum + calculateCardFee(Number(pm.amount), pm.method, pm.card_brand || '', pm.installments || 1), 0);
+            .reduce((pmSum, pm) => pmSum + calculateCardFee(Number(pm.amount), pm.method, pm.card_brand || '', pm.installments || 1, v.created_at), 0);
         }
         if (CARD_METHODS.includes(v.payment_method)) {
-          return sum + calculateCardFee(Number(v.sale_price) * Number(v.quantity), v.payment_method, v.card_brand || '', v.installments || 1);
+          return sum + calculateCardFee(Number(v.sale_price) * Number(v.quantity), v.payment_method, v.card_brand || '', v.installments || 1, v.created_at);
         }
         return sum;
       }, 0);

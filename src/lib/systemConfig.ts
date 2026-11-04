@@ -37,7 +37,9 @@ const DEFAULTS: Record<string, string> = {
   fee_ea_credit_11: '0.1073',
   fee_ea_credit_12: '0.1133',
 
-  // Link de pagamento (Rede): 1 ponto percentual acima do crédito da maquininha, em cada parcela
+  // Link de pagamento (Rede): 1 ponto percentual acima do crédito da maquininha, em cada parcela.
+  // Só vale para vendas a partir de fee_link_start_date (AAAA-MM-DD); antes disso o link usa a taxa do crédito.
+  fee_link_start_date: '2099-01-01',
   fee_link_vm_credit_1: '0.0420',
   fee_link_vm_credit_2: '0.0506',
   fee_link_vm_credit_3: '0.0566',
