@@ -806,13 +806,10 @@
     return { ctwaClid: x.clid, clidInfo: x.info, clidCandidates: x.candidates };
   }
 
-  async function adContext(payload) {
-    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
-    const chat = await individualLoadedChat(payload && payload.chatId);
-    const msgs = (safe(() => chat.msgs.getModelsArray(), null) || []).slice().sort((a, b) => (Number(safe(() => b.t, 0)) || 0) - (Number(safe(() => a.t, 0)) || 0));
-    for (const m of msgs) {
-      const ctx = safe(() => m.ctwaContext, null);
-      if (!ctx || typeof ctx !== 'object') continue;
+  const msgT = (m) => Number(safe(() => m.t, 0)) || 0;
+  const ctxOf = (m) => { const c = safe(() => m.ctwaContext, null); return c && typeof c === 'object' ? c : null; };
+
+  function adSummary(ctx) {
       const s = (k, max) => { const v = safe(() => ctx[k], null); return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : (typeof v === 'number' ? String(v) : null); };
       const app = (s('sourceApp', 40) || s('conversionSource', 40) || '').toLowerCase();
       const url = s('sourceUrl', 500);
@@ -831,8 +828,49 @@
         ...clidFields(ctx),
         keys: safe(() => Object.keys(ctx), []).slice(0, 40).map((k) => String(k).slice(0, 40)),
       };
+  }
+
+  // 2.6.2: conversa longa: a mensagem do anúncio pode não estar carregada. Busca mensagens ANTERIORES pela
+  // WA-JS (chat.getMessages, direction 'before', 100 por vez, só leitura) até achar o ctwaContext, chegar ao
+  // começo da conversa, passar de 30 dias ou de 1000 mensagens.
+  const DEEP_BATCH = 100;
+  const DEEP_MAX = 1000;
+  const DEEP_DAYS = 30;
+  async function earlierAdMessage(chatId, oldest) {
+    if (!wpp.chat || typeof wpp.chat.getMessages !== 'function') return { msg: null, scanned: 0, stop: 'sem acesso às mensagens antigas' };
+    let anchor = safe(() => oldest.id._serialized, '') || '';
+    if (!anchor) return { msg: null, scanned: 0, stop: 'começo da conversa' };
+    const limitT = Math.floor(Date.now() / 1000) - DEEP_DAYS * 86400;
+    let scanned = 0;
+    while (scanned < DEEP_MAX) {
+      let batch;
+      try {
+        batch = await withTimeout(wpp.chat.getMessages(chatId, { count: DEEP_BATCH, direction: 'before', id: anchor }), 10000);
+      } catch { return { msg: null, scanned, stop: 'o WhatsApp não entregou as mensagens antigas' }; }
+      const list = (Array.isArray(batch) ? batch : []).filter((m) => safe(() => m.id._serialized, '') !== anchor).sort((a, b) => msgT(a) - msgT(b));
+      if (!list.length) return { msg: null, scanned, stop: 'começo da conversa' };
+      scanned += list.length;
+      const hit = list.find((m) => ctxOf(m));
+      if (hit) return { msg: hit, scanned, stop: null };
+      const next = safe(() => list[0].id._serialized, '');
+      if (!next || next === anchor) return { msg: null, scanned, stop: 'começo da conversa' };
+      anchor = next;
+      if (msgT(list[0]) && msgT(list[0]) < limitT) return { msg: null, scanned, stop: `passou de ${DEEP_DAYS} dias` };
     }
-    return { found: false };
+    return { msg: null, scanned, stop: `passou de ${DEEP_MAX} mensagens` };
+  }
+
+  // payload.deep: se não achar nas mensagens carregadas, procura nas antigas (pode demorar alguns segundos)
+  async function adContext(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const chat = await individualLoadedChat(payload && payload.chatId);
+    const msgs = (safe(() => chat.msgs.getModelsArray(), null) || []).slice().sort((a, b) => msgT(b) - msgT(a));
+    const loadedHit = msgs.find((m) => ctxOf(m));
+    if (loadedHit) return { ...adSummary(ctxOf(loadedHit)), origin: 'mensagens carregadas', firstMessageAt: msgT(loadedHit) || null };
+    if (!(payload && payload.deep === true)) return { found: false };
+    const r = await earlierAdMessage(payload.chatId, msgs[msgs.length - 1]);
+    if (r.msg) return { ...adSummary(ctxOf(r.msg)), origin: 'mensagens antigas', firstMessageAt: msgT(r.msg) || null, deep: { scanned: r.scanned } };
+    return { found: false, deep: { scanned: r.scanned, stop: r.stop } };
   }
 
   // ── 2.6.0: telefone verdadeiro de conversas @lid ──
@@ -882,6 +920,7 @@
       if (!/^[0-9]+@(c\.us|lid)$/.test(chatId)) return;
       const t = Number(safe(() => m.t, 0)) || Math.floor(Date.now() / 1000);
       const chat = safe(() => wpp.chat.get(chatId), null);
+      queueAttribution(chatId, t, ctx, chat); // 2.6.2: guarda o anúncio de onde o lead veio (sempre)
       const msgs = (chat && safe(() => chat.msgs.getModelsArray(), null)) || [];
       if (msgs.some((x) => x !== m && !safe(() => x.id.fromMe, true) && (Number(safe(() => x.t, 0)) || 0) < t)) return;
       if (leadQueue.some((l) => l.chatId === chatId)) return;
@@ -896,6 +935,48 @@
     } catch { /* mensagem estranha: ignora */ }
   }
   try { if (wpp && typeof wpp.on === 'function') wpp.on('chat.new_message', onNewMessage); } catch { /* sem eventos: sem Contato automático */ }
+
+  // ── 2.6.2: atribuição do anúncio (wa_ad_attribution) ──
+  // Fila só na memória desta aba; o painel (aba com a trava) grava no banco. scan: na abertura do WhatsApp,
+  // varre as conversas já carregadas (a mensagem mais antiga com ctwaContext de cada uma).
+  const ATTR_MAX = 1000;
+  const attrQueue = new Map(); // chatId → item
+  function attributionItem(chatId, t, ctx, chat) {
+    const a = adSummary(ctx);
+    return {
+      chatId, t, name: chat ? realName(chatCard(chat, false).name) : null,
+      ad: { title: a.title, sourceId: a.sourceId, sourceApp: a.platform || a.sourceApp, sourceUrl: a.sourceUrl, conversionSource: a.conversionSource, ctwaClid: a.ctwaClid },
+    };
+  }
+  function queueAttribution(chatId, t, ctx, chat) {
+    const prev = attrQueue.get(chatId);
+    if (prev && prev.t <= t) return; // vale a mais antiga
+    if (!prev && attrQueue.size >= ATTR_MAX) return;
+    attrQueue.set(chatId, attributionItem(chatId, t, ctx, chat));
+  }
+
+  async function adAttributions(payload) {
+    let scanned = false;
+    if (payload && payload.scan === true && isReady()) {
+      let loaded = null;
+      try { loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS); } catch { loaded = null; }
+      if (Array.isArray(loaded)) {
+        scanned = true;
+        for (const chat of loaded.slice(0, 3000)) {
+          const id = chatIdOf(chat);
+          if (!/^[0-9]+@(c\.us|lid)$/.test(id)) continue;
+          const msgs = safe(() => chat.msgs.getModelsArray(), null) || [];
+          let first = null;
+          for (const m of msgs) if (!safe(() => m.id.fromMe, true) && ctxOf(m) && (!first || msgT(m) < msgT(first))) first = m;
+          if (first) queueAttribution(id, msgT(first) || Math.floor(Date.now() / 1000), ctxOf(first), chat);
+        }
+      }
+    }
+    const items = [...attrQueue.values()];
+    attrQueue.clear();
+    if (isReady()) for (const it of items) it.phone = await pnOfChat(it.chatId);
+    return { items, scanned };
+  }
 
   async function adLeads() {
     const leads = leadQueue.splice(0, leadQueue.length);
@@ -1011,6 +1092,7 @@
     labelEvents: () => labelEvents(),
     chatPhone: (payload) => chatPhone(payload),
     adLeads: () => adLeads(),
+    adAttributions: (payload) => adAttributions(payload),
     labelChatIds: (payload) => labelChatIds(payload),
   };
 

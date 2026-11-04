@@ -4006,7 +4006,7 @@
     stopRunning: () => { if (seq && AUTO_LABELS.includes(seq.label)) stopSequence(); },
     campaignJob: (api) => campaignJob(api),
     runCampaignJob: (job, helpers) => runCampaignJob(job, helpers),
-    leaseWork: () => contactAutoTick(),
+    leaseWork: async () => { await adAttributionTick(); await contactAutoTick(); },
   });
 
   // ── Disparos (2.0.0-D2): o motor só pega alvos de disparos que o usuário iniciou ──
@@ -6358,8 +6358,8 @@
     renderConversoes();
     if (!chatId) return;
     const f = cv.form;
-    const [ad, recent, last, pn] = await Promise.all([
-      waRequest('adContext', { chatId }, { timeout: 4000 }).catch(() => null),
+    const [saved, recent, last, pn] = await Promise.all([
+      call('getAdAttribution', { chatId }).catch(() => null),
       call('recentConversion', { chatId }).catch(() => null),
       call('lastChatSaleValue', { chatId, phone }).catch(() => null),
       chatPhoneName(chatId),
@@ -6368,27 +6368,70 @@
     if (!f.phone && pn.phone) f.phone = pn.phone;
     if (!f.name && pn.name) f.name = pn.name;
     f.phoneChecked = true;
-    f.ad = ad && ad.found ? ad : null;
-    f.adLoaded = true;
     f.recent = recent && recent.exists ? recent : null;
     if (last && last.value && !f.value) f.value = String(last.value.toFixed(2));
+    // 2.6.2: o anúncio vem primeiro do banco; senão das mensagens carregadas; senão das antigas (pode demorar)
+    let ad = saved && saved.row ? adFromAttribution(saved.row) : null;
+    if (!ad) {
+      renderConversoes();
+      const found = await waRequest('adContext', { chatId, deep: true }, { timeout: 60000 }).catch(() => null);
+      if (cv.form !== f) return;
+      if (found && found.found) {
+        ad = found;
+        call('saveAdAttributions', { items: [{ chatId, t: found.firstMessageAt, phone: f.phone || null, name: f.name || null,
+          ad: { title: found.title, sourceId: found.sourceId, sourceApp: found.platform || found.sourceApp, sourceUrl: found.sourceUrl, conversionSource: found.conversionSource, ctwaClid: found.ctwaClid } }] }).catch(() => {});
+      } else f.adSearch = found && found.deep ? found.deep : null;
+    }
+    f.ad = ad;
+    f.adLoaded = true;
     renderConversoes();
+  }
+
+  // Linha salva em wa_ad_attribution → o mesmo formato do anúncio lido da conversa
+  function adFromAttribution(r) {
+    const app = String(r.source_app || '').toLowerCase();
+    const clid = r.ctwa_clid || null;
+    return {
+      found: true, origin: 'salvo no banco', title: r.ad_title || null, description: null, sourceUrl: r.source_url || null, sourceId: r.ad_id || null,
+      sourceType: null, sourceApp: r.source_app || null, conversionSource: r.conversion_source || null, mediaType: null,
+      platform: /insta/.test(app) ? 'Instagram' : /face|fb/.test(app) ? 'Facebook' : null, conversionData: null, ctwaClid: clid,
+      clidInfo: clid ? { field: 'salvo no banco', path: '-', length: clid.length, mask: `${clid.slice(0, 6)}…${clid.slice(-4)}` } : null, clidCandidates: [], keys: [],
+      firstMessageAt: r.first_message_at ? Math.floor(Date.parse(r.first_message_at) / 1000) : null,
+    };
+  }
+
+  // 2.6.2: aba com a trava: grava o anúncio de cada lead que chega (sempre) e, uma vez por abertura do
+  // WhatsApp, o das conversas já carregadas. Sem lead novo, nenhuma consulta ao banco.
+  const at = { scanned: false, off: false };
+  async function adAttributionTick() {
+    if (at.off) return;
+    let got = null;
+    try { got = await waRequest('adAttributions', { scan: !at.scanned }, { timeout: 15000 }); } catch { got = null; }
+    if (!got) return;
+    if (got.scanned) at.scanned = true;
+    const items = Array.isArray(got.items) ? got.items : [];
+    if (!items.length) return;
+    try { await call('saveAdAttributions', { items }); } catch (e) {
+      if (e.message === 'Atualize o banco para usar este recurso') at.off = true; // sem a tabela: para até recarregar
+    }
   }
 
   // Onde o código de clique foi achado — nunca o valor inteiro (6 primeiros + 4 últimos)
   const clidWhere = (c) => `${c.field}${c.path && c.path !== '-' ? `, campo protobuf ${c.path}` : ''}, tamanho ${c.length}, ${c.mask}`;
 
-  function techDetails(ad) {
+  function techDetails(ad, search = null) {
     const d = el('details', 'cv-tech');
     d.append(el('summary', null, 'Detalhes técnicos do anúncio'));
     const lines = ad ? [
+      ['origem do anúncio', ad.origin || 'mensagens carregadas'],
       ['título', ad.title], ['descrição', ad.description], ['sourceUrl', ad.sourceUrl], ['sourceId (id do anúncio)', ad.sourceId], ['sourceType', ad.sourceType],
       ['sourceApp', ad.sourceApp], ['conversionSource', ad.conversionSource], ['mediaType', ad.mediaType],
       ['conversionData', ad.conversionData ? `${ad.conversionData.type}${ad.conversionData.size != null ? `, tamanho ${ad.conversionData.size}` : ''}${ad.conversionData.keys && ad.conversionData.keys.length ? `, chaves: ${ad.conversionData.keys.join(', ')}` : ''}${ad.conversionData.looksLikeClid ? ', parece ter identificador de clique' : ''}` : 'não tem'],
       ['ctwa_clid', ad.clidInfo ? `encontrado em ${clidWhere(ad.clidInfo)}` : ad.ctwaClid ? 'encontrado' : 'não encontrado'],
       ...((ad.clidCandidates || []).length > 1 ? [['outros candidatos', ad.clidCandidates.slice(1).map(clidWhere).join(' | ')]] : []),
       ['campos do ctwaContext', (ad.keys || []).join(', ')],
-    ] : [['anúncio', 'nenhum ctwaContext nas mensagens carregadas']];
+    ] : [['anúncio', 'nenhum ctwaContext nas mensagens carregadas'],
+      ...(search ? [['mensagens antigas', `procurei ${search.scanned} mensagens; parei: ${search.stop}`]] : [])];
     lines.forEach(([k, v]) => d.append(el('div', null, `${k}: ${v == null || v === '' ? '—' : v}`)));
     return d;
   }
@@ -6399,11 +6442,11 @@
     sec.append(el('div', 'wt-head', 'COMPRA PARA O FACEBOOK'));
     if (!f.chatId) { sec.append(el('div', 'ed-note', 'Abra uma conversa individual no WhatsApp.')); ctabEl.append(sec); return; }
     const adBox = el('div', 'fw-test');
-    if (!f.adLoaded) adBox.append(el('div', null, 'Procurando o anúncio da conversa…'));
+    if (!f.adLoaded) adBox.append(el('div', null, 'Procurando o anúncio da conversa (pode levar alguns segundos em conversas longas)…'));
     else if (f.ad) adBox.append(el('div', null, `Anúncio: ${f.ad.title || '(sem título)'}${f.ad.sourceId ? ` · id ${f.ad.sourceId}` : ''}${f.ad.platform ? ` · ${f.ad.platform}` : ''}`));
     else adBox.append(el('div', null, 'Não achei anúncio nesta conversa (será enviado só com o telefone).'));
     sec.append(adBox);
-    if (f.adLoaded) sec.append(techDetails(f.ad));
+    if (f.adLoaded) sec.append(techDetails(f.ad, f.adSearch || null));
     const r1 = el('div', 'sc-row');
     r1.append(inputField('Cliente', f.name, (v) => { f.name = v; }, { max: 100, aria: 'Nome do cliente' }), inputField('Telefone', f.phone, (v) => { f.phone = v; }, { max: 20, aria: 'Telefone do cliente', need: !!f.phoneChecked && !f.phone }));
     sec.append(r1);

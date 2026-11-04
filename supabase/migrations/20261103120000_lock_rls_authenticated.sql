@@ -98,7 +98,9 @@ declare
     -- extensão 2.4.0 (eventos de compra do Facebook: migration 20261103190000)
     'wa_conversion_events',
     -- extensão 2.5.0 (etiqueta do WhatsApp no gatilho e inscrição manual: migration 20261104120000)
-    'wa_native_label_seen', 'wa_automation_enrollments'
+    'wa_native_label_seen', 'wa_automation_enrollments',
+    -- extensão 2.6.2 (anúncio de onde o lead veio: migration 20261104160000)
+    'wa_ad_attribution'
   ];
 begin
   foreach t in array tables loop

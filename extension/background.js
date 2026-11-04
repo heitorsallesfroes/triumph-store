@@ -109,6 +109,9 @@ const HANDLERS = {
   metaContactConfig:     ()  => WaApi.metaContactConfig(),
   setMetaContactConfig:  (m) => WaApi.setMetaContactConfig({ on: m.on, test: m.test }),
   chatContactInfo:       (m) => WaApi.chatContactInfo({ chatId: m.chatId }),
+  // 2.6.2: anúncio de onde o lead veio (wa_ad_attribution)
+  getAdAttribution:      (m) => WaApi.getAdAttribution({ chatId: m.chatId }),
+  saveAdAttributions:    (m) => WaApi.saveAdAttributions({ items: m.items }),
   // Conta (1.9.1): a senha só segue para o Supabase Auth; o painel recebe só conectada/dica do e-mail
   authStatus:      ()  => WaAuth.status(),
   // 2.4.1: trocar de conta limpa as leituras guardadas em memória

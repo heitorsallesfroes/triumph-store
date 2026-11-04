@@ -647,6 +647,26 @@ o que hoje é feito pelo Tintim.
 - **Publique a função de novo** depois de atualizar (passo 6 abaixo): a 2.6.0
   mudou `supabase/functions/meta-purchase-event/`. Sem migration nova.
 
+**2.6.2 — anúncio de conversas longas:**
+
+- O anúncio de onde o lead veio fica **salvo no banco** (tabela
+  `wa_ad_attribution`, uma linha por conversa) assim que chega a mensagem do
+  cliente com o anúncio. Vale sempre, mesmo com o "Contato automático"
+  desligado. Quem grava é a aba que executa os envios.
+- Ao abrir o WhatsApp, essa aba também grava o anúncio das conversas que já
+  estão carregadas e ainda não estão na tabela (leads que chegaram com o
+  computador desligado).
+- Gravar de novo a mesma conversa não sobrescreve nada; só completa o código de
+  clique se ele estava vazio.
+- No 📈 o anúncio é procurado nesta ordem: **salvo no banco** → **mensagens
+  carregadas** → **mensagens antigas** (a extensão pede ao WhatsApp as mensagens
+  anteriores, 100 por vez, até achar o anúncio, chegar ao começo da conversa ou
+  passar de 30 dias / 1000 mensagens; pode levar alguns segundos). Achou nas
+  antigas: grava no banco para a próxima vez. "Detalhes técnicos" mostra a
+  origem do anúncio.
+- Precisa da migration `supabase/migrations/20261104160000_wa_ad_attribution.sql`.
+  Sem ela, o 📈 continua procurando nas mensagens (carregadas e antigas).
+
 **Configurar (uma vez só):**
 
 1. **ID do Conjunto de dados (Pixel):** em business.facebook.com abra o
@@ -712,6 +732,15 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.6.2
+- Anúncio do lead salvo no banco (`wa_ad_attribution`) na chegada e na abertura
+  do WhatsApp; o 📈 procura no banco, nas mensagens carregadas e nas antigas.
+  Migration `20261104160000_wa_ad_attribution.sql`.
+- Taxas do link de pagamento só a partir de `fee_link_start_date` (ERP).
+
+### 2.6.1
+- Taxas próprias do link de pagamento (ERP e venda pelo chat).
 
 ### 2.6.0
 - Compra para o Facebook com o código de clique lido do `conversionData`

@@ -2264,6 +2264,69 @@
     return { on, since, test };
   }
 
+  // ── 2.6.2: anúncio de onde o lead veio (wa_ad_attribution; migration 20261104160000) ──
+  // Uma linha por conversa. Gravar de novo não sobrescreve: só completa o ctwa_clid se estava vazio.
+  const AD_TABLE = 'wa_ad_attribution';
+  const AD_COLS = 'chat_id,phone,contact_name,ad_id,ad_title,source_app,source_url,conversion_source,ctwa_clid,first_message_at,created_at';
+
+  async function getAdAttribution({ chatId }) {
+    if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) return { row: null };
+    try {
+      const rows = await rest(`${AD_TABLE}?select=${AD_COLS}&chat_id=eq.${encodeURIComponent(chatId)}&limit=1`);
+      return { row: rows.length ? rows[0] : null };
+    } catch (err) {
+      if (tableMissing(err, [AD_TABLE])) return { row: null, missing: true };
+      throw err;
+    }
+  }
+
+  function checkAttribution(it) {
+    const x = it || {};
+    if (typeof x.chatId !== 'string' || !SCHED_CHAT_RE.test(x.chatId)) throw new Error('Conversa inválida');
+    const ad = x.ad && typeof x.ad === 'object' ? x.ad : {};
+    const url = clip(ad.sourceUrl, 500);
+    const t = Number(x.t);
+    return {
+      chat_id: x.chatId,
+      phone: typeof x.phone === 'string' && /^\d{8,15}$/.test(x.phone) ? x.phone : null,
+      contact_name: clip(x.name, 100),
+      ad_id: clip(ad.sourceId, 100), ad_title: clip(ad.title, 200), source_app: clip(ad.sourceApp, 40),
+      source_url: url && /^https?:\/\//.test(url) ? url : null, conversion_source: clip(ad.conversionSource, 40),
+      ctwa_clid: typeof ad.ctwaClid === 'string' && /^[\w.:=+/-]{8,500}$/.test(ad.ctwaClid) ? ad.ctwaClid : null,
+      first_message_at: Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : null,
+    };
+  }
+
+  // Grava as conversas que ainda não estão na tabela; as que já estão ficam como estão (só ganham o
+  // ctwa_clid se ele estava vazio). Uma leitura por lote de 100 + uma gravação por lote.
+  async function saveAdAttributions({ items }) {
+    if (!Array.isArray(items) || items.length > 3000) throw new Error('Lista inválida');
+    const rows = [];
+    const seen = new Set();
+    items.forEach((it) => { const r = checkAttribution(it); if (!seen.has(r.chat_id)) { seen.add(r.chat_id); rows.push(r); } });
+    let added = 0;
+    let completed = 0;
+    try {
+      for (let i = 0; i < rows.length; i += 100) {
+        const part = rows.slice(i, i + 100);
+        const have = new Map((await rest(`${AD_TABLE}?select=chat_id,ctwa_clid&chat_id=in.${inList(part.map((r) => r.chat_id))}`)).map((r) => [r.chat_id, r]));
+        const fresh = part.filter((r) => !have.has(r.chat_id));
+        if (fresh.length) {
+          await rest(`${AD_TABLE}?on_conflict=chat_id`, json('POST', 'resolution=ignore-duplicates,return=minimal', fresh));
+          added += fresh.length;
+        }
+        for (const r of part.filter((x) => have.has(x.chat_id) && !have.get(x.chat_id).ctwa_clid && x.ctwa_clid)) {
+          await rest(`${AD_TABLE}?chat_id=eq.${encodeURIComponent(r.chat_id)}&ctwa_clid=is.null`, json('PATCH', 'return=minimal', { ctwa_clid: r.ctwa_clid, updated_at: new Date().toISOString() }));
+          completed++;
+        }
+      }
+    } catch (err) {
+      if (tableMissing(err, [AD_TABLE])) throw new Error(ENGINE_MISSING);
+      throw err;
+    }
+    return { added, completed };
+  }
+
   // 2.6.0: nome e telefone salvos no CRM para a conversa (sem criar nada)
   async function chatContactInfo({ chatId }) {
     if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) return { name: null, phone: null };
@@ -2323,7 +2386,7 @@
     nativeLabelEvents, nativeLabelSweep, nativeLabelCandidates, activeEnrollments, enrollmentCandidates, enrollContact,
     leaveAutomation, chatAutomationState,
     metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,
-    sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo,
+    sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
     erpCatalog, createSaleFromChat, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve,
     automationUnreserve, applySendLabels, getContactName,

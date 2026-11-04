@@ -25,6 +25,7 @@
 -- e volta a "public access wa_conversion_events".
 -- Extensão 2.5.0 (20261104120000): wa_native_label_seen e wa_automation_enrollments entram na cópia
 -- como as outras wa_* e voltam a "public access <tabela>".
+-- Extensão 2.6.2 (20261104160000): wa_ad_attribution entra na cópia do mesmo jeito.
 -- ============================================================================
 
 begin;
