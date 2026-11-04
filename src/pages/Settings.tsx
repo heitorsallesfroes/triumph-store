@@ -3,12 +3,55 @@ import { Download, Loader2, Save, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/resumoAnualCalc';
 
-// Todas as linhas em páginas de 1000, no mesmo formato { data, error } da consulta direta
-const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
-  fetchAllRows<T>(mk).then((data) => ({ data, error: null }), (error) => ({ data: null as T[] | null, error }));
 import { getConfigDefaults, refreshSystemConfig } from '../lib/systemConfig';
 
 const INSTALLMENTS = Array.from({ length: 12 }, (_, i) => i + 1);
+
+// Backup completo: todas as tabelas do ERP e do WhatsApp/CRM, uma de cada vez, em páginas de 1000.
+// order = colunas para paginar sem pular nem repetir linhas (a maioria tem id).
+const BACKUP_TABLES: { name: string; order: string[] }[] = [
+  // ERP
+  { name: 'products', order: ['id'] },
+  { name: 'accessories', order: ['id'] },
+  { name: 'sales', order: ['id'] },
+  { name: 'sale_items', order: ['id'] },
+  { name: 'sale_accessories', order: ['id'] },
+  { name: 'small_sales', order: ['id'] },
+  { name: 'suppliers', order: ['id'] },
+  { name: 'supplier_orders', order: ['id'] },
+  { name: 'cities', order: ['id'] },
+  { name: 'neighborhoods', order: ['id'] },
+  { name: 'motoboys', order: ['id'] },
+  { name: 'motoboy_payments', order: ['id'] },
+  { name: 'ad_spend', order: ['id'] },
+  { name: 'operational_costs', order: ['id'] },
+  { name: 'operational_cost_payments', order: ['id'] },
+  { name: 'operational_costs_avulsos', order: ['id'] },
+  { name: 'stock_orders', order: ['id'] },
+  { name: 'stock_movements', order: ['id'] },
+  { name: 'system_config', order: ['key'] },
+  // WhatsApp / CRM
+  { name: 'wa_categories', order: ['id'] },
+  { name: 'wa_items', order: ['id'] },
+  { name: 'wa_item_parts', order: ['id'] },
+  { name: 'wa_labels', order: ['id'] },
+  { name: 'wa_contacts', order: ['id'] },
+  { name: 'wa_contact_labels', order: ['contact_id', 'label_id'] },
+  { name: 'wa_schedules', order: ['id'] },
+  { name: 'wa_settings', order: ['id'] },
+  { name: 'wa_send_log', order: ['id'] },
+  { name: 'wa_flows', order: ['id'] },
+  { name: 'wa_flow_variants', order: ['id'] },
+  { name: 'wa_campaigns', order: ['id'] },
+  { name: 'wa_campaign_targets', order: ['id'] },
+  { name: 'wa_automations', order: ['id'] },
+  { name: 'wa_automation_runs', order: ['id'] },
+  { name: 'wa_conversion_events', order: ['id'] },
+];
+
+// Tabela que não existe no banco (migration não aplicada): pula e anota
+const isMissingTable = (e: any) => !!e && (e.code === 'PGRST205' || e.code === '42P01' || /does not exist|could not find the table/i.test(String(e.message || '')));
+const isMissingColumn = (e: any) => !!e && (e.code === '42703' || /column .* does not exist/i.test(String(e.message || '')));
 
 const STORE_FIELDS: { key: string; label: string; placeholder: string; multiline?: boolean }[] = [
   { key: 'store_name', label: 'Nome da loja', placeholder: 'Ex: Triumph Store Smartwatches' },
@@ -30,6 +73,7 @@ const fromPercentDisplay = (pct: string) => {
 
 export default function Settings() {
   const [isExporting, setIsExporting] = useState(false);
+  const [backupProgress, setBackupProgress] = useState('');
 
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -107,47 +151,48 @@ export default function Settings() {
   const exportBackup = async () => {
     try {
       setIsExporting(true);
+      const data: Record<string, any[]> = {};
+      const tables: { name: string; rows: number }[] = [];
+      const skipped: { name: string; reason: string }[] = [];
 
-      const [
-        productsResult,
-        accessoriesResult,
-        salesResult,
-        suppliersResult,
-        citiesResult,
-        neighborhoodsResult,
-        motoboysResult
-      ] = await Promise.all([
-        allRows<any>((f, t) => supabase.from('products').select('*').order('created_at').order('id').range(f, t)),
-        supabase.from('accessories').select('*').order('created_at'),
-        allRows<any>((f, t) => supabase.from('sales').select('*').order('created_at').order('id').range(f, t)),
-        supabase.from('suppliers').select('*').order('created_at'),
-        supabase.from('cities').select('*').order('name'),
-        allRows<any>((f, t) => supabase.from('neighborhoods').select('*').order('name').order('id').range(f, t)),
-        supabase.from('motoboys').select('*').order('created_at')
-      ]);
-
-      if (productsResult.error) throw productsResult.error;
-      if (accessoriesResult.error) throw accessoriesResult.error;
-      if (salesResult.error) throw salesResult.error;
-      if (suppliersResult.error) throw suppliersResult.error;
-      if (citiesResult.error) throw citiesResult.error;
-      if (neighborhoodsResult.error) throw neighborhoodsResult.error;
-      if (motoboysResult.error) throw motoboysResult.error;
+      // Uma tabela de cada vez (não pesa o banco), cada uma em páginas de 1000 (nunca corta)
+      for (let i = 0; i < BACKUP_TABLES.length; i++) {
+        const t = BACKUP_TABLES[i];
+        const label = `Tabela ${i + 1} de ${BACKUP_TABLES.length}: ${t.name}`;
+        setBackupProgress(`${label}…`);
+        const fetchWith = (order: string[]) => fetchAllRows<any>((f, to) => {
+          let q: any = supabase.from(t.name).select('*');
+          order.forEach((c) => { q = q.order(c); });
+          return q.range(f, to);
+        });
+        try {
+          let rows: any[];
+          try {
+            rows = await fetchWith(t.order);
+          } catch (e) {
+            if (!isMissingColumn(e)) throw e;
+            rows = await fetchWith([]); // tabela sem a coluna de ordem esperada
+          }
+          data[t.name] = rows;
+          tables.push({ name: t.name, rows: rows.length });
+          setBackupProgress(`${label}: ${rows.length.toLocaleString('pt-BR')} linhas`);
+        } catch (e: any) {
+          if (!isMissingTable(e)) throw new Error(`${t.name}: ${e?.message || e}`);
+          skipped.push({ name: t.name, reason: 'tabela não existe no banco' });
+        }
+      }
 
       const backup = {
-        version: '1.0',
+        version: '2.0',
         exportDate: new Date().toISOString(),
-        data: {
-          products: productsResult.data || [],
-          accessories: accessoriesResult.data || [],
-          sales: salesResult.data || [],
-          suppliers: suppliersResult.data || [],
-          cities: citiesResult.data || [],
-          neighborhoods: neighborhoodsResult.data || [],
-          motoboys: motoboysResult.data || []
-        }
+        // Resumo no topo do arquivo: cada tabela com a quantidade de linhas
+        tables,
+        totalRows: tables.reduce((sum, t) => sum + t.rows, 0),
+        skipped,
+        data,
       };
 
+      setBackupProgress('Gerando o arquivo…');
       const blob = new Blob([JSON.stringify(backup, null, 2)], {
         type: 'application/json'
       });
@@ -161,9 +206,11 @@ export default function Settings() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
+      setBackupProgress(`Concluído: ${tables.length} tabelas, ${backup.totalRows.toLocaleString('pt-BR')} linhas${skipped.length ? ` (puladas: ${skipped.map((x) => x.name).join(', ')})` : ''}.`);
       alert('Backup exportado com sucesso!');
     } catch (error) {
       console.error('Erro ao exportar backup:', error);
+      setBackupProgress('');
       alert('Erro ao exportar backup. Por favor, tente novamente.');
     } finally {
       setIsExporting(false);
@@ -343,8 +390,9 @@ export default function Settings() {
             <div className="bg-gray-900 rounded-lg p-6 border border-gray-700">
               <h3 className="text-lg font-medium text-white mb-3">Exportar Backup Completo</h3>
               <p className="text-gray-400 text-sm mb-4">
-                O backup incluirá todos os dados de: produtos, acessórios, vendas, fornecedores,
-                cidades, bairros e motoboys. Use este arquivo para restaurar o sistema posteriormente.
+                O backup inclui todas as tabelas do sistema: vendas e itens, pequenas vendas, produtos,
+                estoque, fornecedores, custos, anúncios, motoboys, configurações e todo o WhatsApp/CRM.
+                Cada tabela é buscada por vez, sem cortar linhas. Use este arquivo para restaurar o sistema posteriormente.
               </p>
 
               <button
@@ -364,6 +412,10 @@ export default function Settings() {
                   </>
                 )}
               </button>
+
+              {backupProgress && (
+                <p className="mt-3 text-sm text-gray-300">{backupProgress}</p>
+              )}
 
               <div className="mt-4 p-4 bg-gray-800 rounded border border-gray-700">
                 <p className="text-xs text-gray-400">
