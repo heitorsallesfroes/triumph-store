@@ -799,6 +799,19 @@ guardada.
 
 ## O que mudou
 
+### 2.8.1
+- **Lista de Mensagens rápidas** (só visual): o título ocupa a largura toda e
+  quebra em até 2 linhas; embaixo, menor, o tipo e o resumo ("Áudio de voz ·
+  46.9 KB", "PDF · tabela.pdf", "5 partes · …"). Na linha ficam só **▶ Enviar**
+  (laranja) e **⋯**. A **Prévia** foi para o ⋯ (e clicar no título também abre),
+  e o "Como arquivo" virou **Enviar áudio como arquivo** dentro do ⋯.
+- Título 13 px, resumo 11 px, cabeçalho da categoria 12 px, e menos espaço
+  entre os itens (cabem mais mensagens sem rolar).
+- Menu: "Mais" com ícone do mesmo tamanho e o nome na mesma linha das outras abas.
+- Mídias, Agendados, Disparos e Automações: títulos longos também quebram em
+  até 2 linhas em vez de cortar.
+- Prints em `extension/screenshots/2.8.1`.
+
 ### 2.8.0
 - **Design do painel** (só visual; nenhuma regra, texto de regra, banco ou envio mudou):
   - Sistema visual único no Shadow DOM: cores (laranja da Triumph como destaque),

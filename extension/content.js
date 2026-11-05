@@ -37,6 +37,7 @@
     chat:      '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     board:     '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>',
     more:      '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
+    apps:      '<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>',
     clock:     '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/>',
     megaphone: '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
     repeat:    '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
@@ -1304,6 +1305,28 @@
       .bcard:hover, .bcard:focus-visible { box-shadow: var(--sh-2); }
       /* Barra do WhatsApp (topo) */
       .wabar { box-shadow: var(--sh-1); }
+      /* ═══ 2.8.1: lista compacta, títulos inteiros (até 2 linhas) ═══ */
+      .cat { margin-bottom: var(--s-2); }
+      .cat-head { padding: var(--s-2) var(--s-3); font-size: var(--fs-2); font-weight: 700; }
+      .cat-inner { gap: var(--s-1); padding: 0 var(--s-1) var(--s-1); }
+      .card-row { gap: var(--s-2); padding: var(--s-1) var(--s-1) var(--s-1) var(--s-2); min-height: 44px; }
+      .type { width: 28px; height: 28px; }
+      .info .t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; width: 100%; padding: 0; border: none; background: transparent; color: var(--fg); font: inherit; font-size: var(--fs-3); font-weight: 600; line-height: 1.3; text-align: left; white-space: normal; overflow: hidden; word-break: break-word; cursor: pointer; }
+      .info .t:hover, .info .t.on { color: var(--accent-text); }
+      .info .sub { margin-top: 2px; font-size: var(--fs-1); line-height: 1.3; }
+      .btns { gap: 2px; opacity: 1; align-self: center; }
+      .btns .icon-btn { width: var(--hit); height: var(--hit); border-radius: var(--r-sm); }
+      .btns .send { color: var(--on-accent); background: var(--accent-strong); }
+      .btns .send:hover { color: var(--on-accent); background: #c2410c; }
+      .btns .send:disabled { opacity: .45; }
+      .btns .send svg, .btns .iopts svg { width: 14px; height: 14px; }
+      .imenu .asfile { width: auto; height: auto; }
+      .md-name, .sc-who, .fw-name, .bcname, .lt-row .lname, .wt-row .wtname { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; overflow: hidden; word-break: break-word; line-height: 1.3; }
+      .pmore-wrap { align-self: stretch; }
+      .pmore { height: 100%; min-height: 48px; padding: var(--s-1) var(--s-2); gap: var(--s-1); }
+      .pmore svg { width: 18px; height: 18px; }
+      .pnav .pmore { height: 100%; min-height: 48px; padding: var(--s-1) var(--s-2); gap: var(--s-1); line-height: 1.2; }
+      .pnav .pmore svg { width: 18px; height: 18px; }
         </style>
     <div class="root light">
       <button class="toggle" type="button" title="Mensagens (Triumph Store)" aria-label="Abrir ou fechar mensagens">${svg('zap', 'fill')}</button>
@@ -1352,7 +1375,7 @@
           <button type="button" data-sec="vendas" title="Vendas pela conversa" aria-pressed="false">${svg('money')}<span>Vendas</span></button>
           <button type="button" data-sec="conversoes" title="Conversões: compra para o Facebook" aria-pressed="false">${svg('trend')}<span>Conversões</span></button>
           <div class="pmore-wrap">
-            <button type="button" class="pmore" title="Mais: Quadro, Agendados, Disparos e Automações" aria-haspopup="true" aria-expanded="false">${svg('more')}<span>Mais</span></button>
+            <button type="button" class="pmore" title="Mais: Quadro, Agendados, Disparos e Automações" aria-haspopup="true" aria-expanded="false">${svg('apps')}<span>Mais</span></button>
             <div class="pmenu" role="group" aria-label="Mais seções" hidden>
               <button type="button" class="pboard" title="Abrir o Quadro" aria-pressed="false">${svg('board')}<span>Quadro</span></button>
               <button type="button" data-sec="agendados" title="Agendados" aria-pressed="false">${svg('clock')}<span>Agendados</span></button>
@@ -2574,10 +2597,15 @@
     return section;
   }
 
+  // 2.8.1: tipo + resumo ("Áudio de voz · 0:40", "Imagem · foto.png · 161.0 KB")
   function subtitle(item) {
     if (item.type === 'texto') return firstWords(item.body) || 'Sem texto';
-    const parts = [item.file_name, formatSize(item.file_size)].filter(Boolean);
-    return parts.join(' · ') || TYPES[item.type]?.label || '';
+    if (item.type === 'audio') {
+      const dur = item.file_url && typeof mediaDur !== 'undefined' && mediaDur.has(item.file_url) ? fmtDur(mediaDur.get(item.file_url)) : formatSize(item.file_size);
+      return ['Áudio de voz', dur].filter(Boolean).join(' · ');
+    }
+    const label = item.type === 'documento' ? 'PDF' : TYPES[item.type]?.label;
+    return [label, item.file_name, formatSize(item.file_size)].filter(Boolean).join(' · ');
   }
 
   function cardEl(item, { showUses = false } = {}) {
@@ -2593,8 +2621,11 @@
     type.title = cfg.label;
 
     const info = el('div', 'info');
-    const t = el('div', 't', item.title);
-    t.title = item.title;
+    // 2.8.1: clicar no título abre/fecha a prévia
+    const t = el('button', 't', item.title);
+    t.type = 'button';
+    t.title = `${item.title} (clique para ver a prévia)`;
+    t.setAttribute('aria-expanded', 'false');
     const sub = el('div', 'sub', subtitle(item));
     sub.title = sub.textContent;
     info.append(t, sub);
@@ -2602,8 +2633,8 @@
     if (showUses) row.append(el('span', 'uses', `${item.usage_count}x`));
 
     const btns = el('div', 'btns');
-    const eye  = iconButton('eye', 'Prévia', () => togglePreview(item, card, eye));
-    eye.setAttribute('aria-pressed', 'false');
+    const eye = t;
+    t.addEventListener('click', (e) => { e.stopPropagation(); togglePreview(item, card, t); });
     const isAudio = item.type === 'audio';
     const fixedSeconds = isAudio ? recordSecondsOf(item) : null;
     const voiceHint = fixedSeconds == null ? 'gravando automático' : fixedSeconds === 0 ? 'na hora' : `gravando ${fixedSeconds} s`;
@@ -2611,23 +2642,15 @@
     const sendTitle = multi ? `Enviar as ${item.parts.length} partes nesta conversa`
       : isAudio ? `Enviar como mensagem de voz (${voiceHint})` : 'Enviar nesta conversa';
     const send = iconButton('send', sendTitle, () => sendItemSequence(item, card, send), 'send');
-    btns.append(eye);
-    if (isAudio) {
-      // Jeito antigo, sempre disponível: anexar o áudio como arquivo
-      const asFile = el('button', 'asfile', 'Como arquivo');
-      asFile.type = 'button';
-      asFile.title = 'Anexar como arquivo de áudio';
-      asFile.addEventListener('click', (e) => { e.stopPropagation(); sendItem(item, card, send, { asFile: true }); });
-      btns.append(asFile);
-    }
     btns.append(send);
-    const opts = iconButton('more', 'Editar, duplicar, excluir…', () => {
+    const opts = iconButton('more', 'Prévia, editar, duplicar, excluir…', () => {
       itemMenu = itemMenu && itemMenu.id === item.id ? null : { id: item.id, mode: 'menu' };
       renderList();
     }, 'iopts');
     btns.append(opts);
     row.append(btns);
     if (multi) info.querySelector('.sub').textContent = `${item.parts.length} partes · ${subtitle(item)}`;
+    info.querySelector('.sub').title = info.querySelector('.sub').textContent;
 
     const wrap  = el('div', 'pv-wrap');
     const inner = el('div', 'pv-inner');
@@ -2640,10 +2663,10 @@
       fillPreview(inner, item);
       card.classList.add('pv-open');
       eye.classList.add('on');
-      eye.setAttribute('aria-pressed', 'true');
+      eye.setAttribute('aria-expanded', 'true');
     }
     if (state.busyId === item.id) setBusy(card, send, true);
-    else if (state.busyId) btns.querySelectorAll('.send, .asfile').forEach((b) => { b.disabled = true; });
+    else if (state.busyId) card.querySelectorAll('.btns .send, .imenu .asfile').forEach((b) => { b.disabled = true; });
     return card;
   }
 
@@ -2655,9 +2678,9 @@
       const prev = listEl.querySelector(`.card[data-id="${state.previewId}"]`);
       if (prev) {
         prev.classList.remove('pv-open');
-        const prevEye = prev.querySelector('.btns .icon-btn');
+        const prevEye = prev.querySelector('.info .t');
         prevEye.classList.remove('on');
-        prevEye.setAttribute('aria-pressed', 'false');
+        prevEye.setAttribute('aria-expanded', 'false');
       }
     }
     state.previewId = opening ? item.id : null;
@@ -2665,7 +2688,7 @@
       fillPreview(card.querySelector('.pv-inner'), item);
       requestAnimationFrame(() => card.classList.add('pv-open'));
       eye.classList.add('on');
-      eye.setAttribute('aria-pressed', 'true');
+      eye.setAttribute('aria-expanded', 'true');
     }
   }
 
@@ -2856,7 +2879,7 @@
 
   // Só um envio por vez (inclusive "Como arquivo")
   function setSendButtonsDisabled(disabled) {
-    listEl.querySelectorAll('.btns .send, .btns .asfile').forEach((b) => { b.disabled = disabled; });
+    listEl.querySelectorAll('.btns .send, .imenu .asfile').forEach((b) => { b.disabled = disabled; });
   }
 
   // ── Mensagem rápida que etiqueta (2.1.0): só depois que a mensagem INTEIRA saiu ──
@@ -3519,6 +3542,15 @@
       box.append(el('div', 'q', `Excluir "${item.title}"? ${isMultiPart(item) ? 'As partes somem junto. ' : ''}Os arquivos continuam guardados.`),
         btn('Excluir', () => deleteLibraryItem(item), 'danger'), btn('Cancelar', () => { itemMenu = null; renderList(); }));
       return box;
+    }
+    const open = state.previewId === item.id;
+    box.append(btn(open ? 'Fechar prévia' : 'Prévia', () => { itemMenu = null; renderList(); const c = listEl.querySelector(`.card[data-id="${item.id}"]`); if (c) togglePreview(item, c, c.querySelector('.info .t')); }));
+    if (item.type === 'audio' && !isMultiPart(item)) {
+      // Jeito antigo, sempre disponível: anexar o áudio como arquivo
+      const asFile = btn('Enviar áudio como arquivo', () => { itemMenu = null; renderList(); const c = listEl.querySelector(`.card[data-id="${item.id}"]`) || card; sendItem(item, c, (c && c.querySelector('.btns .send')) || send, { asFile: true }); }, 'asfile');
+      asFile.title = 'Anexar como arquivo de áudio';
+      if (state.busyId) asFile.disabled = true;
+      box.append(asFile);
     }
     box.append(btn('Editar', () => { itemMenu = null; openEditor(item); }));
     box.append(btn('Duplicar', () => { itemMenu = null; openEditor(item, { duplicate: true }); }));
