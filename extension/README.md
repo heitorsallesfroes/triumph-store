@@ -799,6 +799,28 @@ guardada.
 
 ## O que mudou
 
+### 2.8.3
+- **Nome para mensagens** por conversa (tabela `wa_chat_names`, migration
+  `20261105150000_wa_chat_names.sql`). O {nome} usa só: nome **definido por
+  você** → nome **aprendido da sua mensagem** → vazio. Não usa mais o nome do
+  contato do WhatsApp, o pushname nem o ERP (sem a migration, funciona como antes).
+- **Aprender da sua mensagem**: quando você envia "Olá, Fernanda!!", "Oi
+  Fernanda", "Oii, Fernanda!", "Bom dia, Fernanda" etc., "Fernanda" vira o nome
+  da conversa. Só a primeira palavra depois do cumprimento, com maiúscula, só
+  letras (2–20); "Tudo", "Pessoal", "Amiga", "Cliente"… não contam. Mensagens
+  recebidas não ensinam nada. O definido à mão nunca é trocado pelo aprendido.
+- No topo do painel: **Nome: Fernanda ✏️** com a origem ("aprendido da sua
+  mensagem" / "definido por você"); sem nome, "Nome: — ✏️". Salvar vazio apaga.
+- Sem nome, o trecho some junto com a vírgula: "Olá, {nome}!!" → "Olá!!";
+  "{nome}, tudo bem?" → "Tudo bem?". A prévia mostra o texto já trocado e avisa
+  "Sem nome para esta conversa (vai sair sem nome)".
+- **{saudacao}**: troca na hora do envio (manual, agendada, automação e disparo),
+  no horário de São Paulo: manhã 5h–11h59, tarde 12h–17h59, noite 18h–4h59.
+  Textos editáveis na engrenagem da aba Mensagens ("Textos da saudação", com
+  exemplo ao vivo); padrão "Bommmm dia", "Uma ótima tarde", "Uma ótima noite"
+  (guardados em system_config, chave `wa_greetings`).
+- Editor: botões **+ {nome}** e **+ {saudacao}** que inserem no cursor.
+
 ### 2.8.2
 - Mensagens rápidas: **+ Nova mensagem** e **+ Nova categoria** (pede o nome ali
   mesmo) no topo da aba.

@@ -931,8 +931,21 @@
   // cliente antes, nas mensagens carregadas). O painel decide se manda o "Contato" (interruptor + data).
   const LEADS_MAX = 200;
   const leadQueue = [];
+  // 2.8.3: começo das SUAS mensagens (para aprender o nome: "Olá, Fernanda!!"). Recebidas não entram.
+  const MINE_MAX = 200;
+  const mineQueue = [];
+  function onMyMessage(m) {
+    const chatId = safe(() => m.id.remote._serialized, '') || String(safe(() => m.id.remote, '') || '');
+    if (!/^[0-9]+@(c\.us|lid)$/.test(chatId)) return;
+    const type = safe(() => m.type, '');
+    const body = type === 'chat' ? safe(() => m.body, '') : safe(() => m.caption, '');
+    if (typeof body !== 'string' || !body.trim()) return;
+    mineQueue.push({ chatId, head: body.slice(0, 80) });
+    if (mineQueue.length > MINE_MAX) mineQueue.splice(0, mineQueue.length - MINE_MAX);
+  }
   function onNewMessage(m) {
     try {
+      if (safe(() => m.id.fromMe, false) === true) { onMyMessage(m); return; }
       if (safe(() => m.id.fromMe, true)) return;
       const ctx = safe(() => m.ctwaContext, null);
       if (!ctx || typeof ctx !== 'object') return;
@@ -1113,6 +1126,7 @@
     chatPhone: (payload) => chatPhone(payload),
     verifyChatPhone: (payload) => verifyChatPhone(payload),
     adLeads: () => adLeads(),
+    myMessages: () => mineQueue.splice(0, mineQueue.length),
     adAttributions: (payload) => adAttributions(payload),
     labelChatIds: (payload) => labelChatIds(payload),
   };

@@ -29,6 +29,10 @@ const HANDLERS = {
   renameCategory:  (m) => WaApi.renameCategory({ id: m.id, name: m.name }),
   deleteCategory:  (m) => WaApi.deleteCategory({ id: m.id, withItems: m.withItems === true }),
   reorderCategories: (m) => WaApi.reorderCategories({ ids: m.ids }),
+  getChatName:     (m) => WaApi.getChatName({ chatId: m.chatId }),
+  setChatName:     (m) => WaApi.setChatName({ chatId: m.chatId, name: m.name, source: m.source }),
+  getGreetings:    ()  => WaApi.getGreetings(),
+  setGreetings:    (m) => WaApi.setGreetings({ manha: m.manha, tarde: m.tarde, noite: m.noite }),
   uploadFile:      (m) => WaApi.uploadFile({ partType: m.partType, base64: m.base64, mime: m.mime, fileName: m.fileName }),
   // Agendamentos (1.9.0)
   fetchSchedules:  ()  => WaApi.fetchSchedules(),

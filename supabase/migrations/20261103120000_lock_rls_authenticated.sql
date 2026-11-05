@@ -102,7 +102,9 @@ declare
     -- extensão 2.6.2 (anúncio de onde o lead veio: migration 20261104160000)
     'wa_ad_attribution',
     -- extensão 2.7.0 (biblioteca de mídias: migration 20261105090000)
-    'wa_media_folders', 'wa_media'
+    'wa_media_folders', 'wa_media',
+    -- extensão 2.8.3 (nome para mensagens: migration 20261105150000)
+    'wa_chat_names'
   ];
 begin
   foreach t in array tables loop

@@ -37,6 +37,7 @@
     chat:      '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     board:     '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>',
     more:      '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
+    gear:      '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     apps:      '<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>',
     clock:     '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/>',
     megaphone: '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
@@ -323,6 +324,9 @@
 
   // Nome salvo no CRM por conversa (só na memória; carregado com as etiquetas da conversa)
   const crmNames = new Map();
+  // 2.8.3: "Nome para mensagens" (wa_chat_names): definido à mão → aprendido da SUA mensagem → vazio.
+  // available false = tabela ainda não criada: o {nome} funciona como antes (nome do contato).
+  const chatNames = { available: null, map: new Map(), current: null };
 
   function getContext() {
     const conv     = findConversation();
@@ -334,8 +338,11 @@
     const crmName = identity && identity.key && crmNames.has(identity.key) ? crmNames.get(identity.key) : null;
     return {
       conv, composer, contact, fullName, isNumber,
-      // 2.1.0: {nome} inteligente (CRM → WhatsApp, só nomes da lista de nomes comuns)
-      firstName: globalThis.TspEngine.smartFirstName({ crmName, waName: isNumber ? '' : fullName }),
+      // 2.8.3: {nome} = nome para mensagens desta conversa (à mão → aprendido → vazio). Sem a tabela: como antes
+      // (2.1.0: CRM → WhatsApp, só nomes da lista de nomes comuns).
+      firstName: chatNames.available === false
+        ? globalThis.TspEngine.smartFirstName({ crmName, waName: isNumber ? '' : fullName })
+        : ((chatNames.current && chatNames.map.has(chatNames.current) && chatNames.map.get(chatNames.current).name) || ''),
       identity,
     };
   }
@@ -1305,6 +1312,23 @@
       .bcard:hover, .bcard:focus-visible { box-shadow: var(--sh-2); }
       /* Barra do WhatsApp (topo) */
       .wabar { box-shadow: var(--sh-1); }
+      /* ═══ 2.8.3: nome para mensagens e saudação ═══ */
+      .cname { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-2); margin: 0 var(--s-3) var(--s-2); font-size: var(--fs-2); }
+      .cname[hidden] { display: none; }
+      .cname-l { color: var(--muted); font-weight: 600; }
+      .cname-v { font-weight: 600; }
+      .cname-edit { min-width: var(--hit); min-height: var(--hit); padding: 0; border: none; border-radius: var(--r-sm); background: transparent; font-size: var(--fs-2); }
+      .cname-edit:hover { background: var(--hover); }
+      .cname-src { flex-basis: 100%; margin-top: -4px; font-size: var(--fs-1); color: var(--muted); }
+      .cname-in { flex: 1 1 120px; min-height: var(--hit); padding: 0 var(--s-2); border-radius: var(--r-sm); border: 1px solid var(--border-strong); background: var(--card); color: var(--fg); font: inherit; font-size: var(--fs-2); }
+      .cname-btn { min-height: var(--hit); padding: 0 var(--s-2); border-radius: var(--r-sm); border: 1px solid var(--border-strong); background: var(--card); color: var(--fg); font-size: var(--fs-1); font-weight: 600; }
+      .cname-btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); }
+      .panel.sec-labels .cname, .panel.sec-sched .cname, .panel.sec-follows .cname, .panel.sec-disparos .cname, .panel.sec-vendas .cname, .panel.sec-conversoes .cname, .panel.sec-midias .cname, .panel.editing .cname, .panel.diag .cname { display: none; }
+      .greetbtn { flex: 0 0 auto; width: var(--field-h); height: var(--field-h); border: 1px solid var(--border-strong); background: var(--card); }
+      .greet-form { margin: 0 0 var(--s-2); display: flex; flex-direction: column; gap: var(--s-2); }
+      .ed-vars { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); }
+      .ed-varhint { flex-basis: 100%; font-size: var(--fs-1); color: var(--muted); }
+      .pv-warn { padding: var(--s-2) var(--s-3); border-radius: var(--r-md); background: var(--warn-soft); color: var(--warn); border-left: 3px solid currentColor; font-size: var(--fs-2); }
       /* ═══ 2.8.2: categorias ═══ */
       .trow .newitem, .trow .newcat { flex-shrink: 0; }
       .trow { flex-wrap: wrap; }
@@ -1404,12 +1428,14 @@
           <button class="add" type="button" title="Marcar etiquetas CRM" aria-label="Marcar etiquetas CRM" aria-haspopup="true" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
           <div class="lmenu" role="menu" hidden></div>
         </div>
+        <div class="cname" role="group" aria-label="Nome para mensagens" hidden></div>
         <div class="name-note" hidden title="Sem telefone visível nesta conversa: a etiqueta fica ligada ao nome do contato. Se o nome mudar, ela não acompanha.">identificado só pelo nome</div>
         <div class="tools">
           <div class="trow">
             <label class="search">${svg('search')}<input type="text" placeholder="Pesquisar resposta rápida" aria-label="Pesquisar resposta rápida" /></label>
             <button class="newitem" type="button" title="Criar uma mensagem nova">+ Nova mensagem</button>
             <button class="newcat" type="button" title="Criar uma categoria nova">+ Nova categoria</button>
+            <button class="greetbtn icon-btn" type="button" title="Textos da saudação ({saudacao})" aria-label="Textos da saudação" aria-expanded="false">${svg('gear')}</button>
           </div>
           <div class="filters" role="group" aria-label="Filtros"></div>
         </div>
@@ -1489,6 +1515,70 @@
   const seqStop   = shadow.querySelector('.seqbar .seqstop');
   seqStop.addEventListener('click', () => stopSequence());
   shadow.querySelector('.newitem').addEventListener('click', () => openEditor());
+  // 2.8.3: textos da {saudacao}: carrega uma vez e quando a tela abre
+  const greet = { open: false, cfg: null, draft: null, busy: false, seq: 0 };
+  function loadGreetings() {
+    const n = ++greet.seq; // uma leitura que começou antes de Salvar não volta o texto antigo
+    return call('getGreetings').then((g) => { if (n !== greet.seq) return; greet.cfg = g; globalThis.TspEngine.setGreetings(g); }).catch(() => {});
+  }
+  loadGreetings();
+  shadow.querySelector('.greetbtn').addEventListener('click', () => {
+    if (state.view !== 'list') showList();
+    greet.open = !greet.open;
+    greet.draft = greet.open ? { ...(greet.cfg || globalThis.TspEngine.GREET_DEFAULT) } : null;
+    shadow.querySelector('.greetbtn').setAttribute('aria-expanded', String(greet.open));
+    if (greet.open) loadGreetings().then(() => { if (greet.open && greet.draft && !greet.touched) { greet.draft = { ...greet.cfg }; renderList(); } });
+    greet.touched = false;
+    renderList();
+  });
+  function greetingsEl() {
+    const E2 = globalThis.TspEngine;
+    const box = el('section', 'crmsec greet-form');
+    box.append(el('div', 'wt-head', 'TEXTOS DA SAUDAÇÃO'));
+    box.append(el('div', 'crm-intro', '{saudacao} muda sozinha conforme o horário de São Paulo: manhã (5h–11h59), tarde (12h–17h59) e noite (18h–4h59).'));
+    const ex = el('div', 'fw-test greet-ex');
+    const period = E2.greetingPeriod(new Date());
+    const renderEx = () => { ex.textContent = `Agora (${{ manha: 'manhã', tarde: 'tarde', noite: 'noite' }[period]}): "${E2.fillName('{saudacao}, {nome}! Tudo bem?', 'Fernanda', { greetings: greet.draft })}"`; };
+    [['manha', 'Manhã'], ['tarde', 'Tarde'], ['noite', 'Noite']].forEach(([k, label]) => {
+      const f = el('label', 'ed-field', label);
+      const i = el('input', 'ed-title');
+      i.type = 'text';
+      i.maxLength = 60;
+      i.value = greet.draft[k] || '';
+      i.setAttribute('aria-label', `Saudação da ${label.toLowerCase()}`);
+      i.addEventListener('input', () => { greet.draft[k] = i.value; greet.touched = true; renderEx(); });
+      f.append(i);
+      box.append(f);
+    });
+    renderEx();
+    box.append(ex);
+    const row = el('div', 'ed-add');
+    const save = el('button', 'bbtn primary', greet.busy ? 'Salvando…' : 'Salvar');
+    save.type = 'button';
+    save.disabled = greet.busy;
+    save.addEventListener('click', async () => {
+      greet.busy = true;
+      greet.seq++;
+      renderList();
+      try {
+        const g = await call('setGreetings', greet.draft);
+        greet.cfg = g;
+        E2.setGreetings(g);
+        greet.open = false;
+        shadow.querySelector('.greetbtn').setAttribute('aria-expanded', 'false');
+        toast('Textos da saudação salvos.', 'ok', 3000);
+      } catch (e) { toast(e.message, 'error', 6000); }
+      greet.busy = false;
+      renderList();
+    });
+    const cancel = el('button', 'bbtn', 'Cancelar');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => { greet.open = false; shadow.querySelector('.greetbtn').setAttribute('aria-expanded', 'false'); renderList(); });
+    row.append(save, cancel);
+    box.append(row);
+    return box;
+  }
+
   // 2.8.2: "+ Nova categoria" pede o nome ali mesmo, no topo da lista
   let newCatOpen = false;
   shadow.querySelector('.newcat').addEventListener('click', () => {
@@ -1846,12 +1936,117 @@
     convWatch.busy = false;
     if (!c) return;
     const id = chatKeyOf(c);
-    if (convWatch.chatId === undefined) { convWatch.chatId = id; return; }
-    if (id === convWatch.chatId) return;
+    if (convWatch.chatId === undefined) { convWatch.chatId = id; setNameChat(id); return; }
+    if (id === convWatch.chatId) { if (chatNames.current !== (CHAT_ID_OK.test(id) ? id : null)) setNameChat(id); return; }
     convWatch.chatId = id;
+    setNameChat(id);
     closeConversationScreens();
   }
   const chatKeyOf = (c) => (c && c.kind === 'individual' ? c.chatId : `(${c ? c.kind : 'nenhuma'})`);
+
+  // ── 2.8.3: nome para mensagens ──
+  const CHAT_ID_OK = /^[0-9]+@(c\.us|lid)$/;
+  async function loadChatName(chatId) {
+    if (!CHAT_ID_OK.test(chatId || '')) return null;
+    let r = null;
+    try { r = await call('getChatName', { chatId }); } catch { r = null; }
+    if (!r) return chatNames.map.get(chatId) || null;
+    chatNames.available = r.available !== false;
+    if (r.available === false) return null;
+    const v = { name: r.name || null, source: r.source || null };
+    chatNames.map.set(chatId, v);
+    return v;
+  }
+  // nome do {nome} para um envio (agendado, disparo, automação): à mão → aprendido → vazio; sem a tabela, o de antes
+  async function nameForChat(chatId, fallback = '') {
+    if (chatNames.available === false) return fallback || '';
+    const v = await loadChatName(chatId);
+    if (chatNames.available === false) return fallback || '';
+    return (v && v.name) || '';
+  }
+  async function setNameChat(id) {
+    const chatId = CHAT_ID_OK.test(id || '') ? id : null;
+    chatNames.current = chatId;
+    cn.editing = false;
+    renderNameRow();
+    if (!chatId) return;
+    await loadChatName(chatId);
+    if (chatNames.current !== chatId) return;
+    state.ctx = getContext();
+    renderNameRow();
+    refreshOpenBubble();
+  }
+  // Aprender da SUA mensagem (fila da ponte: só o começo do texto, só na memória)
+  async function learnTick() {
+    if (chatNames.available === false) return;
+    let got = null;
+    try { got = await waRequest('myMessages', {}, { timeout: 2000 }); } catch { got = null; }
+    if (!Array.isArray(got) || !got.length) return;
+    const last = new Map();
+    got.forEach((x) => { const n = x && globalThis.TspEngine.learnNameFrom(x.head); if (n && CHAT_ID_OK.test(x.chatId)) last.set(x.chatId, n); });
+    for (const [chatId, name] of last) {
+      let r = null;
+      try { r = await call('setChatName', { chatId, name, source: 'aprendido' }); } catch { r = null; }
+      if (!r) continue;
+      chatNames.map.set(chatId, { name: r.name || null, source: r.source || null });
+      if (chatId === chatNames.current) { state.ctx = getContext(); renderNameRow(); refreshOpenBubble(); }
+    }
+  }
+  setInterval(() => { learnTick().catch(() => {}); }, 4000);
+  // descobre já se a tabela existe (sem ela, o {nome} funciona como antes)
+  call('getChatName', { chatId: '1@c.us' }).then((r) => { if (r && chatNames.available === null) chatNames.available = r.available !== false; }).catch(() => {});
+
+  // "Nome: Fernanda ✏️" na área de cima (perto das etiquetas CRM)
+  const cn = { editing: false, busy: false };
+  function renderNameRow() {
+    const box = shadow.querySelector('.cname');
+    if (!box) return;
+    box.textContent = '';
+    const chatId = chatNames.current;
+    box.hidden = !chatId || chatNames.available === false;
+    if (box.hidden) return;
+    const v = chatNames.map.get(chatId) || { name: null, source: null };
+    box.append(el('span', 'cname-l', 'Nome:'));
+    if (cn.editing) {
+      const input = el('input', 'cname-in');
+      input.type = 'text';
+      input.maxLength = 40;
+      input.value = v.name || '';
+      input.placeholder = 'Nome para as mensagens';
+      input.setAttribute('aria-label', 'Nome para as mensagens desta conversa');
+      const save = async () => {
+        if (cn.busy) return;
+        cn.busy = true;
+        try {
+          const r = await call('setChatName', { chatId, name: input.value, source: 'manual' });
+          chatNames.map.set(chatId, { name: r.name || null, source: r.source || null });
+          cn.editing = false;
+          state.ctx = getContext();
+          refreshOpenBubble();
+        } catch (e) { toast(e.message, 'error', 5000); }
+        cn.busy = false;
+        renderNameRow();
+      };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cn.editing = false; renderNameRow(); } });
+      const ok2 = el('button', 'cname-btn primary', 'Salvar');
+      ok2.type = 'button';
+      ok2.addEventListener('click', save);
+      const no = el('button', 'cname-btn', 'Cancelar');
+      no.type = 'button';
+      no.addEventListener('click', () => { cn.editing = false; renderNameRow(); });
+      box.append(input, ok2, no);
+      setTimeout(() => input.focus(), 0);
+      return;
+    }
+    box.append(el('span', 'cname-v', v.name || '—'));
+    const edit = el('button', 'cname-edit', '✏️');
+    edit.type = 'button';
+    edit.title = 'Editar o nome para mensagens (vazio apaga)';
+    edit.setAttribute('aria-label', 'Editar o nome para mensagens');
+    edit.addEventListener('click', () => { cn.editing = true; renderNameRow(); });
+    box.append(edit);
+    if (v.name) box.append(el('span', 'cname-src', v.source === 'manual' ? 'definido por você' : 'aprendido da sua mensagem'));
+  }
 
   // Um formulário da conversa está abrindo agora (com a conversa ativa da WA-JS em mãos): se ela não é a
   // conversa que o painel conhecia, descarta as telas da anterior (menos a que está abrindo) e passa a valer esta.
@@ -1859,6 +2054,7 @@
     const id = chatKeyOf(c);
     if (convWatch.chatId !== undefined && convWatch.chatId !== id) closeConversationScreens({ keep, stay: true });
     convWatch.chatId = id;
+    if (chatNames.current !== (CHAT_ID_OK.test(id) ? id : null)) setNameChat(id);
   }
 
   function closeConversationScreens({ keep = null, stay = false } = {}) {
@@ -2556,6 +2752,7 @@
       }
       return;
     }
+    if (greet.open && greet.draft) listEl.append(greetingsEl());
     if (newCatOpen) listEl.append(newCategoryEl());
     const filtering = state.filter !== 'tudo' || state.search.trim() !== '';
     if (!state.items.length && (!state.categories.length || filtering)) {
@@ -2774,7 +2971,8 @@
 
   // Sem nome: o lugar do {nome} aparece destacado (e some ao enviar, ou vira o nome digitado)
   function renderTemplate(target, text, name) {
-    if (name) { appendResolved(target, text, name); return 0; }
+    // 2.8.3: a prévia mostra o texto já trocado (sem nome, o trecho e a vírgula somem)
+    if (name || chatNames.available !== false) { appendResolved(target, text, name); return 0; }
     let slots = 0;
     String(text || '').split(NAME_SLOT_RE).forEach((chunk) => {
       if (!chunk) return;
@@ -2794,10 +2992,10 @@
     bubble.childNodes.forEach((n) => {
       if (n.nodeType === 3) out += n.nodeValue;
       else if (n.nodeName === 'BR') out += '\n';
-      else if (n.classList && n.classList.contains('name-slot')) out += fillVars(n.textContent, name);
+      else if (n.classList && n.classList.contains('name-slot')) out += n.textContent;
       else out += n.textContent;
     });
-    return out;
+    return fillVars(out, name);
   }
 
   function previewName(item) {
@@ -2854,6 +3052,7 @@
     if (usesName) notes.push(detected ? `{nome} trocado por "${detected}".` : 'Sem nome para esta conversa: digite acima ou deixe vazio (o trecho do nome some).');
     if (unresolved) notes.push('Em laranja: variáveis que você troca à mão antes de enviar.');
     if (parts.length) notes.push('Você pode editar o texto aqui: vale só para este envio.');
+    if (usesName && !(st.name || detected) && chatNames.available !== false) slot.append(el('div', 'pv-warn', 'Sem nome para esta conversa (vai sair sem nome)'));
     if (notes.length) slot.append(el('div', 'pv-note', notes.join(' ')));
     if (parts.length) {
       const row = el('div', 'ed-add');
@@ -3832,6 +4031,31 @@
     return pv;
   }
 
+  // 2.8.3: inserir {nome} / {saudacao} no cursor
+  function varButtons(field, onChange, i) {
+    const row = el('div', 'ed-vars');
+    [['{nome}', 'Inserir {nome}'], ['{saudacao}', 'Inserir {saudacao}']].forEach(([v, title]) => {
+      const b = el('button', 'ed-mini ed-var', `+ ${v}`);
+      b.type = 'button';
+      b.title = title;
+      b.setAttribute('aria-label', `${title} (parte ${i + 1})`);
+      b.addEventListener('mousedown', (e) => e.preventDefault());
+      b.addEventListener('click', () => {
+        const a = field.selectionStart ?? field.value.length;
+        const z = field.selectionEnd ?? a;
+        const next = field.value.slice(0, a) + v + field.value.slice(z);
+        if (next.length > field.maxLength && field.maxLength > 0) return;
+        field.value = next;
+        field.selectionStart = field.selectionEnd = a + v.length;
+        onChange(next);
+        field.focus();
+      });
+      row.append(b);
+    });
+    row.append(el('div', 'ed-varhint', '{nome} = nome que você escreveu no primeiro contato; {saudacao} = muda sozinha conforme o horário'));
+    return row;
+  }
+
   function edFileMime(type, file) {
     let m = (file.type || '').toLowerCase();
     const ext = (file.name.split('.').pop() || '').toLowerCase();
@@ -3948,7 +4172,7 @@
       ta.setAttribute('aria-label', `Texto da parte ${i + 1}`);
       const count = el('div', 'ed-count', `${p.body.length}/4096`);
       ta.addEventListener('input', () => { p.body = ta.value; count.textContent = `${ta.value.length}/4096`; });
-      box.append(ta, count);
+      box.append(ta, count, varButtons(ta, (v) => { p.body = v; count.textContent = `${v.length}/4096`; }, i));
     } else {
       const hasFile = !!(p.file || p.file_url);
       const fname = el('span', 'ed-fname', hasFile ? `${p.file_name || 'Arquivo'}${p.file_size != null ? ` · ${formatSize(p.file_size)}` : ''}${p.file ? ' (novo)' : p.fromLibrary ? ' (da biblioteca)' : ''}` : 'Nenhum arquivo');
@@ -4021,7 +4245,7 @@
         cap.placeholder = 'Legenda (opcional)';
         cap.setAttribute('aria-label', `Legenda da parte ${i + 1}`);
         cap.addEventListener('input', () => { p.body = cap.value; });
-        box.append(cap);
+        box.append(cap, varButtons(cap, (v) => { p.body = v; }, i));
       }
     }
 
@@ -4527,7 +4751,7 @@
       parts = [{ type: 'texto', body: row.body, wait_seconds: 0, typing_seconds: 0 }];
     }
     const name = (row.chat_name || '').trim();
-    const firstName = globalThis.TspEngine.smartFirstName({ waName: name });
+    const firstName = await nameForChat(row.chat_id, globalThis.TspEngine.smartFirstName({ waName: name }));
     sched.runner.current = row.id;
     let res;
     try {
@@ -4587,6 +4811,7 @@
     onChange: () => renderEngineUi(),
     onItemUsed: (item) => registerUse(item),
     onItemSent: (item, target) => applyItemLabels(item, target),
+    nameFor: (chatId, fallback) => nameForChat(chatId, fallback),
     onLabelsChanged: () => { syncLabels().catch(() => {}); },
     stopRunning: () => { if (seq && AUTO_LABELS.includes(seq.label)) stopSequence(); },
     campaignJob: (api) => campaignJob(api),
@@ -4639,7 +4864,7 @@
     const logId = await h.logStart(entry);
     let res;
     try {
-      res = await runSequence({ parts: exclusive || partsOf(item), chatId: target.chat_id, firstName: E.firstNameOf(target.name), label: 'Disparo', newChat });
+      res = await runSequence({ parts: exclusive || partsOf(item), chatId: target.chat_id, firstName: await nameForChat(target.chat_id, E.firstNameOf(target.name)), label: 'Disparo', newChat });
     } catch {
       res = { status: 'failed', stage: 'sending', sent: 0 };
     }

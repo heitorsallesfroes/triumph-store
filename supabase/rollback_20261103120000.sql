@@ -27,6 +27,7 @@
 -- como as outras wa_* e voltam a "public access <tabela>".
 -- Extensão 2.6.2 (20261104160000): wa_ad_attribution entra na cópia do mesmo jeito.
 -- Extensão 2.7.0 (20261105090000): wa_media_folders e wa_media entram na cópia do mesmo jeito.
+-- Extensão 2.8.3 (20261105150000): wa_chat_names entra na cópia do mesmo jeito.
 -- ============================================================================
 
 begin;

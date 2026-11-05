@@ -251,9 +251,50 @@
   }
 
   // {nome} → nome (vazio sem nome). {, nome} / {Oi nome!} → o trecho inteiro só se houver nome.
+  // 2.8.3: sem nome, some também a vírgula/espaço que sobra ("Olá, {nome}!!" → "Olá!!"; "{nome}, tudo bem?" →
+  // "Tudo bem?"). {saudacao} → texto do período (manhã/tarde/noite, fuso de São Paulo).
   const NAME_VAR = /\{([^{}]*?)\bnome\b([^{}]*?)\}/gi;
-  function fillName(text, name) {
-    return String(text == null ? '' : text).replace(NAME_VAR, (m, pre, suf) => (name ? `${pre}${name}${suf}` : ''));
+  const GREET_VAR = /\{sauda(?:c|ç)(?:a|ã)o\}/gi;
+  const GREET_DEFAULT = { manha: 'Bommmm dia', tarde: 'Uma ótima tarde', noite: 'Uma ótima noite' };
+  let greetCfg = { ...GREET_DEFAULT };
+  function setGreetings(cfg) {
+    const v = cfg || {};
+    greetCfg = { manha: v.manha || GREET_DEFAULT.manha, tarde: v.tarde || GREET_DEFAULT.tarde, noite: v.noite || GREET_DEFAULT.noite };
+    return greetCfg;
+  }
+  function spHour(at) {
+    const d = at instanceof Date ? at : new Date(at == null ? Date.now() : at);
+    try { return Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', hour: 'numeric', hourCycle: 'h23' }).format(d)) % 24; } catch { return d.getHours(); }
+  }
+  // manhã 5h–11h59, tarde 12h–17h59, noite 18h–4h59
+  const greetingPeriod = (at) => { const h = spHour(at); return h >= 5 && h < 12 ? 'manha' : h >= 12 && h < 18 ? 'tarde' : 'noite'; };
+  const greetingFor = (at, cfg) => { const c = cfg || greetCfg; return c[greetingPeriod(at)] || GREET_DEFAULT[greetingPeriod(at)]; };
+  function fillName(text, name, { at = null, greetings = null } = {}) {
+    let out = String(text == null ? '' : text).replace(GREET_VAR, () => greetingFor(at, greetings));
+    if (name) return out.replace(NAME_VAR, (m, pre, suf) => `${pre}${name}${suf}`);
+    if (!NAME_VAR.test(out)) return out;
+    NAME_VAR.lastIndex = 0;
+    out = out.replace(NAME_VAR, '\u0000')
+      .replace(/,[ \t]*\u0000[ \t]*,/g, ',')
+      .replace(/[ \t]*,?[ \t]*\u0000[ \t]*(?=[!?.;:]|$)/gm, '')
+      .replace(/^([ \t]*)\u0000[ \t]*[,;:]?[ \t]*(\S)/gm, (m, sp, c) => sp + c.toUpperCase())
+      .replace(/[ \t]*,?[ \t]*\u0000/g, '')
+      .replace(/[ \t]{2,}/g, ' ');
+    return out;
+  }
+
+  // 2.8.3: aprender o nome da SUA mensagem: cumprimento + nome ("Olá, Fernanda!!", "Oi Fernanda", "Bom dia, Fernanda").
+  // Só a 1ª palavra depois do cumprimento, com maiúscula, só letras, 2–20; palavras que não são nome ficam de fora.
+  const LEARN_GREETING = /^\s*(?:ol[áa]+|oi+e?|bo[mn]+\s+dia|boa\s+tarde|boa\s+noite|opa|e\s+a[íi])(?=[\s,!.;:-])[\s,!.;:-]*/i;
+  const NOT_NAMES = new Set(['tudo', 'todos', 'todas', 'pessoal', 'amigo', 'amiga', 'querido', 'querida', 'cliente', 'bem', 'bom', 'boa', 'uma', 'um', 'td', 'tudo']);
+  function learnNameFrom(text) {
+    const s = String(text || '').slice(0, 200);
+    const m = LEARN_GREETING.exec(s);
+    if (!m) return null;
+    const word = (s.slice(m[0].length).match(/^[^\s,!?.;:]+/) || [''])[0];
+    if (!/^\p{Lu}\p{L}{1,19}$/u.test(word)) return null;
+    if (NOT_NAMES.has(stripAccents(word).toLowerCase())) return null;
+    return capName(word);
   }
   const hasNameVar = (text) => /\{[^{}]*?\bnome\b[^{}]*?\}/i.test(String(text || ''));
 
@@ -869,7 +910,7 @@
       changed();
       let res;
       try {
-        res = await deps.sendParts({ parts: deps.partsOf(item), chatId: ev.chatId, firstName: firstNameOf(contact.name), label: 'Follow' });
+        res = await deps.sendParts({ parts: deps.partsOf(item), chatId: ev.chatId, firstName: deps.nameFor ? await deps.nameFor(ev.chatId, firstNameOf(contact.name)) : firstNameOf(contact.name), label: 'Follow' });
       } catch {
         res = { status: 'failed', stage: 'sending', sent: 0 };
       } finally {
@@ -1040,7 +1081,7 @@
           changed();
           let res;
           try {
-            res = await deps.sendParts({ parts: deps.partsOf(item), chatId: ev.chatId, firstName: smartFirstName({ crmName: contact.name }), label: 'Automação' });
+            res = await deps.sendParts({ parts: deps.partsOf(item), chatId: ev.chatId, firstName: deps.nameFor ? await deps.nameFor(ev.chatId, smartFirstName({ crmName: contact.name })) : smartFirstName({ crmName: contact.name }), label: 'Automação' });
           } catch {
             res = { status: 'failed', stage: 'sending', sent: 0 };
           } finally {
@@ -1239,6 +1280,7 @@
     formatWait, formatDays, scheduleText, waitText, formatLeft, hm,
     firstNameOf, chatIdOfContact, pickVariant, evaluateFollow,
     smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
+    setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT,
     TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,

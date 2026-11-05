@@ -2499,6 +2499,63 @@
     return { on, since, test };
   }
 
+  // ── 2.8.3: nome para mensagens por conversa (wa_chat_names; migration 20261105150000) ──
+  // manual = definido por você (nunca trocado pelo aprendido); aprendido = da sua mensagem ("Olá, Fernanda!!").
+  const CN_TABLE = 'wa_chat_names';
+  const CN_NAME_RE = /^[\p{L}][\p{L}' -]{0,39}$/u;
+  async function getChatName({ chatId }) {
+    if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) return { available: true, name: null, source: null };
+    try {
+      const rows = await rest(`${CN_TABLE}?select=name,source&chat_id=eq.${encodeURIComponent(chatId)}&limit=1`);
+      return { available: true, name: rows.length ? rows[0].name : null, source: rows.length ? rows[0].source : null };
+    } catch (err) {
+      if (tableMissing(err, [CN_TABLE])) return { available: false, name: null, source: null };
+      throw err;
+    }
+  }
+  async function setChatName({ chatId, name, source }) {
+    if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
+    if (source !== 'manual' && source !== 'aprendido') throw new Error('Origem inválida');
+    const clean = String(name == null ? '' : name).replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (clean && !CN_NAME_RE.test(clean)) throw new Error('Nome inválido');
+    const cur = await getChatName({ chatId });
+    if (!cur.available) throw new Error(ENGINE_MISSING);
+    const where = `${CN_TABLE}?chat_id=eq.${encodeURIComponent(chatId)}`;
+    if (source === 'manual' && !clean) {
+      await rest(where, { method: 'DELETE' });
+      return { name: null, source: null };
+    }
+    if (!clean) return { name: cur.name, source: cur.source, skipped: true };
+    // o aprendido nunca passa por cima do definido à mão
+    if (source === 'aprendido' && cur.source === 'manual') return { name: cur.name, source: cur.source, skipped: true };
+    if (cur.name === clean && cur.source === source) return { name: clean, source, skipped: true };
+    await rest(`${CN_TABLE}?on_conflict=chat_id`, json('POST', 'resolution=merge-duplicates,return=minimal', { chat_id: chatId, name: clean, source, updated_at: new Date().toISOString() }));
+    return { name: clean, source };
+  }
+
+  // 2.8.3: textos da {saudacao} (system_config, chave wa_greetings; sem migration)
+  const GREET_KEY = 'wa_greetings';
+  const GREET_DEFAULT = { manha: 'Bommmm dia', tarde: 'Uma ótima tarde', noite: 'Uma ótima noite' };
+  async function getGreetings() {
+    let v = null;
+    try {
+      const rows = await rest(`system_config?select=key,value&key=eq.${GREET_KEY}`);
+      v = rows.length ? JSON.parse(rows[0].value) : null;
+    } catch { v = null; }
+    const pick = (k) => (v && typeof v[k] === 'string' && v[k].trim() ? v[k].trim().slice(0, 60) : GREET_DEFAULT[k]);
+    return { manha: pick('manha'), tarde: pick('tarde'), noite: pick('noite') };
+  }
+  async function setGreetings({ manha, tarde, noite }) {
+    const out = {};
+    for (const [k, v] of Object.entries({ manha, tarde, noite })) {
+      const c = String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+      if (c.length > 60) throw new Error('Cada texto da saudação tem até 60 caracteres');
+      out[k] = c || GREET_DEFAULT[k];
+    }
+    await rest('system_config?on_conflict=key', json('POST', 'resolution=merge-duplicates,return=minimal', { key: GREET_KEY, value: JSON.stringify(out), updated_at: new Date().toISOString() }));
+    return out;
+  }
+
   // ── 2.6.2: anúncio de onde o lead veio (wa_ad_attribution; migration 20261104160000) ──
   // Uma linha por conversa. Gravar de novo não sobrescreve: só completa o ctwa_clid se estava vazio.
   const AD_TABLE = 'wa_ad_attribution';
@@ -2631,7 +2688,8 @@
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,
-    saveItem, deleteItem, createCategory, renameCategory, deleteCategory, reorderCategories, uploadFile, partsTableExists,
+    saveItem, deleteItem, createCategory, renameCategory, deleteCategory, reorderCategories,
+    getChatName, setChatName, getGreetings, setGreetings, uploadFile, partsTableExists,
     fetchMediaLibrary, createMediaFolder, renameMediaFolder, deleteMediaFolder, reorderMediaFolders, uploadMedia, updateMedia,
     incrementMediaUsage, mediaUsage, deleteMedia, importMediaFromItems,
     fetchLibrary, incrementUsage, fetchFile, isAllowedFileUrl, MAX_FILE_BYTES,
