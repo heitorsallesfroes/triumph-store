@@ -457,6 +457,30 @@
     return previewUrls.get(key);
   }
 
+  // 2.7.1: miniaturas só carregam quando aparecem na tela (o arquivo fica em cache em fileCache/previewUrls)
+  const HAS_IO = typeof IntersectionObserver === 'function';
+  let lazyIO = null;
+  const lazyFns = new WeakMap();
+  function whenVisible(node, fn) {
+    if (!HAS_IO) { fn(); return; }
+    if (!lazyIO) {
+      lazyIO = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          lazyIO.unobserve(e.target);
+          const f = lazyFns.get(e.target);
+          lazyFns.delete(e.target);
+          if (f) f();
+        }
+      }, { rootMargin: '150px' });
+    }
+    lazyFns.set(node, fn);
+    lazyIO.observe(node);
+  }
+  const mediaDur = new Map(); // file_url -> duração do áudio (s)
+  const fmtDur = (sec) => { const t = Math.max(0, Math.round(sec)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+  const videoSrc = (url) => `${url}#t=0.1`; // primeiro quadro
+
   // ── Shadow DOM e layout ────────────────────────────────────────────────────
 
   // Remove sobras de uma versão anterior da extensão na mesma página
@@ -818,7 +842,7 @@
       .md-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
       .md-card { display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--fg); text-align: left; cursor: pointer; font: inherit; }
       .md-card:hover { border-color: var(--accent); }
-      .md-thumb { aspect-ratio: 1; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--bg); font-size: 30px; }
+      .md-thumb { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--bg); font-size: 30px; }
       .md-thumb.big { aspect-ratio: auto; min-height: 120px; max-height: 260px; }
       .md-thumb img, .md-thumb video { width: 100%; height: 100%; object-fit: cover; }
       .md-thumb.big img, .md-thumb.big video { object-fit: contain; max-height: 260px; }
@@ -833,7 +857,24 @@
       .md-quota.bad { color: #dc2626; } .md-quota.bad .md-qfill { background: #dc2626; }
       .md-up { font-size: 12px; } .md-up.err { color: #dc2626; } .md-up.warn { color: #ca8a04; }
       .ed-lib { cursor: pointer; }
-      .md-pick { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+      .md-pick { position: relative; display: flex; flex-direction: column; gap: 6px; }
+      .md-pbar { display: flex; gap: 6px; }
+      .md-pbar > * { flex: 1; min-width: 0; }
+      .md-pick .md-grid { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; max-height: 260px; overflow-y: auto; scrollbar-width: thin; }
+      .md-pcard { position: relative; display: flex; flex-direction: column; border-radius: 9px; border: 1px solid var(--border); background: var(--card); }
+      .md-pcard:hover, .md-pcard:focus-within { border-color: var(--accent); }
+      .md-choose { display: flex; flex-direction: column; gap: 3px; padding: 3px; border: 0; background: transparent; text-align: left; min-width: 0; }
+      .md-pick .md-thumb { font-size: 22px; border-radius: 7px; }
+      .md-pick .md-name { font-size: 11px; }
+      .md-pick .md-size { font-size: 10px; }
+      .md-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 26px; height: 26px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+      .md-dur { position: absolute; right: 4px; bottom: 3px; font-size: 10px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .md-listen { position: absolute; top: 5px; left: 5px; width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 0; background: var(--accent); color: #fff; font-size: 11px; }
+      .md-hov { position: absolute; top: 40px; right: 0; width: 58%; z-index: 6; padding: 6px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); box-shadow: 0 6px 20px var(--shadow); pointer-events: none; display: flex; flex-direction: column; gap: 4px; }
+      .md-hov.left { right: auto; left: 0; }
+      .md-hov[hidden] { display: none; }
+      .ed-docico { font-size: 22px; }
+      .ed-preview .md-ico { font-size: 26px; }
       .fw-count { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
       .fw-card { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); font-size: 12px; text-align: left; }
       .fw-card.on { border-color: var(--accent); }
@@ -2646,13 +2687,41 @@
   }
 
   async function applyItemLabels(item, target) {
-    if (!item || !target || (!item.on_send_add_label_id && !item.on_send_remove_label_id)) return;
-    try {
-      const r = await call('applySendLabels', { addLabelId: item.on_send_add_label_id || null, removeLabelId: item.on_send_remove_label_id || null, ...target });
-      if (r && r.applied) afterLabelChange();
-    } catch {
-      toast('Enviado, mas não consegui trocar a etiqueta CRM.', 'warn', 5000);
+    if (!item || !target) return;
+    if (item.on_send_add_label_id || item.on_send_remove_label_id) {
+      try {
+        const r = await call('applySendLabels', { addLabelId: item.on_send_add_label_id || null, removeLabelId: item.on_send_remove_label_id || null, ...target });
+        if (r && r.applied) afterLabelChange();
+      } catch {
+        toast('Enviado, mas não consegui trocar a etiqueta CRM.', 'warn', 5000);
+      }
     }
+    await applyItemWaLabels(item, target);
+  }
+
+  // 2.7.1: etiquetas do WhatsApp "ao enviar" (mesma troca das automações: motor.setWaLabel).
+  // Etiqueta que não existe mais no WhatsApp é ignorada sem erro.
+  async function applyItemWaLabels(item, target) {
+    const want = { add: item.on_send_add_wa_label_id ? String(item.on_send_add_wa_label_id) : null, remove: item.on_send_remove_wa_label_id ? String(item.on_send_remove_wa_label_id) : null };
+    if (want.add && want.add === want.remove) want.remove = null;
+    if (!want.add && !want.remove) return;
+    let chatId = target.chatId || (target.identity && target.identity.chatId) || null;
+    if (!chatId) {
+      try { const c = await waRequest('activeChat', {}, { timeout: 2000 }); if (c && c.kind === 'individual') chatId = c.chatId; } catch { /* sem conversa */ }
+    }
+    if (!chatId) return;
+    const existing = () => ({ add: want.add && waLabelById(want.add) ? want.add : null, remove: want.remove && waLabelById(want.remove) ? want.remove : null });
+    if (!Array.isArray(state.waLabels)) await refreshBar().catch(() => {});
+    let ch = Array.isArray(state.waLabels) ? existing() : want;
+    if (!ch.add && !ch.remove) return;
+    if (await motor.setWaLabel(chatId, ch)) return;
+    // falhou: relê as etiquetas; se alguma foi apagada, tenta só com as que existem (ou ignora)
+    await refreshBar().catch(() => {});
+    if (!Array.isArray(state.waLabels)) { toast('Enviado, mas não consegui trocar a etiqueta do WhatsApp.', 'warn', 5000); return; }
+    const again = existing();
+    if (!again.add && !again.remove) return;
+    if (again.add !== ch.add || again.remove !== ch.remove) { ch = again; if (await motor.setWaLabel(chatId, ch)) return; }
+    toast('Enviado, mas não consegui trocar a etiqueta do WhatsApp.', 'warn', 5000);
   }
 
   function registerUse(item) {
@@ -3402,6 +3471,28 @@
     return call('uploadFile', { partType: p.type, base64, mime, fileName: p.file.name });
   }
 
+  // 2.7.1: prévia do arquivo da parte (arquivo novo: direto do computador; já salvo: pelo background, em cache)
+  function edChosenPreview(p) {
+    const pv = el('div', 'ed-preview');
+    const mount = (url) => {
+      const tag = p.type === 'imagem' ? 'img' : p.type;
+      const m = document.createElement(tag);
+      if (tag === 'img') m.alt = '';
+      else { m.controls = true; m.preload = 'metadata'; }
+      m.src = p.type === 'video' ? videoSrc(url) : url;
+      pv.textContent = '';
+      pv.append(m);
+    };
+    if (p.localUrl) mount(p.localUrl);
+    else {
+      pv.append(el('span', 'md-ico', MD_ICON[p.type] || '📎'));
+      const url = p.file_url;
+      whenVisible(pv, () => getBlobUrl({ id: 'arquivo', file_url: url, file_name: p.file_name })
+        .then((u) => { if (p.file_url === url && !p.localUrl) mount(u); }).catch(() => { /* fica o ícone */ }));
+    }
+    return pv;
+  }
+
   function edFileMime(type, file) {
     let m = (file.type || '').toLowerCase();
     const ext = (file.name.split('.').pop() || '').toLowerCase();
@@ -3422,9 +3513,13 @@
       // 2.1.0: etiquetas CRM ao enviar (opcionais)
       on_send_add_label_id: (item && item.on_send_add_label_id) || '',
       on_send_remove_label_id: (item && item.on_send_remove_label_id) || '',
+      // 2.7.1: etiquetas do WhatsApp ao enviar (opcionais)
+      on_send_add_wa_label_id: (item && item.on_send_add_wa_label_id) || '',
+      on_send_remove_wa_label_id: (item && item.on_send_remove_wa_label_id) || '',
       saving: false, msg: '', error: false, duplicate,
     };
     state.view = 'editor';
+    if (!Array.isArray(state.waLabels)) refreshBar().then(() => { if (state.view === 'editor' && ed) renderEditor(); }).catch(() => {});
     panel.classList.add('editing');
     renderBanner();
     listEl.scrollTop = 0;
@@ -3432,6 +3527,7 @@
   }
 
   function closeEditorState() {
+    stopPickAudio();
     if (ed) ed.parts.forEach((p) => { if (p.localUrl) URL.revokeObjectURL(p.localUrl); });
     ed = null;
     panel.classList.remove('editing');
@@ -3515,9 +3611,24 @@
       ta.addEventListener('input', () => { p.body = ta.value; count.textContent = `${ta.value.length}/4096`; });
       box.append(ta, count);
     } else {
+      const hasFile = !!(p.file || p.file_url);
+      const fname = el('span', 'ed-fname', hasFile ? `${p.file_name || 'Arquivo'}${p.file_size != null ? ` · ${formatSize(p.file_size)}` : ''}${p.file ? ' (novo)' : p.fromLibrary ? ' (da biblioteca)' : ''}` : 'Nenhum arquivo');
+      // 2.7.1: arquivo escolhido mostra a prévia (foto/vídeo em miniatura, player de áudio, ícone do PDF) e "Trocar"
+      if (hasFile && p.type !== 'documento') box.append(edChosenPreview(p));
+      if (hasFile && !p.changing && !p.picking) {
+        const row = el('div', 'ed-file');
+        if (p.type === 'documento') row.append(el('span', 'ed-docico', '📄'));
+        const swap = el('button', 'ed-mini', 'Trocar');
+        swap.type = 'button';
+        swap.disabled = ctx.saving();
+        swap.setAttribute('aria-label', `Trocar o arquivo (parte ${i + 1})`);
+        swap.addEventListener('click', () => { p.changing = true; ctx.rerender(); });
+        row.append(fname, swap);
+        box.append(row);
+      } else {
       const fileRow = el('div', 'ed-file');
       // <label> abre o seletor de arquivo do próprio navegador (sem clique simulado)
-      const pick = el('label', 'ed-pick', p.file || p.file_url ? 'Trocar arquivo' : 'Subir arquivo');
+      const pick = el('label', 'ed-pick', 'Subir arquivo');
       const input = el('input');
       input.type = 'file';
       input.accept = ED_ACCEPT[p.type];
@@ -3532,6 +3643,9 @@
         p.localUrl = ['imagem', 'video', 'audio'].includes(p.type) ? URL.createObjectURL(f) : null;
         p.file_name = f.name;
         p.file_size = f.size;
+        p.fromLibrary = null;
+        p.changing = false;
+        p.picking = false;
         ctx.msg('');
         ctx.rerender();
       });
@@ -3544,22 +3658,21 @@
       lib.setAttribute('aria-label', `Escolher da biblioteca (parte ${i + 1})`);
       lib.addEventListener('click', () => {
         p.picking = !p.picking;
+        if (!p.picking) stopPickAudio();
         if (p.picking && !md.loaded) loadMedia({ quiet: true }).then(() => ctx.rerender());
         ctx.rerender();
       });
       fileRow.append(lib);
-      if (p.file_name) fileRow.append(el('span', 'ed-fname', `${p.file_name}${p.file_size != null ? ` · ${formatSize(p.file_size)}` : ''}${p.file ? ' (novo)' : p.fromLibrary ? ' (da biblioteca)' : ''}`));
-      else fileRow.append(el('span', 'ed-fname', 'Nenhum arquivo'));
+      if (hasFile) {
+        const cancel = el('button', 'ed-mini', 'Cancelar');
+        cancel.type = 'button';
+        cancel.setAttribute('aria-label', `Manter o arquivo atual (parte ${i + 1})`);
+        cancel.addEventListener('click', () => { p.changing = false; p.picking = false; stopPickAudio(); ctx.rerender(); });
+        fileRow.append(cancel);
+      }
+      fileRow.append(fname);
       box.append(fileRow);
       if (p.picking) box.append(mediaPicker(p, i, ctx));
-      if (p.localUrl) {
-        const tag = p.type === 'imagem' ? 'img' : p.type;
-        const m = document.createElement(tag);
-        m.src = p.localUrl;
-        if (tag !== 'img') { m.controls = true; m.preload = 'metadata'; }
-        const pv = el('div', 'ed-preview');
-        pv.append(m);
-        box.append(pv);
       }
       if (p.type !== 'audio') {
         const cap = el('textarea', 'ed-caption');
@@ -3652,7 +3765,15 @@
     al.append(addSel);
     const rl = el('label', 'ed-field', 'e tirar da etiqueta CRM');
     rl.append(remSel);
-    wrap.append(al, rl, el('div', 'crm-intro', 'Só muda as etiquetas quando a mensagem inteira sai com sucesso (seta, prévia, agendamento, automação ou disparo).'));
+    const waAddSel = waLabelSelect(ed.on_send_add_wa_label_id, 'Ao enviar, colocar na etiqueta do WhatsApp', '(não mexe)');
+    waAddSel.addEventListener('change', () => { ed.on_send_add_wa_label_id = waAddSel.value; });
+    const waRemSel = waLabelSelect(ed.on_send_remove_wa_label_id, 'Ao enviar, tirar da etiqueta do WhatsApp', '(não mexe)');
+    waRemSel.addEventListener('change', () => { ed.on_send_remove_wa_label_id = waRemSel.value; });
+    const wal = el('label', 'ed-field', 'Ao enviar, colocar na etiqueta do WhatsApp');
+    wal.append(waAddSel);
+    const wrl = el('label', 'ed-field', 'e tirar da etiqueta do WhatsApp');
+    wrl.append(waRemSel);
+    wrap.append(al, rl, wal, wrl, el('div', 'crm-intro', 'Só muda as etiquetas (CRM e WhatsApp) quando a mensagem inteira sai com sucesso (seta, prévia, agendamento, automação ou disparo).'));
     wrap.append(el('div', `ed-msg${ed.error ? ' err' : ''}`, ed.msg));
 
     const actionsRow = el('div', 'ed-actions');
@@ -3724,6 +3845,10 @@
       const res = await call('saveItem', {
         id: current.id || undefined, category_id: categoryId, title: current.title, parts,
         on_send_add_label_id: current.on_send_add_label_id || null, on_send_remove_label_id: current.on_send_remove_label_id || null,
+        ...(current.on_send_add_wa_label_id || current.on_send_remove_wa_label_id
+          ? { on_send_add_wa_label_id: current.on_send_add_wa_label_id || null, on_send_remove_wa_label_id: current.on_send_remove_wa_label_id || null }
+          : current.id && state.items.some((x) => x.id === current.id && (x.on_send_add_wa_label_id || x.on_send_remove_wa_label_id))
+            ? { on_send_add_wa_label_id: null, on_send_remove_wa_label_id: null } : {}),
       });
       await reloadLibrary().catch(() => {});
       if (ed !== current) return;
@@ -5251,10 +5376,10 @@
   }
 
   // Etiqueta do WhatsApp das ações "adicionar/remover etiqueta do WhatsApp" (só as que existem)
-  function waLabelSelect(value, aria) {
+  function waLabelSelect(value, aria, empty = 'Escolha a etiqueta do WhatsApp…') {
     const sel = el('select', 'ed-cat');
     sel.setAttribute('aria-label', aria);
-    const none = el('option', null, Array.isArray(state.waLabels) ? 'Escolha a etiqueta do WhatsApp…' : 'Carregando as etiquetas do WhatsApp…');
+    const none = el('option', null, Array.isArray(state.waLabels) ? empty : 'Carregando as etiquetas do WhatsApp…');
     none.value = '';
     sel.append(none);
     (state.waLabels || []).forEach((l) => {
@@ -6473,24 +6598,43 @@
 
   const mdVisible = () => md.media.filter((m) => (md.folder === 'todas' || (md.folder === 'sem' ? !m.folder_id : m.folder_id === md.folder))
     && (md.type === 'todos' || m.type === md.type) && (!md.q || mdNorm(m.title).includes(mdNorm(md.q))));
-  const mdFileItem = (m) => ({ id: `midia:${m.id}`, file_url: m.file_url, file_name: m.file_name });
+  const mdFileItem = (m) => ({ id: 'arquivo', file_url: m.file_url, file_name: m.file_name }); // mesmo cache da prévia do editor
 
   // Miniatura: a foto, o primeiro quadro do vídeo ou o ícone do tipo (o arquivo vem pelo background, em cache)
-  function mdThumb(m, { big = false, load = true } = {}) {
+  // 2.7.1: vídeo com ▶, áudio com a duração; carrega só quando aparece na tela
+  function mdThumb(m, { big = false, load = true, eager = false } = {}) {
     const box = el('div', `md-thumb${big ? ' big' : ''}`);
     box.append(el('span', 'md-ico', MD_ICON[m.type] || '📎'));
-    const wants = load && (m.type === 'imagem' || m.type === 'video' || (big && m.type === 'audio'));
-    if (wants) {
-      getBlobUrl(mdFileItem(m)).then((url) => {
-        let tag;
-        if (m.type === 'imagem') { tag = document.createElement('img'); tag.alt = ''; }
-        else if (m.type === 'video') { tag = document.createElement('video'); tag.muted = true; tag.preload = 'metadata'; if (big) tag.controls = true; }
-        else { tag = document.createElement('audio'); tag.controls = true; tag.preload = 'metadata'; }
-        tag.src = url;
-        if (m.type === 'audio') box.append(tag);
-        else { box.textContent = ''; box.append(tag); }
-      }).catch(() => { /* fica o ícone */ });
+    const play = !big && m.type === 'video' ? el('span', 'md-play', '▶') : null;
+    if (play) box.append(play);
+    let dur = null;
+    if (!big && m.type === 'audio') {
+      dur = el('span', 'md-dur', mediaDur.has(m.file_url) ? fmtDur(mediaDur.get(m.file_url)) : '');
+      box.append(dur);
     }
+    if (!load || m.type === 'documento' || (dur && mediaDur.has(m.file_url))) return box;
+    (eager ? (fn) => fn() : (fn) => whenVisible(box, fn))(() => getBlobUrl(mdFileItem(m)).then((url) => {
+      if (dur) {
+        // só lê a duração (o áudio não toca aqui)
+        const a = document.createElement('audio');
+        a.preload = 'metadata';
+        a.hidden = true;
+        a.addEventListener('loadedmetadata', () => {
+          if (Number.isFinite(a.duration) && a.duration > 0) { mediaDur.set(m.file_url, a.duration); dur.textContent = fmtDur(a.duration); }
+          a.remove();
+        }, { once: true });
+        a.src = url;
+        box.append(a);
+        return;
+      }
+      let tag;
+      if (m.type === 'imagem') { tag = document.createElement('img'); tag.alt = ''; }
+      else if (m.type === 'video') { tag = document.createElement('video'); tag.muted = true; tag.preload = 'metadata'; if (big) tag.controls = true; }
+      else { tag = document.createElement('audio'); tag.controls = true; tag.preload = 'metadata'; }
+      tag.src = m.type === 'video' ? videoSrc(url) : url;
+      if (m.type === 'audio') box.append(tag);
+      else { box.textContent = ''; box.append(tag); if (play) box.append(play); }
+    }).catch(() => { /* fica o ícone */ }));
     return box;
   }
 
@@ -6625,7 +6769,7 @@
       card.type = 'button';
       card.title = m.title;
       card.dataset.id = m.id;
-      card.append(mdThumb(m, { load: i < MD_THUMBS }), el('span', 'md-name', m.title), el('span', 'md-size', `${MD_TYPE_LABEL[m.type] || m.type}${m.file_size != null ? ` · ${formatSize(m.file_size)}` : ''}`));
+      card.append(mdThumb(m, { load: HAS_IO || i < MD_THUMBS }), el('span', 'md-name', m.title), el('span', 'md-size', `${MD_TYPE_LABEL[m.type] || m.type}${m.file_size != null ? ` · ${formatSize(m.file_size)}` : ''}`));
       card.addEventListener('click', () => openMediaDetail(m));
       grid.append(card);
     });
@@ -6775,8 +6919,34 @@
     await loadMedia({ quiet: true });
   }
 
-  // Editor de partes: lista da biblioteca do mesmo tipo da parte
+  // Editor de partes (2.7.1): grade da biblioteca só com o tipo da parte, busca e pasta; passar o mouse mostra
+  // uma prévia maior; áudio tem ▶ para ouvir antes de escolher.
+  const pickAudio = { a: null, id: null, btn: null };
+  function stopPickAudio() {
+    if (pickAudio.a) { try { pickAudio.a.pause(); } catch { /* já parado */ } }
+    if (pickAudio.btn) { pickAudio.btn.textContent = '▶'; pickAudio.btn.setAttribute('aria-label', pickAudio.btn.dataset.listen || 'Ouvir'); }
+    Object.assign(pickAudio, { a: null, id: null, btn: null });
+  }
+  async function togglePickAudio(m, btn) {
+    if (pickAudio.id === m.id) { stopPickAudio(); return; }
+    stopPickAudio();
+    Object.assign(pickAudio, { id: m.id, btn });
+    btn.textContent = '⏸';
+    btn.setAttribute('aria-label', `Parar ${m.title}`);
+    try {
+      const url = await getBlobUrl(mdFileItem(m));
+      if (pickAudio.id !== m.id) return;
+      const au = document.createElement('audio');
+      au.src = url;
+      au.addEventListener('ended', () => { if (pickAudio.a === au) stopPickAudio(); });
+      pickAudio.a = au;
+      await au.play();
+    } catch { if (pickAudio.id === m.id) stopPickAudio(); }
+  }
+
+  const MD_PICK_MAX = 120;
   function mediaPicker(p, i, ctx) {
+    stopPickAudio();
     const box = el('div', 'fw-test md-pick');
     if (!md.loaded) { box.append(el('div', 'lt-none', 'Carregando a biblioteca…')); return box; }
     if (md.error) { box.append(el('div', 'ed-note', md.error === DB_MISSING ? 'Atualize o banco para usar a biblioteca de mídias.' : md.error)); return box; }
@@ -6785,26 +6955,78 @@
     q.value = p.pickQ || '';
     q.placeholder = 'Buscar na biblioteca';
     q.setAttribute('aria-label', `Buscar na biblioteca (parte ${i + 1})`);
-    const list = el('div', 'md-pick');
+    const fsel = el('select', 'ed-title');
+    fsel.setAttribute('aria-label', `Pasta da biblioteca (parte ${i + 1})`);
+    [['todas', 'Todas as pastas'], ['sem', 'Sem pasta'], ...md.folders.map((f) => [f.id, f.name])].forEach(([v, t]) => {
+      const o = el('option', null, t);
+      o.value = v;
+      o.selected = v === (p.pickFolder || 'todas');
+      fsel.append(o);
+    });
+    const bar = el('div', 'md-pbar');
+    bar.append(q, fsel);
+    const grid = el('div', 'md-grid');
+    const hov = el('div', 'md-hov');
+    hov.hidden = true;
+    const showHov = (m, card) => {
+      hov.textContent = '';
+      hov.append(mdThumb(m, { big: true, eager: true, load: m.type === 'imagem' || m.type === 'video' }),
+        el('span', 'md-name', m.title),
+        el('span', 'md-size', `${MD_TYPE_LABEL[m.type]}${m.file_size != null ? ` · ${formatSize(m.file_size)}` : ''}${mediaDur.has(m.file_url) ? ` · ${fmtDur(mediaDur.get(m.file_url))}` : ''}`));
+      const g = grid.getBoundingClientRect();
+      const c = card.getBoundingClientRect();
+      hov.classList.toggle('left', c.left + c.width / 2 > g.left + g.width / 2);
+      hov.hidden = false;
+    };
+    const hideHov = () => { hov.hidden = true; hov.textContent = ''; };
     const fill = () => {
-      list.textContent = '';
-      const items = md.media.filter((m) => m.type === p.type && (!p.pickQ || mdNorm(m.title).includes(mdNorm(p.pickQ)))).slice(0, 50);
-      if (!items.length) list.append(el('div', 'lt-none', `Nenhum${p.type === 'imagem' ? 'a foto' : p.type === 'video' ? ' vídeo' : p.type === 'audio' ? ' áudio' : ' PDF'} na biblioteca.`));
-      items.forEach((m) => {
-        const b = fbtn('ed-mini', `${m.title}${m.file_size != null ? ` · ${formatSize(m.file_size)}` : ''}`, () => {
+      grid.textContent = '';
+      hideHov();
+      const folder = p.pickFolder || 'todas';
+      const items = md.media.filter((m) => m.type === p.type
+        && (folder === 'todas' || (folder === 'sem' ? !m.folder_id : m.folder_id === folder))
+        && (!p.pickQ || mdNorm(m.title).includes(mdNorm(p.pickQ))));
+      if (!items.length) {
+        grid.append(el('div', 'lt-none', `Nenhum${p.type === 'imagem' ? 'a foto' : p.type === 'video' ? ' vídeo' : p.type === 'audio' ? ' áudio' : ' PDF'} na biblioteca${folder !== 'todas' || p.pickQ ? ' com esse filtro' : ''}.`));
+        return;
+      }
+      items.slice(0, MD_PICK_MAX).forEach((m) => {
+        const card = el('div', 'md-pcard');
+        const choose = el('button', 'md-choose');
+        choose.type = 'button';
+        choose.dataset.media = m.id;
+        choose.title = m.title;
+        choose.setAttribute('aria-label', `Escolher ${m.title}`);
+        choose.append(mdThumb(m), el('span', 'md-name', m.title), el('span', 'md-size', m.file_size != null ? formatSize(m.file_size) : MD_TYPE_LABEL[m.type]));
+        choose.addEventListener('click', () => {
+          stopPickAudio();
           if (p.localUrl) URL.revokeObjectURL(p.localUrl);
-          Object.assign(p, { file: null, localUrl: null, file_url: m.file_url, file_name: m.file_name || m.title, file_size: m.file_size ?? null, picking: false, fromLibrary: m.id });
+          Object.assign(p, { file: null, localUrl: null, file_url: m.file_url, file_name: m.file_name || m.title, file_size: m.file_size ?? null, picking: false, changing: false, fromLibrary: m.id });
           if (p.type !== 'audio' && !String(p.body || '').trim() && m.caption) p.body = m.caption;
           ctx.msg('');
           ctx.rerender();
         });
-        b.dataset.media = m.id;
-        list.append(b);
+        card.addEventListener('mouseenter', () => showHov(m, card));
+        card.addEventListener('mouseleave', hideHov);
+        choose.addEventListener('focus', () => showHov(m, card));
+        choose.addEventListener('blur', hideHov);
+        card.append(choose);
+        if (m.type === 'audio') {
+          const listen = el('button', 'md-listen', '▶');
+          listen.type = 'button';
+          listen.dataset.listen = `Ouvir ${m.title}`;
+          listen.setAttribute('aria-label', listen.dataset.listen);
+          listen.addEventListener('click', () => togglePickAudio(m, listen));
+          card.append(listen);
+        }
+        grid.append(card);
       });
+      if (items.length > MD_PICK_MAX) grid.append(el('div', 'lt-none', `Mostrando ${MD_PICK_MAX} de ${items.length}. Use a busca ou a pasta.`));
     };
     q.addEventListener('input', () => { p.pickQ = q.value; fill(); });
+    fsel.addEventListener('change', () => { p.pickFolder = fsel.value; fill(); });
     fill();
-    box.append(q, list);
+    box.append(bar, grid, hov);
     return box;
   }
 

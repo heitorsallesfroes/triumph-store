@@ -153,6 +153,14 @@ novo.
   biblioteca** (usa o mesmo arquivo, nada é copiado). Arquivo subido pelo
   editor também entra na biblioteca ("Sem pasta"). As automações enviam
   mensagens rápidas, então usam a biblioteca por elas.
+- **Prévia no editor (2.7.1):** "Escolher da biblioteca" abre uma grade de
+  miniaturas só do tipo da parte (foto; vídeo com o primeiro quadro e ▶; áudio
+  com 🎵 e a duração; PDF com 📄), com título e tamanho, busca e filtro por
+  pasta. Passar o mouse mostra uma prévia maior; no áudio, ▶ toca ali mesmo
+  antes de escolher. Depois de escolher ou subir, a parte mostra a prévia do
+  arquivo (miniatura, player pequeno ou ícone + nome) com o botão **Trocar**;
+  as mensagens que já têm mídia também mostram a prévia ao abrir o editor.
+  As miniaturas só carregam quando aparecem na tela e ficam em cache.
 - **Importar mídias das mensagens rápidas:** cria na biblioteca as mídias que
   já estão nas mensagens rápidas, sem subir de novo e sem mudar as mensagens.
 - **Rodapé:** espaço usado no wa-media (soma dos arquivos da biblioteca) de
@@ -209,6 +217,12 @@ ERP faz (o Tiny também é avisado). Finalize a venda no ERP, como sempre.
 
 - No editor de mensagens: **Ao enviar, colocar na etiqueta CRM** e **e tirar
   da etiqueta CRM** (opcionais).
+- 2.7.1: logo abaixo, **Ao enviar, colocar na etiqueta do WhatsApp** e **e
+  tirar da etiqueta do WhatsApp** (etiquetas do próprio WhatsApp Business;
+  "(não mexe)" é o padrão). Mesma regra e mesma troca de etiqueta das
+  automações; etiqueta do WhatsApp apagada depois é ignorada sem erro.
+  Precisa da migration `supabase/migrations/20261105120000_wa_items_on_send_wa_labels.sql`;
+  sem ela, tudo funciona como antes.
 - Só muda as etiquetas quando a mensagem **inteira** sai com sucesso: pela
   seta, pela prévia, por agendamento, automação ou disparo. Se falhar ou for
   parada, não mexe. Cria o contato (e guarda o id da conversa) se preciso.
@@ -784,6 +798,14 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.7.1
+- Editor das mensagens rápidas e dos disparos: "Escolher da biblioteca" em
+  grade de miniaturas (pasta, busca, prévia maior ao passar o mouse, ouvir o
+  áudio), prévia do arquivo escolhido com "Trocar"; miniaturas sob demanda e
+  em cache.
+- Mensagem rápida que põe/tira **etiqueta do WhatsApp** ao enviar. Migration
+  `20261105120000_wa_items_on_send_wa_labels.sql`.
 
 ### 2.7.0
 - Aba **Mídias**: biblioteca de mídias em pastas (subir sem duplicar, enviar na

@@ -79,17 +79,20 @@
   // Pede também record_seconds; se a coluna ainda não existe no banco (erro 400), busca sem ela
   // 2.1.0: pede também as etiquetas "ao enviar"; sem essas colunas (migration 20261103150000) busca sem elas
   const ON_SEND_COLUMNS = 'on_send_add_label_id,on_send_remove_label_id';
+  // 2.7.1: etiquetas do WhatsApp "ao enviar" (migration 20261105120000); sem elas, busca sem
+  const ON_SEND_WA_COLUMNS = 'on_send_add_wa_label_id,on_send_remove_wa_label_id';
   // Coluna opcional que o banco disser que não existe sai da consulta, e tenta de novo
   async function fetchItems() {
-    let optional = ['record_seconds', ...ON_SEND_COLUMNS.split(',')];
+    let optional = ['record_seconds', ...ON_SEND_COLUMNS.split(','), ...ON_SEND_WA_COLUMNS.split(',')];
+    // cada par "ao enviar" (CRM, WhatsApp) vem junto na sua migration
+    const group = (c) => (c.startsWith('on_send_') ? (c.includes('_wa_') ? 'on_send_wa' : 'on_send_crm') : c);
     for (;;) {
       try {
         return await rest(`wa_items?select=${[ITEM_COLUMNS, ...optional].join(',')}&${ITEM_ORDER}`);
       } catch (err) {
         const gone = /^Supabase 400:/.test(err.message) ? optional.filter((c) => new RegExp(`\\b${c}\\b`).test(err.message)) : [];
         if (!gone.length) throw err;
-        // as duas colunas "ao enviar" vêm juntas na mesma migration
-        optional = optional.filter((c) => !gone.includes(c) && !(gone.some((g) => g.startsWith('on_send_')) && c.startsWith('on_send_')));
+        optional = optional.filter((c) => !gone.some((g) => group(g) === group(c)));
       }
     }
   }
@@ -590,7 +593,15 @@
 
   // Cria ou edita um item. A parte 1 é espelhada nos campos do wa_items (para o ERP continuar mostrando algo).
   // Sem a tabela de partes: só item de 1 parte (campos do wa_items, como antes).
-  async function saveItem({ id, category_id, title, parts, on_send_add_label_id, on_send_remove_label_id }) {
+  const WA_LABEL_ID_RE = /^[\w.:@-]{1,40}$/;
+  const waLabelId = (v) => {
+    if (v == null || v === '') return null;
+    const s = String(v);
+    if (!WA_LABEL_ID_RE.test(s)) throw new Error('Etiqueta do WhatsApp inválida');
+    return s;
+  };
+
+  async function saveItem({ id, category_id, title, parts, on_send_add_label_id, on_send_remove_label_id, on_send_add_wa_label_id, on_send_remove_wa_label_id }) {
     if (id !== undefined && id !== null) checkUuid(id, 'Item inválido');
     checkUuid(category_id, 'Categoria inválida');
     const cleanTitle = cleanText(title, TITLE_MAX, 'Título');
@@ -603,6 +614,13 @@
     const wantsLabels = on_send_add_label_id !== undefined || on_send_remove_label_id !== undefined;
     const labelCols = wantsLabels && (await probe('wa_items.on_send', () => hasColumn('wa_items', 'on_send_add_label_id')));
     if ((addLabel || removeLabel) && !labelCols) throw new Error('Atualize o banco para usar este recurso');
+    // 2.7.1: etiquetas do WhatsApp "ao enviar" (id como texto; só gravadas se as colunas existirem)
+    const addWa = waLabelId(on_send_add_wa_label_id);
+    const removeWa = waLabelId(on_send_remove_wa_label_id);
+    if (addWa && addWa === removeWa) throw new Error('Escolha etiquetas do WhatsApp diferentes para colocar e tirar');
+    const wantsWa = on_send_add_wa_label_id !== undefined || on_send_remove_wa_label_id !== undefined;
+    const waCols = wantsWa && (await probe('wa_items.on_send_wa', () => hasColumn('wa_items', 'on_send_add_wa_label_id')));
+    if ((addWa || removeWa) && !waCols) throw new Error('Atualize o banco para usar este recurso');
     const hasTable = await partsTableExists();
     if (!hasTable && list.length > 1) throw new Error(PARTS_MISSING);
     const first = list[0];
@@ -610,6 +628,7 @@
       category_id, title: cleanTitle, type: first.type, body: first.body,
       file_url: first.file_url, file_name: first.file_name, file_size: first.file_size,
       ...(labelCols ? { on_send_add_label_id: addLabel, on_send_remove_label_id: removeLabel } : {}),
+      ...(waCols ? { on_send_add_wa_label_id: addWa, on_send_remove_wa_label_id: removeWa } : {}),
     };
     let itemId = id;
     if (itemId) {

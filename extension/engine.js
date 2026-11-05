@@ -1229,6 +1229,7 @@
     return {
       state: st, runnerId, start, stop, tick, leaseTick, poke, refreshActivity, setPaused, saveSettings, simulate, loadSettings, loadFlows,
       refreshCounts, evaluate, ensureNoSendLabel, loadAutomations, evaluateAutomations,
+      setWaLabel, // 2.7.1: a mensagem rápida usa a mesma troca de etiqueta do WhatsApp das automações
     };
   }
 
