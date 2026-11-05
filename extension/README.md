@@ -799,6 +799,21 @@ guardada.
 
 ## O que mudou
 
+### 2.8.7
+- **Várias imagens (álbum)**: tipo novo de parte com até 10 fotos/vídeos (MP4).
+  **Subir arquivos** (vários de uma vez ou arrastando) e **Escolher da biblioteca**
+  com seleção múltipla ("Adicionar N"). No editor: grade de miniaturas com ✕ em
+  cada uma e arrastar para mudar a ordem. Legenda opcional (vai na primeira).
+- Na parte **Imagem**: **+ adicionar mais fotos** transforma em "Várias imagens"
+  mantendo a foto atual.
+- Envio (manual, prévia, agendado, automação e disparo): "esperar" e "digitando"
+  antes da primeira; depois as fotos saem em seguida, sem pausa, para o WhatsApp
+  agrupar. Se uma falhar, as outras continuam e o aviso diz qual. No disparo, a
+  parte conta como 1 mensagem no limite por hora.
+- Prévia mostra a grade das fotos. Precisa da migration
+  `supabase/migrations/20261105190000_wa_item_parts_files.sql` (coluna files nas
+  partes); sem ela o tipo novo não aparece e tudo funciona como antes.
+
 ### 2.8.6
 - Mensagem rápida: em **e tirar da etiqueta CRM** e **e tirar da etiqueta do
   WhatsApp**, nova opção **Todas (menos a que vai colocar)** logo abaixo de

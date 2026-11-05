@@ -1314,6 +1314,24 @@
       .bcard:hover, .bcard:focus-visible { box-shadow: var(--sh-2); }
       /* Barra do WhatsApp (topo) */
       .wabar { box-shadow: var(--sh-1); }
+      /* ═══ 2.8.7: várias imagens (álbum) ═══ */
+      .alb { display: flex; flex-direction: column; gap: var(--s-2); border-radius: var(--r-md); }
+      .alb.over { outline: 2px dashed var(--accent); outline-offset: 2px; background: var(--accent-soft); }
+      .alb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: var(--s-1); }
+      .alb-cell { position: relative; aspect-ratio: 1; border-radius: var(--r-sm); overflow: hidden; background: var(--bg2); cursor: grab; touch-action: none; }
+      .alb-thumb { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: var(--fs-icon); }
+      .alb-thumb img, .alb-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .alb-x { position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; padding: 0; border: none; border-radius: var(--r-pill); background: rgba(0,0,0,.6); color: #fff; font-size: var(--fs-1); }
+      .alb-x:hover { background: var(--err); }
+      .alb-n { position: absolute; left: 4px; bottom: 2px; padding: 0 var(--s-1); border-radius: var(--r-pill); background: rgba(0,0,0,.55); color: #fff; font-size: var(--fs-1); font-weight: 700; }
+      .alb-count { font-size: var(--fs-1); color: var(--muted); }
+      .ed-pick.off { opacity: .45; pointer-events: none; }
+      .md-pcard.sel { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+      .alb-pickok { align-self: flex-end; }
+      .pv-album { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; max-width: 240px; align-self: flex-end; border-radius: var(--r-md); overflow: hidden; }
+      .pv-album.n1 { grid-template-columns: 1fr; }
+      .pv-album .alb-thumb { position: relative; aspect-ratio: 1; background: var(--bg2); }
+      .pv-more { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.5); color: #fff; font-size: var(--fs-4); font-weight: 700; }
       /* ═══ 2.8.5: arrastar para reordenar ═══ */
       .cat-grip { flex-shrink: 0; width: 12px; margin-right: -4px; color: var(--muted); font-size: var(--fs-1); letter-spacing: -2px; opacity: 0; transition: opacity .15s; cursor: grab; }
       .cat-top:hover .cat-grip, .cat-top:focus-within .cat-grip { opacity: 1; }
@@ -2732,6 +2750,7 @@
     state.items      = lib.items || [];
     if (typeof lib.partsAvailable === 'boolean') state.partsAvailable = lib.partsAvailable;
     if (typeof lib.removeAllAvailable === 'boolean') state.removeAllAvailable = lib.removeAllAvailable; // 2.8.6
+    if (typeof lib.albumAvailable === 'boolean') state.albumAvailable = lib.albumAvailable; // 2.8.7
     state.loaded     = true;
     state.source     = source;
     state.syncedAt   = savedAt || null;
@@ -2985,6 +3004,7 @@
     btns.append(opts);
     row.append(btns);
     if (multi) info.querySelector('.sub').textContent = `${item.parts.length} partes · ${subtitle(item)}`;
+    if (multi && item.parts.length === 1 && Array.isArray(item.parts[0].files) && item.parts[0].files.length > 1) info.querySelector('.sub').textContent = `Várias imagens · ${item.parts[0].files.length} arquivos`;
     info.querySelector('.sub').title = info.querySelector('.sub').textContent;
 
     const wrap  = el('div', 'pv-wrap');
@@ -3056,6 +3076,8 @@
       pv.append(doc);
     }
 
+    // 2.8.7: álbum = grade das fotos como vai chegar
+    partsOf(item).forEach((p) => { if (Array.isArray(p.files) && p.files.length > 1) pv.append(albumPreviewEl(p)); });
     if (item.body || textPartsOf(item).length) {
       const slot = el('div', 'bubble-slot');
       fillBubble(slot, item);
@@ -3064,6 +3086,30 @@
       pv.append(el('div', 'pv-note', 'Sem conteúdo.'));
     }
     inner.append(pv);
+  }
+
+  function albumThumb(f, k, key) {
+    const th = el('div', 'alb-thumb');
+    th.append(el('span', 'md-ico', f.kind === 'video' ? '🎬' : '🖼️'));
+    const mount = (url) => {
+      const m = document.createElement(f.kind === 'video' ? 'video' : 'img');
+      if (f.kind === 'video') { m.muted = true; m.preload = 'metadata'; m.src = `${url}#t=0.1`; } else { m.alt = ''; m.src = url; }
+      th.textContent = '';
+      th.append(m);
+      if (f.kind === 'video') th.append(el('span', 'md-play', '▶'));
+    };
+    if (f.localUrl) mount(f.localUrl);
+    else if (f.file_url) whenVisible(th, () => getBlobUrl({ id: key || 'arquivo', file_url: f.file_url, file_name: f.file_name }).then(mount).catch(() => {}));
+    return th;
+  }
+  function albumPreviewEl(p) {
+    const grid = el('div', `pv-album n${Math.min(p.files.length, 4)}`);
+    p.files.forEach((f, k) => {
+      const cell = albumThumb(f, k, 'arquivo');
+      if (k === 3 && p.files.length > 4) cell.append(el('span', 'pv-more', `+${p.files.length - 4}`));
+      if (k < 4) grid.append(cell);
+    });
+    return grid;
   }
 
   // ── Prévia editável (2.1.0) ──
@@ -3745,6 +3791,7 @@
       await waRequest('sendText', { chatId, text: text.slice(0, SEQ_TEXT_MAX), typingMs: typingMs || 0 }, { id: reqId, timeout: (typingMs || 0) + 20000 });
       return;
     }
+    if (Array.isArray(part.files) && part.files.length > 1) return sendAlbum(part, i, chatId, firstName, reqId, newChat, typingMs);
     if (!part.file_url) throw Object.assign(new Error('parte sem arquivo'), { code: 'empty', stage: 'before-send' });
     let blob;
     try {
@@ -3779,6 +3826,33 @@
       { id: reqId, timeout: (typingMs || 0) + 120000, transfer: [data] });
   }
 
+  // 2.8.7: álbum: as fotos/vídeos saem em seguida (sem pausa) para o WhatsApp agrupar. "digitando" só antes da 1ª;
+  // a legenda vai na 1ª. Se um arquivo falhar, os outros continuam e o aviso diz qual falhou.
+  async function sendAlbum(part, i, chatId, firstName, reqId, newChat, typingMs) {
+    const failed = [];
+    let sentAny = false;
+    for (let k = 0; k < part.files.length; k++) {
+      const f = part.files[k];
+      const fileName = (f.file_name || `arquivo ${k + 1}`).slice(0, 200);
+      try {
+        const blob = await getFile({ id: `${part.id || `p${i}`}-${k}`, file_url: f.file_url, file_name: f.file_name });
+        const data = await blob.arrayBuffer();
+        const mime = (blob.type || 'application/octet-stream').split(';')[0];
+        const kind = f.kind === 'video' ? 'video' : 'imagem';
+        const caption = sentAny ? null : fillVars(part.body || '', firstName).slice(0, SEQ_TEXT_MAX);
+        if (newChat) await waRequest('campaignSend', { campaign: true, chatId, kind, data, mime, fileName, caption }, { id: reqId, timeout: 150000, transfer: [data] });
+        else await waRequest('sendMedia', { chatId, kind, data, mime, fileName, caption, typingMs: sentAny ? 0 : (typingMs || 0) }, { id: reqId, timeout: (sentAny ? 0 : (typingMs || 0)) + 120000, transfer: [data] });
+        sentAny = true;
+        if (seq && seq.stop) break;
+      } catch (e) {
+        if (e.code === 'cancelled') throw e;
+        failed.push(fileName);
+      }
+    }
+    if (!sentAny) throw Object.assign(new Error(`nenhum arquivo do álbum saiu (${failed.join(', ')})`), { code: 'album', stage: 'sending' });
+    return { failedFiles: failed };
+  }
+
   // Resultado: { status: 'ok' | 'stopped' | 'failed', sent, failedAt, stage, message }
   async function runSequence({ parts, chatId, firstName = '', label = '', onStop = null, newChat = false }) {
     if (seq) return { status: 'failed', sent: 0, stage: 'before-send', message: 'já existe um envio em andamento' };
@@ -3786,6 +3860,7 @@
     const ticker = setInterval(renderSeq, 250);
     renderSeq();
     let sent = 0;
+    const failedFiles = [];
     try {
       for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
@@ -3807,7 +3882,8 @@
         seq.reqId = newRequestId('q');
         renderSeq();
         try {
-          await sendPart(part, i, chatId, firstName, seq.reqId, firstNew);
+          const r = await sendPart(part, i, chatId, firstName, seq.reqId, firstNew);
+          if (r && Array.isArray(r.failedFiles)) failedFiles.push(...r.failedFiles);
         } catch (e) {
           if (e.code === 'cancelled') return { status: 'stopped', sent };
           return { status: 'failed', sent, failedAt: i + 1, stage: e.stage === 'before-send' ? 'before-send' : 'sending', message: e.message, code: e.code };
@@ -3815,7 +3891,7 @@
         sent++;
         if (seq.stop && i < parts.length - 1) return { status: 'stopped', sent };
       }
-      return { status: 'ok', sent };
+      return failedFiles.length ? { status: 'ok', sent, failedFiles } : { status: 'ok', sent };
     } finally {
       clearInterval(ticker);
       seq = null;
@@ -3824,6 +3900,7 @@
   }
 
   function sequenceToast(res, total) {
+    if (res.status === 'ok' && res.failedFiles && res.failedFiles.length) { toast(`Enviado, mas não consegui enviar: ${res.failedFiles.join(', ')}.`, 'warn', 10000); return; }
     if (res.status === 'ok') { toast(total > 1 ? `Enviado: ${total} partes.` : 'Enviado.', 'ok', 4000); return; }
     if (res.status === 'stopped') { toast(`Parado: ${res.sent} de ${total} enviada${res.sent === 1 ? '' : 's'}.`, 'warn', 6000); return; }
     if (res.stage === 'sending') {
@@ -4219,8 +4296,10 @@
   let edKey = 0;
 
   function edPart(p) {
+    const album = Array.isArray(p.files) && p.files.length > 1;
     return {
-      key: ++edKey, type: p.type, body: p.body || '', file_url: p.file_url || null, file_name: p.file_name || null,
+      ...(album ? { files: p.files.map((f) => ({ kind: f.kind === 'video' ? 'video' : 'imagem', file_url: f.file_url, file_name: f.file_name, file_size: f.file_size ?? null, file: null, localUrl: null })) } : {}),
+      key: ++edKey, type: album ? 'album' : p.type, body: p.body || '', file_url: album ? null : p.file_url || null, file_name: album ? null : p.file_name || null,
       file_size: p.file_size ?? null, wait_seconds: Number(p.wait_seconds) || 0,
       typing_seconds: Number.isInteger(p.typing_seconds) ? p.typing_seconds : p.type === 'audio' ? 3 : 0,
       file: null, localUrl: null,
@@ -4262,6 +4341,119 @@
         .then((u) => { if (p.file_url === url && !p.localUrl) mount(u); }).catch(() => { /* fica o ícone */ }));
     }
     return pv;
+  }
+
+  // ── 2.8.7: "Várias imagens" (álbum): até 10 fotos/vídeos numa parte ──
+  const ALBUM_MAX = 10;
+  const edTypes = (cur) => (state.albumAvailable || cur === 'album' ? [...ED_TYPES.slice(0, 2), ['album', 'Várias imagens'], ...ED_TYPES.slice(2)] : ED_TYPES);
+  function addAlbumFiles(p, list, ctx, i) {
+    const files = [...(list || [])];
+    for (const f of files) {
+      if (p.files.length >= ALBUM_MAX) { ctx.msg(`Parte ${i + 1}: até ${ALBUM_MAX} fotos/vídeos.`, true); break; }
+      const kind = /^video\//.test(f.type) || /\.mp4$/i.test(f.name) ? 'video' : 'imagem';
+      const mime = edFileMime(kind, f);
+      if (!ED_MIME[kind].includes(mime)) { ctx.msg(`Parte ${i + 1}: ${f.name}: tipo de arquivo não aceito (JPG, PNG, WebP ou MP4).`, true); continue; }
+      if (f.size > ED_MAX_BYTES) { ctx.msg(`Parte ${i + 1}: ${f.name}: acima de 40 MB.`, true); continue; }
+      p.files.push({ kind, file: f, localUrl: URL.createObjectURL(f), file_url: null, file_name: f.name, file_size: f.size });
+    }
+    ctx.rerender();
+  }
+  function albumEditorEl(p, i, ctx) {
+    const wrap = el('div', 'alb');
+    const grid = el('div', 'alb-grid');
+    p.files.forEach((f, k) => {
+      const cell = el('div', 'alb-cell');
+      cell.dataset.k = String(k);
+      cell.title = `${f.file_name || 'arquivo'} (arraste para mudar a ordem)`;
+      cell.append(albumThumb(f, k, 'arquivo'), el('span', 'alb-n', String(k + 1)));
+      const x = el('button', 'alb-x', '✕');
+      x.type = 'button';
+      x.disabled = ctx.saving();
+      x.setAttribute('aria-label', `Remover ${f.file_name || `arquivo ${k + 1}`} (parte ${i + 1})`);
+      x.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (f.localUrl) URL.revokeObjectURL(f.localUrl);
+        p.files.splice(k, 1);
+        ctx.rerender();
+      });
+      cell.append(x);
+      grid.append(cell);
+    });
+    // arrastar para mudar a ordem (mesmo arraste da 2.8.5)
+    grid.addEventListener('pointerdown', (e) => {
+      const t = dndPoint(e);
+      if (!t || !t.closest || t.closest('.alb-x')) return;
+      const cell = t.closest('.alb-cell');
+      if (!cell) return;
+      dndStart(e, cell, {
+        blocked: () => false,
+        find: (pp, ev) => { const c = pp.closest('.alb-cell'); return c && grid.contains(c) ? { el: c, where: halfX(c, ev) } : null; },
+        drop: (hit) => {
+          const from = Number(cell.dataset.k);
+          const to = Number(hit.el.dataset.k);
+          const [m] = p.files.splice(from, 1);
+          let at = to - (from < to ? 1 : 0) + (hit.where === 'after' ? 1 : 0);
+          at = Math.max(0, Math.min(p.files.length, at));
+          p.files.splice(at, 0, m);
+          ctx.rerender();
+        },
+      });
+    });
+    wrap.append(grid);
+    wrap.append(el('div', 'alb-count', `${p.files.length}/${ALBUM_MAX} fotos/vídeos · a legenda vai na primeira`));
+    const row = el('div', 'ed-file');
+    const pick = el('label', 'ed-pick', 'Subir arquivos');
+    const input = el('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = 'image/jpeg,image/png,image/webp,video/mp4';
+    input.setAttribute('aria-label', `Subir fotos ou vídeos (parte ${i + 1})`);
+    input.addEventListener('change', () => { addAlbumFiles(p, input.files, ctx, i); });
+    pick.append(input);
+    const lib = el('button', 'ed-mini ed-lib', p.picking ? 'Fechar biblioteca' : 'Escolher da biblioteca');
+    lib.type = 'button';
+    lib.disabled = ctx.saving() || p.files.length >= ALBUM_MAX;
+    lib.setAttribute('aria-label', `Escolher da biblioteca (parte ${i + 1})`);
+    lib.addEventListener('click', () => {
+      p.picking = !p.picking;
+      p.pickSel = [];
+      if (!p.picking) stopPickAudio();
+      if (p.picking && !md.loaded) loadMedia({ quiet: true }).then(() => ctx.rerender());
+      ctx.rerender();
+    });
+    pick.classList.toggle('off', p.files.length >= ALBUM_MAX);
+    row.append(pick, lib);
+    wrap.append(row);
+    // arrastar vários arquivos para a parte
+    wrap.addEventListener('dragover', (e) => { e.preventDefault(); wrap.classList.add('over'); });
+    wrap.addEventListener('dragleave', () => wrap.classList.remove('over'));
+    wrap.addEventListener('drop', (e) => { e.preventDefault(); wrap.classList.remove('over'); addAlbumFiles(p, e.dataTransfer && e.dataTransfer.files, ctx, i); });
+    if (p.picking) wrap.append(mediaPicker(p, i, ctx));
+    const cap = el('textarea', 'ed-caption');
+    cap.maxLength = 4096;
+    cap.rows = 2;
+    cap.value = p.body;
+    cap.placeholder = 'Legenda (opcional; vai na primeira foto)';
+    cap.setAttribute('aria-label', `Legenda da parte ${i + 1}`);
+    cap.addEventListener('input', () => { p.body = cap.value; });
+    wrap.append(cap, varButtons(cap, (v) => { p.body = v; }, i));
+    return wrap;
+  }
+  // salvar: sobe os arquivos novos (entram na biblioteca) e monta a parte; 1 arquivo só vira parte normal
+  async function albumPartForSave(p, i, msg) {
+    const files = [];
+    for (let k = 0; k < p.files.length; k++) {
+      const f = p.files[k];
+      if (f.file) {
+        msg(`Enviando o arquivo ${k + 1} de ${p.files.length} da parte ${i + 1}…`);
+        const up = await uploadPartFile({ type: f.kind, file: f.file });
+        Object.assign(f, up, { file: null });
+      }
+      files.push({ kind: f.kind, file_url: f.file_url, file_name: f.file_name, file_size: f.file_size ?? null });
+    }
+    const base = { body: p.body || null, wait_seconds: p.wait_seconds, typing_seconds: p.typing_seconds };
+    if (files.length === 1) return { type: files[0].kind, ...base, file_url: files[0].file_url, file_name: files[0].file_name, file_size: files[0].file_size };
+    return { type: 'imagem', ...base, file_url: files[0].file_url, file_name: files[0].file_name, file_size: files[0].file_size, files };
   }
 
   // 2.8.6: opção "Todas (menos a que vai colocar)" logo abaixo de "(não mexe)" (só com as colunas no banco)
@@ -4385,10 +4577,11 @@
     head.append(el('b', null, `Parte ${i + 1}`));
     const typeSel = el('select');
     typeSel.setAttribute('aria-label', `Tipo da parte ${i + 1}`);
-    ED_TYPES.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === p.type; typeSel.append(o); });
+    edTypes(p.type).forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === p.type; typeSel.append(o); });
     typeSel.addEventListener('change', () => {
       if (p.localUrl) URL.revokeObjectURL(p.localUrl);
-      Object.assign(p, { type: typeSel.value, file: null, localUrl: null, file_url: null, file_name: null, file_size: null });
+      (p.files || []).forEach((f) => { if (f.localUrl) URL.revokeObjectURL(f.localUrl); });
+      Object.assign(p, { type: typeSel.value, file: null, localUrl: null, file_url: null, file_name: null, file_size: null, files: typeSel.value === 'album' ? [] : undefined, picking: false });
       if (p.type === 'audio' && !p.typing_seconds) p.typing_seconds = 3;
       ctx.rerender();
     });
@@ -4407,7 +4600,9 @@
       mini('×', 'Remover', ctx.parts.length === 1, () => { if (p.localUrl) URL.revokeObjectURL(p.localUrl); ctx.parts.splice(i, 1); ctx.rerender(); }));
     box.append(head);
 
-    if (p.type === 'texto') {
+    if (p.type === 'album') {
+      box.append(albumEditorEl(p, i, ctx));
+    } else if (p.type === 'texto') {
       const ta = el('textarea', 'ed-text');
       ta.maxLength = 4096;
       ta.rows = 4;
@@ -4431,6 +4626,19 @@
         swap.setAttribute('aria-label', `Trocar o arquivo (parte ${i + 1})`);
         swap.addEventListener('click', () => { p.changing = true; ctx.rerender(); });
         row.append(fname, swap);
+        if (p.type === 'imagem' && state.albumAvailable) {
+          // 2.8.7: vira "Várias imagens" mantendo a foto atual
+          const more = el('button', 'ed-mini ed-tomany', '+ adicionar mais fotos');
+          more.type = 'button';
+          more.disabled = ctx.saving();
+          more.setAttribute('aria-label', `Adicionar mais fotos (parte ${i + 1})`);
+          more.addEventListener('click', () => {
+            const first = { kind: 'imagem', file_url: p.file_url, file_name: p.file_name, file_size: p.file_size, file: p.file || null, localUrl: p.localUrl || null };
+            Object.assign(p, { type: 'album', files: [first], file: null, localUrl: null, file_url: null, file_name: null, file_size: null, changing: false });
+            ctx.rerender();
+          });
+          row.append(more);
+        }
         box.append(row);
       } else {
       const fileRow = el('div', 'ed-file');
@@ -4553,11 +4761,11 @@
     const add = el('div', 'ed-add');
     add.append(el('span', null, '+ Adicionar:'));
     const multiOff = state.partsAvailable === false;
-    ED_TYPES.forEach(([v, t]) => {
+    edTypes().forEach(([v, t]) => {
       const b = el('button', 'ed-mini', t);
       b.type = 'button';
       b.disabled = ed.saving || ed.parts.length >= ED_MAX_PARTS || multiOff;
-      b.addEventListener('click', () => { ed.parts.push(edPart({ type: v })); renderEditor(); });
+      b.addEventListener('click', () => { ed.parts.push(v === 'album' ? { ...edPart({ type: 'imagem' }), type: 'album', files: [] } : edPart({ type: v })); renderEditor(); });
       add.append(b);
     });
     wrap.append(add);
@@ -4607,7 +4815,8 @@
     for (let i = 0; i < ed.parts.length; i++) {
       const p = ed.parts[i];
       if (p.type === 'texto' && !p.body.trim()) return `Parte ${i + 1}: escreva o texto.`;
-      if (p.type !== 'texto' && !p.file && !p.file_url) return `Parte ${i + 1}: escolha o arquivo.`;
+      if (p.type === 'album' && !(p.files && p.files.length)) return `Parte ${i + 1}: escolha as fotos.`;
+      if (p.type !== 'texto' && p.type !== 'album' && !p.file && !p.file_url) return `Parte ${i + 1}: escolha o arquivo.`;
     }
     return null;
   }
@@ -4640,6 +4849,7 @@
       const parts = [];
       for (let i = 0; i < current.parts.length; i++) {
         const p = current.parts[i];
+        if (p.type === 'album') { parts.push(await albumPartForSave(p, i, edMsg)); continue; }
         let file = { file_url: p.file_url, file_name: p.file_name, file_size: p.file_size };
         if (p.type !== 'texto' && p.file) {
           edMsg(`Enviando o arquivo da parte ${i + 1}…`);
@@ -5361,8 +5571,8 @@
       f.parts.forEach((p, i) => sec.append(edPartEl(p, i, dpCtx())));
       const add = el('div', 'ed-add');
       add.append(el('span', null, '+ Adicionar:'));
-      ED_TYPES.forEach(([v, t]) => {
-        const b = fbtn('ed-mini', t, () => { f.parts.push(edPart({ type: v })); renderDisparos(); });
+      edTypes().forEach(([v, t]) => {
+        const b = fbtn('ed-mini', t, () => { f.parts.push(v === 'album' ? { ...edPart({ type: 'imagem' }), type: 'album', files: [] } : edPart({ type: v })); renderDisparos(); });
         b.disabled = f.saving || f.parts.length >= ED_MAX_PARTS;
         add.append(b);
       });
@@ -5488,6 +5698,11 @@
     for (let i = 0; i < list.length; i++) {
       const p = list[i];
       if (p.type === 'texto' && !String(p.body || '').trim()) throw new Error(`Parte ${i + 1}: escreva o texto.`);
+      if (p.type === 'album') {
+        if (!(p.files && p.files.length)) throw new Error(`Parte ${i + 1}: escolha as fotos.`);
+        out.push(await albumPartForSave(p, i, msg));
+        continue;
+      }
       if (p.type !== 'texto' && !p.file && !p.file_url) throw new Error(`Parte ${i + 1}: escolha o arquivo.`);
       let file = { file_url: p.file_url, file_name: p.file_name, file_size: p.file_size };
       if (p.type !== 'texto' && p.file) {
@@ -7896,7 +8111,7 @@
       grid.textContent = '';
       hideHov();
       const folder = p.pickFolder || 'todas';
-      const items = md.media.filter((m) => m.type === p.type
+      const items = md.media.filter((m) => (p.type === 'album' ? (m.type === 'imagem' || m.type === 'video') : m.type === p.type)
         && (folder === 'todas' || (folder === 'sem' ? !m.folder_id : m.folder_id === folder))
         && (!p.pickQ || mdNorm(m.title).includes(mdNorm(p.pickQ))));
       if (!items.length) {
@@ -7911,6 +8126,30 @@
         choose.title = m.title;
         choose.setAttribute('aria-label', `Escolher ${m.title}`);
         choose.append(mdThumb(m), el('span', 'md-name', m.title), el('span', 'md-size', m.file_size != null ? formatSize(m.file_size) : MD_TYPE_LABEL[m.type]));
+        if (p.type === 'album') {
+          // 2.8.7: marcar várias e confirmar
+          const on = !!(p.pickSel && p.pickSel.includes(m.id));
+          card.classList.toggle('sel', on);
+          choose.setAttribute('aria-pressed', String(on));
+          choose.addEventListener('click', () => {
+            p.pickSel = p.pickSel || [];
+            const k = p.pickSel.indexOf(m.id);
+            if (k >= 0) p.pickSel.splice(k, 1);
+            else if (p.files.length + p.pickSel.length >= ALBUM_MAX) { ctx.msg(`Parte ${i + 1}: até ${ALBUM_MAX} fotos/vídeos.`, true); return; }
+            else p.pickSel.push(m.id);
+            ctx.msg('');
+            const now = p.pickSel.includes(m.id);
+            card.classList.toggle('sel', now);
+            choose.setAttribute('aria-pressed', String(now));
+            const okBtn = box.querySelector('.alb-pickok');
+            if (okBtn) { okBtn.textContent = `Adicionar ${p.pickSel.length}`; okBtn.disabled = !p.pickSel.length; }
+          });
+          card.addEventListener('mouseenter', () => showHov(m, card));
+          card.addEventListener('mouseleave', hideHov);
+          card.append(choose);
+          grid.append(card);
+          return;
+        }
         choose.addEventListener('click', () => {
           stopPickAudio();
           if (p.localUrl) URL.revokeObjectURL(p.localUrl);
@@ -7940,6 +8179,23 @@
     fsel.addEventListener('change', () => { p.pickFolder = fsel.value; fill(); });
     fill();
     box.append(bar, grid, hov);
+    if (p.type === 'album') {
+      const n = (p.pickSel || []).length;
+      const okBtn = el('button', 'bbtn primary alb-pickok', `Adicionar ${n}`);
+      okBtn.type = 'button';
+      okBtn.disabled = !n;
+      okBtn.addEventListener('click', () => {
+        (p.pickSel || []).forEach((id) => {
+          const m = md.media.find((x) => x.id === id);
+          if (m && p.files.length < ALBUM_MAX) p.files.push({ kind: m.type === 'video' ? 'video' : 'imagem', file_url: m.file_url, file_name: m.file_name || m.title, file_size: m.file_size ?? null, file: null, localUrl: null });
+          if (m && !String(p.body || '').trim() && m.caption) p.body = m.caption;
+        });
+        p.pickSel = [];
+        p.picking = false;
+        ctx.rerender();
+      });
+      box.append(okBtn);
+    }
     return box;
   }
 

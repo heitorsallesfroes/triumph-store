@@ -108,14 +108,22 @@
 
   const PART_COLUMNS = 'id,item_id,position,type,body,file_url,file_name,file_size,wait_seconds,typing_seconds';
 
-  // Partes de todos os itens; null = tabela wa_item_parts ainda não existe
+  // Partes de todos os itens; null = tabela wa_item_parts ainda não existe.
+  // 2.8.7: pede também files (álbum; migration 20261105190000); sem a coluna, busca sem ela.
+  let partFilesCol = false;
   async function fetchParts() {
-    try {
-      return await rest(`wa_item_parts?select=${PART_COLUMNS}&order=item_id.asc,position.asc&limit=10000`);
-    } catch (err) {
-      if (missingTable(err, 'wa_item_parts')) return null;
-      throw err;
+    for (const withFiles of [true, false]) {
+      try {
+        const rows = await rest(`wa_item_parts?select=${PART_COLUMNS}${withFiles ? ',files' : ''}&order=item_id.asc,position.asc&limit=10000`);
+        partFilesCol = withFiles;
+        return rows;
+      } catch (err) {
+        if (missingTable(err, 'wa_item_parts')) return null;
+        if (withFiles && /^Supabase 400:/.test(err.message) && /\bfiles\b/.test(err.message)) continue;
+        throw err;
+      }
     }
+    return null;
   }
 
   async function fetchLibrary() {
@@ -137,7 +145,7 @@
     }
     // 2.8.6: a opção "Todas (menos a que vai colocar)" só aparece com as colunas no banco
     // (sem consulta extra: vale se a leitura das mensagens conseguiu pedir as colunas novas)
-    return { categories, items, partsAvailable: parts !== null, removeAllAvailable: itemOptionalCols.includes('on_send_remove_all_crm') };
+    return { categories, items, partsAvailable: parts !== null, removeAllAvailable: itemOptionalCols.includes('on_send_remove_all_crm'), albumAvailable: parts !== null && partFilesCol };
   }
 
   async function incrementUsage(id) {
@@ -576,6 +584,18 @@
       if (typeof p.body !== 'string' || !p.body.trim() || p.body.length > TEXT_MAX) throw new Error(`Parte ${n}: texto de 1 a ${TEXT_MAX} caracteres`);
       return { type: 'texto', body: p.body, file_url: null, file_name: null, file_size: null, wait_seconds, typing_seconds };
     }
+    // 2.8.7: álbum = parte 'imagem' com até 10 arquivos (fotos e vídeos MP4); a parte guarda o 1º arquivo
+    let files = null;
+    if (p.files != null) {
+      if (p.type !== 'imagem' || !Array.isArray(p.files) || p.files.length < 1 || p.files.length > ALBUM_MAX) throw new Error(`Parte ${n}: de 1 a ${ALBUM_MAX} fotos/vídeos`);
+      files = p.files.map((f, k) => {
+        if (!f || !isAllowedFileUrl(f.file_url)) throw new Error(`Parte ${n}: arquivo ${k + 1} inválido`);
+        const fsz = f.file_size == null ? null : Number(f.file_size);
+        if (fsz != null && (!Number.isFinite(fsz) || fsz < 0 || fsz > MAX_FILE_BYTES)) throw new Error(`Parte ${n}: arquivo ${k + 1} acima de 40 MB`);
+        return { file_url: f.file_url, file_name: typeof f.file_name === 'string' && f.file_name.trim() ? f.file_name.trim().slice(0, 200) : 'arquivo', file_size: fsz, kind: f.kind === 'video' ? 'video' : 'imagem' };
+      });
+      p = { ...p, file_url: files[0].file_url, file_name: files[0].file_name, file_size: files[0].file_size };
+    }
     if (!isAllowedFileUrl(p.file_url)) throw new Error(`Parte ${n}: arquivo inválido`);
     const file_name = typeof p.file_name === 'string' && p.file_name.trim() ? p.file_name.trim().slice(0, 200) : 'arquivo';
     const size = p.file_size == null ? null : Number(p.file_size);
@@ -585,8 +605,9 @@
       if (p.body.length > TEXT_MAX) throw new Error(`Parte ${n}: legenda até ${TEXT_MAX} caracteres`);
       body = p.body;
     }
-    return { type: p.type, body, file_url: p.file_url, file_name, file_size: size, wait_seconds, typing_seconds };
+    return { type: p.type, body, file_url: p.file_url, file_name, file_size: size, wait_seconds, typing_seconds, ...(files ? { files } : {}) };
   }
+  const ALBUM_MAX = 10;
 
   async function partsTableExists() {
     try {
@@ -656,7 +677,10 @@
     }
     if (hasTable) {
       await rest(`wa_item_parts?item_id=eq.${itemId}`, { method: 'DELETE' });
-      await rest('wa_item_parts', json('POST', 'return=minimal', list.map((p, i) => ({ ...p, item_id: itemId, position: i }))));
+      // 2.8.7: com álbum, todas as linhas levam files (o PostgREST pede as mesmas chaves em todas)
+      const anyFiles = list.some((p) => p.files);
+      if (anyFiles && !(await probe('wa_item_parts.files', () => hasColumn('wa_item_parts', 'files')))) throw new Error('Atualize o banco para usar este recurso');
+      await rest('wa_item_parts', json('POST', 'return=minimal', list.map((p, i) => ({ ...p, ...(anyFiles ? { files: p.files || null } : {}), item_id: itemId, position: i }))));
     }
     return { id: itemId };
   }
