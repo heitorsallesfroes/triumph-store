@@ -2754,12 +2754,65 @@
     if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) return { exists: false };
     const since = encodeURIComponent(new Date(Date.now() - 7 * 86400000).toISOString());
     try {
-      const rows = await convRest(`${CONV_TABLE}?select=value,created_at,test&chat_id=eq.${encodeURIComponent(chatId)}&status=eq.enviado&value=not.is.null&created_at=gte.${since}&order=created_at.desc&limit=1`);
+      const rows = await convRest(`${CONV_TABLE}?select=value,created_at,test&chat_id=eq.${encodeURIComponent(chatId)}&status=eq.enviado&value=not.is.null&test=eq.false&created_at=gte.${since}&order=created_at.desc&limit=1`); // 2.9.0: compra em teste não conta
       return rows.length ? { exists: true, value: Number(rows[0].value), at: rows[0].created_at, test: !!rows[0].test } : { exists: false };
     } catch (err) {
       if (err.message === ENGINE_MISSING) return { exists: false, missing: true };
       throw err;
     }
+  }
+
+  // ── 2.9.0: histórico por conversa, conversas com compra real, leads pendentes do Contato e contagens ──
+  const convRow = (r) => {
+    const marked = typeof r.error === 'string' && /^evento: Contact/.test(r.error);
+    const error = marked ? r.error.replace(/^evento: Contact( · )?/, '') || null : r.error;
+    return { ...r, event_name: r.event_name || (marked || r.value == null ? 'Contact' : 'Purchase'), error };
+  };
+  async function chatConversions({ chatId }) {
+    if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) return [];
+    const cols = `event_id,value,test,status,error,created_at${(await convEventName()) ? ',event_name' : ''}`;
+    const rows = await convRest(`${CONV_TABLE}?select=${cols}&chat_id=eq.${encodeURIComponent(chatId)}&order=created_at.desc&limit=30`);
+    return rows.map(convRow);
+  }
+  // Conversas (da lista) que já têm compra REAL enviada
+  async function purchasedChats({ chatIds }) {
+    const ids = [...new Set((Array.isArray(chatIds) ? chatIds : []).filter((c) => typeof c === 'string' && SCHED_CHAT_RE.test(c)))].slice(0, 200);
+    if (!ids.length) return [];
+    const out = new Set();
+    for (let i = 0; i < ids.length; i += 100) {
+      const rows = await convRest(`${CONV_TABLE}?select=chat_id&chat_id=in.${inList(ids.slice(i, i + 100))}&status=eq.enviado&test=eq.false&value=not.is.null`);
+      rows.forEach((r) => out.add(r.chat_id));
+    }
+    return [...out];
+  }
+  // Leads de anúncio guardados (wa_ad_attribution) que ainda não têm "Contato" enviado: chegaram com a extensão
+  // fechada ou a tentativa falhou. Só os de depois de ligar o Contato e dos últimos 7 dias (o Facebook recusa os mais velhos).
+  async function pendingContactLeads({ since }) {
+    const sinceMs = Math.max(Date.parse(since || '') || 0, Date.now() - 7 * 86400000 + 60000);
+    let rows;
+    try {
+      rows = await rest(`${AD_TABLE}?select=chat_id,phone,contact_name,ad_id,ad_title,source_app,conversion_source,ctwa_clid,first_message_at&first_message_at=gte.${encodeURIComponent(new Date(sinceMs).toISOString())}&order=first_message_at.asc&limit=50`);
+    } catch (err) {
+      if (tableMissing(err, [AD_TABLE])) return [];
+      throw err;
+    }
+    if (!rows.length) return [];
+    let done = [];
+    try { done = await convRest(`${CONV_TABLE}?select=chat_id&chat_id=in.${inList(rows.map((r) => r.chat_id))}&status=eq.enviado&value=is.null`); } catch { return []; }
+    const has = new Set(done.map((r) => r.chat_id));
+    return rows.filter((r) => !has.has(r.chat_id)).map((r) => ({
+      chatId: r.chat_id, t: Math.floor(Date.parse(r.first_message_at) / 1000), name: r.contact_name || null, phone: r.phone || null,
+      ad: { title: r.ad_title || null, sourceId: r.ad_id || null, sourceApp: r.source_app || null, conversionSource: r.conversion_source || null, ctwaClid: r.ctwa_clid || null },
+    }));
+  }
+  // Diagnóstico da aba Conversões: leads de anúncio capturados hoje e Contatos enviados hoje (só números)
+  async function conversionStats({ since }) {
+    const day = encodeURIComponent(new Date(Date.parse(since) || Date.now() - 86400000).toISOString());
+    let leads = [];
+    try { leads = await rest(`${AD_TABLE}?select=first_message_at&first_message_at=gte.${day}&order=first_message_at.desc&limit=1000`); } catch (err) { if (!tableMissing(err, [AD_TABLE])) throw err; }
+    let contacts = [];
+    try { contacts = await convRest(`${CONV_TABLE}?select=event_id&status=eq.enviado&value=is.null&created_at=gte.${day}&limit=1000`); } catch { contacts = []; }
+    return { leadsToday: leads.length, lastLeadAt: leads.length ? leads[0].first_message_at : null, contactsToday: contacts.length };
   }
 
   // Valor padrão: total da última venda desta conversa no ERP (pela conversa ou pelo telefone)
@@ -2775,7 +2828,7 @@
   }
 
   root.WaApi = {
-    engineActivity, clearReadCache, automationExisting,
+    engineActivity, clearReadCache, automationExisting, chatConversions, purchasedChats, pendingContactLeads, conversionStats,
     nativeLabelEvents, nativeLabelSweep, nativeLabelCandidates, activeEnrollments, enrollmentCandidates, enrollContact,
     leaveAutomation, chatAutomationState,
     metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,

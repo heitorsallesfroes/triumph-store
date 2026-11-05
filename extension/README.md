@@ -799,6 +799,28 @@ guardada.
 
 ## O que mudou
 
+### 2.9.0
+- 📈 da conversa: no topo, **Já enviado nesta conversa** (compras e contatos desta
+  conversa: data/hora, valor, real ou teste, status) ou "Nenhuma compra enviada
+  nesta conversa".
+- **Trava contra compra duplicada**: com compra REAL enviada para a conversa nos
+  últimos 7 dias, o botão vira **Enviar outra compra** e pede confirmação ("Já foi
+  enviada uma compra de R$ X em DD/MM às HH:MM. É uma compra NOVA (outro pedido)?").
+  Compras em modo teste não contam.
+- Selo **💰 compra enviada** no histórico da aba Conversões e na conversa aberta
+  (perto das etiquetas).
+- **Contato automático**: o lead de anúncio vinha da ponte sem telefone; lead
+  @lid sem código de clique ia sem telefone e o Facebook recusava (sem registro no
+  histórico). Agora o telefone vem do WhatsApp para a conversa (@lid inclusive),
+  conferido. E, a cada abertura do WhatsApp, os leads guardados (wa_ad_attribution)
+  que chegaram depois de ligar o Contato e ainda não têm Contato entram na fila
+  (sem duplicar; só dos últimos 7 dias).
+- Aba Conversões: **Diagnóstico** com "Últimos leads de anúncio capturados: N hoje
+  · último às HH:MM" e "Contatos enviados hoje: N".
+- ERP, aba WhatsApp: nova aba **Conversões (Facebook)** com a lista (data, cliente,
+  telefone mascarado, evento, valor, anúncio, real/teste, status), filtro por período,
+  totais e paginação (sem o limite de 1000 linhas). Só leitura.
+
 ### 2.8.9
 - **Legenda do álbum ("Várias imagens")**: a WA-JS da extensão (4.7.2) não tem
   envio de álbum de verdade (várias mídias numa mensagem só): ela só envia um

@@ -1314,6 +1314,14 @@
       .bcard:hover, .bcard:focus-visible { box-shadow: var(--sh-2); }
       /* Barra do WhatsApp (topo) */
       .wabar { box-shadow: var(--sh-1); }
+      /* ═══ 2.9.0: conversões por conversa ═══ */
+      .cbuy { align-self: flex-start; margin: 0 var(--s-3) var(--s-2); padding: 2px var(--s-2); border-radius: var(--r-pill); background: var(--ok-soft); color: var(--ok); font-size: var(--fs-1); font-weight: 700; }
+      .cbuy[hidden] { display: none; }
+      .panel.sec-labels .cbuy, .panel.sec-sched .cbuy, .panel.sec-follows .cbuy, .panel.sec-disparos .cbuy, .panel.sec-vendas .cbuy, .panel.sec-midias .cbuy, .panel.editing .cbuy, .panel.diag .cbuy { display: none; }
+      .cv-bought { display: inline-block; margin-top: 2px; padding: 0 var(--s-2); border-radius: var(--r-pill); background: var(--ok-soft); color: var(--ok); font-size: var(--fs-1); font-weight: 700; }
+      .cv-chathist { gap: var(--s-1); }
+      .cv-hrow.st-falhou { color: var(--err); }
+      .cv-dup { border: 1px solid var(--warn); }
       /* ═══ 2.8.8: automações só daqui pra frente ═══ */
       .fw-badge.test { background: var(--warn-soft); color: var(--warn); }
       .act-box { gap: var(--s-2); border-color: var(--accent); }
@@ -1483,6 +1491,7 @@
           <div class="lmenu" role="menu" hidden></div>
         </div>
         <div class="cname" role="group" aria-label="Nome para mensagens" hidden></div>
+        <div class="cbuy" hidden>💰 compra enviada</div>
         <div class="name-note" hidden title="Sem telefone visível nesta conversa: a etiqueta fica ligada ao nome do contato. Se o nome mudar, ela não acompanha.">identificado só pelo nome</div>
         <div class="tools">
           <div class="trow">
@@ -2085,9 +2094,20 @@
     if (chatNames.available === false) return fallback || '';
     return (v && v.name) || '';
   }
+  // 2.9.0: selo "💰 compra enviada" na conversa aberta (1 leitura ao trocar de conversa)
+  async function loadChatBought(chatId) {
+    const box = shadow.querySelector('.cbuy');
+    if (!box) return;
+    box.hidden = true;
+    if (!chatId) return;
+    let got = null;
+    try { got = await call('purchasedChats', { chatIds: [chatId] }); } catch { got = null; }
+    if (chatNames.current === chatId) box.hidden = !(Array.isArray(got) && got.includes(chatId));
+  }
   async function setNameChat(id) {
     const chatId = CHAT_ID_OK.test(id || '') ? id : null;
     chatNames.current = chatId;
+    loadChatBought(chatId);
     cn.editing = false;
     renderNameRow();
     if (!chatId) return;
@@ -8427,20 +8447,25 @@
   // Aba com a trava (chamado pelo motor a cada ciclo): pega da ponte os leads novos de anúncio (memória) e,
   // se o interruptor estiver ligado, manda 1 "Contato" por conversa, no máximo 1 a cada 10 s. Sem lead novo,
   // nenhuma consulta ao banco; o interruptor é relido no máximo a cada 5 min (e na hora em que é mudado aqui).
-  const ca = { cfg: null, cfgAt: 0, lastSentAt: 0, sent: new Set(), queue: [] };
+  const ca = { cfg: null, cfgAt: 0, lastSentAt: 0, sent: new Set(), queue: [], pendingDone: false, lastSkip: '' };
   const CONTACT_GAP_MS = 10 * 1000;
   async function contactAutoTick() {
     let got = null;
     try { got = await waRequest('adLeads', {}, { timeout: 4000 }); } catch { got = null; }
     const leads = got && Array.isArray(got.leads) ? got.leads : [];
-    if (!leads.length && !ca.queue.length) return;
+    // 2.9.0: uma vez por abertura (depois da varredura dos anúncios das conversas carregadas): leads guardados que
+    // ainda não têm Contato (chegaram com a extensão fechada ou a tentativa falhou) entram na fila, sem duplicar
+    const pendingDue = !ca.pendingDone && at.scanned;
+    if (!leads.length && !ca.queue.length && !pendingDue) return;
     if (!ca.cfg || Date.now() - ca.cfgAt >= 5 * 60 * 1000) {
       ca.cfgAt = Date.now();
       try { ca.cfg = await call('metaContactConfig'); } catch { /* fica com o que sabia */ }
     }
     const cfg = ca.cfg;
+    if (pendingDue) ca.pendingDone = true;
     if (!cfg || !cfg.on || !cfg.since) { ca.queue = []; return; }
     const since = Date.parse(cfg.since);
+    if (pendingDue) { try { leads.push(...await call('pendingContactLeads', { since: cfg.since })); } catch { /* próxima abertura */ } }
     leads.forEach((l) => {
       if (!l || !l.chatId || !(Number(l.t) * 1000 >= since)) return; // só leads que chegaram depois de ligar
       if (ca.sent.has(l.chatId) || ca.queue.some((q) => q.chatId === l.chatId)) return;
@@ -8451,16 +8476,21 @@
     ca.lastSentAt = Date.now();
     ca.sent.add(l.chatId);
     // 2.6.3: telefone só o do WhatsApp para ESTA conversa (conferido); nome desta conversa
-    const phone = l.phone || '';
-    const name = l.name || '';
-    if (phone && (await phoneLock(l.chatId, phone, { requireActive: false }))) return; // não bate: não envia
+    // 2.9.0: o lead vem da ponte sem telefone: pega o desta conversa no WhatsApp (@c.us = os dígitos; @lid = o que
+    // o WhatsApp diz). Antes, lead @lid sem código de clique ia sem telefone e o Facebook recusava (sem histórico).
+    let phone = String(l.phone || '').replace(/\D/g, '');
+    let name = l.name || '';
+    if (!phone) { const pn = await chatPhoneName(l.chatId); phone = pn.phone || ''; if (!name) name = pn.name || ''; }
     const ad = l.ad || {};
+    if (!phone && !ad.ctwaClid) { ca.lastSkip = 'lead sem telefone e sem código de clique'; return; }
+    if (phone && (await phoneLock(l.chatId, phone, { requireActive: false }))) { ca.lastSkip = 'telefone não confere com a conversa'; return; } // não bate: não envia
     try {
       await call('sendContactEvent', { event: {
         chat_id: l.chatId, phone, contact_name: name || null, event_time: Math.floor(Number(l.t)), test: !!cfg.test,
         ad: { title: ad.title, source_id: ad.sourceId, source_app: ad.platform || ad.sourceApp, conversion_source: ad.conversionSource, ctwa_clid: ad.ctwaClid || null },
       } });
-    } catch { /* falhou: fica no histórico (Edge Function); não tenta de novo nesta aba */ }
+      ca.lastSkip = '';
+    } catch (e) { ca.lastSkip = `falhou: ${e.message}`; /* não tenta de novo nesta aba; na próxima abertura entra de novo (sem duplicar) */ }
     if (cv.open && cv.view === 'list') loadConversions();
   }
 
@@ -8473,6 +8503,12 @@
   async function loadConversions() {
     try { cv.history = await call('fetchConversions', { limit: 50 }); cv.historyError = ''; } catch (e) { cv.history = []; cv.historyError = e.message; }
     renderConversoes();
+    // 2.9.0: selo "💰 compra enviada" e diagnóstico (só números)
+    const ids = [...new Set((cv.history || []).map((h) => h.chat_id).filter(Boolean))];
+    if (ids.length) { try { cv.bought = new Set(await call('purchasedChats', { chatIds: ids })); } catch { cv.bought = null; } }
+    const day = new Date(); day.setHours(0, 0, 0, 0);
+    try { cv.stats = await call('conversionStats', { since: day.toISOString() }); } catch { cv.stats = null; }
+    if (cv.open && cv.view === 'list') renderConversoes();
   }
 
   const nowLocalInput = () => { const d = new Date(); d.setSeconds(0, 0); return `${dateInput(d)}T${timeInput(d)}`; };
@@ -8508,6 +8544,7 @@
     if (!f.name && pn.name) f.name = pn.name;
     f.phoneChecked = true;
     f.recent = recent && recent.exists ? recent : null;
+    loadChatHistory(f);
     if (last && last.value && !f.value) f.value = String(last.value.toFixed(2));
     // 2.6.2: o anúncio vem primeiro do banco; senão das mensagens carregadas; senão das antigas (pode demorar)
     let ad = saved && saved.row ? adFromAttribution(saved.row) : null;
@@ -8525,6 +8562,16 @@
     f.adLoaded = true;
     renderConversoes();
   }
+
+  // 2.9.0: "Já enviado nesta conversa"
+  async function loadChatHistory(f) {
+    let rows = null;
+    try { rows = await call('chatConversions', { chatId: f.chatId }); } catch { rows = []; }
+    if (cv.form !== f) return;
+    f.history = rows;
+    renderConversoes();
+  }
+  const dmHm = (iso) => { const d = new Date(iso); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} às ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
   // Linha salva em wa_ad_attribution → o mesmo formato do anúncio lido da conversa
   function adFromAttribution(r) {
@@ -8580,6 +8627,14 @@
     const sec = el('section', 'crmsec');
     sec.append(el('div', 'wt-head', 'COMPRA PARA O FACEBOOK'));
     if (!f.chatId) { sec.append(el('div', 'ed-note', 'Abra uma conversa individual no WhatsApp.')); ctabEl.append(sec); return; }
+    // 2.9.0: o que já foi enviado para ESTA conversa
+    const hist = el('div', 'fw-test cv-chathist');
+    hist.append(el('div', 'fw-k', 'JÁ ENVIADO NESTA CONVERSA'));
+    if (!f.history) hist.append(el('div', 'lt-none loading', 'Carregando…'));
+    else if (!f.history.length) hist.append(el('div', 'sc-prev', 'Nenhuma compra enviada nesta conversa'));
+    else f.history.forEach((h) => hist.append(el('div', `sc-prev cv-hrow st-${h.status === 'enviado' ? 'enviada' : 'falhou'}`,
+      `${dmHm(h.created_at)} · ${h.event_name === 'Contact' ? 'Contato' : `Compra ${TS.money(h.value)}`} · ${h.test ? 'teste' : 'real'} · ${h.status}`)));
+    sec.append(hist);
     const adBox = el('div', 'fw-test');
     if (!f.adLoaded) adBox.append(el('div', null, 'Procurando o anúncio da conversa (pode levar alguns segundos em conversas longas)…'));
     else if (f.ad) adBox.append(el('div', null, `Anúncio: ${f.ad.title || '(sem título)'}${f.ad.sourceId ? ` · id ${f.ad.sourceId}` : ''}${f.ad.platform ? ` · ${f.ad.platform}` : ''}`));
@@ -8607,13 +8662,15 @@
     sec.append(r2, inputField('Descrição / produto (opcional)', f.description, (v) => { f.description = v; }, { max: 200, aria: 'Descrição da compra' }));
     if (cv.test) sec.append(el('div', 'ed-note', 'Modo teste ligado: o evento aparece em "Testar eventos" no Gerenciador de Eventos.'));
     if (f.recent && f.askAgain) {
-      const box = el('div', 'fw-test');
-      box.append(el('div', 'ed-note', `Já enviado em ${schedWhen(f.recent.at)} por ${TS.money(f.recent.value)}${f.recent.test ? ' (teste)' : ''}. Enviar outro?`),
-        fbtn('bbtn primary', 'Enviar outro', () => sendPurchase(true)), fbtn('bbtn', 'Cancelar', () => { f.askAgain = false; renderConversoes(); }));
+      // 2.9.0: trava contra compra duplicada (só compras REAIS dos últimos 7 dias contam)
+      const box = el('div', 'fw-test cv-dup');
+      box.setAttribute('role', 'alert');
+      box.append(el('div', 'ed-note', `Já foi enviada uma compra de ${TS.money(f.recent.value)} em ${dmHm(f.recent.at)}. É uma compra NOVA (outro pedido)?`),
+        fbtn('bbtn primary', 'Sim, é outra compra', () => sendPurchase(true)), fbtn('bbtn', 'Cancelar', () => { f.askAgain = false; renderConversoes(); }));
       sec.append(box);
     }
     const actions = el('div', 'ed-add');
-    const go = fbtn('bbtn primary', cv.busy ? 'Enviando…' : 'Enviar compra', () => sendPurchase(false));
+    const go = fbtn('bbtn primary', cv.busy ? 'Enviando…' : f.recent ? 'Enviar outra compra' : 'Enviar compra', () => sendPurchase(false));
     go.disabled = cv.busy;
     actions.append(go, fbtn('bbtn', 'Voltar', () => { cv.view = 'list'; loadConversions(); }));
     sec.append(actions, el('div', `ed-msg${cv.err ? ' err' : ''}`, cv.msg));
@@ -8698,6 +8755,17 @@
       if (cv.contactMsg) auto.append(el('div', `ed-msg${cv.contactErr ? ' err' : ''}`, cv.contactMsg));
     }
     ctabEl.append(auto);
+    // 2.9.0: diagnóstico (só números)
+    const dg = el('section', 'crmsec cv-diag');
+    dg.append(el('div', 'wt-head', 'DIAGNÓSTICO'));
+    if (!cv.stats) dg.append(el('div', 'lt-none loading', 'Carregando…'));
+    else {
+      const hm2 = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+      dg.append(el('div', 'sc-prev', `Últimos leads de anúncio capturados: ${cv.stats.leadsToday} hoje${cv.stats.lastLeadAt ? ` · último às ${hm2(cv.stats.lastLeadAt)}` : ''}`),
+        el('div', 'sc-prev', `Contatos enviados hoje: ${cv.stats.contactsToday}`));
+      if (ca.lastSkip) dg.append(el('div', 'ed-note', `Último Contato não enviado: ${ca.lastSkip}`));
+    }
+    ctabEl.append(dg);
     const st = cv.status;
     if (st && st.published === false) ctabEl.append(el('div', 'ed-note', 'A função meta-purchase-event ainda não foi publicada no Supabase.'));
     else if (st && st.configured && !(st.configured.token && st.configured.dataset)) ctabEl.append(el('div', 'ed-note', 'Faltam os secrets META_ACCESS_TOKEN e META_DATASET_ID na Edge Function.'));
@@ -8713,6 +8781,7 @@
         el('div', 'sc-prev', `${h.ad_title ? `anúncio: ${h.ad_title}` : 'sem anúncio'} · ${h.method === 'business_messaging' ? 'WhatsApp (clique do anúncio)' : 'chat (telefone)'}${h.test ? ' · teste' : ''}${h.error ? ` · ${h.error}` : ''}`));
       const side = el('div', 'sc-side');
       side.append(el('span', 'sc-when', schedWhen(h.created_at)), el('span', 'sc-status', h.status));
+      if (cv.bought && h.chat_id && cv.bought.has(h.chat_id)) main.append(el('span', 'cv-bought', '💰 compra enviada'));
       line.append(main, side);
       sec.append(line);
     });

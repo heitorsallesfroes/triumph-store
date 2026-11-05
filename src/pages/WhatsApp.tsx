@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase';
 import ClientsToCrm from '../components/whatsapp/ClientsToCrm';
 import AutoPostSale from '../components/whatsapp/AutoPostSale';
 import WaResults from '../components/whatsapp/WaResults';
+import WaConversions from '../components/whatsapp/WaConversions';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1090,8 +1091,8 @@ function LabelsTab() {
 }
 
 // ── Página WhatsApp do ERP: ponte vendas → CRM do WhatsApp ──────────────────
-type PageTab = 'clientes' | 'posvenda' | 'resultados' | 'antigo';
-const PAGE_TABS: [PageTab, string][] = [['clientes', 'Clientes → CRM'], ['posvenda', 'Pós-venda automático'], ['resultados', 'Resultados'], ['antigo', 'Mensagens (antigo)']];
+type PageTab = 'clientes' | 'posvenda' | 'resultados' | 'conversoes' | 'antigo';
+const PAGE_TABS: [PageTab, string][] = [['clientes', 'Clientes → CRM'], ['posvenda', 'Pós-venda automático'], ['resultados', 'Resultados'], ['conversoes', 'Conversões (Facebook)'], ['antigo', 'Mensagens (antigo)']];
 
 export default function WhatsApp() {
   const [pageTab, setPageTab] = useState<PageTab>('clientes');
@@ -1128,6 +1129,7 @@ export default function WhatsApp() {
           {pageTab === 'clientes' && <ClientsToCrm />}
           {pageTab === 'posvenda' && <AutoPostSale />}
           {pageTab === 'resultados' && <WaResults />}
+          {pageTab === 'conversoes' && <WaConversions />}
         </div>
       )}
     </div>
