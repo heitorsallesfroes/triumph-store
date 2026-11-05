@@ -799,6 +799,29 @@ guardada.
 
 ## O que mudou
 
+### 2.8.0
+- **Design do painel** (só visual; nenhuma regra, texto de regra, banco ou envio mudou):
+  - Sistema visual único no Shadow DOM: cores (laranja da Triumph como destaque),
+    4 tamanhos de texto (11/12/13/15 px), espaços em múltiplos de 4, cantos e
+    sombras como tokens. Todas as telas usam só esses valores.
+  - Tema claro e escuro acompanhando o WhatsApp Web (como antes), com o texto
+    laranja numa variante mais escura/clara para ficar legível nos dois.
+  - Menu numa linha só: **Mensagens, Mídias, Etiquetas, Vendas, Conversões** e
+    **Mais** (Quadro, Agendados, Disparos, Automações). Nomes inteiros, ícones do
+    mesmo tamanho, aba ativa com fundo e traço laranja; "Mais" fica destacado
+    quando a aba aberta está dentro dele. Painel com 360 px para caber tudo.
+  - Faixa da conversa (💰 Venda, 📈 Compra p/ Facebook, 🔁 Automação) quebra a
+    linha em vez de cortar.
+  - Mesmo padrão em listas, cartões e formulários (rótulo em cima, campos da
+    mesma altura, botão principal laranja, secundário neutro, perigo vermelho),
+    estados vazios com ícone (Mídias com "Subir arquivo"), "Carregando…" com
+    esqueleto e mensagens de sucesso/aviso/erro no mesmo formato.
+  - Etiquetas CRM e do WhatsApp com o mesmo chip: fundo suave na cor da
+    etiqueta e texto legível.
+  - Foco visível no teclado, áreas de clique de pelo menos 28 px e nenhum texto
+    menor que 11 px.
+  - Prints em `extension/screenshots/2.8.0` (claro e escuro).
+
 ### 2.7.2
 - **Abrir no ERP direto na venda**: depois de registrar a venda pelo 💰, o botão
   **Abrir esta venda no ERP** abre o Histórico de Vendas já nessa venda (rola até
