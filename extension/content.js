@@ -1305,6 +1305,19 @@
       .bcard:hover, .bcard:focus-visible { box-shadow: var(--sh-2); }
       /* Barra do WhatsApp (topo) */
       .wabar { box-shadow: var(--sh-1); }
+      /* ═══ 2.8.2: categorias ═══ */
+      .trow .newitem, .trow .newcat { flex-shrink: 0; }
+      .trow { flex-wrap: wrap; }
+      .trow .search { flex: 1 1 100%; }
+      .trow .newitem, .trow .newcat { flex: 1 1 0; }
+      .newcat { min-height: var(--field-h); padding: 0 var(--s-3); border-radius: var(--r-md); border: 1px solid var(--border-strong); background: var(--card); color: var(--fg); font-size: var(--fs-2); font-weight: 600; }
+      .newcat:hover { border-color: var(--accent); color: var(--accent-text); }
+      .newcat-form { margin: 0 0 var(--s-2); }
+      .imenu button.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); }
+      .cat-empty { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); padding: var(--s-2) var(--s-3); border: 1px dashed var(--border-strong); border-radius: var(--r-md); color: var(--muted); font-size: var(--fs-2); }
+      .cat-add { min-height: var(--hit); padding: 0 var(--s-2); border: none; border-radius: var(--r-sm); background: transparent; color: var(--accent-text); font-size: var(--fs-2); font-weight: 600; }
+      .cat-add:hover { background: var(--accent-soft); }
+      .cat-askempty { margin: 0 0 var(--s-1); border: 1px solid var(--warn); background: var(--warn-soft); }
       /* ═══ 2.8.1: lista compacta, títulos inteiros (até 2 linhas) ═══ */
       .cat { margin-bottom: var(--s-2); }
       .cat-head { padding: var(--s-2) var(--s-3); font-size: var(--fs-2); font-weight: 700; }
@@ -1395,7 +1408,8 @@
         <div class="tools">
           <div class="trow">
             <label class="search">${svg('search')}<input type="text" placeholder="Pesquisar resposta rápida" aria-label="Pesquisar resposta rápida" /></label>
-            <button class="newitem" type="button" title="Criar uma mensagem nova">+ Nova</button>
+            <button class="newitem" type="button" title="Criar uma mensagem nova">+ Nova mensagem</button>
+            <button class="newcat" type="button" title="Criar uma categoria nova">+ Nova categoria</button>
           </div>
           <div class="filters" role="group" aria-label="Filtros"></div>
         </div>
@@ -1475,6 +1489,13 @@
   const seqStop   = shadow.querySelector('.seqbar .seqstop');
   seqStop.addEventListener('click', () => stopSequence());
   shadow.querySelector('.newitem').addEventListener('click', () => openEditor());
+  // 2.8.2: "+ Nova categoria" pede o nome ali mesmo, no topo da lista
+  let newCatOpen = false;
+  shadow.querySelector('.newcat').addEventListener('click', () => {
+    if (state.view !== 'list') showList();
+    newCatOpen = !newCatOpen;
+    renderList();
+  });
   const lastEl    = shadow.querySelector('.foot b');
   const labelsEl  = shadow.querySelector('.labels');
   const lchipsEl  = shadow.querySelector('.labels .chips');
@@ -2535,13 +2556,15 @@
       }
       return;
     }
-    if (!state.items.length) {
-      listEl.append(stateBox('inbox', 'Nenhuma mensagem cadastrada.', 'Use "+ Nova" aqui no painel ou a aba WhatsApp do ERP.', true));
+    if (newCatOpen) listEl.append(newCategoryEl());
+    const filtering = state.filter !== 'tudo' || state.search.trim() !== '';
+    if (!state.items.length && (!state.categories.length || filtering)) {
+      listEl.append(stateBox('inbox', 'Nenhuma mensagem cadastrada.', 'Use "+ Nova mensagem" aqui no painel ou a aba WhatsApp do ERP.', true));
       return;
     }
 
     const items = visibleItems();
-    if (!items.length) {
+    if (!items.length && filtering) {
       listEl.append(state.filter === 'mais_usadas'
         ? stateBox('inbox', 'Nenhuma mensagem usada ainda.', 'As mais usadas aparecem aqui depois do primeiro envio.')
         : stateBox('search', 'Nada encontrado.', 'Tente outra palavra ou outro filtro.'));
@@ -2554,9 +2577,10 @@
       listEl.append(flat);
     } else {
       const searching = state.search.trim() !== '';
+      // 2.8.2: sem filtro nem busca, mostra também as categorias vazias; com filtro/busca, só as que têm resultado
       state.categories.forEach((cat) => {
         const catItems = items.filter((i) => i.category_id === cat.id);
-        if (catItems.length) listEl.append(categoryEl(cat, catItems, searching));
+        if (catItems.length || !filtering) listEl.append(categoryEl(cat, catItems, searching));
       });
     }
     listEl.scrollTop = scroll;
@@ -2582,7 +2606,7 @@
     const top = el('div', 'cat-top');
     const opts = el('button', 'cat-opts', '···');
     opts.type = 'button';
-    opts.title = 'Renomear ou excluir a categoria';
+    opts.title = 'Renomear, mudar a ordem ou apagar a categoria';
     opts.setAttribute('aria-label', `Opções da categoria "${cat.name}"`);
     opts.addEventListener('click', () => { catMenu = catMenu && catMenu.id === cat.id ? null : { id: cat.id, mode: 'menu' }; renderList(); });
     top.append(head, opts);
@@ -2590,6 +2614,16 @@
     const body  = el('div', 'cat-body');
     const inner = el('div', 'cat-inner');
     catItems.forEach((i) => inner.append(cardEl(i)));
+    if (!catItems.length) {
+      const empty = el('div', 'cat-empty');
+      empty.append('Nenhuma mensagem. ');
+      const add = el('button', 'cat-add', '+ Nova mensagem aqui');
+      add.type = 'button';
+      add.addEventListener('click', (e) => { e.stopPropagation(); openEditor(null, { categoryId: cat.id }); });
+      empty.append(add);
+      inner.append(empty);
+    }
+    if (emptyAsk && emptyAsk.id === cat.id) inner.prepend(emptyAskEl(cat));
     body.append(inner);
     section.append(top);
     if (catMenu && catMenu.id === cat.id) section.append(catMenuEl(cat, catItems));
@@ -3526,6 +3560,7 @@
   // ── Menu "···" do item e da categoria (confirmações dentro do painel) ──
 
   let itemMenu = null; // { id, mode: 'menu' | 'delete' }
+  let emptyAsk = null; // 2.8.2: { id } da categoria que ficou vazia
   let catMenu = null;  // { id, mode: 'menu' | 'rename' | 'delete' }
   let libBusy = false;
 
@@ -3573,9 +3608,11 @@
     libBusy = true;
     renderList();
     try {
+      const wasLast = !state.items.some((i) => i.id !== item.id && i.category_id === item.category_id);
       await call('deleteItem', { id: item.id });
       itemMenu = null;
       toast('Mensagem excluída.', 'ok', 3000);
+      if (wasLast && state.categories.some((c) => c.id === item.category_id)) emptyAsk = { id: item.category_id };
       await reloadLibrary();
     } catch (e) {
       toast(`Não consegui excluir: ${e.message}`, 'error', 6000);
@@ -3606,17 +3643,107 @@
       box.append(input, btn('Salvar', save), btn('Cancelar', () => { catMenu = null; renderList(); }));
       setTimeout(() => input.focus(), 0);
     } else if (catMenu.mode === 'delete') {
-      box.append(el('div', 'q', `Excluir a categoria "${cat.name}"?`),
-        btn('Excluir', () => categoryOp('deleteCategory', { id: cat.id }, 'Categoria excluída.'), 'danger'),
+      // 2.8.2: com mensagens, apaga junto (as mídias da biblioteca ficam)
+      box.append(el('div', 'q', total
+        ? `Apagar a categoria "${cat.name}" e as ${total} mensage${total === 1 ? 'm' : 'ns'} dela? As mídias da biblioteca não são apagadas.`
+        : `Apagar a categoria "${cat.name}"?`),
+        btn('Apagar', () => deleteCategoryNow(cat, total), 'danger'),
         btn('Cancelar', () => { catMenu = null; renderList(); }));
     } else {
+      const idx = state.categories.findIndex((c) => c.id === cat.id);
       box.append(btn('Renomear', () => { catMenu = { id: cat.id, mode: 'rename' }; renderList(); }));
-      box.append(btn('Excluir', () => {
-        if (total) { toast('A categoria tem mensagens: mova ou exclua as mensagens antes.', 'warn', 6000); return; }
-        catMenu = { id: cat.id, mode: 'delete' };
-        renderList();
-      }, 'danger'));
+      const up = btn('Subir', () => moveCategory(cat, -1));
+      up.disabled = libBusy || idx <= 0;
+      const down = btn('Descer', () => moveCategory(cat, 1));
+      down.disabled = libBusy || idx < 0 || idx >= state.categories.length - 1;
+      box.append(up, down);
+      box.append(btn('Apagar', () => { catMenu = { id: cat.id, mode: 'delete' }; renderList(); }, 'danger'));
     }
+    return box;
+  }
+
+  // 2.8.2: apagar a categoria (e as mensagens, se tiver): some da tela e do editor na hora
+  async function deleteCategoryNow(cat, total) {
+    if (libBusy) return;
+    libBusy = true;
+    renderList();
+    try {
+      await call('deleteCategory', { id: cat.id, withItems: total > 0 });
+      catMenu = null;
+      if (emptyAsk && emptyAsk.id === cat.id) emptyAsk = null;
+      state.categories = state.categories.filter((c) => c.id !== cat.id);
+      state.items = state.items.filter((i) => i.category_id !== cat.id);
+      saveCache();
+      toast(total ? `Categoria apagada com ${total} mensage${total === 1 ? 'm' : 'ns'}.` : 'Categoria apagada.', 'ok', 3000);
+      await reloadLibrary().catch(() => {});
+    } catch (e) {
+      toast(e.message, 'error', 6000);
+    } finally {
+      libBusy = false;
+      renderList();
+    }
+  }
+
+  async function moveCategory(cat, dir) {
+    const list = state.categories.slice();
+    const i = list.findIndex((c) => c.id === cat.id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length || libBusy) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    libBusy = true;
+    state.categories = list;
+    renderList();
+    try {
+      await call('reorderCategories', { ids: list.map((c) => c.id) });
+      await reloadLibrary().catch(() => {});
+    } catch (e) {
+      toast(`Não consegui mudar a ordem: ${e.message}`, 'error', 6000);
+      await reloadLibrary().catch(() => {});
+    } finally {
+      libBusy = false;
+      renderList();
+    }
+  }
+
+  // 2.8.2: nova categoria pelo topo da lista
+  function newCategoryEl() {
+    const box = el('div', 'imenu newcat-form');
+    const input = el('input');
+    input.type = 'text';
+    input.maxLength = 60;
+    input.placeholder = 'Nome da nova categoria';
+    input.setAttribute('aria-label', 'Nome da nova categoria');
+    const create = async () => {
+      if (libBusy) return;
+      const name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      libBusy = true;
+      try {
+        await call('createCategory', { name });
+        newCatOpen = false;
+        toast('Categoria criada.', 'ok', 3000);
+        await reloadLibrary();
+      } catch (e) {
+        toast(e.message, 'error', 6000);
+      } finally {
+        libBusy = false;
+        renderList();
+      }
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); create(); } });
+    const b = (text, fn, cls) => { const x = el('button', cls || null, text); x.type = 'button'; x.disabled = libBusy; x.addEventListener('click', (e) => { e.stopPropagation(); fn(); }); return x; };
+    box.append(input, b('Criar', create, 'primary'), b('Cancelar', () => { newCatOpen = false; renderList(); }));
+    setTimeout(() => input.focus(), 0);
+    return box;
+  }
+
+  // 2.8.2: apagou a última mensagem da categoria → "Apagar a categoria também?"
+  function emptyAskEl(cat) {
+    const box = el('div', 'imenu cat-askempty');
+    box.setAttribute('role', 'alert');
+    const b = (text, fn, cls) => { const x = el('button', cls || null, text); x.type = 'button'; x.disabled = libBusy; x.addEventListener('click', (e) => { e.stopPropagation(); fn(); }); return x; };
+    box.append(el('div', 'q', `A categoria "${cat.name}" ficou vazia. Apagar a categoria também?`),
+      b('Apagar', () => deleteCategoryNow(cat, 0), 'danger'), b('Manter', () => { emptyAsk = null; renderList(); }));
     return box;
   }
 
@@ -3713,13 +3840,13 @@
     return m;
   }
 
-  function openEditor(item = null, { duplicate = false } = {}) {
+  function openEditor(item = null, { duplicate = false, categoryId = null } = {}) {
     closeEditorState();
     const cats = state.categories;
     ed = {
       id: item && !duplicate ? item.id : null,
       title: item ? (duplicate ? `${item.title} (cópia)` : item.title).slice(0, 80) : '',
-      category_id: item ? item.category_id : cats.length ? cats[0].id : '__new',
+      category_id: item ? item.category_id : categoryId && cats.some((c) => c.id === categoryId) ? categoryId : cats.length ? cats[0].id : '__new',
       newCategory: '',
       parts: item ? partsOf(item).map(edPart) : [edPart({ type: 'texto' })],
       // 2.1.0: etiquetas CRM ao enviar (opcionais)

@@ -669,12 +669,22 @@
     return true;
   }
 
-  // Só apaga categoria vazia (no banco, apagar a categoria apagaria as mensagens dela)
-  async function deleteCategory({ id }) {
+  // Sem withItems: só apaga categoria vazia. 2.8.2: withItems apaga a categoria e as mensagens dela (as partes vão
+  // junto; arquivos no Storage e mídias da biblioteca ficam).
+  async function deleteCategory({ id, withItems = false }) {
     checkUuid(id, 'Categoria inválida');
-    const items = await rest(`wa_items?select=id&category_id=eq.${id}&limit=1`);
-    if (items.length) throw new Error('A categoria tem mensagens: mova ou exclua as mensagens antes');
+    const items = await rest(`wa_items?select=id&category_id=eq.${id}`);
+    if (items.length && withItems !== true) throw new Error('A categoria tem mensagens: mova ou exclua as mensagens antes');
+    if (items.length) await rest(`wa_items?category_id=eq.${id}`, { method: 'DELETE' });
     await rest(`wa_categories?id=eq.${id}`, { method: 'DELETE' });
+    return { deleted: true, items: items.length };
+  }
+
+  // 2.8.2: ordem das categorias (Subir/Descer)
+  async function reorderCategories({ ids }) {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 200) throw new Error('Ordem inválida');
+    ids.forEach((x) => checkUuid(x, 'Categoria inválida'));
+    for (let i = 0; i < ids.length; i++) await rest(`wa_categories?id=eq.${ids[i]}`, json('PATCH', 'return=minimal', { position: i }));
     return true;
   }
 
@@ -2621,7 +2631,7 @@
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,
-    saveItem, deleteItem, createCategory, renameCategory, deleteCategory, uploadFile, partsTableExists,
+    saveItem, deleteItem, createCategory, renameCategory, deleteCategory, reorderCategories, uploadFile, partsTableExists,
     fetchMediaLibrary, createMediaFolder, renameMediaFolder, deleteMediaFolder, reorderMediaFolders, uploadMedia, updateMedia,
     incrementMediaUsage, mediaUsage, deleteMedia, importMediaFromItems,
     fetchLibrary, incrementUsage, fetchFile, isAllowedFileUrl, MAX_FILE_BYTES,

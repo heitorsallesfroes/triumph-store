@@ -27,7 +27,8 @@ const HANDLERS = {
   deleteItem:      (m) => WaApi.deleteItem({ id: m.id }),
   createCategory:  (m) => WaApi.createCategory({ name: m.name }),
   renameCategory:  (m) => WaApi.renameCategory({ id: m.id, name: m.name }),
-  deleteCategory:  (m) => WaApi.deleteCategory({ id: m.id }),
+  deleteCategory:  (m) => WaApi.deleteCategory({ id: m.id, withItems: m.withItems === true }),
+  reorderCategories: (m) => WaApi.reorderCategories({ ids: m.ids }),
   uploadFile:      (m) => WaApi.uploadFile({ partType: m.partType, base64: m.base64, mime: m.mime, fileName: m.fileName }),
   // Agendamentos (1.9.0)
   fetchSchedules:  ()  => WaApi.fetchSchedules(),

@@ -799,6 +799,19 @@ guardada.
 
 ## O que mudou
 
+### 2.8.2
+- Mensagens rápidas: **+ Nova mensagem** e **+ Nova categoria** (pede o nome ali
+  mesmo) no topo da aba.
+- Categorias vazias aparecem na lista (contador 0 e "Nenhuma mensagem. + Nova
+  mensagem aqui", que abre o editor já nessa categoria). Com filtro ou busca
+  ativos, só aparecem as categorias com resultado.
+- Menu ⋯ da categoria: **Renomear**, **Subir**, **Descer** e **Apagar**. Com
+  mensagens, pergunta "Apagar a categoria e as N mensagens dela?" (as mídias da
+  biblioteca e os arquivos não são apagados); vazia, confirmação simples. Some da
+  lista e do editor na hora.
+- Ao apagar a última mensagem de uma categoria: "A categoria X ficou vazia.
+  Apagar a categoria também?" com **Apagar** e **Manter**.
+
 ### 2.8.1
 - **Lista de Mensagens rápidas** (só visual): o título ocupa a largura toda e
   quebra em até 2 linhas; embaixo, menor, o tipo e o resumo ("Áudio de voz ·
