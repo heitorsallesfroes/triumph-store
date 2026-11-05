@@ -1314,6 +1314,17 @@
       .bcard:hover, .bcard:focus-visible { box-shadow: var(--sh-2); }
       /* Barra do WhatsApp (topo) */
       .wabar { box-shadow: var(--sh-1); }
+      /* ═══ 2.8.5: arrastar para reordenar ═══ */
+      .cat-grip { flex-shrink: 0; width: 12px; margin-right: -4px; color: var(--muted); font-size: var(--fs-1); letter-spacing: -2px; opacity: 0; transition: opacity .15s; cursor: grab; }
+      .cat-top:hover .cat-grip, .cat-top:focus-within .cat-grip { opacity: 1; }
+      .list .card-row, .mtab .md-card, .mtab [data-folder] { touch-action: none; }
+      .root.dnd-on, .root.dnd-on * { user-select: none !important; -webkit-user-select: none !important; cursor: grabbing !important; }
+      .dnd-src { opacity: .45; }
+      .dnd-before { box-shadow: 0 -3px 0 var(--accent) !important; }
+      .dnd-after { box-shadow: 0 3px 0 var(--accent) !important; }
+      .mtab .dnd-before { box-shadow: -3px 0 0 var(--accent) !important; }
+      .mtab .dnd-after { box-shadow: 3px 0 0 var(--accent) !important; }
+      .dnd-into { outline: 2px dashed var(--accent) !important; outline-offset: 2px; background: var(--accent-soft) !important; }
       /* ═══ 2.8.4: largura ajustável ═══ */
       .resizer { position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; z-index: 9; cursor: col-resize; touch-action: none; }
       .resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: var(--accent); opacity: 0; transition: opacity .15s; }
@@ -2875,9 +2886,14 @@
     section.style.setProperty('--cat', catColor(cat.id));
     if (!searching && state.collapsed[cat.id]) section.classList.add('collapsed');
 
+    section.dataset.cat = cat.id;
     const head = el('button', 'cat-head');
     head.type = 'button';
     head.innerHTML = svg('chevron', 'chev');
+    const grip = el('span', 'cat-grip', '⋮⋮');
+    grip.setAttribute('aria-hidden', 'true');
+    grip.title = 'Arraste para mudar a ordem';
+    head.prepend(grip);
     head.append(el('span', 'name', cat.name), el('span', 'count', String(catItems.length)));
     head.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
     head.addEventListener('click', () => {
@@ -3936,13 +3952,7 @@
         btn('Apagar', () => deleteCategoryNow(cat, total), 'danger'),
         btn('Cancelar', () => { catMenu = null; renderList(); }));
     } else {
-      const idx = state.categories.findIndex((c) => c.id === cat.id);
       box.append(btn('Renomear', () => { catMenu = { id: cat.id, mode: 'rename' }; renderList(); }));
-      const up = btn('Subir', () => moveCategory(cat, -1));
-      up.disabled = libBusy || idx <= 0;
-      const down = btn('Descer', () => moveCategory(cat, 1));
-      down.disabled = libBusy || idx < 0 || idx >= state.categories.length - 1;
-      box.append(up, down);
       box.append(btn('Apagar', () => { catMenu = { id: cat.id, mode: 'delete' }; renderList(); }, 'danger'));
     }
     return box;
@@ -3970,26 +3980,145 @@
     }
   }
 
-  async function moveCategory(cat, dir) {
-    const list = state.categories.slice();
-    const i = list.findIndex((c) => c.id === cat.id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= list.length || libBusy) return;
-    [list[i], list[j]] = [list[j], list[i]];
-    libBusy = true;
+  // ── 2.8.5: arrastar para reordenar (ponteiro; só começa depois de mover alguns pixels) ──
+  // Clique simples continua abrindo/fechando; Esc cancela; com filtro/busca fica desligado; erro ao salvar volta a ordem.
+  const DND_PX = 6;
+  const dnd = { cfg: null, src: null, active: false, x0: 0, y0: 0, hit: null };
+  const dndPoint = (e) => (e.composedPath ? e.composedPath()[0] : e.target);
+  function dndMark(hit) {
+    shadow.querySelectorAll('.dnd-before, .dnd-after, .dnd-into').forEach((n) => n.classList.remove('dnd-before', 'dnd-after', 'dnd-into'));
+    if (hit) hit.el.classList.add(`dnd-${hit.where}`);
+  }
+  function dndStop(drop) {
+    window.removeEventListener('pointermove', dndMove, true);
+    window.removeEventListener('pointerup', dndUp, true);
+    window.removeEventListener('keydown', dndKey, true);
+    const { cfg, hit, active, src } = dnd;
+    dndMark(null);
+    root.classList.remove('dnd-on');
+    if (src) src.classList.remove('dnd-src');
+    Object.assign(dnd, { cfg: null, src: null, active: false, hit: null });
+    if (!active) return;
+    // o clique que vem logo depois de soltar não abre/fecha nada
+    const stop = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+    shadow.addEventListener('click', stop, true);
+    setTimeout(() => shadow.removeEventListener('click', stop, true), 0);
+    if (drop && hit) cfg.drop(hit);
+  }
+  function dndMove(e) {
+    if (!dnd.cfg) return;
+    if (!dnd.active) {
+      if (Math.abs(e.clientX - dnd.x0) < DND_PX && Math.abs(e.clientY - dnd.y0) < DND_PX) return;
+      if (dnd.cfg.blocked()) { toast('Limpe a busca para reordenar', 'warn', 4000); dndStop(false); return; }
+      dnd.active = true;
+      root.classList.add('dnd-on');
+      dnd.src.classList.add('dnd-src');
+    }
+    const t = dndPoint(e);
+    const hit = t && t.closest ? dnd.cfg.find(t, e) : null;
+    dnd.hit = hit && hit.el !== dnd.src ? hit : null;
+    dndMark(dnd.hit);
+  }
+  function dndUp(e) { if (dnd.active) dndMove(e); dndStop(true); }
+  function dndKey(e) {
+    if (e.key !== 'Escape' || !dnd.cfg) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dndStop(false);
+  }
+  function dndStart(e, src, cfg) {
+    if (e.button != null && e.button !== 0) return;
+    if (dnd.cfg) dndStop(false);
+    Object.assign(dnd, { cfg, src, active: false, x0: e.clientX, y0: e.clientY, hit: null });
+    window.addEventListener('pointermove', dndMove, true);
+    window.addEventListener('pointerup', dndUp, true);
+    window.addEventListener('keydown', dndKey, true);
+  }
+  const halfY = (node, e) => { const r = node.getBoundingClientRect(); return e.clientY < r.top + r.height / 2 ? 'before' : 'after'; };
+  const halfX = (node, e) => { const r = node.getBoundingClientRect(); return e.clientX < r.left + r.width / 2 ? 'before' : 'after'; };
+  const listFiltering = () => state.filter !== 'tudo' || state.search.trim() !== '';
+
+  async function dropCategory(srcId, hit) {
+    const prev = state.categories.slice();
+    const list = prev.filter((c) => c.id !== srcId);
+    const moved = prev.find((c) => c.id === srcId);
+    const at = list.findIndex((c) => c.id === hit.el.dataset.cat);
+    if (!moved || at < 0) return;
+    list.splice(at + (hit.where === 'after' ? 1 : 0), 0, moved);
     state.categories = list;
     renderList();
     try {
       await call('reorderCategories', { ids: list.map((c) => c.id) });
-      await reloadLibrary().catch(() => {});
+      saveCache();
     } catch (e) {
-      toast(`Não consegui mudar a ordem: ${e.message}`, 'error', 6000);
-      await reloadLibrary().catch(() => {});
-    } finally {
-      libBusy = false;
+      state.categories = prev;
       renderList();
+      toast(`Não consegui salvar a nova ordem: ${e.message}`, 'error', 6000);
     }
   }
+
+  async function dropItem(srcId, hit) {
+    const prev = state.items.slice();
+    const item = prev.find((i) => i.id === srcId);
+    if (!item) return;
+    const list = prev.filter((i) => i.id !== srcId);
+    let catId;
+    let at;
+    if (hit.where === 'into') {
+      catId = hit.el.dataset.cat;
+      let last = -1;
+      list.forEach((i, k) => { if (i.category_id === catId) last = k; });
+      at = last >= 0 ? last + 1 : list.length;
+    } else {
+      const target = list.find((i) => i.id === hit.el.dataset.id);
+      if (!target) return;
+      catId = target.category_id;
+      at = list.indexOf(target) + (hit.where === 'after' ? 1 : 0);
+    }
+    if (!catId) return;
+    list.splice(at, 0, { ...item, category_id: catId });
+    state.items = list;
+    renderList();
+    try {
+      await call('moveItems', { categoryId: catId, ids: list.filter((i) => i.category_id === catId).map((i) => i.id) });
+      saveCache();
+      if (catId !== item.category_id) toast('Mensagem movida.', 'ok', 2500);
+    } catch (e) {
+      state.items = prev;
+      renderList();
+      toast(`Não consegui salvar a nova ordem: ${e.message}`, 'error', 6000);
+    }
+  }
+
+  // Lista de mensagens: arrastar categoria (pelo cabeçalho) ou mensagem (pela linha)
+  listEl.addEventListener('pointerdown', (e) => {
+    if (state.view !== 'list' || state.filter === 'mais_usadas') return;
+    const t = dndPoint(e);
+    if (!t || !t.closest || t.closest('.btns, .cat-opts, .imenu, .pv-wrap, .cat-empty, .greet-form, .newcat-form, input, textarea, select')) return;
+    const card = t.closest('.card');
+    if (card && card.closest('.cat')) {
+      dndStart(e, card, {
+        blocked: listFiltering,
+        find: (p, ev) => {
+          const c = p.closest('.card');
+          if (c && c.closest('.cat')) return { el: c, where: halfY(c, ev) };
+          const sec = p.closest('.cat');
+          return sec ? { el: sec, where: 'into' } : null;
+        },
+        drop: (hit) => dropItem(card.dataset.id, hit),
+      });
+      return;
+    }
+    const top = t.closest('.cat-top');
+    const sec = top && top.closest('.cat');
+    if (sec) {
+      dndStart(e, sec, {
+        blocked: listFiltering,
+        find: (p, ev) => { const c = p.closest('.cat'); return c ? { el: c, where: halfY(c, ev) } : null; },
+        drop: (hit) => dropCategory(sec.dataset.cat, hit),
+      });
+    }
+  });
 
   // 2.8.2: nova categoria pelo topo da lista
   function newCategoryEl() {
@@ -7268,6 +7397,66 @@
     await loadMedia({ quiet: true });
   }
 
+  // 2.8.5: arrastar pastas (ordem) e mídias (para outra pasta)
+  const mdFiltering = () => !!md.q || md.type !== 'todos';
+  async function dropFolder(srcId, hit) {
+    const prev = md.folders.slice();
+    const list = prev.filter((f) => f.id !== srcId);
+    const moved = prev.find((f) => f.id === srcId);
+    const at = list.findIndex((f) => f.id === hit.el.dataset.folder);
+    if (!moved || at < 0) return;
+    list.splice(at + (hit.where === 'after' ? 1 : 0), 0, moved);
+    md.folders = list;
+    renderMidias();
+    try { await call('reorderMediaFolders', { ids: list.map((f) => f.id) }); } catch (e) {
+      md.folders = prev;
+      renderMidias();
+      toast(`Não consegui salvar a nova ordem: ${e.message}`, 'error', 6000);
+    }
+  }
+  async function dropMedia(mediaId, hit) {
+    const m = md.media.find((x) => x.id === mediaId);
+    if (!m) return;
+    const folderId = hit.el.dataset.folder === 'sem' ? null : hit.el.dataset.folder;
+    if ((m.folder_id || null) === folderId) return;
+    const before = m.folder_id;
+    m.folder_id = folderId;
+    renderMidias();
+    try {
+      await call('updateMedia', { id: m.id, folderId });
+      toast('Mídia movida.', 'ok', 2500);
+    } catch (e) {
+      m.folder_id = before;
+      renderMidias();
+      toast(`Não consegui mover: ${e.message}`, 'error', 6000);
+    }
+  }
+  const FOLDER_ID = /^[0-9a-f-]{36}$/;
+  if (mtabEl) {
+    mtabEl.addEventListener('pointerdown', (e) => {
+      if (md.sel) return;
+      const t = dndPoint(e);
+      if (!t || !t.closest || t.closest('input, textarea, select, .md-drop')) return;
+      const chip = t.closest('[data-folder]');
+      if (chip && FOLDER_ID.test(chip.dataset.folder)) {
+        dndStart(e, chip, {
+          blocked: mdFiltering,
+          find: (p, ev) => { const c = p.closest('[data-folder]'); return c && FOLDER_ID.test(c.dataset.folder) ? { el: c, where: halfX(c, ev) } : null; },
+          drop: (hit) => dropFolder(chip.dataset.folder, hit),
+        });
+        return;
+      }
+      const card = t.closest('.md-card');
+      if (card && card.dataset.id) {
+        dndStart(e, card, {
+          blocked: mdFiltering,
+          find: (p) => { const c = p.closest('[data-folder]'); return c && c.dataset.folder !== 'todas' ? { el: c, where: 'into' } : null; },
+          drop: (hit) => dropMedia(card.dataset.id, hit),
+        });
+      }
+    });
+  }
+
   // Arrastar e soltar em qualquer lugar da aba
   if (mtabEl) {
     mtabEl.addEventListener('dragover', (e) => { e.preventDefault(); const z = mtabEl.querySelector('.md-drop'); if (z) z.classList.add('over'); });
@@ -7342,6 +7531,7 @@
     const chip = (id, label) => {
       const b = fbtn(`ed-mini${md.folder === id ? ' on' : ''}`, label, () => { md.folder = id; md.folderEdit = null; md.confirmFolderDel = null; renderMidias(); });
       b.setAttribute('aria-pressed', String(md.folder === id));
+      b.dataset.folder = id; // 2.8.5: arrastar (pastas: ordem; mídias: soltar na pasta)
       return b;
     };
     chips.append(chip('todas', `Todas (${md.media.length})`), chip('sem', `Sem pasta (${count((m) => !m.folder_id)})`));
@@ -7351,16 +7541,8 @@
     fact.append(fbtn('ed-mini', '+ Pasta', () => { md.folderEdit = { id: null, name: '' }; renderMidias(); }));
     const cur = md.folders.find((f) => f.id === md.folder);
     if (cur) {
-      const idx = md.folders.indexOf(cur);
-      const move = (d) => async () => {
-        const ids = md.folders.map((f) => f.id);
-        ids.splice(idx + d, 0, ids.splice(idx, 1)[0]);
-        try { await call('reorderMediaFolders', { ids }); } catch (e) { md.msg = `Não consegui mudar a ordem: ${e.message}`; md.err = true; }
-        await loadMedia({ quiet: true });
-      };
-      const up = fbtn('ed-mini', '↑', move(-1)); up.disabled = idx === 0; up.setAttribute('aria-label', 'Subir a pasta');
-      const down = fbtn('ed-mini', '↓', move(1)); down.disabled = idx === md.folders.length - 1; down.setAttribute('aria-label', 'Descer a pasta');
-      fact.append(fbtn('ed-mini', 'Renomear', () => { md.folderEdit = { id: cur.id, name: cur.name }; renderMidias(); }), up, down,
+      // 2.8.5: a ordem das pastas muda arrastando o nome da pasta
+      fact.append(fbtn('ed-mini', 'Renomear', () => { md.folderEdit = { id: cur.id, name: cur.name }; renderMidias(); }),
         fbtn('ed-mini', md.confirmFolderDel === cur.id ? 'Confirmar: apagar a pasta' : 'Apagar pasta', async () => {
           if (md.confirmFolderDel !== cur.id) { md.confirmFolderDel = cur.id; renderMidias(); return; }
           md.confirmFolderDel = null;

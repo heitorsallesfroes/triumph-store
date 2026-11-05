@@ -680,7 +680,16 @@
     return { deleted: true, items: items.length };
   }
 
-  // 2.8.2: ordem das categorias (Subir/Descer)
+  // 2.8.5: arrastar mensagens: categoria e ordem (ids na ordem nova da categoria de destino)
+  async function moveItems({ categoryId, ids }) {
+    checkUuid(categoryId, 'Categoria inválida');
+    if (!Array.isArray(ids) || !ids.length || ids.length > 500) throw new Error('Ordem inválida');
+    ids.forEach((x) => checkUuid(x, 'Item inválido'));
+    for (let i = 0; i < ids.length; i++) await rest(`wa_items?id=eq.${ids[i]}`, json('PATCH', 'return=minimal', { category_id: categoryId, position: i }));
+    return true;
+  }
+
+  // 2.8.2: ordem das categorias (2.8.5: pelo arraste)
   async function reorderCategories({ ids }) {
     if (!Array.isArray(ids) || !ids.length || ids.length > 200) throw new Error('Ordem inválida');
     ids.forEach((x) => checkUuid(x, 'Categoria inválida'));
@@ -2688,7 +2697,7 @@
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,
-    saveItem, deleteItem, createCategory, renameCategory, deleteCategory, reorderCategories,
+    saveItem, deleteItem, createCategory, renameCategory, deleteCategory, reorderCategories, moveItems,
     getChatName, setChatName, getGreetings, setGreetings, uploadFile, partsTableExists,
     fetchMediaLibrary, createMediaFolder, renameMediaFolder, deleteMediaFolder, reorderMediaFolders, uploadMedia, updateMedia,
     incrementMediaUsage, mediaUsage, deleteMedia, importMediaFromItems,

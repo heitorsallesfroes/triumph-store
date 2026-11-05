@@ -799,6 +799,20 @@ guardada.
 
 ## O que mudou
 
+### 2.8.5
+- **Arrastar para reordenar** (com o mouse):
+  - Categorias das mensagens rápidas: arraste o cabeçalho (alça ⋮⋮ ao passar o
+    mouse; linha laranja onde vai cair). O menu da categoria ficou com
+    **Renomear** e **Apagar**.
+  - Mensagens: arraste para mudar a ordem dentro da categoria ou solte em cima
+    de outra categoria (aberta ou fechada) para mover.
+  - Mídias: arraste as pastas para mudar a ordem (saíram ↑ ↓) e solte uma mídia
+    numa pasta (ou em "Sem pasta") para mover.
+  - Clique simples continua abrindo/fechando e abrindo a prévia (o arraste só
+    começa depois de mover alguns pixels). **Esc** cancela. Com filtro ou busca
+    ativos, o arraste fica desligado ("Limpe a busca para reordenar"). Erro ao
+    salvar volta para a ordem anterior com aviso. Tudo fica salvo no banco.
+
 ### 2.8.4
 - **Largura do painel ajustável**: arraste a borda esquerda do painel (o cursor
   vira ↔ e aparece uma linha laranja). Mínimo 300 px; máximo 50% da janela ou

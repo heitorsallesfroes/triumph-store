@@ -29,6 +29,7 @@ const HANDLERS = {
   renameCategory:  (m) => WaApi.renameCategory({ id: m.id, name: m.name }),
   deleteCategory:  (m) => WaApi.deleteCategory({ id: m.id, withItems: m.withItems === true }),
   reorderCategories: (m) => WaApi.reorderCategories({ ids: m.ids }),
+  moveItems:       (m) => WaApi.moveItems({ categoryId: m.categoryId, ids: m.ids }),
   getChatName:     (m) => WaApi.getChatName({ chatId: m.chatId }),
   setChatName:     (m) => WaApi.setChatName({ chatId: m.chatId, name: m.name, source: m.source }),
   getGreetings:    ()  => WaApi.getGreetings(),
