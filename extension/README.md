@@ -799,6 +799,24 @@ guardada.
 
 ## O que mudou
 
+### 2.8.8
+- **Automações só valem daqui pra frente** (segurança): gatilhos de etiqueta
+  ("entrou na etiqueta", "há X tempo", "sem resposta", "respondeu") só contam quem
+  entrou na etiqueta DEPOIS de ligar a automação. Ligar de novo, ou editar uma ligada
+  trocando o gatilho ou a etiqueta, conta como nova ativação. Na etiqueta do
+  WhatsApp, quem já estava nela ao ligar fica registrado como "já estava".
+  "Dia e hora" só vale a partir do próximo dia/hora depois de ligar; "venda
+  registrada" só para vendas registradas depois de ligar.
+- Ao **Ligar**: mostra "X contatos já estão nessa etiqueta e NÃO vão receber" e a
+  opção desmarcada **Incluir também quem já está na etiqueta**, que só vale depois
+  de confirmar a lista de quem vai receber.
+- **Testar só com uma conversa**: no editor, escolha a conversa (ou "Usar a conversa
+  aberta"); em teste, roda só para ela e a lista mostra **EM TESTE**.
+- Migration `supabase/migrations/20261105200000_wa_automations_activation.sql`
+  (activated_at, include_existing, test_chat_id); ela também faz as automações já
+  ligadas valerem a partir de agora. Sem ela, a extensão não deixa ligar automação
+  ("Atualize o banco").
+
 ### 2.8.7
 - **Várias imagens (álbum)**: tipo novo de parte com até 10 fotos/vídeos (MP4).
   **Subir arquivos** (vários de uma vez ou arrastando) e **Escolher da biblioteca**

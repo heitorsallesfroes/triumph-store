@@ -78,8 +78,9 @@ const HANDLERS = {
   duplicateCampaign:    (m) => WaApi.duplicateCampaign({ id: m.id }),
   // Automações e mensagem que etiqueta (2.1.0): cada uma valida a entrada em supabase-api.js
   fetchAutomations:     ()  => WaApi.fetchAutomations(),
-  saveAutomation:       (m) => WaApi.saveAutomation({ id: m.id, automation: m.automation }),
-  setAutomationActive:  (m) => WaApi.setAutomationActive({ id: m.id, active: m.active }),
+  saveAutomation:       (m) => WaApi.saveAutomation({ id: m.id, automation: m.automation, includeExisting: m.includeExisting === true }),
+  setAutomationActive:  (m) => WaApi.setAutomationActive({ id: m.id, active: m.active, includeExisting: m.includeExisting === true }),
+  automationExisting:   (m) => WaApi.automationExisting({ labelId: m.labelId }),
   deleteAutomation:     (m) => WaApi.deleteAutomation({ id: m.id }),
   automationRuns:       (m) => WaApi.automationRuns({ automationIds: m.automationIds, contactIds: m.contactIds }),
   automationReserve:    (m) => WaApi.automationReserve({ automationId: m.automationId, contactId: m.contactId, runKey: m.runKey }),

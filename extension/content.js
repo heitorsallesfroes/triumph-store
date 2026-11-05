@@ -1314,6 +1314,11 @@
       .bcard:hover, .bcard:focus-visible { box-shadow: var(--sh-2); }
       /* Barra do WhatsApp (topo) */
       .wabar { box-shadow: var(--sh-1); }
+      /* ═══ 2.8.8: automações só daqui pra frente ═══ */
+      .fw-badge.test { background: var(--warn-soft); color: var(--warn); }
+      .act-box { gap: var(--s-2); border-color: var(--accent); }
+      .act-count { font-weight: 600; color: var(--fg); }
+      .act-list { margin: 0; padding-left: var(--s-4); max-height: 160px; overflow-y: auto; font-size: var(--fs-2); }
       /* ═══ 2.8.7: várias imagens (álbum) ═══ */
       .alb { display: flex; flex-direction: column; gap: var(--s-2); border-radius: var(--r-md); }
       .alb.over { outline: 2px dashed var(--accent); outline-offset: 2px; background: var(--accent-soft); }
@@ -6163,7 +6168,10 @@
     const card = el('div', `fw-card${a.active ? ' on' : ''}`);
     const head = el('div', 'fw-head');
     head.append(el('span', 'fw-name', a.name), el('span', `fw-badge${a.active ? ' on' : ''}`, a.active ? 'ATIVA' : 'DESLIGADA'));
+    if (a.test_chat_id) head.append(el('span', 'fw-badge test', 'EM TESTE')); // 2.8.8
     card.append(head);
+    if (a.test_chat_id) card.append(el('div', 'crm-intro', `Em teste: roda só para ${testChatLabel(a.test_chat_id)}; ignora todos os outros.`));
+    if (a.active && a.activated_at) card.append(el('div', 'crm-intro', `Vale daqui pra frente: desde ${new Date(a.activated_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}${a.include_existing ? ' (incluiu quem já estava na etiqueta)' : ''}.`));
     const s = summaryOf(a);
     [['QUANDO', s.quando], ['SE', s.se], ['ENTÃO', s.entao]].forEach(([k, t], i) => {
       if (i) card.append(el('div', 'fw-arrow', '↓'));
@@ -6176,8 +6184,10 @@
     actions.append(
       fbtn('ed-mini', 'Editar', () => openAutomationEditor(a)),
       fbtn('ed-mini', a.active ? 'Desligar' : 'Ligar', async () => {
+        // 2.8.8: ligar mostra antes quem já está na etiqueta (e NÃO vai receber)
+        if (!a.active) { fl.activating = { id: a.id, include: false, info: null }; renderFollows(); loadActivationInfo(a); return; }
         try {
-          await call('setAutomationActive', { id: a.id, active: !a.active });
+          await call('setAutomationActive', { id: a.id, active: false });
           await motor.loadAutomations();
         } catch (e) { flash(`Não consegui mudar: ${e.message}`, true); }
         renderFollows();
@@ -6196,7 +6206,90 @@
       }),
     );
     card.append(actions);
+    if (fl.activating && fl.activating.id === a.id) card.append(activationEl(a, fl.activating, async () => {
+      const act = fl.activating;
+      try {
+        await baselineWaLabel(a);
+        await call('setAutomationActive', { id: a.id, active: true, includeExisting: !!act.include });
+        fl.activating = null;
+        await motor.loadAutomations();
+        flash(act.include ? 'Automação ligada (incluindo quem já estava na etiqueta).' : 'Automação ligada: vale para quem entrar daqui pra frente.');
+      } catch (e) { act.err = e.message; }
+      renderFollows();
+      renderFootPause();
+    }, () => { fl.activating = null; renderFollows(); }));
     return card;
+  }
+
+  // ── 2.8.8: ativar = vale daqui pra frente ──
+  const LABEL_TRIGGERS = ['sem_resposta', 'entrou_etiqueta', 'respondeu'];
+  function testChatLabel(chatId) {
+    const c = (fl.recentChats || []).find((x) => x.id === chatId);
+    return c && c.name ? `${c.name} (${chatId.split('@')[0]})` : chatId.split('@')[0];
+  }
+  // quem já está na etiqueta do gatilho (CRM pelo banco; WhatsApp pela lista do WhatsApp Web)
+  async function loadActivationInfo(a) {
+    const act = fl.activating || (fl.edit && fl.edit.activation);
+    if (!act || !LABEL_TRIGGERS.includes(a.trigger_type)) return;
+    let list = null;
+    try {
+      if (a.trigger_label_source === 'whatsapp' && a.trigger_wa_label_id) {
+        const r = await waRequest('labelChatIds', { labelId: String(a.trigger_wa_label_id) }, { timeout: 8000 });
+        list = (r && r.chats ? r.chats : []).map((c) => ({ name: c.name || null, phone: c.phone || (/@c\.us$/.test(c.id) ? c.id.split('@')[0] : null) }));
+      } else if (a.trigger_label_id && !String(a.trigger_label_id).startsWith(NEW_LABEL)) {
+        list = await call('automationExisting', { labelId: a.trigger_label_id });
+      } else list = [];
+    } catch (e) { act.infoErr = e.message; list = null; }
+    act.info = list;
+    renderFollows();
+  }
+  // etiqueta do WhatsApp: registra agora quem já está nela (assim, ao ligar, conta como "já estava")
+  async function baselineWaLabel(a) {
+    if (a.trigger_label_source !== 'whatsapp' || !a.trigger_wa_label_id || !LABEL_TRIGGERS.includes(a.trigger_type)) return;
+    const labelId = String(a.trigger_wa_label_id);
+    const r = await waRequest('labelChatIds', { labelId }, { timeout: 8000 });
+    const chats = (r && r.chats) || [];
+    await call('nativeLabelSweep', { labelId, chats: chats.slice(0, 5000), complete: chats.length >= (Number(r && r.count) || 0) });
+  }
+  function activationEl(a, act, onConfirm, onCancel) {
+    const box = el('div', 'fw-block act-box');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'Ligar a automação');
+    if (a.trigger_type === 'dia_hora') box.append(el('div', 'crm-intro', 'Vale a partir do próximo dia e hora depois de ligar.'));
+    else if (a.trigger_type === 'venda_registrada') box.append(el('div', 'crm-intro', 'Só vendas registradas depois de ligar disparam (as antigas não).'));
+    else if (act.info == null) box.append(el('div', 'lt-none loading', act.infoErr ? `Não consegui ver quem já está na etiqueta: ${act.infoErr}` : 'Carregando…'));
+    else {
+      const n = act.info.length;
+      box.append(el('div', 'act-count', `${n} contato${n === 1 ? '' : 's'} já ${n === 1 ? 'está' : 'estão'} nessa etiqueta e NÃO ${n === 1 ? 'vai' : 'vão'} receber.`));
+      if (n) {
+        const lab = el('label', 'sc-radio');
+        const cb = el('input');
+        cb.type = 'checkbox';
+        cb.checked = !!act.include;
+        cb.setAttribute('aria-label', 'Incluir também quem já está na etiqueta');
+        cb.addEventListener('change', () => { act.include = cb.checked; renderFollows(); });
+        lab.append(cb, ' Incluir também quem já está na etiqueta');
+        box.append(lab);
+        if (act.include) {
+          box.append(el('div', 'ed-note', `Confirme: estes ${n} vão receber${n > 50 ? ' (mostrando 50)' : ''}:`));
+          const ul = el('ul', 'act-list');
+          act.info.slice(0, 50).forEach((c) => ul.append(el('li', null, [c.name, c.phone].filter(Boolean).join(' · ') || 'sem nome')));
+          box.append(ul);
+        }
+      }
+    }
+    const row = el('div', 'ed-add');
+    const go = el('button', 'bbtn primary act-go', act.include && act.info && act.info.length ? `Confirmar e ligar (incluir ${act.info.length})` : 'Ligar daqui pra frente');
+    go.type = 'button';
+    go.disabled = LABEL_TRIGGERS.includes(a.trigger_type) && act.info == null && !act.infoErr;
+    go.addEventListener('click', onConfirm);
+    const no = el('button', 'bbtn', 'Cancelar');
+    no.type = 'button';
+    no.addEventListener('click', onCancel);
+    row.append(go, no);
+    box.append(row);
+    if (act.err) box.append(el('div', 'ed-msg err', act.err));
+    return box;
   }
 
   function renderFollows() {
@@ -6282,6 +6375,7 @@
     const wait = Number(src.wait_minutes) || 60;
     const unit = wait % 1440 === 0 ? 'dias' : wait % 60 === 0 ? 'horas' : 'minutos';
     fl.edit = {
+      wasActive: !!src.id && !!src.active, testOn: !!src.test_chat_id, test_chat_id: src.test_chat_id || '', activation: null, // 2.8.8
       id: src.id || null, name: src.name || '', active: !!src.active, trigger_type: src.trigger_type || 'sem_resposta', trigger_label_id: src.trigger_label_id || '',
       trigger_label_source: src.trigger_label_source === 'whatsapp' ? 'whatsapp' : 'crm', trigger_wa_label_id: src.trigger_wa_label_id || '',
       wait_minutes: wait, wait_unit: unit, schedule_days: [...(src.schedule_days || [1, 2, 3, 4, 5])], schedule_time: String(src.schedule_time || '10:00').slice(0, 5),
@@ -6326,6 +6420,7 @@
 
   function editorToAutomation(f) {
     return {
+      test_chat_id: f.testOn ? f.test_chat_id || null : null, // 2.8.8
       name: f.name, active: f.active, trigger_type: f.trigger_type, trigger_label_id: f.trigger_label_source === 'whatsapp' ? null : f.trigger_label_id || null,
       trigger_label_source: f.trigger_label_source, trigger_wa_label_id: f.trigger_label_source === 'whatsapp' ? f.trigger_wa_label_id || null : null,
       wait_minutes: f.wait_minutes,
@@ -6445,7 +6540,7 @@
     const cb = el('input');
     cb.type = 'checkbox';
     cb.checked = f.active;
-    cb.addEventListener('change', () => { f.active = cb.checked; });
+    cb.addEventListener('change', () => { f.active = cb.checked; if (f.active && !f.wasActive) { f.activation = { include: false, info: null }; loadActivationInfo(editorToAutomation(f)); } renderFollows(); });
     act.append(cb, 'Ativa');
     sec.append(act);
 
@@ -6628,6 +6723,7 @@
 
     sec.append(el('div', 'crm-sub', 'Resumo'), summaryBox);
     updateSummary();
+    sec.append(automationSafetyEl(f)); // 2.8.8
     const actions = el('div', 'ed-add');
     const save = fbtn('bbtn primary', fl.saving ? 'Salvando…' : 'Salvar', () => saveAutomationForm());
     save.disabled = fl.saving;
@@ -6640,13 +6736,16 @@
     const f = fl.edit;
     if (!f || fl.saving) return;
     const automation = editorToAutomation(f);
+    if (f.testOn && !f.test_chat_id) { f.msg = 'Escolha a conversa de teste.'; f.err = true; renderFollows(); return; }
     const pending = JSON.stringify(automation).match(/"new:([^"]+)"/);
     if (pending) { f.msg = `A etiqueta "${pending[1]}" ainda não existe: clique em "Criar agora".`; f.err = true; renderFollows(); return; }
     fl.saving = true;
     f.msg = '';
     renderFollows();
     try {
-      await call('saveAutomation', { id: f.id || undefined, automation });
+      // 2.8.8: ligar (ou trocar gatilho/etiqueta de uma ligada) = vale daqui pra frente
+      if (automation.active) await baselineWaLabel(automation).catch(() => {});
+      await call('saveAutomation', { id: f.id || undefined, automation, includeExisting: !!(f.activation && f.activation.include) });
       await motor.loadAutomations();
       flash('Automação salva.');
       fl.saving = false;
@@ -6659,6 +6758,48 @@
     }
     fl.saving = false;
     renderFollows();
+  }
+
+  // 2.8.8: bloco do editor: aviso ao ligar + modo teste (só uma conversa)
+  function automationSafetyEl(f) {
+    const box = el('div', 'fw-block');
+    box.append(el('div', 'fw-k', 'SEGURANÇA'));
+    box.append(el('div', 'crm-intro', 'Só vale daqui pra frente: quem já estava na etiqueta antes de ligar (ou de trocar o gatilho/etiqueta) não recebe. "Dia e hora" e "venda registrada" também só valem depois de ligar.'));
+    if (f.active && !f.wasActive && f.activation) {
+      box.append(activationEl(editorToAutomation(f), f.activation, () => saveAutomationForm(), () => { f.active = false; f.activation = null; renderFollows(); }));
+    }
+    const lab = el('label', 'sc-radio');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = !!f.testOn;
+    cb.setAttribute('aria-label', 'Testar só com uma conversa');
+    cb.addEventListener('change', async () => {
+      f.testOn = cb.checked;
+      if (f.testOn && !fl.recentChats) { try { fl.recentChats = await waRequest('recentChats', { limit: 30 }, { timeout: 6000 }); } catch { fl.recentChats = []; } }
+      renderFollows();
+    });
+    lab.append(cb, ' Testar só com uma conversa');
+    box.append(lab);
+    if (f.testOn) {
+      const opts = [['', 'Escolha a conversa…'], ...(fl.recentChats || []).map((c) => [c.id, `${c.name || c.id.split('@')[0]}`])];
+      if (f.test_chat_id && !opts.some(([v]) => v === f.test_chat_id)) opts.push([f.test_chat_id, f.test_chat_id.split('@')[0]]);
+      const sel = el('select', 'ed-cat');
+      sel.setAttribute('aria-label', 'Conversa de teste');
+      opts.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === (f.test_chat_id || ''); sel.append(o); });
+      sel.addEventListener('change', () => { f.test_chat_id = sel.value; });
+      const here = fbtn('ed-mini', 'Usar a conversa aberta', async () => {
+        let c = null;
+        try { c = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { c = null; }
+        if (!c || c.kind !== 'individual') { flash('Abra uma conversa individual.', true); return; }
+        if (!(fl.recentChats || []).some((x) => x.id === c.chatId)) fl.recentChats = [{ id: c.chatId, name: c.name || null }, ...(fl.recentChats || [])];
+        f.test_chat_id = c.chatId;
+        renderFollows();
+      });
+      const row = el('div', 'sc-row');
+      row.append(sel, here);
+      box.append(row, el('div', 'ed-note', 'Em teste, roda só para esta conversa e ignora todos os outros ("EM TESTE" na lista).'));
+    }
+    return box;
   }
 
   // ── Limites e horário ──

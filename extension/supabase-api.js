@@ -1723,7 +1723,15 @@
   const AUTOMATION_V25_COLUMNS = 'trigger_label_source,trigger_wa_label_id';
   // "não" é testado de novo só a cada 30 min (2.4.1: poucas consultas); recarregar o WhatsApp testa na hora
   const automationsV25 = () => probe('automations.v25', () => hasColumn('wa_automations', 'trigger_label_source'), 30 * 60 * 1000);
-  const autoCols = async () => ((await automationsV25()) ? `${AUTOMATION_COLUMNS},${AUTOMATION_V25_COLUMNS}` : AUTOMATION_COLUMNS);
+  // 2.8.8 (migration 20261105200000): ativação ("só daqui pra frente"), incluir quem já estava e modo teste
+  const AUTOMATION_V288_COLUMNS = 'activated_at,include_existing,test_chat_id';
+  const automationsV288 = () => probe('automations.v288', () => hasColumn('wa_automations', 'activated_at'), 30 * 60 * 1000);
+  const autoCols = async () => {
+    let cols = AUTOMATION_COLUMNS;
+    if (await automationsV25()) cols += `,${AUTOMATION_V25_COLUMNS}`;
+    if (await automationsV288()) cols += `,${AUTOMATION_V288_COLUMNS}`;
+    return cols;
+  };
   const checkWaLabel = (v, what) => { if (typeof v !== 'string' || !WA_LABEL_RE.test(v)) throw new Error(what); return v; };
   const RUN_KEY_RE = /^[\w:@.+-]{1,120}$/;
 
@@ -1833,6 +1841,8 @@
         ? null : checkUuid(a.trigger_label_id, 'Escolha a etiqueta CRM do gatilho'),
       wait_minutes: null, schedule_days: null, schedule_time: null,
       ignore_older_days: intIn(a.ignore_older_days ?? 15, 1, 365, 'Ignorar conversas paradas há (dias)'),
+      // 2.8.8: modo teste (só uma conversa)
+      test_chat_id: a.test_chat_id == null || a.test_chat_id === '' ? null : (typeof a.test_chat_id === 'string' && SCHED_CHAT_RE.test(a.test_chat_id) ? a.test_chat_id : (() => { throw new Error('Escolha a conversa de teste'); })()),
     };
     if (a.trigger_type === 'sem_resposta' || a.trigger_type === 'entrou_etiqueta') row.wait_minutes = intIn(a.wait_minutes, 1, 525600, 'Espera (minutos)');
     if (a.trigger_type === 'dia_hora') {
@@ -1856,8 +1866,10 @@
     return autoRest(`wa_automations?select=${await autoCols()}&order=position.asc,created_at.asc`);
   }
 
-  async function saveAutomation({ id, automation }) {
+  async function saveAutomation({ id, automation, includeExisting = false }) {
     const row = checkAutomation(automation);
+    const testChat = row.test_chat_id;
+    delete row.test_chat_id;
     if (row.trigger_type === 'venda_registrada' && !(await salesOrigin())) throw new Error(ENGINE_MISSING);
     // 2.5.0: sem a migration 20261104120000, etiqueta do WhatsApp não dá; o resto salva como antes
     if (!(await automationsV25())) {
@@ -1865,23 +1877,50 @@
       delete row.trigger_label_source;
       delete row.trigger_wa_label_id;
     }
+    // 2.8.8: ativar (ou editar uma ativa trocando gatilho/etiqueta) = vale daqui pra frente
+    const v288 = await automationsV288();
+    let prev = null;
     if (id !== undefined && id !== null) {
       checkUuid(id, 'Automação inválida');
+      const got = await autoRest(`wa_automations?select=${await autoCols()}&id=eq.${id}`);
+      if (!got.length) throw new Error('Automação não encontrada');
+      prev = got[0];
+    }
+    const sameTrigger = !!prev && prev.trigger_type === row.trigger_type && (prev.trigger_label_id || null) === (row.trigger_label_id || null)
+      && (prev.trigger_wa_label_id || null) === (row.trigger_wa_label_id || null) && (prev.trigger_label_source || 'crm') === (row.trigger_label_source || 'crm');
+    const activating = row.active && (!prev || !prev.active || !sameTrigger);
+    if ((activating || testChat) && !v288) throw new Error(ENGINE_MISSING);
+    if (v288) {
+      row.test_chat_id = testChat;
+      if (activating) { row.activated_at = new Date().toISOString(); row.include_existing = includeExisting === true; }
+    }
+    if (prev) {
       const rows = await autoRest(`wa_automations?id=eq.${id}`, json('PATCH', 'return=representation', row));
       if (!rows.length) throw new Error('Automação não encontrada');
-      return { id };
+      return { id, activated: activating };
     }
     const last = await autoRest('wa_automations?select=position&order=position.desc&limit=1');
     const position = last.length ? (Number(last[0].position) || 0) + 1 : 0;
     const rows = await autoRest('wa_automations', json('POST', 'return=representation', { ...row, position }));
-    return { id: rows[0].id };
+    return { id: rows[0].id, activated: activating };
   }
 
-  async function setAutomationActive({ id, active }) {
+  async function setAutomationActive({ id, active, includeExisting = false }) {
     checkUuid(id, 'Automação inválida');
     if (typeof active !== 'boolean') throw new Error('Valor inválido');
-    const rows = await autoRest(`wa_automations?id=eq.${id}`, json('PATCH', 'return=representation', { active }));
+    // 2.8.8: ligar = vale daqui pra frente (sem as colunas novas, não deixa ligar)
+    if (active && !(await automationsV288())) throw new Error(ENGINE_MISSING);
+    const patchRow = active ? { active, activated_at: new Date().toISOString(), include_existing: includeExisting === true } : { active };
+    const rows = await autoRest(`wa_automations?id=eq.${id}`, json('PATCH', 'return=representation', patchRow));
     return { active: rows.length ? rows[0].active : null };
+  }
+
+  // 2.8.8: quem já está na etiqueta CRM do gatilho (para avisar e, se confirmar, incluir)
+  async function automationExisting({ labelId }) {
+    checkUuid(labelId, 'Etiqueta inválida');
+    const cols = (await chatIdColumn()) ? 'id,name,phone,chat_id' : 'id,name,phone';
+    const rows = await restAll(`wa_contact_labels?select=contact:wa_contacts!inner(${cols})&label_id=eq.${labelId}&order=contact_id.asc`, 5000);
+    return rows.map((r) => ({ name: r.contact.name || null, phone: r.contact.phone || null }));
   }
 
   async function deleteAutomation({ id }) {
@@ -2467,7 +2506,7 @@
     const info = new Map(contacts.map((c) => [c.id, { id: c.id, name: c.name || null, phone: c.phone || null, chat_id: c.chat_id || null, labelIds: [], links: [] }]));
     links.forEach((l) => { const c = info.get(l.contact_id); if (c) { c.labelIds.push(l.label_id); c.links.push({ label_id: l.label_id, created_at: l.created_at }); } });
     return sales.filter((s) => byChat[s.wa_chat_id] && info.has(byChat[s.wa_chat_id].id))
-      .map((s) => ({ ...info.get(byChat[s.wa_chat_id].id), chat_id: info.get(byChat[s.wa_chat_id].id).chat_id || s.wa_chat_id, sale_id: s.id }));
+      .map((s) => ({ ...info.get(byChat[s.wa_chat_id].id), chat_id: info.get(byChat[s.wa_chat_id].id).chat_id || s.wa_chat_id, sale_id: s.id, sale_at: s.created_at }));
   }
 
   // ── Conversões do Facebook (2.4.0): Edge Function meta-purchase-event ──
@@ -2735,7 +2774,7 @@
   }
 
   root.WaApi = {
-    engineActivity, clearReadCache,
+    engineActivity, clearReadCache, automationExisting,
     nativeLabelEvents, nativeLabelSweep, nativeLabelCandidates, activeEnrollments, enrollmentCandidates, enrollContact,
     leaveAutomation, chatAutomationState,
     metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,

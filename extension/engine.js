@@ -384,6 +384,17 @@
     if (saleTrigger && a.trigger_label_id && !labels.includes(a.trigger_label_id)) return { action: 'skip', reason: 'fora da etiqueta do gatilho' };
     const entry = saleTrigger ? null : automationEntry(a, contact);
     if (!saleTrigger && !entry) return { action: 'skip', reason: 'fora da etiqueta do gatilho' };
+    // 2.8.8: modo teste (só a conversa escolhida) e "só daqui pra frente" (a partir da ativação/edição)
+    if (a.test_chat_id && chatIdOfContact(contact) !== a.test_chat_id) return { action: 'skip', reason: 'em teste: só a conversa escolhida' };
+    const activatedAt = a.activated_at ? Date.parse(a.activated_at) : NaN;
+    if (Number.isFinite(activatedAt)) {
+      if (saleTrigger) {
+        const saleAt = Date.parse(contact.sale_at || '');
+        if (!Number.isFinite(saleAt) || saleAt < activatedAt) return { action: 'skip', reason: 'venda anterior à ativação' };
+      } else if (!a.include_existing && a.trigger_type !== 'dia_hora' && entry.via !== 'inscricao' && (!Number.isFinite(entry.at) || entry.at < activatedAt)) {
+        return { action: 'skip', reason: 'já estava na etiqueta antes de ativar' };
+      }
+    }
     if (entry && ranKeys && ranKeys.has(`${a.id}:${contact.id}:${leaveKey(entry.key)}`)) return { action: 'done', reason: 'tirado da automação', entry };
     if (noSendLabelId && labels.includes(noSendLabelId)) return { action: 'skip', reason: 'Não enviar' };
     const needsChat = automationNeedsChat(a);
@@ -424,8 +435,9 @@
       const t = parseHM(a.schedule_time);
       const d = new Date(now);
       const todayAt = t == null ? null : atMinute(d.getFullYear(), d.getMonth(), d.getDate(), t);
-      if (todayAt == null || !(a.schedule_days || []).includes(d.getDay()) || now < todayAt || (manual && todayAt < enteredAt)) {
-        const dueAt = nextScheduleAt(a, manual ? Math.max(now, enteredAt) : now);
+      const fromAct = Number.isFinite(activatedAt) ? activatedAt : 0; // 2.8.8: o dia/hora de antes da ativação não conta
+      if (todayAt == null || !(a.schedule_days || []).includes(d.getDay()) || now < todayAt || (manual && todayAt < enteredAt) || todayAt < fromAct) {
+        const dueAt = nextScheduleAt(a, Math.max(now, manual ? enteredAt : 0, fromAct));
         return { action: 'wait', reason: 'aguardando o dia/hora', chatId, dueAt, leftMs: dueAt == null ? null : dueAt - now, entry };
       }
       runKey = `dia@${dateKey(now)}`;
