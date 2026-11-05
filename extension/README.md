@@ -799,6 +799,17 @@ guardada.
 
 ## O que mudou
 
+### 2.8.4
+- **Largura do painel ajustável**: arraste a borda esquerda do painel (o cursor
+  vira ↔ e aparece uma linha laranja). Mínimo 300 px; máximo 50% da janela ou
+  700 px (o menor). O WhatsApp ao lado encolhe/cresce junto, também ao mudar o
+  tamanho da janela. A largura fica guardada neste computador; **duplo clique**
+  na borda volta ao padrão (360 px). Pelo teclado: foco na borda e ← / →.
+- Estreito (até 340 px): menu de abas só com ícones (o nome aparece na dica).
+  Largo (acima de 480 px): grade de Mídias com mais colunas e, no editor de
+  mensagem, campos lado a lado.
+- Prints em `extension/screenshots/2.8.4` (320 px, padrão e 600 px).
+
 ### 2.8.3
 - **Nome para mensagens** por conversa (tabela `wa_chat_names`, migration
   `20261105150000_wa_chat_names.sql`). O {nome} usa só: nome **definido por

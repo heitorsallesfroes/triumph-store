@@ -499,8 +499,10 @@
   const layoutStyle = document.createElement('style');
   layoutStyle.id = 'tsp-wa-layout';
   layoutStyle.textContent = `
-    html.tsp-wa-open body { width: calc(100% - ${PANEL_W}px) !important; min-width: 0 !important; }
-    html.tsp-wa-open #app { max-width: calc(100vw - ${PANEL_W}px) !important; }
+    html.tsp-wa-open body { width: calc(100% - var(--tsp-pw, ${PANEL_W}px)) !important; min-width: 0 !important; }
+    html.tsp-wa-open #app { max-width: calc(100vw - var(--tsp-pw, ${PANEL_W}px)) !important; }
+    html.tsp-wa-open, html.tsp-wa-open body { overflow-x: hidden !important; }
+    html.tsp-wa-resizing, html.tsp-wa-resizing * { user-select: none !important; -webkit-user-select: none !important; cursor: col-resize !important; }
     html.tsp-wa-bar #app { margin-top: ${BAR_H}px !important; height: calc(100% - ${BAR_H}px) !important; max-height: calc(100vh - ${BAR_H}px) !important; }
   `;
 
@@ -519,7 +521,7 @@
         --fs-1: 11px; --fs-2: 12px; --fs-3: 13px; --fs-4: 15px; --fs-icon: 22px;
         --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px;
         --r-xs: 4px; --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-pill: 999px;
-        --hit: 28px; --field-h: 32px; --wa-green: #25d366;
+        --hit: 28px; --field-h: 32px; --wa-green: #25d366; --pw: ${PANEL_W}px;
         font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         font-size: var(--fs-3); line-height: 1.4; -webkit-font-smoothing: antialiased;
       }
@@ -550,11 +552,11 @@
       }
       .toggle:hover { height: 27px; }
       .toggle svg { width: 13px; height: 13px; }
-      .root.open .toggle { left: calc((100% - ${PANEL_W}px) / 2 - 20px); }
+      .root.open .toggle { left: calc((100% - var(--pw)) / 2 - 20px); }
 
       /* Painel */
       .panel {
-        position: fixed; top: 0; right: 0; width: ${PANEL_W}px; height: 100vh;
+        position: fixed; top: 0; right: 0; width: var(--pw); height: 100vh;
         background: var(--bg); color: var(--fg); border-left: 1px solid var(--border);
         display: flex; flex-direction: column; box-shadow: -2px 0 12px var(--shadow);
         transform: translateX(100%); visibility: hidden; transition: transform .22s ease, visibility .22s;
@@ -770,7 +772,7 @@
       .panel { z-index: 4; }
       .wabar { position: fixed; top: 0; left: 0; right: 0; height: ${BAR_H}px; z-index: 1; display: flex; align-items: center; gap: 8px ; padding: 0 8px 0 12px ; background: var(--bg); color: var(--fg); border-bottom: 1px solid var(--border); box-shadow: 0 1px 4px var(--shadow); font-size: var(--fs-2); }
       .wabar[hidden] { display: none; }
-      .root.open .wabar { right: ${PANEL_W}px; }
+      .root.open .wabar { right: var(--pw); }
       .root.bar-on .toggle { top: ${BAR_H}px; }
       .wempty { color: var(--muted); font-size: var(--fs-1); }
       .wchips { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 8px ; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scrollbar-width: thin; }
@@ -787,7 +789,7 @@
       .board { position: fixed; top: 0; left: 64px; right: 0; bottom: 0; z-index: 2; display: flex; flex-direction: column; background: var(--bg2); color: var(--fg); border-left: 1px solid var(--border); box-shadow: 0 0 20px var(--shadow); outline: none; animation: fadeIn .15s ease both; }
       .board[hidden] { display: none; }
       .root.bar-on .board { top: ${BAR_H}px; }
-      .root.open .board { right: ${PANEL_W}px; }
+      .root.open .board { right: var(--pw); }
       /* Menu de seções do painel */
       .pnav { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px ; margin: 0 8px 12px ; padding: 4px ; border-radius: var(--r-lg) ; background: var(--bg2); }
       .pnav button { display: flex; flex-direction: column; align-items: center; gap: 2px ; min-width: 0; padding: 4px 1px 4px ; border: none; border-radius: var(--r-md) ; background: transparent; color: var(--muted); font-size: var(--fs-1); font-weight: 600; line-height: 1.15; transition: background .15s, color .15s; }
@@ -1312,6 +1314,23 @@
       .bcard:hover, .bcard:focus-visible { box-shadow: var(--sh-2); }
       /* Barra do WhatsApp (topo) */
       .wabar { box-shadow: var(--sh-1); }
+      /* ═══ 2.8.4: largura ajustável ═══ */
+      .resizer { position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; z-index: 9; cursor: col-resize; touch-action: none; }
+      .resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: var(--accent); opacity: 0; transition: opacity .15s; }
+      .resizer:hover::after, .resizer:focus-visible::after, .root.resizing .resizer::after { opacity: 1; }
+      .resizer:focus-visible { outline: none; }
+      .root.resizing .panel { transition: none; user-select: none; }
+      .panel.w-narrow .pnav > button > span, .panel.w-narrow .pmore > span { display: none; }
+      .panel.w-narrow .pnav > button, .panel.w-narrow .pnav .pmore { min-height: 40px; }
+      .panel.w-narrow .pnav > button svg, .panel.w-narrow .pnav .pmore svg { width: 20px; height: 20px; }
+      .panel.w-narrow .qbtns { margin-left: 0; }
+      .panel.w-narrow .trow .newitem, .panel.w-narrow .trow .newcat { white-space: nowrap; padding: 0 var(--s-2); font-size: var(--fs-1); }
+      .panel.w-wide .md-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+      .panel.w-wide .md-pick .md-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+      .panel.w-wide .editor { display: grid; grid-template-columns: 1fr 1fr; column-gap: var(--s-3); }
+      .panel.w-wide .editor > * { grid-column: 1 / -1; }
+      .panel.w-wide .editor > .ed-field { grid-column: auto; }
+      .panel.w-wide .sc-row .ed-field { min-width: 160px; }
       /* ═══ 2.8.3: nome para mensagens e saudação ═══ */
       .cname { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-2); margin: 0 var(--s-3) var(--s-2); font-size: var(--fs-2); }
       .cname[hidden] { display: none; }
@@ -1392,6 +1411,7 @@
         <div class="btoast" role="status" aria-live="polite" hidden></div>
       </div>
       <aside class="panel" aria-label="Mensagens">
+        <div class="resizer" role="separator" aria-orientation="vertical" aria-label="Largura do painel" tabindex="0" title="Arraste para mudar a largura · duplo clique volta ao tamanho padrão"></div>
         <header class="head">
           <div class="brand"><span class="logo">${svg('zap', 'fill')}</span><span class="brand-txt">Mensagens</span></div>
           <div class="actions"></div>
@@ -1812,6 +1832,73 @@
   }
 
   toggleBtn.addEventListener('click', () => setOpen(!state.open));
+
+  // ── 2.8.4: largura do painel ajustável (arrastar a borda esquerda) ──
+  // Mín. 300 px; máx. 50% da janela ou 700 px (o menor). Guardada só neste computador (storage local).
+  // Durante o arraste só muda uma variável CSS, no máximo uma vez por quadro.
+  const PW_MIN = 300;
+  const pwMax = () => Math.max(PW_MIN, Math.min(700, Math.floor(window.innerWidth * 0.5)));
+  const clampPw = (w) => Math.round(Math.min(pwMax(), Math.max(PW_MIN, Number(w) || PANEL_W)));
+  state.panelW = PANEL_W;   // escolhida (guardada)
+  let pwApplied = PANEL_W;  // a que está na tela (pode ser menor se a janela estreitar)
+  function applyPanelWidth(w) {
+    const px = clampPw(w);
+    pwApplied = px;
+    root.style.setProperty('--pw', `${px}px`);
+    document.documentElement.style.setProperty('--tsp-pw', `${px}px`);
+    panel.classList.toggle('w-narrow', px <= 340);
+    panel.classList.toggle('w-wide', px > 480);
+    resizer.setAttribute('aria-valuenow', String(px));
+    resizer.setAttribute('aria-valuemin', String(PW_MIN));
+    resizer.setAttribute('aria-valuemax', String(pwMax()));
+    return px;
+  }
+  function setPanelWidth(w, { save = true } = {}) {
+    state.panelW = applyPanelWidth(w);
+    if (save) storageSet({ panelWidth: state.panelW });
+    if (state.open) window.dispatchEvent(new Event('resize'));
+  }
+  const resizer = shadow.querySelector('.resizer');
+  const drag = { on: false, x: null, raf: 0 };
+  const dragFrame = () => { drag.raf = 0; if (drag.on && drag.x != null) applyPanelWidth(window.innerWidth - drag.x); };
+  resizer.addEventListener('pointerdown', (e) => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    drag.on = true;
+    drag.x = e.clientX;
+    try { resizer.setPointerCapture(e.pointerId); } catch { /* sem captura */ }
+    root.classList.add('resizing');
+    document.documentElement.classList.add('tsp-wa-resizing');
+  });
+  resizer.addEventListener('pointermove', (e) => {
+    if (!drag.on) return;
+    drag.x = e.clientX;
+    if (!drag.raf) drag.raf = requestAnimationFrame(dragFrame);
+  });
+  const endDrag = (e) => {
+    if (!drag.on) return;
+    if (e && e.clientX != null) drag.x = e.clientX;
+    drag.on = false;
+    if (drag.raf) { cancelAnimationFrame(drag.raf); drag.raf = 0; }
+    root.classList.remove('resizing');
+    document.documentElement.classList.remove('tsp-wa-resizing');
+    setPanelWidth(window.innerWidth - drag.x);
+  };
+  resizer.addEventListener('pointerup', endDrag);
+  resizer.addEventListener('pointercancel', endDrag);
+  resizer.addEventListener('lostpointercapture', endDrag);
+  resizer.addEventListener('dblclick', (e) => { e.preventDefault(); setPanelWidth(PANEL_W); });
+  resizer.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); setPanelWidth(pwApplied + (e.key === 'ArrowLeft' ? 16 : -16)); }
+    else if (e.key === 'Home' || e.key === 'Enter') { e.preventDefault(); setPanelWidth(PANEL_W); }
+  });
+  // Janela do Chrome mudou de tamanho: reajusta (sem esquecer a largura escolhida)
+  let pwResizeRaf = 0;
+  window.addEventListener('resize', () => {
+    if (drag.on || pwResizeRaf) return;
+    pwResizeRaf = requestAnimationFrame(() => { pwResizeRaf = 0; if (clampPw(state.panelW) !== pwApplied) applyPanelWidth(state.panelW); });
+  });
+  applyPanelWidth(PANEL_W);
 
   // ── Seções do painel: Mensagens e Etiquetas (o Quadro abre por cima, sem trocar a seção) ──
 
@@ -9668,8 +9755,9 @@
     });
   } catch { /* extensão recarregada */ }
   try {
-    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref', 'panelSection'], (saved) => {
+    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref', 'panelSection', 'panelWidth'], (saved) => {
       saved = saved || {};
+      if (Number.isFinite(saved.panelWidth)) { state.panelW = saved.panelWidth; applyPanelWidth(saved.panelWidth); } // 2.8.4
       state.collapsed = saved.collapsed || {};
       state.lastUsed  = saved.lastUsed || '';
       state.themePref = THEME_PREFS[saved.themePref] ? saved.themePref : 'auto';
