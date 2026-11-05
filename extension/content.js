@@ -3189,7 +3189,9 @@
     let unresolved = 0;
     const multi = parts.length > 1 || (parts[0] && parts[0].p.type !== 'texto');
     parts.forEach(({ p, i }) => {
-      if (multi) slot.append(el('div', 'pv-part', `Parte ${i + 1}${p.type !== 'texto' ? ' (legenda)' : ''}`));
+      const albumPart = Array.isArray(p.files) && p.files.length > 1;
+      const albumBefore = albumPart && !!(p.files[0] && p.files[0].caption_before);
+      if (multi) slot.append(el('div', 'pv-part', `Parte ${i + 1}${albumPart ? (albumBefore ? ' (mensagem antes das fotos)' : ' (mensagem depois das fotos)') : p.type !== 'texto' ? ' (legenda)' : ''}`));
       const bubble = el('div', 'bubble');
       bubble.dataset.part = String(i);
       bubble.setAttribute('contenteditable', 'plaintext-only');
@@ -3831,11 +3833,29 @@
       { id: reqId, timeout: (typingMs || 0) + 120000, transfer: [data] });
   }
 
-  // 2.8.7: álbum: as fotos/vídeos saem em seguida (sem pausa) para o WhatsApp agrupar. "digitando" só antes da 1ª;
-  // a legenda vai na 1ª. Se um arquivo falhar, os outros continuam e o aviso diz qual falhou.
+  // 2.8.7: álbum: as fotos/vídeos saem em seguida (sem pausa) para o WhatsApp agrupar. "digitando" só antes da 1ª
+  // mensagem. Se um arquivo falhar, os outros continuam e o aviso diz qual falhou.
+  // 2.8.9: a WA-JS 4.7.2 não tem envio de álbum (várias mídias numa mensagem): as fotos vão SEM legenda e a legenda
+  // vai como mensagem de texto separada, logo depois da última foto (~1,5 s) ou antes das fotos.
+  const ALBUM_CAPTION_GAP_MS = 1500;
+  async function sendAlbumCaption(text, chatId, reqId, newChat, typingMs) {
+    if (newChat) await waRequest('campaignSend', { campaign: true, chatId, kind: 'texto', text }, { id: reqId, timeout: 150000 });
+    else await waRequest('sendText', { chatId, text, typingMs: typingMs || 0 }, { id: reqId, timeout: (typingMs || 0) + 20000 });
+  }
   async function sendAlbum(part, i, chatId, firstName, reqId, newChat, typingMs) {
     const failed = [];
     let sentAny = false;
+    const caption = fillVars(part.body || '', firstName).slice(0, SEQ_TEXT_MAX).trim();
+    const before = !!(part.caption_before || (part.files[0] && part.files[0].caption_before));
+    let typingLeft = typingMs || 0;
+    if (caption && before) {
+      try { await sendAlbumCaption(caption, chatId, reqId, newChat, typingLeft); typingLeft = 0; } catch (e) {
+        if (e.code === 'cancelled') throw e;
+        throw Object.assign(new Error(`não consegui enviar a legenda (${e.message})`), { code: e.code || 'album', stage: e.stage || 'sending' });
+      }
+      sentAny = true;
+    }
+    let sentFiles = 0;
     for (let k = 0; k < part.files.length; k++) {
       const f = part.files[k];
       const fileName = (f.file_name || `arquivo ${k + 1}`).slice(0, 200);
@@ -3844,17 +3864,27 @@
         const data = await blob.arrayBuffer();
         const mime = (blob.type || 'application/octet-stream').split(';')[0];
         const kind = f.kind === 'video' ? 'video' : 'imagem';
-        const caption = sentAny ? null : fillVars(part.body || '', firstName).slice(0, SEQ_TEXT_MAX);
-        if (newChat) await waRequest('campaignSend', { campaign: true, chatId, kind, data, mime, fileName, caption }, { id: reqId, timeout: 150000, transfer: [data] });
-        else await waRequest('sendMedia', { chatId, kind, data, mime, fileName, caption, typingMs: sentAny ? 0 : (typingMs || 0) }, { id: reqId, timeout: (sentAny ? 0 : (typingMs || 0)) + 120000, transfer: [data] });
+        if (newChat) await waRequest('campaignSend', { campaign: true, chatId, kind, data, mime, fileName, caption: null }, { id: reqId, timeout: 150000, transfer: [data] });
+        else await waRequest('sendMedia', { chatId, kind, data, mime, fileName, caption: null, typingMs: typingLeft }, { id: reqId, timeout: typingLeft + 120000, transfer: [data] });
+        typingLeft = 0;
         sentAny = true;
+        sentFiles++;
         if (seq && seq.stop) break;
       } catch (e) {
         if (e.code === 'cancelled') throw e;
         failed.push(fileName);
       }
     }
-    if (!sentAny) throw Object.assign(new Error(`nenhum arquivo do álbum saiu (${failed.join(', ')})`), { code: 'album', stage: 'sending' });
+    if (!sentFiles) throw Object.assign(new Error(`nenhum arquivo do álbum saiu (${failed.join(', ')})`), { code: 'album', stage: 'sending' });
+    if (caption && !before && !(seq && seq.stop)) {
+      await waitUnlessStopped(ALBUM_CAPTION_GAP_MS);
+      if (!(seq && seq.stop)) {
+        try { await sendAlbumCaption(caption, chatId, reqId, newChat, 0); } catch (e) {
+          if (e.code === 'cancelled') throw e;
+          failed.push('legenda');
+        }
+      }
+    }
     return { failedFiles: failed };
   }
 
@@ -4303,7 +4333,7 @@
   function edPart(p) {
     const album = Array.isArray(p.files) && p.files.length > 1;
     return {
-      ...(album ? { files: p.files.map((f) => ({ kind: f.kind === 'video' ? 'video' : 'imagem', file_url: f.file_url, file_name: f.file_name, file_size: f.file_size ?? null, file: null, localUrl: null })) } : {}),
+      ...(album ? { files: p.files.map((f) => ({ kind: f.kind === 'video' ? 'video' : 'imagem', file_url: f.file_url, file_name: f.file_name, file_size: f.file_size ?? null, file: null, localUrl: null })), caption_before: !!(p.files[0] && p.files[0].caption_before) } : {}),
       key: ++edKey, type: album ? 'album' : p.type, body: p.body || '', file_url: album ? null : p.file_url || null, file_name: album ? null : p.file_name || null,
       file_size: p.file_size ?? null, wait_seconds: Number(p.wait_seconds) || 0,
       typing_seconds: Number.isInteger(p.typing_seconds) ? p.typing_seconds : p.type === 'audio' ? 3 : 0,
@@ -4405,7 +4435,7 @@
       });
     });
     wrap.append(grid);
-    wrap.append(el('div', 'alb-count', `${p.files.length}/${ALBUM_MAX} fotos/vídeos · a legenda vai na primeira`));
+    wrap.append(el('div', 'alb-count', `${p.files.length}/${ALBUM_MAX} fotos/vídeos`));
     const row = el('div', 'ed-file');
     const pick = el('label', 'ed-pick', 'Subir arquivos');
     const input = el('input');
@@ -4438,10 +4468,16 @@
     cap.maxLength = 4096;
     cap.rows = 2;
     cap.value = p.body;
-    cap.placeholder = 'Legenda (opcional; vai na primeira foto)';
+    cap.placeholder = 'Legenda (opcional; vai como mensagem separada)';
     cap.setAttribute('aria-label', `Legenda da parte ${i + 1}`);
     cap.addEventListener('input', () => { p.body = cap.value; });
-    wrap.append(cap, varButtons(cap, (v) => { p.body = v; }, i));
+    // 2.8.9: legenda depois (padrão) ou antes das fotos
+    const pos = el('select', 'ed-cat alb-cappos');
+    pos.setAttribute('aria-label', `Posição da legenda (parte ${i + 1})`);
+    [['depois', 'Legenda: depois das fotos'], ['antes', 'Legenda: antes das fotos']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = (p.caption_before ? 'antes' : 'depois') === v; pos.append(o); });
+    pos.addEventListener('change', () => { p.caption_before = pos.value === 'antes'; });
+    wrap.append(cap, pos, varButtons(cap, (v) => { p.body = v; }, i));
+    wrap.append(el('div', 'ed-varhint alb-help', 'As fotos vão juntas; a legenda vai como mensagem logo depois (o WhatsApp agrupa a partir de 4 fotos)'));
     return wrap;
   }
   // salvar: sobe os arquivos novos (entram na biblioteca) e monta a parte; 1 arquivo só vira parte normal
@@ -4458,6 +4494,7 @@
     }
     const base = { body: p.body || null, wait_seconds: p.wait_seconds, typing_seconds: p.typing_seconds };
     if (files.length === 1) return { type: files[0].kind, ...base, file_url: files[0].file_url, file_name: files[0].file_name, file_size: files[0].file_size };
+    if (p.caption_before) files[0].caption_before = true; // 2.8.9
     return { type: 'imagem', ...base, file_url: files[0].file_url, file_name: files[0].file_name, file_size: files[0].file_size, files };
   }
 

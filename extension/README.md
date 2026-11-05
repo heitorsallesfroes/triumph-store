@@ -799,6 +799,16 @@ guardada.
 
 ## O que mudou
 
+### 2.8.9
+- **Legenda do álbum ("Várias imagens")**: a WA-JS da extensão (4.7.2) não tem
+  envio de álbum de verdade (várias mídias numa mensagem só): ela só envia um
+  arquivo por vez (`WPP.chat.sendFileMessage`). Por isso as fotos vão **sem
+  legenda** (para o WhatsApp agrupar) e a legenda vai como **mensagem de texto
+  separada**, ~1,5 s depois da última foto. Opção na parte: **Legenda: depois das
+  fotos** (padrão) ou **antes das fotos** (guardada junto da lista de arquivos;
+  sem migration). Vale para seta, prévia, agendamento, automação e disparo; a
+  prévia mostra a grade e a mensagem separada.
+
 ### 2.8.8
 - **Automações só valem daqui pra frente** (segurança): gatilhos de etiqueta
   ("entrou na etiqueta", "há X tempo", "sem resposta", "respondeu") só contam quem

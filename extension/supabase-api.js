@@ -592,7 +592,8 @@
         if (!f || !isAllowedFileUrl(f.file_url)) throw new Error(`Parte ${n}: arquivo ${k + 1} inválido`);
         const fsz = f.file_size == null ? null : Number(f.file_size);
         if (fsz != null && (!Number.isFinite(fsz) || fsz < 0 || fsz > MAX_FILE_BYTES)) throw new Error(`Parte ${n}: arquivo ${k + 1} acima de 40 MB`);
-        return { file_url: f.file_url, file_name: typeof f.file_name === 'string' && f.file_name.trim() ? f.file_name.trim().slice(0, 200) : 'arquivo', file_size: fsz, kind: f.kind === 'video' ? 'video' : 'imagem' };
+        // 2.8.9: caption_before (só no 1º arquivo) = a legenda vai como texto ANTES das fotos (padrão: depois)
+        return { file_url: f.file_url, file_name: typeof f.file_name === 'string' && f.file_name.trim() ? f.file_name.trim().slice(0, 200) : 'arquivo', file_size: fsz, kind: f.kind === 'video' ? 'video' : 'imagem', ...(k === 0 && f.caption_before === true ? { caption_before: true } : {}) };
       });
       p = { ...p, file_url: files[0].file_url, file_name: files[0].file_name, file_size: files[0].file_size };
     }
