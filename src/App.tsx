@@ -18,9 +18,21 @@ import ResumoAnual from './pages/ResumoAnual';
 import SmallSales from './pages/SmallSales';
 import CorreiosTracking from './pages/CorreiosTracking';
 import { loadSystemConfig } from './lib/systemConfig';
+import { takeErpLink } from './lib/erpLink';
 
 function App() {
-  const [currentPage, setCurrentPage] = useState('home');
+  // Link da extensão (?pagina=historico&venda=<id> ou ?pagina=nova-venda&nome=...&telefone=...): lido uma vez,
+  // depois do login (o App só monta dentro do AuthGate). Sem parâmetros, abre como sempre.
+  const [erpLink] = useState(() => takeErpLink());
+  const [currentPage, setPage] = useState<string>(erpLink ? erpLink.page : 'home');
+  const [focusSaleId, setFocusSaleId] = useState<string | null>(erpLink?.saleId ?? null);
+  const [salePrefill, setSalePrefill] = useState<{ name: string; phone: string } | null>(erpLink?.prefill ?? null);
+  // Trocar de tela pelo menu esquece o link (voltar à tela não repete o destaque nem o preenchimento)
+  const setCurrentPage = (page: string) => {
+    setFocusSaleId(null);
+    setSalePrefill(null);
+    setPage(page);
+  };
   const [triggerFastSale, setTriggerFastSale] = useState(0);
   const [configReady, setConfigReady] = useState(false);
 
@@ -35,7 +47,9 @@ function App() {
 
       if (e.key === 'F2' && !isTyping) {
         e.preventDefault();
-        setCurrentPage('sales');
+        setFocusSaleId(null);
+        setSalePrefill(null);
+        setPage('sales');
         setTriggerFastSale(prev => prev + 1);
       }
     };
@@ -53,11 +67,11 @@ function App() {
       case 'stock':
         return <StockControl />;
       case 'sales':
-        return <Sales triggerFastSale={triggerFastSale} onNavigate={setCurrentPage} />;
+        return <Sales triggerFastSale={triggerFastSale} onNavigate={setCurrentPage} prefill={salePrefill} />;
       case 'small-sales':
         return <SmallSales />;
       case 'history':
-        return <SalesHistory />;
+        return <SalesHistory focusSaleId={focusSaleId} />;
       case 'motoboys':
         return <Motoboys />;
       case 'logistics':

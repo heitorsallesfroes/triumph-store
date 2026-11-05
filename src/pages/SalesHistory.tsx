@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows, chunk } from '../lib/resumoAnualCalc';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
@@ -105,7 +105,10 @@ interface Sale {
   payment_confirmed?: boolean;
 }
 
-export default function SalesHistory() {
+const SALE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// focusSaleId: link da extensão (?pagina=historico&venda=<id>): abre, rola até a venda e realça por alguns segundos
+export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: string | null } = {}) {
   const [sales, setSales] = useState<Sale[]>([]);
   const [filteredSales, setFilteredSales] = useState<Sale[]>([]);
   const [filteredSmartwatch, setFilteredSmartwatch] = useState(0);
@@ -142,9 +145,51 @@ export default function SalesHistory() {
   const [deliveryEditMotoboyId, setDeliveryEditMotoboyId] = useState('');
   const [deliveryEditFee, setDeliveryEditFee] = useState('');
   const [updatingDeliveryId, setUpdatingDeliveryId] = useState<string | null>(null);
+  const [filterRun, setFilterRun] = useState(0);
+  const focusRef = useRef<{ id: string; searched: boolean } | null>(focusSaleId ? { id: focusSaleId, searched: false } : null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [focusNotice, setFocusNotice] = useState('');
 
   useEffect(() => { loadSales(); }, []);
   useEffect(() => { setVisibleCount(PAGE_SIZE); setSelectedIds(new Set()); }, [filteredSales]);
+
+  // Venda do link: na lista filtrada → mostra, rola e realça. Fora (filtro de data, paginação) → busca pelo id e
+  // abre o dia dela com os filtros limpos. Não existe → aviso "Venda não encontrada".
+  useEffect(() => {
+    const f = focusRef.current;
+    if (!f || filterRun === 0 || filterLoading) return;
+    const idx = filteredSales.findIndex((s) => s.id === f.id);
+    if (idx >= 0) {
+      focusRef.current = null;
+      setVisibleCount((c) => Math.max(c, idx + 1));
+      setHighlightId(f.id);
+      setTimeout(() => document.getElementById(`venda-${f.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150);
+      return;
+    }
+    const notFound = () => { focusRef.current = null; setFocusNotice('Venda não encontrada.'); };
+    if (f.searched || !SALE_ID_RE.test(f.id)) { notFound(); return; }
+    f.searched = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase.from('sales').select('id, sale_date').eq('id', f.id).maybeSingle();
+        if (error || !data || !data.sale_date) { notFound(); return; }
+        const day = String(data.sale_date).slice(0, 10);
+        const same = period === 'custom' && dateFilter.start === day && dateFilter.end === day && statusFilter === 'all' && deliveryTypeFilter === 'all'
+          && motoboyFilter === 'all' && paymentFilter === 'all' && !paymentPendingFilter && !searchTerm && !debouncedProductFilter;
+        if (same) { notFound(); return; }
+        setStatusFilter('all'); setDeliveryTypeFilter('all'); setMotoboyFilter('all'); setPaymentFilter('all'); setPaymentPendingFilter(false);
+        setSearchTerm(''); setProductFilter(''); setDebouncedProductFilter('');
+        setDateFilter({ start: day, end: day });
+        setPeriod('custom');
+      } catch { notFound(); }
+    })();
+  }, [filterRun, filterLoading, filteredSales]);
+
+  useEffect(() => {
+    if (!highlightId) return;
+    const t = setTimeout(() => setHighlightId(null), 5000);
+    return () => clearTimeout(t);
+  }, [highlightId]);
 
   useEffect(() => {
     const timer = setTimeout(() => { setDebouncedProductFilter(productFilter); }, 300);
@@ -389,6 +434,7 @@ export default function SalesHistory() {
       setFilteredSales([]);
     } finally {
       setFilterLoading(false);
+      setFilterRun((n) => n + 1);
     }
   };
 
@@ -823,6 +869,13 @@ export default function SalesHistory() {
         <p className="text-gray-400">Visualize e gerencie todas as vendas realizadas</p>
       </div>
 
+      {focusNotice && (
+        <div role="alert" className="bg-yellow-500/10 border border-yellow-500/40 text-yellow-300 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+          <span>{focusNotice} O link pode ser de uma venda apagada.</span>
+          <button onClick={() => setFocusNotice('')} className="text-sm underline">Fechar</button>
+        </div>
+      )}
+
       {/* Filtros */}
       <div className="bg-gray-800 rounded-lg p-5 border border-gray-700 space-y-4">
 
@@ -1057,8 +1110,9 @@ export default function SalesHistory() {
             return (
               <div
                 key={sale.id}
-                className="relative bg-gray-800 rounded-lg p-6 border transition-all"
-                style={{ borderColor: isSelected ? '#f5c518' : undefined }}
+                id={`venda-${sale.id}`}
+                className={`relative bg-gray-800 rounded-lg p-6 border transition-all${highlightId === sale.id ? ' ring-4 ring-orange-500 shadow-lg shadow-orange-500/30' : ''}`}
+                style={{ borderColor: isSelected ? '#f5c518' : highlightId === sale.id ? '#f97316' : undefined }}
                 onClick={e => {
                   const tag = (e.target as HTMLElement).tagName;
                   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'OPTION') return;

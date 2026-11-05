@@ -56,6 +56,8 @@ interface SalesProps {
   onNavigate?: (page: string) => void;
   editSaleId?: string;
   onEditDone?: () => void;
+  // Link da extensão: cliente e telefone da conversa do WhatsApp
+  prefill?: { name: string; phone: string } | null;
 }
 
 const RECENT_CITIES_KEY = 'recent_cities';
@@ -79,7 +81,7 @@ function reorderByRecent<T extends { name: string }>(items: T[], recentNames: st
   return [...recentItems, ...restItems];
 }
 
-export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditDone }: SalesProps) {
+export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditDone, prefill }: SalesProps) {
   console.log('Nova Venda loaded');
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -106,8 +108,8 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
   const originalItemsRef = useRef<{ product_id: string; quantity: number }[]>([]);
 
   const [formData, setFormData] = useState({
-    customer_name: '',
-    customer_phone: '',
+    customer_name: (!editSaleId && prefill?.name) || '',
+    customer_phone: (!editSaleId && prefill?.phone) || '',
     customer_cpf: '',
     address_street: '',
     address_number: '',

@@ -799,6 +799,14 @@ guardada.
 
 ## O que mudou
 
+### 2.7.2
+- **Abrir no ERP direto na venda**: depois de registrar a venda pelo 💰, o botão
+  **Abrir esta venda no ERP** abre o Histórico de Vendas já nessa venda (rola até
+  ela e realça). Na aba Vendas, cada venda da lista tem **Abrir no ERP**, e o
+  botão **Nova venda no ERP** abre a Nova Venda do ERP com o nome e o telefone
+  desta conversa (com a trava do telefone da 2.6.3). Precisa do ERP atualizado
+  (lê `?pagina=historico&venda=<id>` e `?pagina=nova-venda&nome=&telefone=`).
+
 ### 2.7.1
 - Editor das mensagens rápidas e dos disparos: "Escolher da biblioteca" em
   grade de miniaturas (pasta, busca, prévia maior ao passar o mouse, ouvir o

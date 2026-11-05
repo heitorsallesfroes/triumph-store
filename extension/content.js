@@ -821,6 +821,10 @@
       .vd-prod:hover { border-color: var(--accent); }
       .vd-total { font-size: 13px; }
       .vd-sale { width: 100%; text-align: left; border: none; }
+      .vd-row { display: flex; align-items: center; gap: 6px; }
+      .vd-row .vd-sale { flex: 1; min-width: 0; }
+      a.bbtn, a.ed-mini { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+      .vd-erp { flex-shrink: 0; }
       .sale-quick { margin-left: auto; flex-shrink: 0; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; background: transparent; color: inherit; font-size: 11px; font-weight: 700; }
       .sale-quick[hidden] { display: none; }
       .conv-quick { margin-left: 4px; }
@@ -5986,6 +5990,39 @@
     if (vs.view === 'list') loadChatSales();
   }
 
+  // 2.7.2: links que abrem o ERP direto na tela certa (?pagina=historico&venda=<id> / ?pagina=nova-venda&nome=&telefone=)
+  function erpLink(params) {
+    const base = vs.catalog && vs.catalog.erpUrl;
+    if (!base) return null;
+    try {
+      const u = new URL(base);
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+      Object.entries(params).forEach(([k, v]) => { if (v) u.searchParams.set(k, String(v)); });
+      return u.href;
+    } catch { return null; }
+  }
+  function erpAnchor(text, href, cls, aria) {
+    const a = el('a', cls, text);
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    if (aria) a.setAttribute('aria-label', aria);
+    return a;
+  }
+  // Nova venda no ERP com o nome e o telefone DESTA conversa (mesma trava do telefone da 2.6.3)
+  async function openErpNewSale() {
+    if (!erpLink({})) { toast('Endereço do ERP não configurado (ERP_URL).', 'warn', 5000); return; }
+    let chat = null;
+    try { chat = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { chat = null; }
+    const chatId = chat && chat.kind === 'individual' ? chat.chatId : null;
+    if (!chatId) { toast('Abra uma conversa individual no WhatsApp.', 'warn', 5000); return; }
+    const pn = await chatPhoneName(chatId);
+    const lock = await phoneLock(chatId, pn.phone, { allowEmpty: true });
+    if (lock) { toast(lock, 'warn', 6000); return; }
+    const url = erpLink({ pagina: 'nova-venda', nome: pn.name, telefone: pn.phone });
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
   async function loadSaleCatalog() {
     try { vs.catalog = await call('erpCatalog'); } catch (e) { vs.catalog = { error: e.message }; }
     renderVendas();
@@ -6414,14 +6451,9 @@
     const sec = el('section', 'crmsec');
     sec.append(el('div', 'wt-head', 'VENDA REGISTRADA'));
     sec.append(el('div', 'fw-test', `Venda registrada (pendente). Finalize no ERP. Total ${TS.money(vs.done.total)}.`));
-    const url = vs.catalog && vs.catalog.erpUrl;
-    if (url) {
-      const a = el('a', null, 'abrir o ERP');
-      a.href = url;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      sec.append(a);
-    } else sec.append(el('div', 'crm-intro', 'No ERP: Histórico de Vendas.'));
+    const url = erpLink({ pagina: 'historico', venda: vs.done.id });
+    if (url) sec.append(erpAnchor('Abrir esta venda no ERP', url, 'bbtn primary vd-open'));
+    else sec.append(el('div', 'crm-intro', 'No ERP: Histórico de Vendas.'));
     if (vs.done.tinyFailed) sec.append(el('div', 'ed-note', 'O estoque do Tiny não confirmou a atualização: confira no ERP.'));
     sec.append(fbtn('bbtn', 'Gerar mensagem do entregador', () => openCourier()), fbtn('bbtn', 'Voltar', () => { vs.view = 'list'; loadChatSales(); }));
     vtabEl.append(sec);
@@ -6489,6 +6521,7 @@
     if (vs.view === 'courier' && vs.courier) { renderCourier(); return; }
     const top = el('div', 'ed-add');
     top.append(fbtn('bbtn primary', '💰 Nova venda desta conversa', () => openSaleForm()));
+    if (erpLink({})) top.append(fbtn('bbtn', 'Nova venda no ERP', () => openErpNewSale()));
     vtabEl.append(top);
     const sec = el('section', 'crmsec');
     sec.append(el('div', 'wt-head', 'ÚLTIMAS 20 VENDAS PELA CONVERSA'));
@@ -6504,7 +6537,12 @@
       const side = el('div', 'sc-side');
       side.append(el('span', 'sc-when', schedWhen(s.created_at || s.sale_date)));
       line.append(main, side);
-      sec.append(line);
+      const href = s.id ? erpLink({ pagina: 'historico', venda: s.id }) : null;
+      if (href) {
+        const row = el('div', 'vd-row');
+        row.append(line, erpAnchor('Abrir no ERP', href, 'ed-mini vd-erp', `Abrir no ERP a venda de ${s.customer_name || 'Cliente'}`));
+        sec.append(row);
+      } else sec.append(line);
     });
     vtabEl.append(sec);
   }
