@@ -799,6 +799,18 @@ guardada.
 
 ## O que mudou
 
+### 2.8.6
+- Mensagem rápida: em **e tirar da etiqueta CRM** e **e tirar da etiqueta do
+  WhatsApp**, nova opção **Todas (menos a que vai colocar)** logo abaixo de
+  "(não mexe)". Quando a mensagem inteira sai com sucesso, tira o contato de todas
+  as etiquetas daquele tipo, menos a escolhida em "colocar" (e coloca nela); com
+  "colocar" em "(não mexe)", tira de todas. A etiqueta **Não enviar** nunca é
+  retirada. Precisa da migration
+  `supabase/migrations/20261105180000_wa_items_remove_all_labels.sql`; sem ela a
+  opção não aparece e tudo funciona como antes.
+- Disparos e Automações não ganharam a opção: lá "tirar etiqueta" é uma ação
+  própria de cada disparo/automação, não o mesmo campo da mensagem rápida.
+
 ### 2.8.5
 - **Arrastar para reordenar** (com o mouse):
   - Categorias das mensagens rápidas: arraste o cabeçalho (alça ⋮⋮ ao passar o

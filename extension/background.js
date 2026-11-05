@@ -23,7 +23,7 @@ const HANDLERS = {
   moveContactLabel:       (m) => WaApi.moveContactLabel({ contactId: m.contactId, from: m.from, to: m.to }),
   fetchAllLabelClients:   (m) => WaApi.fetchAllLabelClients({ labelId: m.labelId }),
   // Editor de mensagens (1.9.0): cada uma valida a entrada em supabase-api.js
-  saveItem:        (m) => WaApi.saveItem({ id: m.id, category_id: m.category_id, title: m.title, parts: m.parts, on_send_add_label_id: m.on_send_add_label_id, on_send_remove_label_id: m.on_send_remove_label_id, on_send_add_wa_label_id: m.on_send_add_wa_label_id, on_send_remove_wa_label_id: m.on_send_remove_wa_label_id }),
+  saveItem:        (m) => WaApi.saveItem({ id: m.id, category_id: m.category_id, title: m.title, parts: m.parts, on_send_add_label_id: m.on_send_add_label_id, on_send_remove_label_id: m.on_send_remove_label_id, on_send_add_wa_label_id: m.on_send_add_wa_label_id, on_send_remove_wa_label_id: m.on_send_remove_wa_label_id, on_send_remove_all_crm: m.on_send_remove_all_crm, on_send_remove_all_wa: m.on_send_remove_all_wa }),
   deleteItem:      (m) => WaApi.deleteItem({ id: m.id }),
   createCategory:  (m) => WaApi.createCategory({ name: m.name }),
   renameCategory:  (m) => WaApi.renameCategory({ id: m.id, name: m.name }),
@@ -84,7 +84,7 @@ const HANDLERS = {
   automationRuns:       (m) => WaApi.automationRuns({ automationIds: m.automationIds, contactIds: m.contactIds }),
   automationReserve:    (m) => WaApi.automationReserve({ automationId: m.automationId, contactId: m.contactId, runKey: m.runKey }),
   automationUnreserve:  (m) => WaApi.automationUnreserve({ id: m.id }),
-  applySendLabels:      (m) => WaApi.applySendLabels({ addLabelId: m.addLabelId, removeLabelId: m.removeLabelId, contactId: m.contactId, identity: m.identity, chatId: m.chatId, name: m.name }),
+  applySendLabels:      (m) => WaApi.applySendLabels({ addLabelId: m.addLabelId, removeLabelId: m.removeLabelId, removeAll: m.removeAll === true, contactId: m.contactId, identity: m.identity, chatId: m.chatId, name: m.name }),
   getContactName:       (m) => WaApi.getContactName(m.identity),
   // Venda pela conversa (2.3.0): só createSaleFromChat grava nas tabelas do ERP, e só pelo botão "Registrar venda"
   erpCatalog:            ()  => WaApi.erpCatalog(),

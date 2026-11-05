@@ -2731,6 +2731,7 @@
     state.categories = lib.categories || [];
     state.items      = lib.items || [];
     if (typeof lib.partsAvailable === 'boolean') state.partsAvailable = lib.partsAvailable;
+    if (typeof lib.removeAllAvailable === 'boolean') state.removeAllAvailable = lib.removeAllAvailable; // 2.8.6
     state.loaded     = true;
     state.source     = source;
     state.syncedAt   = savedAt || null;
@@ -3227,9 +3228,9 @@
 
   async function applyItemLabels(item, target) {
     if (!item || !target) return;
-    if (item.on_send_add_label_id || item.on_send_remove_label_id) {
+    if (item.on_send_add_label_id || item.on_send_remove_label_id || item.on_send_remove_all_crm) {
       try {
-        const r = await call('applySendLabels', { addLabelId: item.on_send_add_label_id || null, removeLabelId: item.on_send_remove_label_id || null, ...target });
+        const r = await call('applySendLabels', { addLabelId: item.on_send_add_label_id || null, removeLabelId: item.on_send_remove_all_crm ? null : item.on_send_remove_label_id || null, removeAll: !!item.on_send_remove_all_crm, ...target });
         if (r && r.applied) afterLabelChange();
       } catch {
         toast('Enviado, mas não consegui trocar a etiqueta CRM.', 'warn', 5000);
@@ -3243,12 +3244,28 @@
   async function applyItemWaLabels(item, target) {
     const want = { add: item.on_send_add_wa_label_id ? String(item.on_send_add_wa_label_id) : null, remove: item.on_send_remove_wa_label_id ? String(item.on_send_remove_wa_label_id) : null };
     if (want.add && want.add === want.remove) want.remove = null;
-    if (!want.add && !want.remove) return;
+    const removeAllWa = !!item.on_send_remove_all_wa;
+    if (removeAllWa) want.remove = null;
+    if (!want.add && !want.remove && !removeAllWa) return;
     let chatId = target.chatId || (target.identity && target.identity.chatId) || null;
     if (!chatId) {
       try { const c = await waRequest('activeChat', {}, { timeout: 2000 }); if (c && c.kind === 'individual') chatId = c.chatId; } catch { /* sem conversa */ }
     }
     if (!chatId) return;
+    if (removeAllWa) {
+      // 2.8.6: tira de todas as etiquetas do WhatsApp da conversa (uma por vez), menos a que vai colocar e a "Não enviar"
+      if (!Array.isArray(state.waLabels)) await refreshBar().catch(() => {});
+      let now = [];
+      try { const r = await waRequest('chatLabels', { chatId }, { timeout: 5000 }); now = (r && r.labelIds) || []; } catch { now = []; }
+      const noSend = (id) => { const l = waLabelById(String(id)); return !!l && String(l.name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() === 'nao enviar'; };
+      let failed = false;
+      for (const lid of now.map(String)) {
+        if (lid === want.add || noSend(lid)) continue;
+        if (!(await motor.setWaLabel(chatId, { remove: lid }))) failed = true;
+      }
+      if (failed) toast('Enviado, mas não consegui tirar todas as etiquetas do WhatsApp.', 'warn', 5000);
+      if (!want.add) return;
+    }
     const existing = () => ({ add: want.add && waLabelById(want.add) ? want.add : null, remove: want.remove && waLabelById(want.remove) ? want.remove : null });
     if (!Array.isArray(state.waLabels)) await refreshBar().catch(() => {});
     let ch = Array.isArray(state.waLabels) ? existing() : want;
@@ -4247,6 +4264,17 @@
     return pv;
   }
 
+  // 2.8.6: opção "Todas (menos a que vai colocar)" logo abaixo de "(não mexe)" (só com as colunas no banco)
+  const REMOVE_ALL = '__all__';
+  function withRemoveAll(sel, value) {
+    if (!state.removeAllAvailable && value !== REMOVE_ALL) return sel;
+    const o = el('option', null, 'Todas (menos a que vai colocar)');
+    o.value = REMOVE_ALL;
+    sel.insertBefore(o, sel.options[1] || null);
+    if (value === REMOVE_ALL) sel.value = REMOVE_ALL;
+    return sel;
+  }
+
   // 2.8.3: inserir {nome} / {saudacao} no cursor
   function varButtons(field, onChange, i) {
     const row = el('div', 'ed-vars');
@@ -4291,10 +4319,10 @@
       parts: item ? partsOf(item).map(edPart) : [edPart({ type: 'texto' })],
       // 2.1.0: etiquetas CRM ao enviar (opcionais)
       on_send_add_label_id: (item && item.on_send_add_label_id) || '',
-      on_send_remove_label_id: (item && item.on_send_remove_label_id) || '',
+      on_send_remove_label_id: (item && item.on_send_remove_all_crm) ? REMOVE_ALL : (item && item.on_send_remove_label_id) || '',
       // 2.7.1: etiquetas do WhatsApp ao enviar (opcionais)
       on_send_add_wa_label_id: (item && item.on_send_add_wa_label_id) || '',
-      on_send_remove_wa_label_id: (item && item.on_send_remove_wa_label_id) || '',
+      on_send_remove_wa_label_id: (item && item.on_send_remove_all_wa) ? REMOVE_ALL : (item && item.on_send_remove_wa_label_id) || '',
       saving: false, msg: '', error: false, duplicate,
     };
     state.view = 'editor';
@@ -4538,7 +4566,7 @@
     // 2.1.0: mensagem rápida que etiqueta (só quando a mensagem inteira sair com sucesso)
     const addSel = labelSelect(ed.on_send_add_label_id, { empty: '(não mexe)', aria: 'Ao enviar, colocar na etiqueta CRM' });
     addSel.addEventListener('change', () => { ed.on_send_add_label_id = addSel.value; });
-    const remSel = labelSelect(ed.on_send_remove_label_id, { empty: '(não mexe)', aria: 'Ao enviar, tirar da etiqueta CRM' });
+    const remSel = withRemoveAll(labelSelect(ed.on_send_remove_label_id === REMOVE_ALL ? '' : ed.on_send_remove_label_id, { empty: '(não mexe)', aria: 'Ao enviar, tirar da etiqueta CRM' }), ed.on_send_remove_label_id);
     remSel.addEventListener('change', () => { ed.on_send_remove_label_id = remSel.value; });
     const al = el('label', 'ed-field', 'Ao enviar, colocar na etiqueta CRM');
     al.append(addSel);
@@ -4546,13 +4574,15 @@
     rl.append(remSel);
     const waAddSel = waLabelSelect(ed.on_send_add_wa_label_id, 'Ao enviar, colocar na etiqueta do WhatsApp', '(não mexe)');
     waAddSel.addEventListener('change', () => { ed.on_send_add_wa_label_id = waAddSel.value; });
-    const waRemSel = waLabelSelect(ed.on_send_remove_wa_label_id, 'Ao enviar, tirar da etiqueta do WhatsApp', '(não mexe)');
+    const waRemSel = withRemoveAll(waLabelSelect(ed.on_send_remove_wa_label_id === REMOVE_ALL ? '' : ed.on_send_remove_wa_label_id, 'Ao enviar, tirar da etiqueta do WhatsApp', '(não mexe)'), ed.on_send_remove_wa_label_id);
     waRemSel.addEventListener('change', () => { ed.on_send_remove_wa_label_id = waRemSel.value; });
     const wal = el('label', 'ed-field', 'Ao enviar, colocar na etiqueta do WhatsApp');
     wal.append(waAddSel);
     const wrl = el('label', 'ed-field', 'e tirar da etiqueta do WhatsApp');
     wrl.append(waRemSel);
-    wrap.append(al, rl, wal, wrl, el('div', 'crm-intro', 'Só muda as etiquetas (CRM e WhatsApp) quando a mensagem inteira sai com sucesso (seta, prévia, agendamento, automação ou disparo).'));
+    wrap.append(al, rl, wal, wrl);
+    if (state.removeAllAvailable) wrap.append(el('div', 'ed-varhint', 'A etiqueta Não enviar nunca é retirada.'));
+    wrap.append(el('div', 'crm-intro', 'Só muda as etiquetas (CRM e WhatsApp) quando a mensagem inteira sai com sucesso (seta, prévia, agendamento, automação ou disparo).'));
     wrap.append(el('div', `ed-msg${ed.error ? ' err' : ''}`, ed.msg));
 
     const actionsRow = el('div', 'ed-actions');
@@ -4623,9 +4653,11 @@
       }
       const res = await call('saveItem', {
         id: current.id || undefined, category_id: categoryId, title: current.title, parts,
-        on_send_add_label_id: current.on_send_add_label_id || null, on_send_remove_label_id: current.on_send_remove_label_id || null,
+        on_send_add_label_id: current.on_send_add_label_id || null, on_send_remove_label_id: current.on_send_remove_label_id === REMOVE_ALL ? null : current.on_send_remove_label_id || null,
+        // 2.8.6: "Todas" vai em colunas próprias (só manda se a opção existe ou se o item já tinha)
+        ...(state.removeAllAvailable ? { on_send_remove_all_crm: current.on_send_remove_label_id === REMOVE_ALL, on_send_remove_all_wa: current.on_send_remove_wa_label_id === REMOVE_ALL } : {}),
         ...(current.on_send_add_wa_label_id || current.on_send_remove_wa_label_id
-          ? { on_send_add_wa_label_id: current.on_send_add_wa_label_id || null, on_send_remove_wa_label_id: current.on_send_remove_wa_label_id || null }
+          ? { on_send_add_wa_label_id: current.on_send_add_wa_label_id || null, on_send_remove_wa_label_id: current.on_send_remove_wa_label_id === REMOVE_ALL ? null : current.on_send_remove_wa_label_id || null }
           : current.id && state.items.some((x) => x.id === current.id && (x.on_send_add_wa_label_id || x.on_send_remove_wa_label_id))
             ? { on_send_add_wa_label_id: null, on_send_remove_wa_label_id: null } : {}),
       });

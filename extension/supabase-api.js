@@ -81,14 +81,19 @@
   const ON_SEND_COLUMNS = 'on_send_add_label_id,on_send_remove_label_id';
   // 2.7.1: etiquetas do WhatsApp "ao enviar" (migration 20261105120000); sem elas, busca sem
   const ON_SEND_WA_COLUMNS = 'on_send_add_wa_label_id,on_send_remove_wa_label_id';
+  // 2.8.6: "tirar de todas" (migration 20261105180000); sem elas, busca sem
+  const ON_SEND_ALL_COLUMNS = 'on_send_remove_all_crm,on_send_remove_all_wa';
   // Coluna opcional que o banco disser que não existe sai da consulta, e tenta de novo
+  let itemOptionalCols = []; // 2.8.6: colunas opcionais que a última leitura conseguiu pedir
   async function fetchItems() {
-    let optional = ['record_seconds', ...ON_SEND_COLUMNS.split(','), ...ON_SEND_WA_COLUMNS.split(',')];
-    // cada par "ao enviar" (CRM, WhatsApp) vem junto na sua migration
-    const group = (c) => (c.startsWith('on_send_') ? (c.includes('_wa_') ? 'on_send_wa' : 'on_send_crm') : c);
+    let optional = ['record_seconds', ...ON_SEND_COLUMNS.split(','), ...ON_SEND_WA_COLUMNS.split(','), ...ON_SEND_ALL_COLUMNS.split(',')];
+    // cada grupo "ao enviar" (CRM, WhatsApp, tirar de todas) vem junto na sua migration
+    const group = (c) => (c.startsWith('on_send_remove_all_') ? 'on_send_all' : c.startsWith('on_send_') ? (c.includes('_wa_') ? 'on_send_wa' : 'on_send_crm') : c);
     for (;;) {
       try {
-        return await rest(`wa_items?select=${[ITEM_COLUMNS, ...optional].join(',')}&${ITEM_ORDER}`);
+        const rows = await rest(`wa_items?select=${[ITEM_COLUMNS, ...optional].join(',')}&${ITEM_ORDER}`);
+        itemOptionalCols = optional.slice();
+        return rows;
       } catch (err) {
         const gone = /^Supabase 400:/.test(err.message) ? optional.filter((c) => new RegExp(`\\b${c}\\b`).test(err.message)) : [];
         if (!gone.length) throw err;
@@ -130,7 +135,9 @@
         if (list.length) i.parts = list;
       });
     }
-    return { categories, items, partsAvailable: parts !== null };
+    // 2.8.6: a opção "Todas (menos a que vai colocar)" só aparece com as colunas no banco
+    // (sem consulta extra: vale se a leitura das mensagens conseguiu pedir as colunas novas)
+    return { categories, items, partsAvailable: parts !== null, removeAllAvailable: itemOptionalCols.includes('on_send_remove_all_crm') };
   }
 
   async function incrementUsage(id) {
@@ -601,7 +608,7 @@
     return s;
   };
 
-  async function saveItem({ id, category_id, title, parts, on_send_add_label_id, on_send_remove_label_id, on_send_add_wa_label_id, on_send_remove_wa_label_id }) {
+  async function saveItem({ id, category_id, title, parts, on_send_add_label_id, on_send_remove_label_id, on_send_add_wa_label_id, on_send_remove_wa_label_id, on_send_remove_all_crm, on_send_remove_all_wa }) {
     if (id !== undefined && id !== null) checkUuid(id, 'Item inválido');
     checkUuid(category_id, 'Categoria inválida');
     const cleanTitle = cleanText(title, TITLE_MAX, 'Título');
@@ -621,6 +628,12 @@
     const wantsWa = on_send_add_wa_label_id !== undefined || on_send_remove_wa_label_id !== undefined;
     const waCols = wantsWa && (await probe('wa_items.on_send_wa', () => hasColumn('wa_items', 'on_send_add_wa_label_id')));
     if ((addWa || removeWa) && !waCols) throw new Error('Atualize o banco para usar este recurso');
+    // 2.8.6: "Todas (menos a que vai colocar)"
+    const allCrm = on_send_remove_all_crm === true;
+    const allWa = on_send_remove_all_wa === true;
+    const wantsAll = on_send_remove_all_crm !== undefined || on_send_remove_all_wa !== undefined;
+    const allCols = wantsAll && (await probe('wa_items.remove_all', () => hasColumn('wa_items', 'on_send_remove_all_crm')));
+    if ((allCrm || allWa) && !allCols) throw new Error('Atualize o banco para usar este recurso');
     const hasTable = await partsTableExists();
     if (!hasTable && list.length > 1) throw new Error(PARTS_MISSING);
     const first = list[0];
@@ -629,6 +642,7 @@
       file_url: first.file_url, file_name: first.file_name, file_size: first.file_size,
       ...(labelCols ? { on_send_add_label_id: addLabel, on_send_remove_label_id: removeLabel } : {}),
       ...(waCols ? { on_send_add_wa_label_id: addWa, on_send_remove_wa_label_id: removeWa } : {}),
+      ...(allCols ? { on_send_remove_all_crm: allCrm, on_send_remove_all_wa: allWa, ...(allCrm && labelCols ? { on_send_remove_label_id: null } : {}), ...(allWa && waCols ? { on_send_remove_wa_label_id: null } : {}) } : {}),
     };
     let itemId = id;
     if (itemId) {
@@ -2172,10 +2186,11 @@
   // ── Mensagem rápida que etiqueta (2.1.0) ──
   // Depois que a mensagem INTEIRA saiu: põe/tira o contato das etiquetas CRM do item.
   // Acha o contato pelo id, pela conversa aberta (identity) ou pelo id da conversa; cria se preciso.
-  async function applySendLabels({ addLabelId, removeLabelId, contactId, identity, chatId, name }) {
+  async function applySendLabels({ addLabelId, removeLabelId, removeAll = false, contactId, identity, chatId, name }) {
     const add = addLabelId == null || addLabelId === '' ? null : checkUuid(addLabelId, 'Etiqueta inválida');
     const remove = removeLabelId == null || removeLabelId === '' ? null : checkUuid(removeLabelId, 'Etiqueta inválida');
-    if (!add && !remove) return { applied: false };
+    const all = removeAll === true;
+    if (!add && !remove && !all) return { applied: false };
     let contact = null;
     if (contactId) {
       contact = { id: checkUuid(contactId, 'Contato inválido') };
@@ -2195,10 +2210,23 @@
       }
     }
     if (!contact) return { applied: false };
-    if (remove) await rest(`wa_contact_labels?contact_id=eq.${contact.id}&label_id=eq.${remove}`, { method: 'DELETE' });
+    if (all) {
+      // 2.8.6: tira de todas as etiquetas CRM, menos a que vai colocar e a "Não enviar" (bloqueio do motor)
+      const now = await labelIdsOf(contact.id);
+      const keep = new Set([add].filter(Boolean));
+      if (now.length) {
+        const rows = await rest(`wa_labels?select=id,name&id=in.(${now.join(',')})`);
+        rows.filter((l) => isNoSendName(l.name)).forEach((l) => keep.add(l.id));
+      }
+      const out = now.filter((x) => !keep.has(x));
+      if (out.length) await rest(`wa_contact_labels?contact_id=eq.${contact.id}&label_id=in.(${out.join(',')})`, { method: 'DELETE' });
+    } else if (remove) await rest(`wa_contact_labels?contact_id=eq.${contact.id}&label_id=eq.${remove}`, { method: 'DELETE' });
     if (add) await followAdd({ contactId: contact.id, labelId: add });
     return { applied: true, contactId: contact.id, labelIds: await labelIdsOf(contact.id) };
   }
+
+  // 2.8.6: "Não enviar" (com ou sem acento/maiúsculas) nunca sai pelo "tirar de todas"
+  const isNoSendName = (n) => String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() === 'nao enviar';
 
   // Nome salvo no CRM para o contato da conversa aberta (para o {nome})
   async function getContactName(identity) {
