@@ -799,6 +799,22 @@ guardada.
 
 ## O que mudou
 
+### 2.10.4 — tirar partes na prévia (só deste envio)
+- A prévia da mensagem rápida agora mostra **todas as partes** na ordem em que vão sair (áudio, imagem,
+  vídeo, PDF, álbum, cartões e texto editável), cada uma com um **✕** pequeno no canto ("Não enviar esta
+  parte agora"). Clicou: a parte fica apagada/riscada com **"Não vai ser enviada · desfazer"**.
+- No **álbum** ("Várias imagens"), cada foto tem o seu ✕ (e ↺ para voltar): tira só aquela foto. Sobrando
+  1 foto, ela vai como imagem/vídeo normal com a legenda; tirando todas, a parte inteira sai.
+- Vale **só para este envio**: a mensagem rápida salva não muda. "Restaurar" volta tudo.
+- O "esperar" e o "digitando" das partes tiradas não contam: o rodapé mostra "2 de 3 partes · tempo total
+  ~10s". Tirando todas, o botão fica desligado (**"Nada para enviar"**).
+- As etiquetas de **"Ao enviar"** (CRM e WhatsApp) continuam valendo quando as partes escolhidas saem
+  (pelo menos uma enviada com sucesso). Se o envio falhar ou for parado no meio, elas não mudam, como antes.
+- Regras em `engine.js` (`previewSendPlan`, `sendLabelsApply`); testes em `tests/preview.test.cjs`. O teste
+  no Chrome real grava uma mensagem de teste (áudio + texto + álbum de 3 fotos) no cache local, abre a
+  prévia e usa os ✕ de verdade (tirar a 1ª parte de áudio, desfazer, foto do álbum, tirar todas,
+  Restaurar). Print em `extension/screenshots/2.10.4`.
+
 ### 2.10.3 — a lista de conversas não volta mais para o topo depois de enviar
 - **Manter a posição da lista de conversas ao enviar** (no Personalizar, **ligado** por padrão). A
   extensão guarda onde **você** deixou a lista da esquerda (`#pane-side`, ou o que rola dentro dele) a cada

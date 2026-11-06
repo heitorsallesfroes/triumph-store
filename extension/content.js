@@ -1377,6 +1377,25 @@
       /* ═══ 2.10.0: follow-up ═══ */
       .ed-follow { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; padding: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); }
       .ed-check { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--fs-2); font-weight: 600; cursor: pointer; }
+      /* ═══ 2.10.4: prévia — tirar partes deste envio ═══ */
+      .pv-pt { display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-1) var(--s-2) var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); background: var(--card); }
+      .pv-pt.off { opacity: .55; border-style: dashed; }
+      .pv-pt.off .bubble, .pv-pt.off .pv-doc, .pv-pt.off .rp-card { text-decoration: line-through; }
+      .pv-pt.off .pv-media, .pv-pt.off .pv-albx, .pv-pt.off .rp-card { filter: grayscale(1); }
+      .pv-ph { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); min-height: 22px; }
+      .pv-pl { margin: 0; }
+      .pv-x { flex: none; width: 22px; height: 22px; padding: 0; border: none; border-radius: var(--r-pill); background: transparent; color: var(--muted); font-size: 12px; line-height: 1; cursor: pointer; }
+      .pv-x:hover, .pv-x:focus-visible { background: var(--err-soft); color: var(--err); outline: none; }
+      .pv-offnote { font-size: var(--fs-1); color: var(--muted); font-weight: 600; }
+      .pv-undo { padding: 0; border: none; background: none; color: var(--accent-text); font: inherit; text-decoration: underline; cursor: pointer; }
+      .pv-albx { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: var(--s-1); }
+      .pv-cell { position: relative; aspect-ratio: 1; border-radius: var(--r-sm); overflow: hidden; background: var(--bg2); }
+      .pv-cell.off .alb-thumb { opacity: .3; filter: grayscale(1); }
+      .pv-fx { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; padding: 0; border: none; border-radius: var(--r-pill); background: rgba(0,0,0,.6); color: #fff; font-size: 11px; cursor: pointer; }
+      .pv-fx:hover, .pv-fx:focus-visible { background: var(--err); outline: none; }
+      .pv-cell.off .pv-fx { background: var(--accent); }
+      .pv-total { font-size: var(--fs-1); color: var(--muted); font-weight: 600; }
+      .pv-send:disabled { opacity: .5; cursor: default; }
       /* ═══ 2.10.2: painel personalizável ═══ */
       .ptop { flex: 0 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
       .panel.sec-msg.top-limited .ptop { max-height: var(--top-max); }
@@ -3519,42 +3538,10 @@
   function fillPreview(inner, item) {
     inner.textContent = '';
     const pv = el('div', 'pv');
-
-    if (['imagem', 'video', 'audio'].includes(item.type) && item.file_url) {
-      const media = el('div', 'pv-media loading sk');
-      pv.append(media);
-      getBlobUrl(item).then((url) => {
-        const tag = item.type === 'imagem' ? 'img' : item.type;
-        const m = document.createElement(tag);
-        m.src = url;
-        if (tag === 'img') m.alt = item.title;
-        else { m.controls = true; m.preload = 'metadata'; }
-        media.className = 'pv-media';
-        media.append(m);
-      }).catch((e) => {
-        media.className = 'pv-note';
-        media.textContent = `Não foi possível carregar a prévia: ${e.message}`;
-      });
-    }
-
-    if (item.type === 'documento' && item.file_name) {
-      const doc = el('div', 'pv-doc');
-      doc.innerHTML = svg('documento');
-      doc.firstChild.style.color = TYPES.documento.color;
-      doc.append(`${item.file_name}${item.file_size != null ? ` · ${formatSize(item.file_size)}` : ''}`);
-      pv.append(doc);
-    }
-
-    // 2.8.7: álbum = grade das fotos como vai chegar
-    partsOf(item).forEach((p) => { if (Array.isArray(p.files) && p.files.length > 1) pv.append(albumPreviewEl(p)); });
-    const hasRich = partsOf(item).some((p) => Rich.isRich(p.type)); // 2.9.2: cartões na ordem, dentro da bolha
-    if (item.body || textPartsOf(item).length || hasRich) {
-      const slot = el('div', 'bubble-slot');
-      fillBubble(slot, item);
-      pv.append(slot);
-    } else if (item.type === 'texto' || !item.file_url) {
-      pv.append(el('div', 'pv-note', 'Sem conteúdo.'));
-    }
+    // 2.10.4: todas as partes, na ordem, como vão chegar (mídia, álbum, cartão e texto editável), cada uma com ✕
+    const slot = el('div', 'bubble-slot');
+    fillBubble(slot, item);
+    pv.append(slot);
     inner.append(pv);
   }
 
@@ -3572,15 +3559,7 @@
     else if (f.file_url) whenVisible(th, () => getBlobUrl({ id: key || 'arquivo', file_url: f.file_url, file_name: f.file_name }).then(mount).catch(() => {}));
     return th;
   }
-  function albumPreviewEl(p) {
-    const grid = el('div', `pv-album n${Math.min(p.files.length, 4)}`);
-    p.files.forEach((f, k) => {
-      const cell = albumThumb(f, k, 'arquivo');
-      if (k === 3 && p.files.length > 4) cell.append(el('span', 'pv-more', `+${p.files.length - 4}`));
-      if (k < 4) grid.append(cell);
-    });
-    return grid;
-  }
+
 
   // ── Prévia editável (2.1.0) ──
   // Textos e legendas ficam editáveis; "Enviar só nesta conversa" manda o que está na tela e a
@@ -3624,14 +3603,47 @@
     return state.ctx ? state.ctx.firstName : '';
   }
 
-  // Como o texto vai ficar na conversa aberta
+  // Como cada parte vai ficar na conversa aberta. 2.10.4: cada parte (e cada foto do álbum) ganha um ✕ que a tira
+  // SÓ deste envio ("Não vai ser enviada · desfazer"); a mensagem salva não muda.
+  const pvState = (item) => {
+    if (!pvEdits.has(item.id)) pvEdits.set(item.id, { name: null, texts: {}, skip: [], skipFiles: {} });
+    const st = pvEdits.get(item.id);
+    st.skip = st.skip || [];
+    st.skipFiles = st.skipFiles || {};
+    return st;
+  };
+  function pvPartLabel(p) {
+    if (Array.isArray(p.files) && p.files.length > 1) return `Várias imagens (${p.files.length})`;
+    if (Rich.isRich(p.type)) return Rich.LABEL[p.type];
+    if (p.type === 'documento') return 'PDF';
+    if (p.type === 'audio') return 'Áudio';
+    return (TYPES[p.type] && TYPES[p.type].label) || p.type;
+  }
+  function pvMediaEl(p, i) {
+    const media = el('div', 'pv-media loading sk');
+    getBlobUrl(partAsItem(p, i)).then((url) => {
+      const tag = p.type === 'imagem' ? 'img' : p.type === 'video' ? 'video' : 'audio';
+      const m = document.createElement(tag);
+      m.src = url;
+      if (tag === 'img') m.alt = p.file_name || '';
+      else { m.controls = true; m.preload = 'metadata'; }
+      media.className = 'pv-media';
+      media.append(m);
+    }).catch((e) => {
+      media.className = 'pv-note';
+      media.textContent = `Não foi possível carregar a prévia: ${e.message}`;
+    });
+    return media;
+  }
   function fillBubble(slot, item) {
     slot.textContent = '';
     slot.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
-    if (!pvEdits.has(item.id)) pvEdits.set(item.id, { name: null, texts: {} });
-    const st = pvEdits.get(item.id);
+    const st = pvState(item);
+    const rerender = () => fillBubble(slot, item);
     const detected = state.ctx ? state.ctx.firstName : '';
+    const all = partsOf(item);
     const parts = textPartsOf(item);
+    const textIdx = new Set(parts.map(({ i }) => i));
     const usesName = parts.some(({ p }) => globalThis.TspEngine.hasNameVar(p.body));
     if (usesName && !detected) {
       const nameIn = el('input', 'ed-title pv-name');
@@ -3652,50 +3664,111 @@
       slot.append(nameIn);
     }
     let unresolved = 0;
-    // 2.9.2: localização/produto/catálogo/contato/Pix aparecem como cartão, na ordem das partes
-    const richParts = partsOf(item).map((p, i) => ({ p, i })).filter(({ p }) => Rich.isRich(p.type));
-    const textIdx = new Set(parts.map(({ i }) => i));
-    const order = [...parts, ...richParts.filter(({ i }) => !textIdx.has(i))].sort((a, b) => a.i - b.i);
-    const multi = order.length > 1 || (order[0] && order[0].p.type !== 'texto' && !Rich.isRich(order[0].p.type));
-    order.forEach(({ p, i }) => {
-      if (Rich.isRich(p.type)) {
-        if (multi) slot.append(el('div', 'pv-part', `Parte ${i + 1} (${Rich.LABEL[p.type]}${textIdx.has(i) ? ' + texto junto' : ''})`));
-        slot.append(richPreviewEl(p));
-        if (!textIdx.has(i)) return;
+    const multi = all.length > 1;
+    all.forEach((p, i) => {
+      const off = st.skip.includes(i);
+      const box = el('div', `pv-pt${off ? ' off' : ''}`);
+      box.dataset.part = String(i);
+      const head = el('div', 'pv-ph');
+      const album = Array.isArray(p.files) && p.files.length > 1;
+      const albumBefore = album && !!(p.files[0] && p.files[0].caption_before);
+      const extra = textIdx.has(i) && p.type !== 'texto' ? (album ? (albumBefore ? ' · mensagem antes das fotos' : ' · mensagem depois das fotos') : Rich.isRich(p.type) ? ' · texto junto' : ' · legenda') : '';
+      head.append(el('span', 'pv-part pv-pl', `${multi ? `Parte ${i + 1} · ` : ''}${pvPartLabel(p)}${extra}`));
+      if (!off) {
+        const x = el('button', 'pv-x', '✕');
+        x.type = 'button';
+        x.title = 'Não enviar esta parte agora';
+        x.setAttribute('aria-label', `Não enviar a parte ${i + 1} agora`);
+        x.addEventListener('click', (e) => { e.stopPropagation(); st.skip.push(i); rerender(); });
+        head.append(x);
       }
-      const albumPart = Array.isArray(p.files) && p.files.length > 1;
-      const albumBefore = albumPart && !!(p.files[0] && p.files[0].caption_before);
-      if (multi && !Rich.isRich(p.type)) slot.append(el('div', 'pv-part', `Parte ${i + 1}${albumPart ? (albumBefore ? ' (mensagem antes das fotos)' : ' (mensagem depois das fotos)') : p.type !== 'texto' ? ' (legenda)' : ''}`));
-      const bubble = el('div', 'bubble');
-      bubble.dataset.part = String(i);
-      bubble.setAttribute('contenteditable', 'plaintext-only');
-      bubble.setAttribute('role', 'textbox');
-      bubble.setAttribute('aria-label', `Texto da parte ${i + 1} (editável só nesta conversa)`);
-      if (st.texts[i] != null) bubble.textContent = st.texts[i];
-      else {
-        renderTemplate(bubble, p.body, st.name || detected);
-        unresolved += bubble.querySelectorAll('.var:not(.name-slot)').length;
+      box.append(head);
+      if (off) {
+        const note = el('div', 'pv-offnote', 'Não vai ser enviada · ');
+        const undo = el('button', 'pv-undo', 'desfazer');
+        undo.type = 'button';
+        undo.setAttribute('aria-label', `Desfazer: enviar a parte ${i + 1}`);
+        undo.addEventListener('click', (e) => {
+          e.stopPropagation();
+          st.skip = st.skip.filter((x) => x !== i);
+          if (album && (st.skipFiles[i] || []).length >= p.files.length) delete st.skipFiles[i];
+          rerender();
+        });
+        note.append(undo);
+        box.append(note);
       }
-      bubble.addEventListener('input', () => { st.texts[i] = bubbleText(bubble, st.name || detected); });
-      slot.append(bubble);
+      if (Rich.isRich(p.type)) box.append(richPreviewEl(p));
+      else if (album) box.append(pvAlbumEl(p, i, st, off, rerender));
+      else if (p.type === 'documento' && p.file_name) {
+        const doc = el('div', 'pv-doc');
+        doc.innerHTML = svg('documento');
+        doc.firstChild.style.color = TYPES.documento.color;
+        doc.append(`${p.file_name}${p.file_size != null ? ` · ${formatSize(p.file_size)}` : ''}`);
+        box.append(doc);
+      } else if (['imagem', 'video', 'audio'].includes(p.type) && p.file_url) box.append(pvMediaEl(p, i));
+      if (textIdx.has(i)) {
+        const bubble = el('div', 'bubble');
+        bubble.dataset.part = String(i);
+        if (!off) {
+          bubble.setAttribute('contenteditable', 'plaintext-only');
+          bubble.setAttribute('role', 'textbox');
+          bubble.setAttribute('aria-label', `Texto da parte ${i + 1} (editável só nesta conversa)`);
+        }
+        if (st.texts[i] != null) bubble.textContent = st.texts[i];
+        else {
+          renderTemplate(bubble, p.body, st.name || detected);
+          unresolved += bubble.querySelectorAll('.var:not(.name-slot)').length;
+        }
+        bubble.addEventListener('input', () => { st.texts[i] = bubbleText(bubble, st.name || detected); });
+        box.append(bubble);
+      }
+      slot.append(box);
     });
     const notes = [];
     if (usesName) notes.push(detected ? `{nome} trocado por "${detected}".` : 'Sem nome para esta conversa: digite acima ou deixe vazio (o trecho do nome some).');
     if (unresolved) notes.push('Em laranja: variáveis que você troca à mão antes de enviar.');
     if (parts.length) notes.push('Você pode editar o texto aqui: vale só para este envio.');
+    notes.push('✕ tira a parte (ou a foto) só deste envio.');
     if (usesName && !(st.name || detected) && chatNames.available !== false) slot.append(el('div', 'pv-warn', 'Sem nome para esta conversa (vai sair sem nome)'));
     if (notes.length) slot.append(el('div', 'pv-note', notes.join(' ')));
-    if (parts.length || richParts.length) {
-      const row = el('div', 'ed-add');
-      const go = el('button', 'btn primary pv-send', 'Enviar só nesta conversa');
-      go.type = 'button';
-      go.addEventListener('click', (e) => { e.stopPropagation(); sendEditedPreview(item, slot); });
-      const restore = el('button', 'btn pv-restore', 'Restaurar');
-      restore.type = 'button';
-      restore.addEventListener('click', (e) => { e.stopPropagation(); pvEdits.delete(item.id); fillBubble(slot, item); });
-      row.append(go, restore);
-      slot.append(row);
-    }
+    const plan = globalThis.TspEngine.previewSendPlan(all, st.skip, st.skipFiles);
+    slot.append(el('div', 'pv-total', plan.empty ? 'Nenhuma parte para enviar' : `${plan.parts.length} de ${all.length} parte${all.length === 1 ? '' : 's'} · tempo total ~${plan.seconds}s`));
+    const row = el('div', 'ed-add');
+    const go = el('button', 'btn primary pv-send', plan.empty ? 'Nada para enviar' : 'Enviar só nesta conversa');
+    go.type = 'button';
+    go.disabled = plan.empty;
+    go.addEventListener('click', (e) => { e.stopPropagation(); sendEditedPreview(item, slot); });
+    const restore = el('button', 'btn pv-restore', 'Restaurar');
+    restore.type = 'button';
+    restore.addEventListener('click', (e) => { e.stopPropagation(); pvEdits.delete(item.id); rerender(); });
+    row.append(go, restore);
+    slot.append(row);
+  }
+  // álbum da prévia: todas as fotos, cada uma com ✕ (tira só aquela foto deste envio) ou ↺ (volta)
+  function pvAlbumEl(p, i, st, partOff, rerender) {
+    const grid = el('div', 'pv-albx');
+    const gone = new Set(st.skipFiles[i] || []);
+    p.files.forEach((f, k) => {
+      const cell = el('div', `pv-cell${gone.has(k) ? ' off' : ''}`);
+      cell.append(albumThumb(f, k, `pv-${i}-${k}`));
+      if (!partOff) {
+        const b = el('button', 'pv-fx', gone.has(k) ? '↺' : '✕');
+        b.type = 'button';
+        b.title = gone.has(k) ? 'Enviar esta foto de novo' : 'Não enviar esta foto agora';
+        b.setAttribute('aria-label', `${b.title} (foto ${k + 1} da parte ${i + 1})`);
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const set = new Set(st.skipFiles[i] || []);
+          if (set.has(k)) set.delete(k); else set.add(k);
+          st.skipFiles[i] = [...set];
+          if (set.size >= p.files.length && !st.skip.includes(i)) st.skip.push(i); // tirou todas: a parte sai
+          rerender();
+        });
+        cell.append(b);
+      }
+      grid.append(cell);
+    });
+    return grid;
   }
 
   async function sendEditedPreview(item, slot) {
@@ -3706,19 +3779,25 @@
     const chatId = await openIndividualChat();
     if (!chatId) return;
     const name = previewName(item);
-    const parts = partsOf(item).map((p, i) => {
+    const pst = pvState(item);
+    const edited = partsOf(item).map((p, i) => {
       if (!(p.type === 'texto' || (p.type !== 'audio' && p.body))) return p;
       const bubble = slot.querySelector(`.bubble[data-part="${i}"]`);
       return { ...p, body: bubble ? bubbleText(bubble, name) : fillVars(p.body || '', name) };
     });
+    // 2.10.4: só as partes (e fotos) que ficaram; o "esperar"/"digitando" das tiradas não conta
+    const plan = globalThis.TspEngine.previewSendPlan(edited, pst.skip, pst.skipFiles);
+    if (plan.empty) { toast('Nada para enviar: você tirou todas as partes.', 'warn', 5000); return; }
+    const parts = plan.parts;
     if (parts.some((p) => p.type === 'texto' && !String(p.body || '').trim())) { toast('Uma parte de texto ficou vazia.', 'warn', 5000); return; }
     state.busyId = item.id;
     setSendButtonsDisabled(true);
     try {
-      const noLearn = !name && partsOf(item).some((p) => globalThis.TspEngine.hasNameVar(p.body)); // 2.9.1
+      const noLearn = !name && globalThis.TspEngine.previewSendPlan(partsOf(item), pst.skip, pst.skipFiles).parts.some((p) => globalThis.TspEngine.hasNameVar(p.body)); // 2.9.1
       const res = await runSequence({ parts, chatId, firstName: name, noLearn });
       sequenceToast(res, parts.length);
-      if (res.status === 'ok') { registerUse(item); applyItemLabels(item, targetForOpenChat(chatId)); logQuickSend(chatId, item.id); }
+      // etiquetas "Ao enviar" continuam valendo com partes tiradas (as escolhidas saíram e pelo menos uma foi enviada)
+      if (globalThis.TspEngine.sendLabelsApply(res)) { registerUse(item); applyItemLabels(item, targetForOpenChat(chatId)); logQuickSend(chatId, item.id); }
     } finally {
       state.busyId = null;
       setSendButtonsDisabled(false);

@@ -341,6 +341,40 @@
       topH: r.topH != null && Number.isFinite(h) ? Math.round(Math.min(2000, Math.max(48, h))) : null,
     };
   }
+  // ── 2.10.4: prévia — tirar partes (e fotos do álbum) só deste envio ──
+  // skip: índices das partes tiradas; skipFiles: { [parte]: [índices das fotos tiradas] }. A mensagem salva não
+  // muda. Álbum com 1 foto sobrando vira imagem/vídeo normal; com 0, a parte sai. O "esperar" e o "digitando"
+  // das partes tiradas não contam no tempo total.
+  function previewSendPlan(parts, skip = [], skipFiles = {}) {
+    const off = new Set(skip || []);
+    const out = [];
+    (parts || []).forEach((p, i) => {
+      if (!p || off.has(i)) return;
+      if (Array.isArray(p.files) && p.files.length > 1) {
+        const gone = new Set((skipFiles && skipFiles[i]) || []);
+        const before = !!(p.caption_before || (p.files[0] && p.files[0].caption_before));
+        const files = p.files.filter((_, k) => !gone.has(k)).map((f) => { const c = { ...f }; delete c.caption_before; return c; });
+        if (!files.length) return;
+        const first = files[0];
+        if (files.length === 1) {
+          const single = { ...p, type: first.kind === 'video' ? 'video' : 'imagem', file_url: first.file_url, file_name: first.file_name, file_size: first.file_size ?? null };
+          delete single.files;
+          delete single.caption_before;
+          out.push(single);
+          return;
+        }
+        if (before) files[0].caption_before = true;
+        out.push({ ...p, files, file_url: first.file_url, file_name: first.file_name, file_size: first.file_size ?? null });
+        return;
+      }
+      out.push(p);
+    });
+    const seconds = out.reduce((s, p) => s + (Number(p.wait_seconds) || 0) + (Number.isInteger(p.typing_seconds) ? p.typing_seconds : 0), 0);
+    return { parts: out, seconds, empty: out.length === 0 };
+  }
+  // etiquetas "Ao enviar" (CRM e WhatsApp): quando as partes escolhidas saíram e pelo menos uma foi enviada
+  const sendLabelsApply = (res) => !!res && res.status === 'ok' && (Number(res.sent) || 0) > 0;
+
   // ── 2.10.3: manter a posição da lista de conversas ao enviar ──
   // Depois de um envio SEU (até 2 s), se a lista pulou para o topo sem você mexer nela, volta para onde você
   // estava + 1 linha (a conversa que recebeu a mensagem subiu para o topo e as de cima desceram uma linha:
@@ -1395,7 +1429,7 @@
     firstNameOf, chatIdOfContact, pickVariant, evaluateFollow,
     smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
     setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT, convTracker,
-    defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,
+    defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, previewSendPlan, sendLabelsApply, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,
     TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
