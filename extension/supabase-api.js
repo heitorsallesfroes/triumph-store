@@ -86,7 +86,7 @@
   // Coluna opcional que o banco disser que não existe sai da consulta, e tenta de novo
   let itemOptionalCols = []; // 2.8.6: colunas opcionais que a última leitura conseguiu pedir
   async function fetchItems() {
-    let optional = ['record_seconds', ...ON_SEND_COLUMNS.split(','), ...ON_SEND_WA_COLUMNS.split(','), ...ON_SEND_ALL_COLUMNS.split(',')];
+    let optional = ['record_seconds', ...ON_SEND_COLUMNS.split(','), ...ON_SEND_WA_COLUMNS.split(','), ...ON_SEND_ALL_COLUMNS.split(','), 'follow_step'];
     // cada grupo "ao enviar" (CRM, WhatsApp, tirar de todas) vem junto na sua migration
     const group = (c) => (c.startsWith('on_send_remove_all_') ? 'on_send_all' : c.startsWith('on_send_') ? (c.includes('_wa_') ? 'on_send_wa' : 'on_send_crm') : c);
     for (;;) {
@@ -159,6 +159,7 @@
     return {
       categories, items, partsAvailable: parts !== null, removeAllAvailable: itemOptionalCols.includes('on_send_remove_all_crm'),
       albumAvailable: parts !== null && partFilesCol, richAvailable: parts !== null && partDataCol,
+      followAvailable: itemOptionalCols.includes('follow_step'), // 2.10.0
     };
   }
 
@@ -656,7 +657,7 @@
     return s;
   };
 
-  async function saveItem({ id, category_id, title, parts, on_send_add_label_id, on_send_remove_label_id, on_send_add_wa_label_id, on_send_remove_wa_label_id, on_send_remove_all_crm, on_send_remove_all_wa }) {
+  async function saveItem({ id, category_id, title, parts, on_send_add_label_id, on_send_remove_label_id, on_send_add_wa_label_id, on_send_remove_wa_label_id, on_send_remove_all_crm, on_send_remove_all_wa, follow_step }) {
     if (id !== undefined && id !== null) checkUuid(id, 'Item inválido');
     checkUuid(category_id, 'Categoria inválida');
     const cleanTitle = cleanText(title, TITLE_MAX, 'Título');
@@ -682,6 +683,10 @@
     const wantsAll = on_send_remove_all_crm !== undefined || on_send_remove_all_wa !== undefined;
     const allCols = wantsAll && (await probe('wa_items.remove_all', () => hasColumn('wa_items', 'on_send_remove_all_crm')));
     if ((allCrm || allWa) && !allCols) throw new Error('Atualize o banco para usar este recurso');
+    // 2.10.0: "Esta mensagem é um follow-up" + etapa (null = não é); só gravado com a coluna
+    if (follow_step != null && !(Number.isInteger(follow_step) && follow_step >= 1 && follow_step <= 20)) throw new Error('Etapa do follow-up: 1 a 20');
+    const stepCol = follow_step !== undefined && (await probe('wa_items.follow_step', () => hasColumn('wa_items', 'follow_step')));
+    if (follow_step != null && !stepCol) throw new Error('Atualize o banco para usar este recurso');
     const hasTable = await partsTableExists();
     if (!hasTable && list.length > 1) throw new Error(PARTS_MISSING);
     // 2.9.2: tipos novos só com a coluna data (e a regra do tipo trocada, na mesma migration)
@@ -696,7 +701,9 @@
       ...(labelCols ? { on_send_add_label_id: addLabel, on_send_remove_label_id: removeLabel } : {}),
       ...(waCols ? { on_send_add_wa_label_id: addWa, on_send_remove_wa_label_id: removeWa } : {}),
       ...(allCols ? { on_send_remove_all_crm: allCrm, on_send_remove_all_wa: allWa, ...(allCrm && labelCols ? { on_send_remove_label_id: null } : {}), ...(allWa && waCols ? { on_send_remove_wa_label_id: null } : {}) } : {}),
+      ...(stepCol ? { follow_step: follow_step ?? null } : {}),
     };
+    if (stepCol) followSteps.at = 0; // o próximo envio relê as etapas
     let itemId = id;
     if (itemId) {
       const rows = await rest(`wa_items?id=eq.${itemId}`, json('PATCH', 'return=representation', fields));
@@ -1103,6 +1110,10 @@
   const RUNNER_RE = /^[a-z0-9]{4,40}$/;
   const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const SEND_SOURCES = ['follow', 'disparo', 'agendado'];
+  // 2.10.0: 'manual' e 'rapida' também vão para wa_send_log (painel); limites, intervalo, histórico e
+  // "pular quem recebeu" continuam só com os envios automáticos
+  const AUTO_SOURCES = 'source=in.(follow,disparo,agendado)';
+  const ORIGIN_OF = { follow: 'automacao', disparo: 'disparo', agendado: 'agendada', manual: 'manual', rapida: 'rapida' };
   const SEND_STATUS = ['enviando', 'enviado', 'falhou', 'pulado'];
   const REASON_MAX = 60;
 
@@ -1236,7 +1247,7 @@
     const h = Date.parse(hourSince);
     const d = Date.parse(daySince);
     if (!Number.isFinite(h) || !Number.isFinite(d)) throw new Error('Data inválida');
-    const base = 'wa_send_log?status=neq.pulado&created_at=gte.';
+    const base = `wa_send_log?${AUTO_SOURCES}&status=neq.pulado&created_at=gte.`;
     const [hour, day] = await Promise.all([
       countRows2(base + encodeURIComponent(new Date(h).toISOString())),
       countRows2(base + encodeURIComponent(new Date(d).toISOString())),
@@ -1246,7 +1257,7 @@
 
   // Momento do último envio (para respeitar o intervalo depois de recarregar a página)
   async function lastSendAt() {
-    const rows = await engineRest('wa_send_log?select=created_at&status=neq.pulado&order=created_at.desc&limit=1');
+    const rows = await engineRest(`wa_send_log?select=created_at&${AUTO_SOURCES}&status=neq.pulado&order=created_at.desc&limit=1`);
     return { at: rows.length ? rows[0].created_at : null };
   }
 
@@ -1260,11 +1271,114 @@
     if (!SEND_SOURCES.includes(source)) throw new Error('Origem inválida');
     if (!SEND_STATUS.includes(status)) throw new Error('Status inválido');
     const chat = chat_id == null ? null : (typeof chat_id === 'string' && SCHED_CHAT_RE.test(chat_id) ? chat_id : null);
+    const item = optUuid(item_id, 'Mensagem inválida');
+    const panel = await panelCols(); // 2.10.0: origem e etapa do follow-up (só com a migration)
     const rows = await engineRest('wa_send_log', json('POST', 'return=representation', {
       source, source_id: optUuid(source_id, 'Origem inválida'), contact_id: optUuid(contact_id, 'Contato inválido'),
-      chat_id: chat, item_id: optUuid(item_id, 'Mensagem inválida'), status, reason: cleanReason(reason),
+      chat_id: chat, item_id: item, status, reason: cleanReason(reason),
+      ...(panel ? { origin: ORIGIN_OF[source], follow_step: await followStepOf(item) } : {}),
     }));
     return { id: rows[0].id };
+  }
+
+  // ── 2.10.0: registros do painel de resultados (wa_leads, wa_replies, origin/follow_step em wa_send_log) ──
+  const PANEL_MISSING = 'Atualize o banco para usar este recurso';
+  const panelCols = () => probe('wa_send_log.origin', () => hasColumn('wa_send_log', 'origin'));
+  const panelTables = () => probe('wa_replies', async () => {
+    try { await rest('wa_replies?select=id&limit=1'); await rest('wa_leads?select=id&limit=1'); return true; } catch (err) {
+      if (tableMissing(err, ['wa_replies', 'wa_leads'])) return false;
+      throw err;
+    }
+  });
+  async function panelReady() {
+    if (!(await panelCols()) || !(await panelTables())) throw new Error(PANEL_MISSING);
+  }
+  // etapa do follow-up de cada mensagem rápida (relida a cada 5 min)
+  const followSteps = { map: new Map(), at: 0 };
+  const stepOf = (v) => (Number.isInteger(v) && v >= 1 && v <= 20 ? v : null);
+  async function followStepOf(itemId) {
+    if (!itemId) return null;
+    if (Date.now() - followSteps.at > 5 * 60 * 1000) {
+      try {
+        const rows = await rest('wa_items?select=id,follow_step');
+        followSteps.map = new Map(rows.map((r) => [r.id, stepOf(r.follow_step)]));
+      } catch { /* sem a coluna: sem etapa */ }
+      followSteps.at = Date.now();
+    }
+    return followSteps.map.get(itemId) ?? null;
+  }
+  const PANEL_CHAT_RE = /^[0-9]+@(c\.us|lid)$/;
+  const isoOfSec = (t) => { const n = Number(t); if (!Number.isFinite(n) || n <= 0) throw new Error('Data inválida'); return new Date(Math.round(n * 1000)).toISOString(); };
+  const panelPhone = (v) => (typeof v === 'string' && /^\d{8,15}$/.test(v) ? v : null);
+  const short = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().replace(/\s+/g, ' ').slice(0, max) : null);
+  const eqIso = (ms) => encodeURIComponent(new Date(ms).toISOString());
+
+  // Leads novos (1ª mensagem da conversa); a mesma conversa de novo não muda nada
+  async function saveLeads({ items }) {
+    if (!Array.isArray(items) || items.length > 500) throw new Error('Lista inválida');
+    await panelReady();
+    const rows = [];
+    const seen = new Set();
+    for (const it of items) {
+      if (!it || !PANEL_CHAT_RE.test(it.chatId || '') || seen.has(it.chatId)) continue;
+      seen.add(it.chatId);
+      const adId = short(it.ad && it.ad.id, 100);
+      const adTitle = short(it.ad && it.ad.title, 200);
+      rows.push({ chat_id: it.chatId, phone: panelPhone(it.phone), first_message_at: isoOfSec(it.t), origin: it.ad ? 'anuncio' : 'organico', ad_id: adId, ad_title: adTitle });
+    }
+    if (rows.length) await rest('wa_leads?on_conflict=chat_id', json('POST', 'resolution=ignore-duplicates,return=minimal', rows));
+    return { saved: rows.length };
+  }
+
+  // Envio de mensagem rápida pelo painel (seta / prévia), já enviado. Sem a migration: não registra (como antes).
+  async function logQuickSend({ chat_id, item_id }) {
+    if (!(await panelCols())) return { id: null };
+    if (!PANEL_CHAT_RE.test(chat_id || '')) throw new Error('Conversa inválida');
+    const item = optUuid(item_id, 'Mensagem inválida');
+    const rows = await engineRest('wa_send_log', json('POST', 'return=representation', {
+      source: 'rapida', origin: 'rapida', chat_id, item_id: item, status: 'enviado', follow_step: await followStepOf(item),
+    }));
+    return { id: rows[0].id };
+  }
+
+  // Mensagens que você digitou no WhatsApp (uma por "vez de falar" da loja). Pula se já houver envio
+  // registrado na conversa 3 min antes/depois (mensagem rápida, agendada etc. de outra aba ou PC).
+  const NEAR_MS = 3 * 60 * 1000;
+  async function logManualSends({ items }) {
+    if (!Array.isArray(items) || items.length > 200) throw new Error('Lista inválida');
+    await panelReady();
+    let saved = 0;
+    for (const it of items) {
+      if (!it || !PANEL_CHAT_RE.test(it.chatId || '')) continue;
+      const at = Date.parse(isoOfSec(it.t));
+      const near = await rest(`wa_send_log?select=id&chat_id=eq.${encodeURIComponent(it.chatId)}&status=eq.enviado&created_at=gte.${eqIso(at - NEAR_MS)}&created_at=lte.${eqIso(at + NEAR_MS)}&limit=1`);
+      if (near.length) continue;
+      await rest('wa_send_log', json('POST', 'return=minimal', { source: 'manual', origin: 'manual', chat_id: it.chatId, status: 'enviado', created_at: new Date(at).toISOString() }));
+      saved++;
+    }
+    return { saved };
+  }
+
+  // 1ª resposta do cliente depois do último envio nosso (até 7 dias antes). phone: também acha o envio
+  // gravado com o número (@c.us) quando a mensagem chega pela conversa @lid. Já respondido: nada muda.
+  const REPLY_WINDOW_MS = 7 * 24 * 3600 * 1000;
+  async function recordReplies({ items }) {
+    if (!Array.isArray(items) || items.length > 200) throw new Error('Lista inválida');
+    await panelReady();
+    let saved = 0;
+    for (const it of items) {
+      if (!it || !PANEL_CHAT_RE.test(it.chatId || '')) continue;
+      const at = Date.parse(isoOfSec(it.t));
+      const phone = panelPhone(it.phone);
+      const ids = [...new Set([it.chatId, phone ? `${phone}@c.us` : null].filter(Boolean))];
+      const inList = encodeURIComponent(`(${ids.map((x) => `"${x}"`).join(',')})`);
+      const last = await rest(`wa_send_log?select=id,created_at&chat_id=in.${inList}&status=eq.enviado&created_at=lt.${eqIso(at)}&created_at=gte.${eqIso(at - REPLY_WINDOW_MS)}&order=created_at.desc&limit=1`);
+      if (!last.length) continue;
+      const minutes = Math.max(0, Math.round((at - Date.parse(last[0].created_at)) / 60000));
+      await rest('wa_replies?on_conflict=send_log_id', json('POST', 'resolution=ignore-duplicates,return=minimal', { chat_id: it.chatId, replied_at: new Date(at).toISOString(), send_log_id: last[0].id, minutes }));
+      saved++;
+    }
+    return { saved };
   }
 
   async function finishSendLog({ id, status, reason }) {
@@ -1314,7 +1428,7 @@
   // Últimos envios automáticos com o nome do contato (só para a tela)
   async function fetchSendLog({ limit = 50 } = {}) {
     const lim = Math.min(200, Math.max(1, Math.floor(Number(limit) || 50)));
-    const rows = await engineRest(`wa_send_log?select=id,source,contact_id,chat_id,status,reason,created_at&order=created_at.desc&limit=${lim}`);
+    const rows = await engineRest(`wa_send_log?select=id,source,contact_id,chat_id,status,reason,created_at&${AUTO_SOURCES}&order=created_at.desc&limit=${lim}`);
     const contactIds = [...new Set(rows.map((r) => r.contact_id).filter(Boolean))];
     const names = {};
     for (let i = 0; i < contactIds.length; i += 100) {
@@ -1600,7 +1714,7 @@
     const recent = new Set();
     if (c.skip_recent_days > 0 && contacts.length) {
       const since = new Date(Date.now() - c.skip_recent_days * 24 * 3600 * 1000).toISOString();
-      const logs = await engineRest(`wa_send_log?select=contact_id,chat_id&status=eq.enviado&created_at=gte.${encodeURIComponent(since)}&limit=50000`);
+      const logs = await engineRest(`wa_send_log?select=contact_id,chat_id&${AUTO_SOURCES}&status=eq.enviado&created_at=gte.${encodeURIComponent(since)}&limit=50000`);
       logs.forEach((l) => { if (l.contact_id) recent.add(l.contact_id); if (l.chat_id) recent.add(l.chat_id); });
     }
     const targets = contacts.map((ct) => {
@@ -2870,6 +2984,7 @@
     fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,
+    saveLeads, logQuickSend, logManualSends, recordReplies,
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,

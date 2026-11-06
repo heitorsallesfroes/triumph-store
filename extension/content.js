@@ -1367,6 +1367,9 @@
       .rp-crow:hover, .rp-crow:focus-visible { background: var(--accent-soft); }
       .rp-crow span { color: var(--muted); }
       .ed-varhint.err { color: var(--err); }
+      /* ═══ 2.10.0: follow-up ═══ */
+      .ed-follow { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; padding: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); }
+      .ed-check { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--fs-2); font-weight: 600; cursor: pointer; }
       .pv-album .alb-thumb { position: relative; aspect-ratio: 1; background: var(--bg2); }
       .pv-more { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.5); color: #fff; font-size: var(--fs-4); font-weight: 700; }
       /* ═══ 2.8.5: arrastar para reordenar ═══ */
@@ -2805,6 +2808,7 @@
     if (typeof lib.removeAllAvailable === 'boolean') state.removeAllAvailable = lib.removeAllAvailable; // 2.8.6
     if (typeof lib.albumAvailable === 'boolean') state.albumAvailable = lib.albumAvailable; // 2.8.7
     if (typeof lib.richAvailable === 'boolean') { state.richAvailable = lib.richAvailable; renderFilters(); } // 2.9.2
+    if (typeof lib.followAvailable === 'boolean') state.followAvailable = lib.followAvailable; // 2.10.0
     state.loaded     = true;
     state.source     = source;
     state.syncedAt   = savedAt || null;
@@ -3307,7 +3311,7 @@
       const noLearn = !name && partsOf(item).some((p) => globalThis.TspEngine.hasNameVar(p.body)); // 2.9.1
       const res = await runSequence({ parts, chatId, firstName: name, noLearn });
       sequenceToast(res, parts.length);
-      if (res.status === 'ok') { registerUse(item); applyItemLabels(item, targetForOpenChat(chatId)); }
+      if (res.status === 'ok') { registerUse(item); applyItemLabels(item, targetForOpenChat(chatId)); logQuickSend(chatId, item.id); }
     } finally {
       state.busyId = null;
       setSendButtonsDisabled(false);
@@ -4019,6 +4023,7 @@
     const hasVar = (t) => globalThis.TspEngine.hasNameVar(t);
     const quiet = noLearn || (!firstName && (parts || []).some((p) => hasVar(p && p.body) || (Array.isArray(p && p.files) && p.files.some((f) => hasVar(f && f.caption)))));
     if (quiet && chatId) noLearnUntil.set(chatId, Infinity);
+    const extMark = markExtSend(chatId); // 2.10.0: o que a extensão envia não conta como "você digitou"
     seq = { total: parts.length, index: 0, phase: 'wait', until: 0, stop: false, reqId: null, label, typingLabel: 'digitando', onStop };
     const ticker = setInterval(renderSeq, 250);
     renderSeq();
@@ -4060,6 +4065,7 @@
       seq = null;
       renderSeq();
       if (quiet && chatId) noLearnUntil.set(chatId, Date.now() + 20000);
+      extMark.done();
     }
   }
 
@@ -4110,7 +4116,7 @@
     try {
       const res = await runSequence({ parts, chatId, firstName: ctx.firstName });
       sequenceToast(res, parts.length);
-      if (res.status === 'ok') { registerUse(item); applyItemLabels(item, targetForOpenChat(chatId)); }
+      if (res.status === 'ok') { registerUse(item); applyItemLabels(item, targetForOpenChat(chatId)); logQuickSend(chatId, item.id); }
     } finally {
       state.busyId = null;
       if (card && send && card.isConnected) setBusy(card, send, false);
@@ -4907,6 +4913,8 @@
       // 2.7.1: etiquetas do WhatsApp ao enviar (opcionais)
       on_send_add_wa_label_id: (item && item.on_send_add_wa_label_id) || '',
       on_send_remove_wa_label_id: (item && item.on_send_remove_all_wa) ? REMOVE_ALL : (item && item.on_send_remove_wa_label_id) || '',
+      // 2.10.0: "Esta mensagem é um follow-up" + etapa (para o painel do ERP)
+      follow_step: item && Number.isInteger(item.follow_step) ? item.follow_step : null,
       saving: false, msg: '', error: false, duplicate,
     };
     state.view = 'editor';
@@ -5166,6 +5174,27 @@
     wrap.append(add);
     if (multiOff) wrap.append(el('div', 'ed-note', `Várias partes: ${DB_MISSING.toLowerCase()}.`));
     wrap.append(el('div', 'ed-total', `Tempo total ~${edTotalSeconds()}s`));
+    // 2.10.0: follow-up (o painel do ERP mostra o funil Follow 1 → 2 → 3…); automações que enviam esta mensagem herdam
+    if (state.followAvailable || ed.follow_step != null) {
+      const fu = el('div', 'ed-follow');
+      const lbl = el('label', 'ed-check');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = ed.follow_step != null;
+      cb.disabled = ed.saving;
+      cb.addEventListener('change', () => { ed.follow_step = cb.checked ? (ed.follow_step || 1) : null; renderEditor(); });
+      lbl.append(cb, ' Esta mensagem é um follow-up');
+      fu.append(lbl);
+      if (ed.follow_step != null) {
+        const stepSel = el('select', 'ed-cat');
+        stepSel.setAttribute('aria-label', 'Etapa do follow-up');
+        for (let n = 1; n <= 10; n++) { const o = el('option', null, `Etapa ${n}`); o.value = String(n); o.selected = ed.follow_step === n; stepSel.append(o); }
+        stepSel.addEventListener('change', () => { ed.follow_step = Number(stepSel.value); });
+        fu.append(stepSel);
+      }
+      fu.append(el('div', 'ed-varhint', 'Para o painel de resultados do ERP (funil Follow 1 → 2 → 3). Automações que enviam esta mensagem contam como esta etapa.'));
+      wrap.append(fu);
+    }
     // 2.1.0: mensagem rápida que etiqueta (só quando a mensagem inteira sair com sucesso)
     const addSel = labelSelect(ed.on_send_add_label_id, { empty: '(não mexe)', aria: 'Ao enviar, colocar na etiqueta CRM' });
     addSel.addEventListener('change', () => { ed.on_send_add_label_id = addSel.value; });
@@ -5263,6 +5292,7 @@
         on_send_add_label_id: current.on_send_add_label_id || null, on_send_remove_label_id: current.on_send_remove_label_id === REMOVE_ALL ? null : current.on_send_remove_label_id || null,
         // 2.8.6: "Todas" vai em colunas próprias (só manda se a opção existe ou se o item já tinha)
         ...(state.removeAllAvailable ? { on_send_remove_all_crm: current.on_send_remove_label_id === REMOVE_ALL, on_send_remove_all_wa: current.on_send_remove_wa_label_id === REMOVE_ALL } : {}),
+        ...(state.followAvailable || current.follow_step != null ? { follow_step: current.follow_step } : {}), // 2.10.0
         ...(current.on_send_add_wa_label_id || current.on_send_remove_wa_label_id
           ? { on_send_add_wa_label_id: current.on_send_add_wa_label_id || null, on_send_remove_wa_label_id: current.on_send_remove_wa_label_id === REMOVE_ALL ? null : current.on_send_remove_wa_label_id || null }
           : current.id && state.items.some((x) => x.id === current.id && (x.on_send_add_wa_label_id || x.on_send_remove_wa_label_id))
@@ -5671,7 +5701,7 @@
     stopRunning: () => { if (seq && AUTO_LABELS.includes(seq.label)) stopSequence(); },
     campaignJob: (api) => campaignJob(api),
     runCampaignJob: (job, helpers) => runCampaignJob(job, helpers),
-    leaseWork: async () => { await adAttributionTick(); await contactAutoTick(); },
+    leaseWork: async () => { await adAttributionTick(); await contactAutoTick(); await panelTick().catch(() => {}); },
   });
 
   // ── Disparos (2.0.0-D2): o motor só pega alvos de disparos que o usuário iniciou ──
@@ -8541,6 +8571,7 @@
       const res = await runSequence({ parts: [part], chatId, firstName: ctx.firstName });
       sequenceToast(res, 1);
       if (res.status === 'ok') {
+        logQuickSend(chatId, null); // 2.10.0
         try { m.usage_count = await call('incrementMediaUsage', { id: m.id }); } catch { /* contador */ }
       }
     } finally {
@@ -8922,6 +8953,50 @@
       firstMessageAt: r.first_message_at ? Math.floor(Date.parse(r.first_message_at) / 1000) : null,
     };
   }
+
+  // ── 2.10.0: painel de resultados do ERP ──
+  // Só a aba com a trava: pega da ponte as mensagens novas das conversas (só conversa, lado e hora) e grava
+  // leads novos (wa_leads), o que você digitou (wa_send_log origin 'manual') e a 1ª resposta do cliente
+  // depois de cada envio nosso (wa_replies). Espera 45 s para os envios de outras abas/PCs já estarem
+  // gravados. Ao abrir, recupera os leads das últimas 24 h. Sem a migration: para até recarregar.
+  const pnl = { off: false, scanned: false, pending: [], tracker: globalThis.TspEngine.convTracker() };
+  const PANEL_DELAY_MS = 45 * 1000;
+  const extSends = new Map(); // chatId → [{ from, to }] (ms) dos envios da extensão nesta aba
+  function markExtSend(chatId) {
+    if (!chatId) return { done() {} };
+    const span = { from: Date.now() - 5000, to: Infinity };
+    const list = (extSends.get(chatId) || []).filter((s) => s.to === Infinity || Date.now() - s.to < 10 * 60 * 1000).slice(-9);
+    list.push(span);
+    extSends.set(chatId, list);
+    return { done() { span.to = Date.now() + 60 * 1000; } };
+  }
+  const isExtSend = (chatId, t) => (extSends.get(chatId) || []).some((s) => t * 1000 >= s.from && t * 1000 <= s.to);
+  async function panelBatch(type, list, size) {
+    for (let i = 0; i < list.length; i += size) await call(type, { items: list.slice(i, i + size) });
+  }
+  async function panelTick() {
+    if (pnl.off) return;
+    let got = null;
+    try { got = await waRequest('convEvents', { scan: !pnl.scanned }, { timeout: 20000 }); } catch { got = null; }
+    if (!got) return;
+    if (got.scanned) pnl.scanned = true;
+    const now = Date.now();
+    (Array.isArray(got.events) ? got.events : []).forEach((e) => pnl.pending.push({ ...e, at: e.scan ? 0 : now }));
+    if (pnl.pending.length > 5000) pnl.pending.splice(0, pnl.pending.length - 5000);
+    const ready = pnl.pending.filter((e) => now - e.at >= PANEL_DELAY_MS);
+    if (!ready.length) return;
+    pnl.pending = pnl.pending.filter((e) => now - e.at < PANEL_DELAY_MS);
+    const out = pnl.tracker.ingest(ready, isExtSend);
+    try {
+      if (out.leads.length) await panelBatch('saveLeads', out.leads, 500);
+      if (out.manual.length) await panelBatch('logManualSends', out.manual, 200);
+      if (out.replies.length) await panelBatch('recordReplies', out.replies, 200);
+    } catch (e) {
+      if (e.message === 'Atualize o banco para usar este recurso') pnl.off = true;
+    }
+  }
+  // envio pelo painel (seta, prévia, mídia): registra como mensagem rápida (sem a migration, não faz nada)
+  const logQuickSend = (chatId, itemId) => call('logQuickSend', { chat_id: chatId, item_id: itemId || null }).catch(() => {});
 
   // 2.6.2: aba com a trava: grava o anúncio de cada lead que chega (sempre) e, uma vez por abertura do
   // WhatsApp, o das conversas já carregadas. Sem lead novo, nenhuma consulta ao banco.

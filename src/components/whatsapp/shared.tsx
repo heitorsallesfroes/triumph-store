@@ -5,7 +5,8 @@ import { createLabel, type WaLabelRow } from '../../lib/crmBridgeDb';
 
 export const ORANGE = '#f97316';
 
-export const card: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border-main)', borderRadius: 14, padding: 16 };
+// Mesmo cartão em todas as sub-abas (Painel incluso; ver ui.tsx)
+export const card: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border-main)', borderRadius: 16, padding: 18, boxShadow: '0 1px 2px rgba(0,0,0,0.06)' };
 export const input: React.CSSProperties = { padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-inner)', color: 'var(--text-primary)', fontSize: 13 };
 export const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'transparent', color: 'var(--text-primary)', fontSize: 13, fontWeight: 600, cursor: 'pointer' };
 export const btnPrimary: React.CSSProperties = { ...btn, background: ORANGE, border: `1px solid ${ORANGE}`, color: '#fff' };

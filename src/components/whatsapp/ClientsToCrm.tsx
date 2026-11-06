@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { applyItemAndClientFilters, clientsCsv, type Client, type ClientFilters, type SaleItemRow, type SaleRow } from '../../lib/crmBridge';
 import { loadClientSales, loadFilterOptions, loadLabels, pushClientsToLabel, type PushResult, type WaLabelRow } from '../../lib/crmBridgeDb';
 import { btn, btnPrimary, card, Field, input, LabelChooser, money, muted, Progress } from './shared';
+import { SectionHeader } from './ui';
 
 const DEFAULT_FILTERS: ClientFilters = {
   period: 'last_days', days: 90, start: '', end: '', productIds: [], city: '', neighborhood: '', deliveryType: '',
@@ -72,6 +73,7 @@ export default function ClientsToCrm() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <SectionHeader title="Clientes → CRM" subtitle="Filtre as vendas do ERP e mande os clientes para uma etiqueta CRM do WhatsApp" />
       <div style={card}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 12 }}>
           <Field label="Período da compra">

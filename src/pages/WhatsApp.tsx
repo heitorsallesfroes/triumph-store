@@ -9,6 +9,7 @@ import ClientsToCrm from '../components/whatsapp/ClientsToCrm';
 import AutoPostSale from '../components/whatsapp/AutoPostSale';
 import WaResults from '../components/whatsapp/WaResults';
 import WaConversions from '../components/whatsapp/WaConversions';
+import WaPanel from '../components/whatsapp/WaPanel';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1091,11 +1092,11 @@ function LabelsTab() {
 }
 
 // ── Página WhatsApp do ERP: ponte vendas → CRM do WhatsApp ──────────────────
-type PageTab = 'clientes' | 'posvenda' | 'resultados' | 'conversoes' | 'antigo';
-const PAGE_TABS: [PageTab, string][] = [['clientes', 'Clientes → CRM'], ['posvenda', 'Pós-venda automático'], ['resultados', 'Resultados'], ['conversoes', 'Conversões (Facebook)'], ['antigo', 'Mensagens (antigo)']];
+type PageTab = 'painel' | 'clientes' | 'posvenda' | 'resultados' | 'conversoes' | 'antigo';
+const PAGE_TABS: [PageTab, string][] = [['painel', 'Painel'], ['clientes', 'Clientes → CRM'], ['posvenda', 'Pós-venda automático'], ['resultados', 'Resultados'], ['conversoes', 'Conversões (Facebook)'], ['antigo', 'Mensagens (antigo)']];
 
 export default function WhatsApp() {
-  const [pageTab, setPageTab] = useState<PageTab>('clientes');
+  const [pageTab, setPageTab] = useState<PageTab>('painel');
   return (
     <div>
       <div style={{ padding: '28px 32px 0', maxWidth: 1200, margin: '0 auto' }}>
@@ -1103,7 +1104,7 @@ export default function WhatsApp() {
           <MessageCircle size={28} color={ORANGE} />
           WhatsApp
         </h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>Clientes das vendas no CRM do WhatsApp, pós-venda automático e resultados</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>Resultados do WhatsApp, clientes das vendas no CRM, pós-venda automático e conversões</p>
         <div style={{ display: 'flex', gap: 4, marginTop: 18, borderBottom: '1px solid var(--border-main)', flexWrap: 'wrap' }}>
           {PAGE_TABS.map(([id, label]) => (
             <button key={id} onClick={() => setPageTab(id)}
@@ -1126,6 +1127,7 @@ export default function WhatsApp() {
         </>
       ) : (
         <div style={{ padding: '20px 32px 28px', maxWidth: 1200, margin: '0 auto' }}>
+          {pageTab === 'painel' && <WaPanel />}
           {pageTab === 'clientes' && <ClientsToCrm />}
           {pageTab === 'posvenda' && <AutoPostSale />}
           {pageTab === 'resultados' && <WaResults />}

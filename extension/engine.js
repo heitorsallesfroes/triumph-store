@@ -306,6 +306,48 @@
   }
   const hasNameVar = (text) => /\{[^{}]*?\bnome\b[^{}]*?\}/i.test(String(text || ''));
 
+  // ── 2.10.0: painel de resultados — o que gravar a partir das mensagens das conversas ──
+  // events: { chatId, fromMe, t (s), first?, ad?, phone?, scan? } (da ponte). isExt(chatId, t): mensagem
+  // enviada pela extensão nesta aba (já registrada de outro jeito). Devolve:
+  //   leads   : 1ª mensagem do cliente numa conversa sem mensagens antes
+  //   manual  : o que você digitou, uma vez por "vez de falar" da loja (o cliente falou depois do nosso
+  //             último envio, ou 30 min sem a loja falar, ou a 1ª vez que vemos a conversa)
+  //   replies : 1ª mensagem do cliente depois de uma mensagem nossa (as seguintes, até a loja falar de
+  //             novo, não contam; o banco ainda confere com o último envio registrado)
+  const TURN_GAP_S = 30 * 60;
+  function convTracker() {
+    const lastOur = new Map();
+    const lastCust = new Map();
+    const replied = new Map();
+    return {
+      ingest(events, isExt = () => false) {
+        const out = { leads: [], manual: [], replies: [] };
+        [...(events || [])].filter((e) => e && typeof e.chatId === 'string' && Number.isFinite(Number(e.t)))
+          .sort((a, b) => a.t - b.t).forEach((e) => {
+            const chat = e.chatId;
+            if (!e.fromMe && e.first) out.leads.push({ chatId: chat, phone: e.phone || null, t: e.t, ad: e.ad || null });
+            if (e.scan) return; // varredura da abertura: só o lead
+            if (e.fromMe) {
+              const prev = lastOur.get(chat);
+              const cust = lastCust.get(chat);
+              const newTurn = prev === undefined || (cust !== undefined && cust > prev) || e.t - prev > TURN_GAP_S;
+              if (newTurn && !isExt(chat, e.t)) out.manual.push({ chatId: chat, t: e.t });
+              lastOur.set(chat, Math.max(prev ?? 0, e.t));
+              return;
+            }
+            lastCust.set(chat, e.t);
+            const our = lastOur.has(chat) ? lastOur.get(chat) : -Infinity;
+            const rep = replied.get(chat);
+            if (rep === undefined || rep < our) {
+              out.replies.push({ chatId: chat, t: e.t, phone: e.phone || null });
+              replied.set(chat, e.t);
+            }
+          });
+        return out;
+      },
+    };
+  }
+
   // ── Automações (2.1.0): QUANDO → SE → ENTÃO ─────────────────────────────
 
   // 2.3.0: 'venda_registrada' = venda registrada pela conversa (migration 20261103170000)
@@ -1300,7 +1342,7 @@
     formatWait, formatDays, scheduleText, waitText, formatLeft, hm,
     firstNameOf, chatIdOfContact, pickVariant, evaluateFollow,
     smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
-    setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT,
+    setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT, convTracker,
     TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,

@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { fetchAllRows } from '../../lib/resumoAnualCalc';
 import { conversionTotals, eventKind, hasAd, maskPhone, periodBounds, type ConversionRow, type ConversionTotals } from '../../lib/waConversions';
 import { btn, card, input, money, muted, ORANGE } from './shared';
+import { SectionHeader, StatCard, fmtInt } from './ui';
 
 const PAGE = 50;
 const BASE_COLS = 'event_id,chat_id,contact_name,value,ad_id,ad_title,test,status,error,created_at';
@@ -57,16 +58,17 @@ export default function WaConversions() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>Conversões enviadas ao Facebook</div>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <label style={muted}>De <input type="date" value={start} onChange={(e) => setStart(e.target.value)} style={input} aria-label="Data inicial" /></label>
-        <label style={muted}>Até <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} style={input} aria-label="Data final" /></label>
-      </div>
+      <SectionHeader title="Conversões enviadas ao Facebook" subtitle="Compras e contatos que a extensão enviou à API de Conversões" right={(
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={muted}>De <input type="date" value={start} onChange={(e) => setStart(e.target.value)} style={input} aria-label="Data inicial" /></label>
+          <label style={muted}>Até <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} style={input} aria-label="Data final" /></label>
+        </div>
+      )} />
       {error && <p style={{ color: '#ef4444', fontSize: 13 }}>{error}</p>}
       {totals && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }} data-testid="conv-totals">
-          <div style={card}><div style={muted}>COMPRAS REAIS</div><b style={{ fontSize: 20 }}>{totals.purchases}</b> · {money(totals.purchaseSum)}</div>
-          <div style={card}><div style={muted}>CONTATOS REAIS</div><b style={{ fontSize: 20 }}>{totals.contacts}</b></div>
+          <StatCard accent label="Compras reais" value={fmtInt(totals.purchases)} sub={money(totals.purchaseSum)} />
+          <StatCard label="Contatos reais" value={fmtInt(totals.contacts)} sub="eventos Contact enviados" />
         </div>
       )}
       <div style={{ ...card, padding: 0, overflowX: 'auto' }}>

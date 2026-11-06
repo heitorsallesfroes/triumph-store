@@ -799,6 +799,54 @@ guardada.
 
 ## O que mudou
 
+### 2.10.0 — Painel de resultados (extensão + ERP)
+**Extensão: registros novos** (só a aba que tem a trava grava; sem a migration, nada muda):
+- **Lead novo** (`wa_leads`, uma linha por conversa): a 1ª mensagem do cliente numa conversa
+  individual sem nenhuma mensagem antes, com o telefone, a hora, a origem (**anúncio** quando a
+  mensagem tem ctwaContext, senão **orgânico**) e o id/título do anúncio. Ao abrir o WhatsApp,
+  recupera os leads das últimas 24 h que chegaram com o PC desligado (só conversas que o WhatsApp
+  diz estarem completas e cuja 1ª mensagem é do cliente); a mesma conversa nunca duplica.
+- **Resposta do cliente** (`wa_replies`): a 1ª mensagem do cliente depois de um envio nosso
+  (o que você digitou, mensagem rápida, agendada, automação ou disparo), ligada ao último envio
+  registrado antes dela (até 7 dias), com os minutos até responder. Só a 1ª resposta de cada envio conta.
+- **Tipo de cada envio** em `wa_send_log`: coluna `origin` (manual, rapida, agendada, automacao,
+  disparo) e `follow_step`; `item_id` (mensagem rápida) e `source_id` (automação/disparo) já existiam.
+  - Mensagem rápida pela seta, pela prévia ou da aba Mídias: registrada como `rapida`.
+  - O que você digita no WhatsApp (de qualquer aparelho): `manual`, uma vez por "vez de falar" da loja
+    (o cliente falou depois, ou 30 min sem a loja falar); pula se outra aba/PC já registrou um envio na
+    conversa 3 min antes/depois. A extensão espera 45 s antes de gravar, para isso dar certo.
+  - O limite por hora/dia, o intervalo entre envios, o histórico e o "pular quem recebeu" dos disparos
+    continuam contando **só** os envios automáticos (como antes).
+- **Mensagem rápida é follow-up**: no editor, "Esta mensagem é um follow-up" + **Etapa** (1 a 10).
+  Automações que enviam a mensagem herdam a etapa (fica gravada em cada envio).
+- Nunca guarda o texto das mensagens: só conversa, lado (loja/cliente) e hora.
+- Banco: migration `20261106150000_wa_panel.sql` (tabelas `wa_leads` e `wa_replies` com as mesmas
+  políticas das wa_*, registradas na Fase 2 e no rollback; colunas novas com `add column if not exists`;
+  `source` aceita `manual`/`rapida`; índices por data e chat_id; `notify pgrst`).
+
+**ERP: aba WhatsApp → "Painel"** (a primeira, aberta por padrão):
+- Período: Hoje, Ontem, 7 dias, 30 dias, Este mês (comparado com o mesmo trecho do mês passado) e
+  Personalizado; cada número compara com o período anterior (▲▼ e %).
+- Cartões: leads novos (anúncio / orgânico), conversas respondidas, vendas pelo WhatsApp (quantidade e
+  R$), ticket médio, conversão lead → venda, vendas depois de follow-up, vendas de anúncio e compras
+  enviadas ao Facebook. Cada número tem um (i) com a regra.
+- Gráfico "Leads por dia" (barras empilhadas anúncio x orgânico + linha de vendas), funil dos follow-ups
+  (Follow 1 → 2 → 3…: receberam, responderam com tempo mediano, compraram depois e "seguiram sem
+  responder"; conta conversas), tabelas ordenáveis por qualquer coluna (por mensagem rápida, por
+  anúncio, automações e disparos) e mapa de calor dia da semana × hora dos leads.
+- **Regras**: venda pelo WhatsApp = registrada pelo 💰 da conversa ou venda do ERP (não cancelada/
+  reembolsada) com o telefone de uma conversa (lead, anúncio, envio ou resposta registrados).
+  "Depois de um follow" = até 7 dias depois do último follow-up recebido pela conversa antes da venda.
+  "De anúncio" = conversa com registro em `wa_ad_attribution`/lead de anúncio, ou venda do 💰 com
+  origem anúncio. Envios antigos sem etapa usam a etapa atual da mensagem rápida.
+- Tudo em lotes de 1000 linhas (sem o limite do Supabase); sem a migration, o painel avisa o que falta
+  e mostra o resto. Esqueleto ao carregar, "Sem dados neste período" quando vazio, tema claro/escuro e
+  celular. As outras sub-abas ganharam o mesmo visual (título de seção e cartões de número); a aba
+  "Resultados" segue mostrando só os envios automáticos.
+- Contas em `src/lib/waPanel.ts` (funções puras) e leitura em `src/lib/waPanelDb.ts`.
+- Testes: `node scripts/tests/waPanel.test.ts` (regras e contas do painel) e
+  `node extension/tests/panel.test.cjs` (registros da extensão).
+
 ### 2.9.2
 - **Tipos novos de parte** nas mensagens rápidas (botões em "+ Adicionar" e no tipo da
   parte; também na mensagem exclusiva do disparo):

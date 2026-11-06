@@ -155,7 +155,7 @@ export async function loadResults(days: number) {
     contacts: { id: string; phone: string | null }[];
   } = { logAvailable: true, originAvailable: true, logs: [], sales: [], contacts: [] };
   try {
-    out.logs = await fetchAllRows<any>((f, t) => supabase.from('wa_send_log').select('source, status, created_at, contact_id, chat_id').gte('created_at', sinceIso).order('id').range(f, t));
+    out.logs = await fetchAllRows<any>((f, t) => supabase.from('wa_send_log').select('source, status, created_at, contact_id, chat_id').in('source', ['follow', 'disparo', 'agendado']).gte('created_at', sinceIso).order('id').range(f, t));
   } catch { out.logAvailable = false; }
   out.originAvailable = await hasColumn('sales', 'wa_chat_id');
   const cols = out.originAvailable ? 'id, sale_date, total_sale_price, customer_phone, wa_chat_id, origin, ad_title' : 'id, sale_date, total_sale_price, customer_phone';

@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { computeResults } from '../../lib/crmBridge';
 import { loadResults } from '../../lib/crmBridgeDb';
-import { ORANGE, btn, card, money, muted } from './shared';
+import { ORANGE, card, money, muted } from './shared';
+import { eyebrow, SectionHeader, StatCard, fmtInt, fmtMoney, fmtPct } from './ui';
 
 const SOURCE_LABEL: Record<string, string> = { follow: 'Automações (follow)', disparo: 'Disparos', agendado: 'Agendados' };
 const STATUS_ORDER = ['enviado', 'falhou', 'pulado', 'enviando'];
@@ -23,21 +24,30 @@ export default function WaResults() {
 
   const box = (title: string, body: React.ReactNode) => (
     <div style={card}>
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 }}>{title}</div>
+      <div style={{ ...eyebrow, marginBottom: 8 }}>{title}</div>
       {body}
     </div>
   );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', gap: 6 }}>
-        {[7, 30, 90].map((d) => (
-          <button key={d} type="button" onClick={() => setDays(d)} style={{ ...btn, borderColor: days === d ? ORANGE : 'var(--border-main)', color: days === d ? ORANGE : 'var(--text-primary)' }}>{d} dias</button>
-        ))}
-      </div>
+      <SectionHeader title="Resultados dos envios automáticos" subtitle="Automações, disparos e agendados (o Painel mostra tudo junto, com respostas e leads)" right={(
+        <div role="group" aria-label="Período" style={{ display: 'flex', gap: 4, padding: 4, borderRadius: 12, background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
+          {[7, 30, 90].map((d) => (
+            <button key={d} type="button" aria-pressed={days === d} onClick={() => setDays(d)} style={{ padding: '6px 12px', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer', background: days === d ? ORANGE : 'transparent', color: days === d ? '#fff' : 'var(--text-muted)' }}>{d} dias</button>
+          ))}
+        </div>
+      )} />
       {error && <p style={{ color: '#ef4444', fontSize: 13 }}>{error}</p>}
       {!data && !error && <span style={muted}>Carregando…</span>}
       {data && (<>
+        {data.originAvailable && data.logAvailable && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+            <StatCard accent label="Vendas pela conversa" value={fmtMoney(data.r.chatSales.total)} sub={`${fmtInt(data.r.chatSales.count)} venda${data.r.chatSales.count === 1 ? '' : 's'} registradas pelo 💰`} />
+            <StatCard label="Receberam envio automático" value={fmtInt(data.r.conversion.reached)} sub="contatos no período" />
+            <StatCard label="Compraram em até 7 dias" value={fmtInt(data.r.conversion.converted)} sub={fmtPct(data.r.conversion.reached ? data.r.conversion.converted / data.r.conversion.reached : null)} />
+          </div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
           {box('ENVIOS AUTOMÁTICOS', !data.logAvailable ? <span style={muted}>Atualize o banco para usar este recurso.</span> : (
             Object.keys(data.r.bySource).length === 0 ? <span style={muted}>Nenhum envio no período.</span> : (
@@ -69,7 +79,7 @@ export default function WaResults() {
           ))}
         </div>
         <div style={card}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 }}>ENVIOS E VENDAS POR DIA</div>
+          <div style={{ ...eyebrow, marginBottom: 8 }}>Envios e vendas por dia</div>
           <div style={{ width: '100%', height: 260 }}>
             <ResponsiveContainer>
               <BarChart data={data.r.daily.map((d) => ({ ...d, dia: d.day.slice(8, 10) + '/' + d.day.slice(5, 7) }))}>

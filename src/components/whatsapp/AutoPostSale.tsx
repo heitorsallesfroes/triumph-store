@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { finalizedSalesSince, loadAutoClient, loadLabels, pushPhonesToLabel, saveAutoClient, type AutoClientSettings, type PushResult, type WaLabelRow } from '../../lib/crmBridgeDb';
 import { btn, btnPrimary, card, Field, input, LabelChooser, muted, Progress } from './shared';
+import { SectionHeader } from './ui';
 
 export default function AutoPostSale() {
   const [cfg, setCfg] = useState<AutoClientSettings | null>(null);
@@ -59,6 +60,7 @@ export default function AutoPostSale() {
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <SectionHeader title="Pós-venda automático" subtitle="Venda finalizada no ERP → cliente na etiqueta CRM do WhatsApp" />
       <div style={card}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: 'var(--text-primary)', fontWeight: 600 }}>
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />

@@ -23,7 +23,7 @@ const HANDLERS = {
   moveContactLabel:       (m) => WaApi.moveContactLabel({ contactId: m.contactId, from: m.from, to: m.to }),
   fetchAllLabelClients:   (m) => WaApi.fetchAllLabelClients({ labelId: m.labelId }),
   // Editor de mensagens (1.9.0): cada uma valida a entrada em supabase-api.js
-  saveItem:        (m) => WaApi.saveItem({ id: m.id, category_id: m.category_id, title: m.title, parts: m.parts, on_send_add_label_id: m.on_send_add_label_id, on_send_remove_label_id: m.on_send_remove_label_id, on_send_add_wa_label_id: m.on_send_add_wa_label_id, on_send_remove_wa_label_id: m.on_send_remove_wa_label_id, on_send_remove_all_crm: m.on_send_remove_all_crm, on_send_remove_all_wa: m.on_send_remove_all_wa }),
+  saveItem:        (m) => WaApi.saveItem({ id: m.id, category_id: m.category_id, title: m.title, parts: m.parts, on_send_add_label_id: m.on_send_add_label_id, on_send_remove_label_id: m.on_send_remove_label_id, on_send_add_wa_label_id: m.on_send_add_wa_label_id, on_send_remove_wa_label_id: m.on_send_remove_wa_label_id, on_send_remove_all_crm: m.on_send_remove_all_crm, on_send_remove_all_wa: m.on_send_remove_all_wa, follow_step: m.follow_step }),
   deleteItem:      (m) => WaApi.deleteItem({ id: m.id }),
   createCategory:  (m) => WaApi.createCategory({ name: m.name }),
   renameCategory:  (m) => WaApi.renameCategory({ id: m.id, name: m.name }),
@@ -50,6 +50,11 @@ const HANDLERS = {
   lastSendAt:           ()  => WaApi.lastSendAt(),
   logSend:              (m) => WaApi.logSend({ source: m.source, source_id: m.source_id, contact_id: m.contact_id, chat_id: m.chat_id, item_id: m.item_id, status: m.status, reason: m.reason }),
   finishSendLog:        (m) => WaApi.finishSendLog({ id: m.id, status: m.status, reason: m.reason }),
+  // 2.10.0: painel de resultados (leads, respostas, envios manuais e de mensagem rápida)
+  saveLeads:            (m) => WaApi.saveLeads({ items: m.items }),
+  logQuickSend:         (m) => WaApi.logQuickSend({ chat_id: m.chat_id, item_id: m.item_id }),
+  logManualSends:       (m) => WaApi.logManualSends({ items: m.items }),
+  recordReplies:        (m) => WaApi.recordReplies({ items: m.items }),
   fetchSendLog:         (m) => WaApi.fetchSendLog({ limit: m.limit }),
   chatContact:          (m) => WaApi.chatContact({ chatId: m.chatId, labelId: m.labelId }),
   ensureNoSendLabel:    ()  => WaApi.ensureNoSendLabel(),

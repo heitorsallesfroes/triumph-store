@@ -1032,7 +1032,76 @@
     mineQueue.push({ chatId, head: body.slice(0, 80) });
     if (mineQueue.length > MINE_MAX) mineQueue.splice(0, mineQueue.length - MINE_MAX);
   }
+  // ── 2.10.0: painel de resultados — eventos das conversas individuais (só memória desta aba) ──
+  // Para cada mensagem nova: conversa, se é sua ou do cliente e a hora. Mensagem do cliente sem nenhuma
+  // mensagem antes na conversa = lead novo (first), com o anúncio se vier de anúncio. Nunca o texto.
+  // O painel (aba com a trava) grava leads, respostas e o que você digitou.
+  const CONV_MAX = 2000;
+  const convQueue = [];
+  const SKIP_TYPES = new Set(['e2e_notification', 'notification', 'notification_template', 'gp2', 'protocol', 'reaction', 'call_log', 'revoked', 'ciphertext_failed']);
+  const realMsg = (x) => !SKIP_TYPES.has(String(safe(() => x.type, '') || '')) && !safe(() => x.isNotification, false);
+  const convChatId = (m) => safe(() => m.id.remote._serialized, '') || String(safe(() => m.id.remote, '') || '');
+  const noEarlierOf = (chat) => safe(() => chat.msgs.msgLoadState.noEarlierMsgs, undefined);
+  function leadAd(m) {
+    const ctx = ctxOf(m);
+    if (!ctx) return null;
+    const a = adSummary(ctx);
+    return { id: a.sourceId || null, title: a.title || null };
+  }
+  function onConvMessage(m) {
+    const chatId = convChatId(m);
+    if (!/^[0-9]+@(c\.us|lid)$/.test(chatId) || !realMsg(m)) return;
+    const fromMe = safe(() => m.id.fromMe, null);
+    if (typeof fromMe !== 'boolean') return;
+    const t = msgT(m) || Math.floor(Date.now() / 1000);
+    const ev = { chatId, fromMe, t };
+    if (!fromMe) {
+      const chat = safe(() => wpp.chat.get(chatId), null);
+      const msgs = (chat && safe(() => chat.msgs.getModelsArray(), null)) || [];
+      const earlier = msgs.some((x) => x !== m && realMsg(x) && msgT(x) <= t && safe(() => x.id.id, 1) !== safe(() => m.id.id, 2));
+      if (!earlier && noEarlierOf(chat) !== false) { ev.first = true; ev.ad = leadAd(m); }
+    }
+    convQueue.push(ev);
+    if (convQueue.length > CONV_MAX) convQueue.splice(0, convQueue.length - CONV_MAX);
+  }
+  const pnCache = new Map();
+  async function cachedPn(chatId) {
+    if (pnCache.has(chatId)) return pnCache.get(chatId);
+    const pn = await pnOfChat(chatId);
+    if (pnCache.size > 5000) pnCache.clear();
+    pnCache.set(chatId, pn);
+    return pn;
+  }
+  // scan (1 vez por abertura): conversas carregadas cuja 1ª mensagem é do cliente e chegou nas últimas 24 h
+  // (com o PC desligado). Só conta se o WhatsApp diz que não há mensagens mais antigas na conversa.
+  const LEAD_SCAN_MS = 24 * 3600 * 1000;
+  async function convEvents(payload) {
+    let scanned = false;
+    const scan = [];
+    if (payload && payload.scan === true && isReady()) {
+      let loaded = null;
+      try { loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS); } catch { loaded = null; }
+      if (Array.isArray(loaded)) {
+        scanned = true;
+        const since = (Date.now() - LEAD_SCAN_MS) / 1000;
+        for (const chat of loaded.slice(0, 3000)) {
+          const id = chatIdOf(chat);
+          if (!/^[0-9]+@(c\.us|lid)$/.test(id) || noEarlierOf(chat) !== true) continue;
+          const msgs = (safe(() => chat.msgs.getModelsArray(), null) || []).filter(realMsg);
+          if (!msgs.length) continue;
+          const first = msgs.reduce((a, b) => (msgT(b) < msgT(a) ? b : a));
+          if (safe(() => first.id.fromMe, true) || msgT(first) < since) continue;
+          scan.push({ chatId: id, fromMe: false, t: msgT(first), first: true, ad: leadAd(first), scan: true });
+        }
+      }
+    }
+    const events = [...convQueue.splice(0, convQueue.length), ...scan];
+    if (isReady()) for (const e of events) if (!e.fromMe) e.phone = await cachedPn(e.chatId);
+    return { events, scanned };
+  }
+
   function onNewMessage(m) {
+    try { onConvMessage(m); } catch { /* mensagem estranha: ignora */ }
     try {
       if (safe(() => m.id.fromMe, false) === true) { onMyMessage(m); return; }
       if (safe(() => m.id.fromMe, true)) return;
@@ -1227,6 +1296,7 @@
     richInfo: () => richInfo(),
     catalogProducts: () => catalogProducts(),
     contactSearch: (payload) => contactSearch(payload),
+    convEvents: (payload) => convEvents(payload), // 2.10.0
   };
 
   function reply(request, ok, data, error) {
