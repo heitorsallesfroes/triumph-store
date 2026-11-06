@@ -313,13 +313,14 @@
   const PANEL_TABS = ['midias', 'etiquetas', 'vendas', 'conversoes', 'quadro', 'agendados', 'disparos', 'follows'];
   const PANEL_FILTERS = ['mais_usadas', 'texto', 'audio', 'imagem', 'video', 'documento', 'localizacao', 'produto', 'catalogo', 'contato', 'pix'];
   const PANEL_BLOCKS = ['conv', 'etiquetas', 'nome', 'busca'];
-  const PANEL_CONV_BTNS = ['venda', 'compra', 'automacao'];
+  const PANEL_CONV_BTNS = ['venda', 'compra', 'automacao', 'proxima']; // 2.10.3: + Próxima conversa
   function defaultPanelPrefs() {
     return {
       tabs: { midias: true, etiquetas: true, vendas: true, conversoes: true, quadro: false, agendados: false, disparos: false, follows: false },
       filters: ['mais_usadas', 'texto', 'audio', 'imagem', 'video'],
-      convBtns: { venda: true, compra: true, automacao: true },
+      convBtns: { venda: true, compra: true, automacao: true, proxima: true },
       density: 'confortavel',
+      keepListPos: true, // 2.10.3: manter a posição da lista de conversas ao enviar
       collapsed: { conv: false, etiquetas: false, nome: false, busca: false },
       topH: null,
     };
@@ -335,10 +336,25 @@
       filters: PANEL_FILTERS.filter((f) => filters.includes(f)), // sempre na ordem dos chips
       convBtns: bools(r.convBtns, PANEL_CONV_BTNS, d.convBtns),
       density: r.density === 'compacta' ? 'compacta' : 'confortavel',
+      keepListPos: typeof r.keepListPos === 'boolean' ? r.keepListPos : d.keepListPos,
       collapsed: bools(r.collapsed, PANEL_BLOCKS, d.collapsed),
       topH: r.topH != null && Number.isFinite(h) ? Math.round(Math.min(2000, Math.max(48, h))) : null,
     };
   }
+  // ── 2.10.3: manter a posição da lista de conversas ao enviar ──
+  // Depois de um envio SEU (até 2 s), se a lista pulou para o topo sem você mexer nela, volta para onde você
+  // estava + 1 linha (a conversa que recebeu a mensagem subiu para o topo e as de cima desceram uma linha:
+  // assim as mesmas conversas continuam na tela). Você rolou ou clicou na lista depois do envio: não mexe.
+  const LIST_KEEP_MS = 2000;
+  function listShouldRestore({ enabled, now, armAt, userAt, scrollTop, saved, restores }) {
+    if (!enabled || !armAt || now - armAt > LIST_KEEP_MS) return false;
+    if (userAt >= armAt) return false;
+    if (saved == null || saved <= 8 || scrollTop > 8) return false;
+    return (restores || 0) < 3;
+  }
+  const listRestoreTarget = ({ saved, rowH, scrollHeight, clientHeight }) =>
+    Math.round(Math.max(0, Math.min(Math.max(0, (scrollHeight || 0) - (clientHeight || 0)), (saved || 0) + Math.min(120, Math.max(40, Number(rowH) || 72)))));
+
   // altura do topo ao arrastar a divisória: entre 48 px e o que deixa ~160 px para a lista
   const clampTopH = (h, panelH) => Math.round(Math.max(48, Math.min(Math.max(48, (Number(panelH) || 0) - 160), Number(h) || 0)));
 
@@ -1379,7 +1395,7 @@
     firstNameOf, chatIdOfContact, pickVariant, evaluateFollow,
     smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
     setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT, convTracker,
-    defaultPanelPrefs, normPanelPrefs, clampTopH, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,
+    defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,
     TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,

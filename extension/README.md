@@ -799,6 +799,24 @@ guardada.
 
 ## O que mudou
 
+### 2.10.3 — a lista de conversas não volta mais para o topo depois de enviar
+- **Manter a posição da lista de conversas ao enviar** (no Personalizar, **ligado** por padrão). A
+  extensão guarda onde **você** deixou a lista da esquerda (`#pane-side`, ou o que rola dentro dele) a cada
+  rolagem sua (roda do mouse, toque, teclado ou barra). Quando você envia (Enter na caixa, botão Enviar
+  ou envio pela extensão) e a lista pula para o topo em até **2 s**, ela volta para onde estava **mais
+  uma linha**: a conversa que recebeu a mensagem subiu para o topo e as de cima desceram uma linha, então
+  é assim que as **mesmas conversas** continuam na tela (descontar a linha deixaria tudo uma linha fora do
+  lugar).
+- Não briga com você: se você rolar ou clicar na lista depois de enviar, não mexe. Mensagem de cliente
+  (que também leva a conversa para o topo) e clique para abrir outra conversa não restauram. No máximo 3
+  vezes por envio. Se o WhatsApp mudar a página e a lista não for encontrada, não faz nada (sem erro).
+- **Próxima ▼** (junto dos botões da conversa; dá para desligar em Personalizar → Botões da conversa):
+  abre a conversa logo abaixo da aberta na lista, para ir descendo sem rolar. Se a de baixo ainda não
+  estiver desenhada, desce uma linha e tenta de novo.
+- Regras em `engine.js` (`listShouldRestore`, `listRestoreTarget`; testes em `prefs.test.cjs`). O teste no
+  Chrome real ganhou uma lista simulada que pula para o topo depois do envio (Enter e botão), com mensagem
+  de cliente, clique na lista, rolagem sua logo depois, opção desligada, "Próxima ▼" e página sem a lista.
+
 ### 2.10.2 — painel personalizável (só visual)
 - **Seções recolhíveis**: Conversa (e os botões), Etiquetas CRM, Nome e Busca + filtros ganham uma
   setinha ▸/▾. Recolhida, a seção vira uma linha com o resumo ("Etiquetas CRM: Cliente, Follow Up 1",

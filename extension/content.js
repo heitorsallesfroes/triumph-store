@@ -171,6 +171,9 @@
   // 2.10.2: painel personalizável (abas, filtros, botões da conversa, densidade, seções recolhidas, altura do topo).
   // Só visual; guardado em chrome.storage.local (panelPrefs), por computador. Regras em engine.js (normPanelPrefs).
   const pz = { prefs: globalThis.TspEngine.defaultPanelPrefs(), filtersOpen: false, moreChip: null, open: false, el: null };
+  // 2.10.3: lista de conversas do WhatsApp (#pane-side): posição que VOCÊ deixou, último envio seu e sua última mexida
+  // userAt = qualquer mexida sua na lista (clique incluso); scrollAt = você rolando (roda, toque, teclado, barra)
+  const lk = { el: null, saved: null, userAt: 0, scrollAt: 0, armAt: 0, restores: 0, pointer: false };
   // Aba Etiquetas: contadores e lista de clientes da etiqueta aberta
   const lt = {
     counts: null, countsAt: null, countsError: null,
@@ -1397,7 +1400,10 @@
       .tools.cs-collapsed .trow { padding-bottom: var(--s-2); }
       .trow > .cs-toggle + .search { flex: 1 1 calc(100% - 30px); }
       .status.cs-collapsed { padding-top: var(--s-1); padding-bottom: var(--s-1); }
-      .panel.cz-no-venda .qbtns .sale-quick:not(.conv-quick), .panel.cz-no-compra .qbtns .conv-quick:not(.auto-quick), .panel.cz-no-automacao .qbtns .auto-quick { display: none !important; }
+      .panel.cz-no-venda .qbtns .sale-quick:not(.conv-quick), .panel.cz-no-compra .qbtns .conv-quick:not(.auto-quick), .panel.cz-no-automacao .qbtns .auto-quick, .panel.cz-no-proxima .qbtns .next-chat { display: none !important; }
+      .next-chat { margin: 0; min-height: var(--hit); padding: 0 var(--s-2); border-radius: var(--r-pill); border: 1px solid color-mix(in srgb, currentColor 45%, transparent); background: var(--card); color: var(--fg); font-size: var(--fs-1); font-weight: 600; white-space: nowrap; cursor: pointer; }
+      .next-chat:hover { border-color: var(--accent); color: var(--accent-text); }
+      .next-chat[hidden] { display: none; }
       .chip.cz-more { border-style: dashed; color: var(--muted); }
       .cz { position: absolute; top: 52px; right: var(--s-2); left: var(--s-2); z-index: 20; max-height: calc(100vh - 70px); overflow-y: auto; padding: var(--s-3); border-radius: var(--r-lg); background: var(--card); border: 1px solid var(--border); box-shadow: var(--sh-3); display: flex; flex-direction: column; gap: var(--s-3); animation: fadeIn .12s ease both; }
       .cz-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); font-weight: 700; font-size: var(--fs-3); }
@@ -1560,7 +1566,7 @@
           </div>
         </nav>
         <div class="ptop">
-        <div class="status warn"><span class="dot"></span><span class="txt"></span><span class="qbtns"><button class="sale-quick" type="button" title="Registrar venda desta conversa" hidden>💰 Venda</button><button class="sale-quick conv-quick" type="button" title="Enviar compra desta conversa para o Facebook" hidden>📈 Compra p/ Facebook</button><button class="sale-quick conv-quick auto-quick" type="button" title="Adicionar esta conversa a uma automação" hidden>🔁 Automação</button></span></div>
+        <div class="status warn"><span class="dot"></span><span class="txt"></span><span class="qbtns"><button class="sale-quick" type="button" title="Registrar venda desta conversa" hidden>💰 Venda</button><button class="sale-quick conv-quick" type="button" title="Enviar compra desta conversa para o Facebook" hidden>📈 Compra p/ Facebook</button><button class="sale-quick conv-quick auto-quick" type="button" title="Adicionar esta conversa a uma automação" hidden>🔁 Automação</button><button class="next-chat" type="button" title="Abrir a conversa logo abaixo desta na lista" hidden>Próxima ▼</button></span></div>
         <div class="labels">
           <span class="lbl">Etiquetas CRM</span>
           <div class="chips"></div>
@@ -2130,6 +2136,7 @@
     renderSaleQuick();
     scheduleChatCheck();
     csRefreshSums(); // 2.10.2: resumo das seções recolhidas (só as recolhidas)
+    if (pz.ready) renderNextBtn(); // 2.10.3
   }
 
   // 2.6.3: trocou de conversa → fecha as telas ligadas à conversa (📈, 💰, agendar com algo digitado,
@@ -2968,7 +2975,7 @@
 
   // "Personalizar" (cabeçalho): liga/desliga abas, filtros, botões da conversa e densidade
   const TAB_LABEL = { midias: 'Mídias', etiquetas: 'Etiquetas', vendas: 'Vendas', conversoes: 'Conversões', quadro: 'Quadro', agendados: 'Agendados', disparos: 'Disparos', follows: 'Automações' };
-  const CONV_LABEL = { venda: '💰 Venda', compra: '📈 Compra p/ Facebook', automacao: '🔁 Automação' };
+  const CONV_LABEL = { venda: '💰 Venda', compra: '📈 Compra p/ Facebook', automacao: '🔁 Automação', proxima: 'Próxima conversa ▼' };
   function czCheck(label, checked, onChange, { fixed = false } = {}) {
     const l = el('label', `cz-opt${fixed ? ' fixed' : ''}`);
     const cb = el('input');
@@ -3012,7 +3019,10 @@
       czCheck('Tudo', true, null, { fixed: true }),
       ...filterIds.map((id) => czCheck((FILTERS.find(([x]) => x === id) || [id, id])[1], p.filters.includes(id), (v) => set((n) => { n.filters = v ? [...n.filters, id] : n.filters.filter((x) => x !== id); }))),
     ]));
-    box.append(czGroup('Botões da conversa', null, E2P.PANEL_CONV_BTNS.map((k) => czCheck(CONV_LABEL[k], p.convBtns[k], (v) => set((n) => { n.convBtns[k] = v; })))));
+    box.append(czGroup('Botões da conversa', 'Próxima conversa ▼ abre a conversa logo abaixo da aberta na lista.', E2P.PANEL_CONV_BTNS.map((k) => czCheck(CONV_LABEL[k], p.convBtns[k], (v) => set((n) => { n.convBtns[k] = v; })))));
+    box.append(czGroup('Lista de conversas', 'Depois de você enviar, se a lista do WhatsApp pular para o topo, ela volta para onde você estava. Se você rolar ou clicar na lista, não mexe.', [
+      czCheck('Manter a posição da lista de conversas ao enviar', p.keepListPos, (v) => set((n) => { n.keepListPos = v; })),
+    ]));
     const dg = el('div', 'cz-grp');
     dg.append(el('div', 'cz-t', 'Densidade'));
     const seg = el('div', 'cz-seg');
@@ -3051,6 +3061,107 @@
   actions.prepend(czBtn);
   shadow.addEventListener('click', (e) => { if (pz.open && pz.el && !e.composedPath().includes(pz.el) && !e.composedPath().includes(czBtn)) setCustomizeOpen(false); });
   pz.ready = true;
+
+  // ── 2.10.3: manter a posição da lista de conversas ao enviar + "Próxima ▼" ──
+  // Guarda onde VOCÊ deixou a lista (#pane-side ou o que rola dentro dele). Depois de um envio seu (Enter na
+  // caixa, botão de enviar ou envio da extensão), se a lista pular para o topo em até 2 s sem você mexer nela,
+  // volta para lá (+ 1 linha). Sem a lista na página: não faz nada.
+  const lkScrolls = (e) => !!e && e.scrollHeight > e.clientHeight + 4 && /(auto|scroll)/.test(getComputedStyle(e).overflowY);
+  function lkPane() {
+    if (lk.el && lk.el.isConnected) return lk.el;
+    lk.el = null;
+    if (Date.now() - (lk.missAt || 0) < 2000) return null; // não achou há pouco: não procura de novo a cada rolagem
+    const side = document.getElementById('pane-side');
+    if (!side) { lk.missAt = Date.now(); return null; }
+    if (lkScrolls(side)) lk.el = side;
+    else {
+      const inner = [...side.querySelectorAll('div')].slice(0, 400).find(lkScrolls);
+      let up = side.parentElement;
+      for (let i = 0; !inner && up && i < 4; i++, up = up.parentElement) if (lkScrolls(up)) { lk.el = up; break; }
+      if (inner) lk.el = inner;
+    }
+    if (!lk.el) lk.missAt = Date.now();
+    return lk.el;
+  }
+  const lkRows = (pane) => [...pane.querySelectorAll('[role="listitem"], [role="row"]')].filter((r) => r.getBoundingClientRect().height >= 20);
+  function lkRowH(pane) {
+    const r = lkRows(pane)[0];
+    return r ? r.getBoundingClientRect().height : 72;
+  }
+  const lkInPane = (t) => { const p = lkPane(); return !!(p && t && t.nodeType === 1 && (p.contains(t) || t.contains(p))); };
+  function lkArm() {
+    if (!pz.prefs.keepListPos) return;
+    lk.armAt = Date.now();
+    lk.restores = 0;
+  }
+  const lkUser = () => { lk.userAt = Date.now(); };
+  const lkScroll = () => { lk.userAt = Date.now(); lk.scrollAt = lk.userAt; };
+  // suas mexidas na lista: roda do mouse, toque, teclado na lista, clique/arrasto da barra
+  document.addEventListener('wheel', (e) => { if (lkInPane(e.target)) lkScroll(); }, { capture: true, passive: true });
+  document.addEventListener('touchmove', (e) => { if (lkInPane(e.target)) lkScroll(); }, { capture: true, passive: true });
+  // clique na lista (abrir conversa) = mexida sua; segurando e arrastando (barra) = rolagem sua
+  document.addEventListener('pointerdown', (e) => { if (lkInPane(e.target)) { lk.pointer = true; lkUser(); } }, { capture: true, passive: true });
+  document.addEventListener('pointerup', () => { lk.pointer = false; }, { capture: true, passive: true });
+  document.addEventListener('keydown', (e) => {
+    if (/^(PageUp|PageDown|ArrowUp|ArrowDown|Home|End| )$/.test(e.key) && lkInPane(e.target)) lkScroll();
+    // envio manual: Enter (sem Shift) na caixa de mensagem com texto
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    const box = e.target && e.target.closest ? e.target.closest('footer [contenteditable="true"]') : null;
+    if (box && !box.closest('#side') && (box.textContent || '').trim()) lkArm();
+  }, true);
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('footer button, footer [role="button"], footer [data-icon]') : null;
+    if (!b || b.closest('#side')) return;
+    const icon = b.matches('[data-icon]') ? b : b.querySelector('[data-icon]');
+    const name = (icon && icon.getAttribute('data-icon')) || '';
+    const label = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+    if (/send/.test(name) || /^(enviar|send)$/.test(label)) lkArm();
+  }, true);
+  // rolagem da lista: sua = guarda; pulo para o topo logo depois do seu envio = volta
+  document.addEventListener('scroll', (e) => {
+    const pane = lkPane();
+    if (!pane || e.target !== pane) return;
+    const now = Date.now();
+    if (lk.pointer) lkScroll(); // arrastando a barra
+    if (now - lk.scrollAt < 600) { lk.saved = pane.scrollTop; return; }
+    if (!E2P.listShouldRestore({ enabled: pz.prefs.keepListPos, now, armAt: lk.armAt, userAt: lk.userAt, scrollTop: pane.scrollTop, saved: lk.saved, restores: lk.restores })) return;
+    lk.restores++;
+    const to = E2P.listRestoreTarget({ saved: lk.saved, rowH: lkRowH(pane), scrollHeight: pane.scrollHeight, clientHeight: pane.clientHeight });
+    pane.scrollTop = to;
+    lk.saved = to;
+  }, { capture: true, passive: true });
+
+  // "Próxima ▼": abre a conversa logo abaixo da aberta na lista (sem você rolar)
+  const nextBtn = shadow.querySelector('.next-chat');
+  const lkSelected = (rows) => rows.find((r) => r.getAttribute('aria-selected') === 'true' || r.querySelector('[aria-selected="true"]'));
+  function lkOpenRow(row) {
+    const target = row.querySelector('[role="gridcell"], [tabindex="-1"], [tabindex="0"]') || row;
+    const r = target.getBoundingClientRect();
+    const at = { bubbles: true, cancelable: true, view: window, button: 0, clientX: r.left + Math.min(40, r.width / 2), clientY: r.top + r.height / 2 };
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach((t) => target.dispatchEvent(t.startsWith('pointer') ? new PointerEvent(t, { ...at, pointerId: 1, isPrimary: true }) : new MouseEvent(t, at)));
+  }
+  function nextConversation(retry = true) {
+    const pane = lkPane() || document.getElementById('pane-side');
+    if (!pane) { toast('Não achei a lista de conversas do WhatsApp.', 'warn', 4000); return; }
+    const rows = lkRows(pane).sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+    const cur = lkSelected(rows);
+    const curTop = cur ? cur.getBoundingClientRect().top : -Infinity;
+    const next = rows.find((r) => r !== cur && r.getBoundingClientRect().top > curTop + 2);
+    if (!next) {
+      // a de baixo ainda não está desenhada: desce uma linha e tenta de novo uma vez
+      if (retry && lkScrolls(pane)) { pane.scrollTop += lkRowH(pane); setTimeout(() => nextConversation(false), 180); return; }
+      toast('Não há conversa abaixo desta na lista.', 'warn', 3000);
+      return;
+    }
+    const pr = pane.getBoundingClientRect();
+    const nr = next.getBoundingClientRect();
+    if (nr.bottom > pr.bottom || nr.top < pr.top) { pane.scrollTop += nr.bottom > pr.bottom ? nr.bottom - pr.bottom : nr.top - pr.top; lk.saved = pane.scrollTop; }
+    lk.armAt = 0; // abrir conversa não é envio
+    lkOpenRow(next);
+  }
+  if (nextBtn) nextBtn.addEventListener('click', () => nextConversation());
+  function renderNextBtn() { if (nextBtn) nextBtn.hidden = !document.getElementById('pane-side'); }
+
   queueMicrotask(applyPrefs); // depois do script inteiro iniciar (renderPanelNav usa o Quadro, declarado mais abaixo)
 
   // ── Aviso, faixa offline e rodapé ──────────────────────────────────────────
@@ -4347,6 +4458,7 @@
         renderSeq();
         try {
           const r = await sendPart(part, i, chatId, firstName, seq.reqId, firstNew);
+          lkArm(); // 2.10.3: a lista do WhatsApp pode pular para o topo depois deste envio
           if (r && Array.isArray(r.failedFiles)) failedFiles.push(...r.failedFiles);
         } catch (e) {
           if (e.code === 'cancelled') return { status: 'stopped', sent };

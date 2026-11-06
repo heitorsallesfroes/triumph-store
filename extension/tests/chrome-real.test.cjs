@@ -35,13 +35,36 @@ function findChrome() {
   return c.find((p) => fs.existsSync(p)) || null;
 }
 
-// WhatsApp Web simulado: só o esqueleto que o painel usa (#app); a WA-JS não acha o WhatsApp e fica esperando
+// WhatsApp Web simulado: o esqueleto que o painel usa (#app, #main, caixa de mensagem) e, desde a 2.10.3, a lista de
+// conversas (#pane-side, 40 linhas de 72 px) que se comporta como a do WhatsApp: clicar abre a conversa; enviar
+// (Enter ou botão Enviar) leva a conversa para o topo e, 120 ms depois, a lista PULA para o topo;
+// __fakeIncoming() faz o mesmo para mensagem de cliente. A WA-JS não acha o WhatsApp e fica esperando.
+const ROWS = Array.from({ length: 40 }, (_, i) => `<div role="listitem" data-name="Cliente ${i + 1}" style="height:72px;border-bottom:1px solid #eee;display:flex;align-items:center"><div role="gridcell" tabindex="-1" aria-selected="${i === 0}" style="padding:0 16px;width:100%">Cliente ${i + 1}</div></div>`).join('');
 const FAKE_WA = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>WhatsApp</title>
 <style>html,body{margin:0;height:100%;font-family:Segoe UI,Helvetica,Arial,sans-serif;background:#efeae2}
-#app{height:100%;display:flex}.side{width:30%;min-width:260px;background:#fff;border-right:1px solid #d1d7db}
-.chat{flex:1;display:flex;flex-direction:column}.hdr{height:59px;background:#f0f2f5;display:flex;align-items:center;padding:0 16px;font-weight:600}
-.msgs{flex:1}.foot{height:62px;background:#f0f2f5}</style></head>
-<body><div id="app"><div class="side"><div class="hdr">Conversas</div></div><div class="chat" id="main"><header class="hdr"><span dir="auto" title="Cliente Teste">Cliente Teste</span></header><div class="msgs"></div><footer class="foot"><div contenteditable="true" role="textbox" data-tab="10" style="margin:12px;height:38px;background:#fff;border-radius:8px"></div></footer></div></div></body></html>`;
+#app{height:100%;display:flex}.side{width:30%;min-width:260px;background:#fff;border-right:1px solid #d1d7db;display:flex;flex-direction:column}
+#pane-side{flex:1;overflow-y:auto}[aria-selected="true"]{background:#f0f2f5;font-weight:600}
+.chat{flex:1;display:flex;flex-direction:column}.hdr{height:59px;flex:none;background:#f0f2f5;display:flex;align-items:center;padding:0 16px;font-weight:600}
+.msgs{flex:1}.foot{height:62px;background:#f0f2f5;display:flex;align-items:center}</style></head>
+<body><div id="app"><div class="side" id="side"><div class="hdr">Conversas</div><div id="pane-side"><div role="grid">${ROWS}</div></div></div>
+<div class="chat" id="main"><header class="hdr"><span dir="auto" title="Cliente 1">Cliente 1</span></header><div class="msgs"></div>
+<footer class="foot"><div contenteditable="true" role="textbox" data-tab="10" style="flex:1;margin:12px;height:38px;background:#fff;border-radius:8px"></div><button aria-label="Enviar" style="margin-right:12px;height:38px"><span data-icon="send">➤</span></button></footer></div></div>
+<script>
+const pane = document.getElementById('pane-side');
+const grid = pane.firstElementChild;
+const box = document.querySelector('footer [contenteditable]');
+function open(row) {
+  grid.querySelectorAll('[role=gridcell]').forEach((c) => c.setAttribute('aria-selected', 'false'));
+  row.firstElementChild.setAttribute('aria-selected', 'true');
+  const s = document.querySelector('#main header span'); s.textContent = row.dataset.name; s.title = row.dataset.name;
+}
+pane.addEventListener('mousedown', (e) => { const r = e.target.closest('[role=listitem]'); if (r) open(r); });
+function jumpTop(row) { grid.prepend(row); setTimeout(() => { pane.scrollTop = 0; }, 120); }
+function send() { if (!box.textContent.trim()) return; box.textContent = ''; jumpTop(grid.querySelector('[aria-selected=true]').parentElement); }
+box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+document.querySelector('footer button').addEventListener('click', send);
+window.__fakeIncoming = (name) => jumpTop(grid.querySelector('[data-name="' + name + '"]'));
+</script></body></html>`;
 
 // ── CDP por pipe (fd 3 = escrita, fd 4 = leitura; mensagens separadas por \0) ──
 function cdp(child) {
@@ -265,7 +288,88 @@ async function main() {
     await czClose();
     const def = await q(`const p = sh.querySelector('.panel'); return { dense: p.classList.contains('dense'), labels: sh.querySelector('.labels').classList.contains('cs-collapsed'), midiasInBar: !!sh.querySelector('.pnav > [data-sec="midias"]'), limited: p.classList.contains('top-limited') };`);
     check('"Voltar ao padrão" desfaz tudo', !def.dense && !def.labels && def.midiasInBar && !def.limited, JSON.stringify(def));
-    check('nenhum erro no console usando tudo isso', errors.length === 0, errors.slice(0, 8).join(' | '));
+    // 4. lista de conversas (2.10.3): depois de enviar, a lista que pulou para o topo volta para onde estava
+    const list = () => evalPage(`(() => { const p = document.getElementById('pane-side'); if (!p) return null; const pr = p.getBoundingClientRect();
+      const rows = [...p.querySelectorAll('[role=listitem]')]; const top = rows.find((r) => r.getBoundingClientRect().bottom > pr.top + 4);
+      const sel = p.querySelector('[aria-selected=true]'); return { st: Math.round(p.scrollTop), top: top && top.dataset.name, sel: sel && sel.parentElement.dataset.name }; })()`);
+    const paneXY = async () => evalPage(`(() => { const r = document.getElementById('pane-side').getBoundingClientRect(); return { x: r.left + 120, y: r.top + 160 }; })()`);
+    async function wheel(dy) { const p = await paneXY(); await s('Input.dispatchMouseEvent', { type: 'mouseWheel', x: p.x, y: p.y, deltaX: 0, deltaY: dy }); }
+    async function clickAt(x, y) { await mouse('mouseMoved', x, y, { buttons: 0, button: 'none' }); await mouse('mousePressed', x, y); await mouse('mouseReleased', x, y); }
+    async function clickRow(name) {
+      const r = await evalPage(`(() => { const e = document.querySelector('[data-name="${name}"]').getBoundingClientRect(); return { x: e.left + 60, y: e.top + 30 }; })()`);
+      await clickAt(r.x, r.y);
+    }
+    async function typeAndSend(how = 'enter') {
+      const b = await evalPage(`(() => { const r = document.querySelector('footer [contenteditable]').getBoundingClientRect(); return { x: r.left + 40, y: r.top + 18 }; })()`);
+      await clickAt(b.x, b.y);
+      await s('Input.insertText', { text: 'oi, tudo bem?' });
+      if (how === 'enter') {
+        await s('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+        await s('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      } else {
+        const r = await evalPage(`(() => { const e = document.querySelector('footer button').getBoundingClientRect(); return { x: e.left + e.width / 2, y: e.top + e.height / 2 }; })()`);
+        await clickAt(r.x, r.y);
+      }
+    }
+    const settle = () => sleep(2300); // passa a janela de 2 s entre um cenário e outro
+    // a) rolei até o meio, abri uma conversa da tela e enviei com Enter
+    await wheel(1100); await sleep(700);
+    const l0 = await list();
+    await clickRow(`Cliente ${Number(l0.top.split(' ')[1]) + 3}`); await sleep(200);
+    const l1 = await list();
+    await typeAndSend('enter'); await sleep(800);
+    const l2 = await list();
+    check('lista: depois de enviar (Enter), volta para onde estava e as mesmas conversas continuam na tela', l0.st > 500 && l2.st > 500 && l2.top === l1.top, `antes ${JSON.stringify(l1)} · depois ${JSON.stringify(l2)}`);
+    await settle();
+    // b) pelo botão Enviar
+    await wheel(-300); await sleep(700);
+    const b0 = await list();
+    await clickRow(`Cliente ${Number(b0.top.split(' ')[1]) + 2}`); await sleep(200);
+    const b1 = await list();
+    await typeAndSend('button'); await sleep(800);
+    const b2 = await list();
+    check('lista: pelo botão Enviar também volta', b2.st > 300 && b2.top === b1.top, `antes ${JSON.stringify(b1)} · depois ${JSON.stringify(b2)}`);
+    await settle();
+    // c) não briga: se eu rolo logo depois de enviar, a extensão não mexe
+    await typeAndSend('enter');
+    await wheel(-200);
+    await sleep(800);
+    const c1 = await list();
+    check('lista: se você rola logo depois de enviar, não mexe', c1.st <= 8, JSON.stringify(c1));
+    await settle();
+    // d) mensagem de cliente e clique na lista não restauram
+    await wheel(900); await sleep(700);
+    await evalPage(`window.__fakeIncoming('Cliente 30')`); await sleep(600);
+    const d1 = await list();
+    check('lista: mensagem de cliente que joga a lista para o topo não restaura', d1.st <= 8, JSON.stringify(d1));
+    await wheel(900); await sleep(700);
+    await typeAndSend('enter');
+    const d2r = await list();
+    await clickRow(d2r.top); // clicou na lista logo depois de enviar (antes do pulo)
+    await sleep(800);
+    const d2 = await list();
+    check('lista: clicar na lista para abrir outra conversa logo depois de enviar não restaura', d2.st <= 8, JSON.stringify(d2));
+    await settle();
+    // e) desligado no Personalizar
+    await czClickLabel('Manter a posição da lista de conversas ao enviar');
+    await wheel(900); await sleep(700);
+    await typeAndSend('enter'); await sleep(800);
+    const e1 = await list();
+    check('lista: com a opção desligada, não mexe', e1.st <= 8, JSON.stringify(e1));
+    await czClickLabel('Manter a posição da lista de conversas ao enviar');
+    // f) Próxima conversa ▼ abre a de baixo
+    await wheel(300); await sleep(700);
+    const f0 = await list();
+    const below = await evalPage(`(() => { const rows = [...document.querySelectorAll('#pane-side [role=listitem]')]; const i = rows.findIndex((r) => r.querySelector('[aria-selected=true]')); return rows[i + 1] && rows[i + 1].dataset.name; })()`);
+    await q(`sh.querySelector('.next-chat').click(); await wait(400); return true;`);
+    const f1 = await list();
+    const nextVisible = await q(`const b = sh.querySelector('.next-chat'); return !!b && !b.hidden && getComputedStyle(b).display !== 'none';`);
+    check('"Próxima ▼" abre a conversa logo abaixo da atual', nextVisible && !!below && f1.sel === below && f1.sel !== f0.sel, `de ${f0.sel} para ${f1.sel} (esperado ${below})`);
+    // g) sem a lista na página: nada acontece, sem erro
+    await evalPage(`document.getElementById('pane-side').remove()`);
+    await typeAndSend('enter'); await sleep(600);
+    await q(`sh.querySelector('.next-chat') && sh.querySelector('.next-chat').click(); await wait(300); return true;`);
+    check('nenhum erro no console usando tudo isso (inclusive sem a lista na página)', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {
