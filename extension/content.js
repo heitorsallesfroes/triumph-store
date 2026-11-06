@@ -37,6 +37,7 @@
     chat:      '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     board:     '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>',
     more:      '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
+    sliders:   '<line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/>',
     gear:      '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     apps:      '<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>',
     clock:     '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/>',
@@ -167,6 +168,9 @@
     labels: [], labelsLoaded: false, labelsSource: null, labelsSyncedAt: null, labelsError: null,
     convKey: null, convLabelIds: [], convLoading: false, convError: false, menuOpen: false,
   };
+  // 2.10.2: painel personalizável (abas, filtros, botões da conversa, densidade, seções recolhidas, altura do topo).
+  // Só visual; guardado em chrome.storage.local (panelPrefs), por computador. Regras em engine.js (normPanelPrefs).
+  const pz = { prefs: globalThis.TspEngine.defaultPanelPrefs(), filtersOpen: false, moreChip: null, open: false, el: null };
   // Aba Etiquetas: contadores e lista de clientes da etiqueta aberta
   const lt = {
     counts: null, countsAt: null, countsError: null,
@@ -1370,6 +1374,51 @@
       /* ═══ 2.10.0: follow-up ═══ */
       .ed-follow { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; padding: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); }
       .ed-check { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--fs-2); font-weight: 600; cursor: pointer; }
+      /* ═══ 2.10.2: painel personalizável ═══ */
+      .ptop { flex: 0 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+      .panel.sec-msg.top-limited .ptop { max-height: var(--top-max); }
+      .psplit { flex: none; position: relative; z-index: 3; height: 10px; margin: -5px 0; cursor: row-resize; touch-action: none; }
+      .psplit::after { content: ""; position: absolute; left: var(--s-3); right: var(--s-3); top: 4px; height: 2px; border-radius: 2px; background: var(--accent); opacity: 0; transition: opacity .15s; }
+      .psplit:hover::after, .psplit:focus-visible::after, .panel.splitting .psplit::after { opacity: 1; }
+      .psplit:focus-visible { outline: none; }
+      .panel:not(.sec-msg) .psplit, .panel.editing .psplit, .panel.diag .psplit { display: none; }
+      .panel.splitting, .panel.splitting * { cursor: row-resize !important; user-select: none !important; }
+      .cs-toggle { flex: none; align-self: center; width: 20px; height: 20px; padding: 0; margin: 0 -2px 0 -4px; border: none; border-radius: var(--r-xs); background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+      .cs-toggle svg { width: 14px; height: 14px; transition: transform .15s; }
+      .cs-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+      .cz[hidden], .cname[hidden] { display: none !important; }
+      .cs-toggle:hover { color: var(--fg); background: var(--bg2); }
+      .cs-toggle:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+      .cs-sum { display: none; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-2); color: var(--muted); }
+      .cs-sum b { color: var(--fg); font-weight: 600; }
+      .cs-collapsed > .cs-holder > :not(.cs-toggle):not(.cs-sum), .cs-holder.cs-collapsed > :not(.cs-toggle):not(.cs-sum) { display: none !important; }
+      .cs-collapsed > .cs-holder > .cs-sum, .cs-holder.cs-collapsed > .cs-sum { display: block; }
+      .tools.cs-collapsed .filters { display: none; }
+      .tools.cs-collapsed .trow { padding-bottom: var(--s-2); }
+      .trow > .cs-toggle + .search { flex: 1 1 calc(100% - 30px); }
+      .status.cs-collapsed { padding-top: var(--s-1); padding-bottom: var(--s-1); }
+      .panel.cz-no-venda .qbtns .sale-quick:not(.conv-quick), .panel.cz-no-compra .qbtns .conv-quick:not(.auto-quick), .panel.cz-no-automacao .qbtns .auto-quick { display: none !important; }
+      .chip.cz-more { border-style: dashed; color: var(--muted); }
+      .cz { position: absolute; top: 52px; right: var(--s-2); left: var(--s-2); z-index: 20; max-height: calc(100vh - 70px); overflow-y: auto; padding: var(--s-3); border-radius: var(--r-lg); background: var(--card); border: 1px solid var(--border); box-shadow: var(--sh-3); display: flex; flex-direction: column; gap: var(--s-3); animation: fadeIn .12s ease both; }
+      .cz-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); font-weight: 700; font-size: var(--fs-3); }
+      .cz-grp { display: flex; flex-direction: column; gap: var(--s-1); }
+      .cz-grp > .cz-t { font-size: var(--fs-1); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+      .cz-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 2px var(--s-2); }
+      .cz-opt { display: flex; align-items: center; gap: var(--s-2); min-height: 28px; font-size: var(--fs-2); cursor: pointer; }
+      .cz-opt input { margin: 0; accent-color: var(--accent); }
+      .cz-opt.fixed { opacity: .6; cursor: default; }
+      .cz-seg { display: inline-flex; padding: 2px; border-radius: var(--r-md); background: var(--bg2); gap: 2px; align-self: flex-start; }
+      .cz-seg button { padding: 4px var(--s-3); border: none; border-radius: var(--r-sm); background: transparent; color: var(--muted); font-size: var(--fs-2); font-weight: 600; cursor: pointer; }
+      .cz-seg button.on { background: var(--card); color: var(--accent-text); box-shadow: 0 1px 3px var(--shadow); }
+      .cz-note { font-size: var(--fs-1); color: var(--muted); }
+      .cz-foot { display: flex; justify-content: space-between; gap: var(--s-2); padding-top: var(--s-2); border-top: 1px solid var(--border); }
+      /* densidade compacta: menos espaço, texto nunca abaixo de 11 px */
+      .panel.dense { --fs-1: 11px; --fs-2: 11px; --fs-3: 12px; --fs-4: 14px; --s-1: 3px; --s-2: 6px; --s-3: 9px; --s-4: 12px; --s-5: 15px; --s-6: 18px; --hit: 24px; --field-h: 28px; }
+      .panel.dense .head { padding: 8px 6px 8px 12px; }
+      .panel.dense .pnav > button, .panel.dense .pmore { min-height: 38px; }
+      .panel.dense .pnav > button svg, .panel.dense .pmore svg { width: 16px; height: 16px; }
+      .panel.dense .card { padding-top: 6px; padding-bottom: 6px; }
+      .panel.dense .chip { padding-top: 2px; padding-bottom: 2px; min-height: 24px; }
       .pv-album .alb-thumb { position: relative; aspect-ratio: 1; background: var(--bg2); }
       .pv-more { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.5); color: #fff; font-size: var(--fs-4); font-weight: 700; }
       /* ═══ 2.8.5: arrastar para reordenar ═══ */
@@ -1479,7 +1528,7 @@
         <div class="bcols"></div>
         <div class="btoast" role="status" aria-live="polite" hidden></div>
       </div>
-      <aside class="panel" aria-label="Mensagens">
+      <aside class="panel sec-msg" aria-label="Mensagens">
         <div class="resizer" role="separator" aria-orientation="vertical" aria-label="Largura do painel" tabindex="0" title="Arraste para mudar a largura · duplo clique volta ao tamanho padrão"></div>
         <header class="head">
           <div class="brand"><span class="logo">${svg('zap', 'fill')}</span><span class="brand-txt">Mensagens</span></div>
@@ -1510,6 +1559,7 @@
             </div>
           </div>
         </nav>
+        <div class="ptop">
         <div class="status warn"><span class="dot"></span><span class="txt"></span><span class="qbtns"><button class="sale-quick" type="button" title="Registrar venda desta conversa" hidden>💰 Venda</button><button class="sale-quick conv-quick" type="button" title="Enviar compra desta conversa para o Facebook" hidden>📈 Compra p/ Facebook</button><button class="sale-quick conv-quick auto-quick" type="button" title="Adicionar esta conversa a uma automação" hidden>🔁 Automação</button></span></div>
         <div class="labels">
           <span class="lbl">Etiquetas CRM</span>
@@ -1529,6 +1579,8 @@
           </div>
           <div class="filters" role="group" aria-label="Filtros"></div>
         </div>
+        </div>
+        <div class="psplit" role="separator" aria-orientation="horizontal" aria-label="Espaço do topo do painel" tabindex="0" title="Arraste para mudar o espaço do topo · duplo clique volta ao padrão"></div>
         <div class="banner" hidden>${svg('wifiOff')}<span>Sem conexão: mostrando a última versão</span><button type="button">Tentar de novo</button></div>
         <div class="list"></div>
         <div class="ltab" role="region" aria-label="Etiquetas CRM">
@@ -2006,6 +2058,7 @@
     panel.classList.toggle('sec-vendas', state.section === 'vendas');
     panel.classList.toggle('sec-conversoes', state.section === 'conversoes');
     panel.classList.toggle('sec-midias', state.section === 'midias');
+    panel.classList.toggle('sec-msg', state.section === 'mensagens'); // 2.10.2: divisória do topo só em Mensagens
     brandTxt.textContent = { mensagens: 'Mensagens', etiquetas: 'Etiquetas CRM', agendados: 'Agendados', follows: 'Automações', disparos: 'Disparos', vendas: 'Vendas', conversoes: 'Conversões', midias: 'Mídias' }[state.section];
     panel.setAttribute('aria-label', brandTxt.textContent);
     if (persist) storageSet({ panelSection: state.section }); // só o nome da seção
@@ -2065,10 +2118,10 @@
     state.ctx = getContext();
     const { conv, composer, fullName } = state.ctx;
     if (conv && composer) {
-      statusEl.className = 'status ok';
+      statusEl.classList.add('ok'); statusEl.classList.remove('warn'); // 2.10.2: classList (mantém o recolhido)
       statusTxt.textContent = `Conversa: ${fullName || 'contato sem nome'}`;
     } else {
-      statusEl.className = 'status warn';
+      statusEl.classList.add('warn'); statusEl.classList.remove('ok');
       statusTxt.textContent = conv ? 'Esta conversa não tem caixa de mensagem' : 'Abra uma conversa para enviar';
     }
     statusTxt.title = statusTxt.textContent;
@@ -2076,6 +2129,7 @@
     onConversationIdentity(state.ctx.identity);
     renderSaleQuick();
     scheduleChatCheck();
+    csRefreshSums(); // 2.10.2: resumo das seções recolhidas (só as recolhidas)
   }
 
   // 2.6.3: trocou de conversa → fecha as telas ligadas à conversa (📈, 💰, agendar com algo digitado,
@@ -2168,7 +2222,12 @@
 
   // "Nome: Fernanda ✏️" na área de cima (perto das etiquetas CRM)
   const cn = { editing: false, busy: false };
+  // 2.10.2: a linha é refeita a cada mudança; a setinha de recolher volta junto
   function renderNameRow() {
+    renderNameRowInner();
+    csDecorate('nome');
+  }
+  function renderNameRowInner() {
     const box = shadow.querySelector('.cname');
     if (!box) return;
     box.textContent = '';
@@ -2746,16 +2805,253 @@
     chip.addEventListener('click', () => { state.filter = id; renderFilters(); renderList(); });
     filtersEl.appendChild(chip);
   });
+  // 2.10.2: os filtros desligados no Personalizar ficam atrás de "+ filtros"
+  pz.moreChip = el('button', 'chip cz-more', '+ filtros');
+  pz.moreChip.type = 'button';
+  pz.moreChip.addEventListener('click', () => { pz.filtersOpen = !pz.filtersOpen; renderFilters(); });
+  filtersEl.appendChild(pz.moreChip);
 
   function renderFilters() {
     if (Rich.isRich(state.filter) && !state.richAvailable) state.filter = 'tudo';
-    filtersEl.querySelectorAll('.chip').forEach((c) => {
-      c.hidden = Rich.isRich(c.dataset.id) && !state.richAvailable; // 2.9.2: só com a migration
-      const active = c.dataset.id === state.filter;
+    const shown = new Set(['tudo', ...pz.prefs.filters]);
+    let hiddenAvail = 0;
+    filtersEl.querySelectorAll('.chip[data-id]').forEach((c) => {
+      const id = c.dataset.id;
+      const avail = !(Rich.isRich(id) && !state.richAvailable); // 2.9.2: só com a migration
+      const pick = shown.has(id) || id === state.filter; // o filtro em uso sempre aparece
+      if (avail && !pick) hiddenAvail++;
+      c.hidden = !avail || (!pick && !pz.filtersOpen);
+      const active = id === state.filter;
       c.classList.toggle('active', active);
       c.setAttribute('aria-pressed', String(active));
     });
+    if (pz.moreChip) {
+      pz.moreChip.hidden = !hiddenAvail;
+      pz.moreChip.textContent = pz.filtersOpen ? '− filtros' : `+ filtros (${hiddenAvail})`;
+      pz.moreChip.setAttribute('aria-expanded', String(pz.filtersOpen));
+    }
+    csRefreshSums();
   }
+
+  // ── 2.10.2: painel personalizável ──────────────────────────────────────────
+  const E2P = globalThis.TspEngine;
+  const ptopEl = shadow.querySelector('.ptop');
+  const psplitEl = shadow.querySelector('.psplit');
+  // blocos do topo: block = o que recolhe; holder = onde ficam a setinha e o resumo (uma linha)
+  const CS_BLOCKS = {
+    conv: { title: 'Conversa', block: () => statusEl, holder: () => statusEl },
+    etiquetas: { title: 'Etiquetas CRM', block: () => labelsEl, holder: () => labelsEl },
+    nome: { title: 'Nome', block: () => shadow.querySelector('.cname'), holder: () => shadow.querySelector('.cname') },
+    busca: { title: 'Busca e filtros', block: () => shadow.querySelector('.tools'), holder: () => shadow.querySelector('.tools .trow') },
+  };
+  const csText = (node) => [...node.childNodes].filter((n) => !(n.classList && (n.classList.contains('cs-toggle') || n.classList.contains('cs-sum') || n.classList.contains('lmenu'))))
+    .map((n) => (n.textContent || '').trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ');
+  function csSummary(key) {
+    if (key === 'conv') return ['Conversa', statusEl.querySelector('.txt').textContent.replace(/^Conversa:\s*/, '') || '—'];
+    if (key === 'etiquetas') {
+      const names = [...labelsEl.querySelectorAll('.chips > *')].map((c) => (c.textContent || '').trim()).filter(Boolean);
+      return ['Etiquetas CRM', names.length ? names.join(', ') : csText(labelsEl.querySelector('.chips')) || 'nenhuma'];
+    }
+    if (key === 'nome') { const b = CS_BLOCKS.nome.block(); return ['Nome', b ? csText(b).replace(/^Nome:\s*/, '').replace(/✏️/g, '').trim() || '—' : '—']; }
+    const f = (FILTERS.find(([id]) => id === state.filter) || [null, 'Tudo'])[1];
+    return ['Busca e filtros', `${f}${state.search.trim() ? ` · "${state.search.trim()}"` : ''}`];
+  }
+  function csDecorate(key) {
+    if (!pz.ready) return; // ainda iniciando (o módulo é montado logo abaixo)
+    const cfg = CS_BLOCKS[key];
+    const block = cfg.block();
+    const holder = cfg.holder();
+    if (!block || !holder) return;
+    holder.classList.add('cs-holder');
+    let btn = holder.querySelector(':scope > .cs-toggle');
+    if (!btn) {
+      btn = el('button', 'cs-toggle');
+      btn.type = 'button';
+      btn.addEventListener('click', (e) => { e.stopPropagation(); pz.prefs.collapsed[key] = !pz.prefs.collapsed[key]; savePrefs(); csApply(key); });
+      holder.prepend(btn);
+    }
+    if (!holder.querySelector(':scope > .cs-sum')) holder.append(el('div', 'cs-sum'));
+    csApply(key);
+  }
+  function csApply(key) {
+    const cfg = CS_BLOCKS[key];
+    const block = cfg.block();
+    const holder = cfg.holder();
+    if (!block || !holder) return;
+    const collapsed = !!pz.prefs.collapsed[key];
+    block.classList.toggle('cs-collapsed', collapsed);
+    const btn = holder.querySelector(':scope > .cs-toggle');
+    if (btn) {
+      if (!btn.firstChild) btn.innerHTML = svg('chevron'); // ▸ recolhido · ▾ aberto (gira pelo CSS)
+      btn.setAttribute('aria-expanded', String(!collapsed));
+      btn.title = `${collapsed ? 'Abrir' : 'Recolher'}: ${cfg.title}`;
+      btn.setAttribute('aria-label', btn.title);
+    }
+    if (collapsed) csSum(key);
+  }
+  function csSum(key) {
+    const holder = CS_BLOCKS[key].holder();
+    const box = holder && holder.querySelector(':scope > .cs-sum');
+    if (!box) return;
+    const [t, v] = csSummary(key);
+    const text = `${t}: ${v}`;
+    if (box.title === text) return;
+    box.title = text;
+    box.textContent = '';
+    box.append(el('b', null, `${t}: `), v);
+  }
+  function csRefreshSums() {
+    if (!pz.ready) return;
+    Object.keys(CS_BLOCKS).forEach((k) => { if (pz.prefs.collapsed[k]) csSum(k); });
+  }
+
+  // Abas: as ligadas ficam na barra (na ordem de sempre), as outras em "Mais"; Mensagens nunca some
+  const pmoreWrap = shadow.querySelector('.pmore-wrap');
+  const tabKey = (b) => b.dataset.sec || (b.classList.contains('pboard') ? 'quadro' : null);
+  function applyTabs() {
+    const nav = shadow.querySelector('.pnav');
+    E2P.PANEL_TABS.forEach((k) => {
+      const b = navBtns.find((x) => tabKey(x) === k);
+      if (!b) return;
+      if (pz.prefs.tabs[k]) nav.insertBefore(b, pmoreWrap);
+      else pmenuEl.append(b);
+    });
+    pmoreWrap.hidden = !pmenuEl.querySelector('button');
+    renderPanelNav();
+  }
+
+  // Altura do topo (divisória arrastável); duplo clique volta ao padrão (sem limite)
+  function applyTopH() {
+    const on = pz.prefs.topH != null;
+    panel.classList.toggle('top-limited', on);
+    if (on) panel.style.setProperty('--top-max', `${pz.prefs.topH}px`);
+    else panel.style.removeProperty('--top-max');
+    psplitEl.setAttribute('aria-valuenow', String(Math.round(ptopEl.getBoundingClientRect().height)));
+  }
+  function setTopH(h, save = true) {
+    pz.prefs.topH = h == null ? null : E2P.clampTopH(h, panel.getBoundingClientRect().height);
+    applyTopH();
+    if (save) savePrefs();
+  }
+  let splitDrag = null;
+  psplitEl.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    splitDrag = { y: e.clientY, h: ptopEl.getBoundingClientRect().height };
+    panel.classList.add('splitting');
+    try { psplitEl.setPointerCapture(e.pointerId); } catch { /* sem captura */ }
+  });
+  psplitEl.addEventListener('pointermove', (e) => { if (splitDrag) setTopH(splitDrag.h + (e.clientY - splitDrag.y), false); });
+  const endSplit = () => { if (!splitDrag) return; splitDrag = null; panel.classList.remove('splitting'); savePrefs(); };
+  psplitEl.addEventListener('pointerup', endSplit);
+  psplitEl.addEventListener('pointercancel', endSplit);
+  psplitEl.addEventListener('lostpointercapture', endSplit);
+  psplitEl.addEventListener('dblclick', (e) => { e.preventDefault(); setTopH(null); });
+  psplitEl.addEventListener('keydown', (e) => {
+    const cur = ptopEl.getBoundingClientRect().height;
+    if (e.key === 'ArrowUp') { e.preventDefault(); setTopH(cur - 16); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); setTopH(cur + 16); }
+    else if (e.key === 'Home' || e.key === 'Enter') { e.preventDefault(); setTopH(null); }
+  });
+
+  function applyPrefs() {
+    applyTabs();
+    panel.classList.toggle('dense', pz.prefs.density === 'compacta');
+    E2P.PANEL_CONV_BTNS.forEach((k) => panel.classList.toggle(`cz-no-${k}`, !pz.prefs.convBtns[k]));
+    Object.keys(CS_BLOCKS).forEach(csDecorate);
+    applyTopH();
+    renderFilters();
+    if (pz.open) renderCustomize();
+  }
+  function savePrefs() { storageSet({ panelPrefs: pz.prefs }); }
+  function setPrefs(next) { pz.prefs = E2P.normPanelPrefs(next); savePrefs(); applyPrefs(); }
+
+  // "Personalizar" (cabeçalho): liga/desliga abas, filtros, botões da conversa e densidade
+  const TAB_LABEL = { midias: 'Mídias', etiquetas: 'Etiquetas', vendas: 'Vendas', conversoes: 'Conversões', quadro: 'Quadro', agendados: 'Agendados', disparos: 'Disparos', follows: 'Automações' };
+  const CONV_LABEL = { venda: '💰 Venda', compra: '📈 Compra p/ Facebook', automacao: '🔁 Automação' };
+  function czCheck(label, checked, onChange, { fixed = false } = {}) {
+    const l = el('label', `cz-opt${fixed ? ' fixed' : ''}`);
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = checked;
+    cb.disabled = fixed;
+    if (!fixed) cb.addEventListener('change', () => onChange(cb.checked));
+    l.append(cb, label);
+    return l;
+  }
+  function czGroup(title, note, items) {
+    const g = el('div', 'cz-grp');
+    g.append(el('div', 'cz-t', title));
+    const opts = el('div', 'cz-opts');
+    items.forEach((x) => opts.append(x));
+    g.append(opts);
+    if (note) g.append(el('div', 'cz-note', note));
+    return g;
+  }
+  function renderCustomize() {
+    if (!pz.el) {
+      pz.el = el('div', 'cz');
+      pz.el.setAttribute('role', 'dialog');
+      pz.el.setAttribute('aria-label', 'Personalizar o painel');
+      pz.el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); setCustomizeOpen(false); } });
+      panel.append(pz.el);
+    }
+    const p = pz.prefs;
+    const box = pz.el;
+    box.textContent = '';
+    const head = el('div', 'cz-head');
+    head.append(el('span', null, 'Personalizar o painel'), iconButton('x', 'Fechar', () => setCustomizeOpen(false), 'cz-close'));
+    box.append(head);
+    const set = (fn) => { const next = JSON.parse(JSON.stringify(p)); fn(next); setPrefs(next); };
+    box.append(czGroup('Abas do menu', 'As desligadas ficam em "Mais". Mensagens sempre aparece.', [
+      czCheck('Mensagens', true, null, { fixed: true }),
+      ...E2P.PANEL_TABS.map((k) => czCheck(TAB_LABEL[k], p.tabs[k], (v) => set((n) => { n.tabs[k] = v; }))),
+    ]));
+    const filterIds = FILTERS.map(([id]) => id).filter((id) => id !== 'tudo' && !(Rich.isRich(id) && !state.richAvailable));
+    box.append(czGroup('Filtros das Mensagens', 'Os desligados continuam no chip "+ filtros". Tudo sempre aparece.', [
+      czCheck('Tudo', true, null, { fixed: true }),
+      ...filterIds.map((id) => czCheck((FILTERS.find(([x]) => x === id) || [id, id])[1], p.filters.includes(id), (v) => set((n) => { n.filters = v ? [...n.filters, id] : n.filters.filter((x) => x !== id); }))),
+    ]));
+    box.append(czGroup('Botões da conversa', null, E2P.PANEL_CONV_BTNS.map((k) => czCheck(CONV_LABEL[k], p.convBtns[k], (v) => set((n) => { n.convBtns[k] = v; })))));
+    const dg = el('div', 'cz-grp');
+    dg.append(el('div', 'cz-t', 'Densidade'));
+    const seg = el('div', 'cz-seg');
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'Densidade');
+    [['confortavel', 'Confortável'], ['compacta', 'Compacta']].forEach(([v, t]) => {
+      const b = el('button', p.density === v ? 'on' : '', t);
+      b.type = 'button';
+      b.dataset.czDensity = v;
+      b.setAttribute('aria-pressed', String(p.density === v));
+      b.addEventListener('click', () => set((n) => { n.density = v; }));
+      seg.append(b);
+    });
+    dg.append(seg);
+    box.append(dg);
+    const foot = el('div', 'cz-foot');
+    const reset = el('button', 'bbtn', 'Voltar ao padrão');
+    reset.type = 'button';
+    reset.addEventListener('click', () => { pz.filtersOpen = false; setPrefs(E2P.defaultPanelPrefs()); });
+    const done = el('button', 'bbtn primary', 'Pronto');
+    done.type = 'button';
+    done.addEventListener('click', () => setCustomizeOpen(false));
+    foot.append(reset, done);
+    box.append(el('div', 'cz-note', 'Seções do topo: use a setinha ▸/▾ de cada uma. Espaço do topo: arraste a linha entre o topo e a lista (duplo clique volta ao padrão). Tudo fica só neste computador.'), foot);
+  }
+  function setCustomizeOpen(open) {
+    pz.open = open;
+    czBtn.classList.toggle('on', open);
+    czBtn.setAttribute('aria-expanded', String(open));
+    if (open) { renderCustomize(); pz.el.hidden = false; pz.el.querySelector('input:not([disabled]), button')?.focus(); }
+    else if (pz.el) { pz.el.hidden = true; czBtn.focus(); }
+  }
+  const czBtn = iconButton('sliders', 'Personalizar o painel', () => setCustomizeOpen(!pz.open), 'cz-open');
+  czBtn.setAttribute('aria-haspopup', 'dialog');
+  czBtn.setAttribute('aria-expanded', 'false');
+  actions.prepend(czBtn);
+  shadow.addEventListener('click', (e) => { if (pz.open && pz.el && !e.composedPath().includes(pz.el) && !e.composedPath().includes(czBtn)) setCustomizeOpen(false); });
+  pz.ready = true;
+  queueMicrotask(applyPrefs); // depois do script inteiro iniciar (renderPanelNav usa o Quadro, declarado mais abaixo)
 
   // ── Aviso, faixa offline e rodapé ──────────────────────────────────────────
 
@@ -10884,9 +11180,10 @@
     });
   } catch { /* extensão recarregada */ }
   try {
-    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref', 'panelSection', 'panelWidth'], (saved) => {
+    chrome.storage.local.get(['library', 'labels', 'collapsed', 'lastUsed', 'themePref', 'panelSection', 'panelWidth', 'panelPrefs'], (saved) => {
       saved = saved || {};
       if (Number.isFinite(saved.panelWidth)) { state.panelW = saved.panelWidth; applyPanelWidth(saved.panelWidth); } // 2.8.4
+      if (saved.panelPrefs) { pz.prefs = globalThis.TspEngine.normPanelPrefs(saved.panelPrefs); applyPrefs(); } // 2.10.2
       state.collapsed = saved.collapsed || {};
       state.lastUsed  = saved.lastUsed || '';
       state.themePref = THEME_PREFS[saved.themePref] ? saved.themePref : 'auto';

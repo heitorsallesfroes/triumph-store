@@ -306,6 +306,42 @@
   }
   const hasNameVar = (text) => /\{[^{}]*?\bnome\b[^{}]*?\}/i.test(String(text || ''));
 
+  // ── 2.10.2: painel personalizável (só visual; guardado no storage local, por computador) ──
+  // tabs: abas na barra (as outras vão para "Mais"; Mensagens nunca some). filters: chips além de "Tudo".
+  // convBtns: botões da conversa. density: confortavel | compacta. collapsed: blocos do topo recolhidos.
+  // topH: altura máxima do topo em px (null = padrão, sem limite).
+  const PANEL_TABS = ['midias', 'etiquetas', 'vendas', 'conversoes', 'quadro', 'agendados', 'disparos', 'follows'];
+  const PANEL_FILTERS = ['mais_usadas', 'texto', 'audio', 'imagem', 'video', 'documento', 'localizacao', 'produto', 'catalogo', 'contato', 'pix'];
+  const PANEL_BLOCKS = ['conv', 'etiquetas', 'nome', 'busca'];
+  const PANEL_CONV_BTNS = ['venda', 'compra', 'automacao'];
+  function defaultPanelPrefs() {
+    return {
+      tabs: { midias: true, etiquetas: true, vendas: true, conversoes: true, quadro: false, agendados: false, disparos: false, follows: false },
+      filters: ['mais_usadas', 'texto', 'audio', 'imagem', 'video'],
+      convBtns: { venda: true, compra: true, automacao: true },
+      density: 'confortavel',
+      collapsed: { conv: false, etiquetas: false, nome: false, busca: false },
+      topH: null,
+    };
+  }
+  function normPanelPrefs(raw) {
+    const d = defaultPanelPrefs();
+    const r = raw && typeof raw === 'object' ? raw : {};
+    const bools = (src, keys, base) => keys.reduce((o, k) => { o[k] = src && typeof src[k] === 'boolean' ? src[k] : base[k]; return o; }, {});
+    const filters = Array.isArray(r.filters) ? [...new Set(r.filters.filter((f) => PANEL_FILTERS.includes(f)))] : d.filters;
+    const h = Number(r.topH);
+    return {
+      tabs: bools(r.tabs, PANEL_TABS, d.tabs),
+      filters: PANEL_FILTERS.filter((f) => filters.includes(f)), // sempre na ordem dos chips
+      convBtns: bools(r.convBtns, PANEL_CONV_BTNS, d.convBtns),
+      density: r.density === 'compacta' ? 'compacta' : 'confortavel',
+      collapsed: bools(r.collapsed, PANEL_BLOCKS, d.collapsed),
+      topH: r.topH != null && Number.isFinite(h) ? Math.round(Math.min(2000, Math.max(48, h))) : null,
+    };
+  }
+  // altura do topo ao arrastar a divisória: entre 48 px e o que deixa ~160 px para a lista
+  const clampTopH = (h, panelH) => Math.round(Math.max(48, Math.min(Math.max(48, (Number(panelH) || 0) - 160), Number(h) || 0)));
+
   // ── 2.10.0: painel de resultados — o que gravar a partir das mensagens das conversas ──
   // events: { chatId, fromMe, t (s), first?, ad?, phone?, scan? } (da ponte). isExt(chatId, t): mensagem
   // enviada pela extensão nesta aba (já registrada de outro jeito). Devolve:
@@ -1343,6 +1379,7 @@
     firstNameOf, chatIdOfContact, pickVariant, evaluateFollow,
     smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
     setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT, convTracker,
+    defaultPanelPrefs, normPanelPrefs, clampTopH, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,
     TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,

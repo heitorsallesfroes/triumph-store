@@ -799,6 +799,35 @@ guardada.
 
 ## O que mudou
 
+### 2.10.2 — painel personalizável (só visual)
+- **Seções recolhíveis**: Conversa (e os botões), Etiquetas CRM, Nome e Busca + filtros ganham uma
+  setinha ▸/▾. Recolhida, a seção vira uma linha com o resumo ("Etiquetas CRM: Cliente, Follow Up 1",
+  "Busca e filtros: Texto · "frete""). O estado fica lembrado.
+- **Divisória arrastável** entre o topo e a lista: arraste para cima/baixo para mudar quanto espaço o
+  topo ocupa (o topo rola por dentro se não couber); setas ↑/↓ no teclado também; **duplo clique** volta
+  ao padrão. Só aparece em Mensagens. Lembrada.
+- **Personalizar** (ícone de ajustes no cabeçalho do painel): liga/desliga
+  - **abas do menu** (as desligadas vão para "Mais"; Mensagens nunca some);
+  - **filtros das Mensagens** (Tudo sempre aparece; padrão: Tudo, Mais usadas, Texto, Áudio, Imagem,
+    Vídeo; os outros ficam no chip **"+ filtros"**; o filtro em uso sempre aparece);
+  - **botões da conversa** (💰 Venda, 📈 Compra p/ Facebook, 🔁 Automação);
+  - **densidade**: Confortável / Compacta (menos espaço; texto nunca abaixo de 11 px);
+  - **Voltar ao padrão**.
+- Tudo guardado no armazenamento local da extensão (`panelPrefs`, por computador), sem banco. A
+  largura do painel continua funcionando junto. Nenhuma regra, envio ou dado mudou.
+- **Teste "o painel abre no Chrome real"** (padrão para toda versão daqui pra frente):
+  `node extension/tests/chrome-real.test.cjs` abre o Google Chrome instalado, carrega a extensão
+  (Extensions.loadUnpacked pelo protocolo DevTools do próprio Chrome: o Chrome 137+ não aceita mais
+  `--load-extension`, e o Playwright não está instalado — sem npm install), serve um
+  https://web.whatsapp.com **simulado**, confere que o painel aparece (#tsp-wa-host) e que não há erro
+  no console, e usa cada função do Personalizar com mouse de verdade (arrastar a divisória e a largura,
+  recarregar e conferir que tudo foi lembrado). Toda a rede de verdade fica bloqueada: o teste nunca fala
+  com o Supabase nem pega a trava do motor. Esse teste pegou dois erros desta versão antes de sair
+  (um "Cannot access 'board' before initialization" e o menu que não fechava) e pega o erro da 2.10.0.
+  `SHOTS_DIR=pasta` salva os prints; `HEADFUL=1` mostra a janela.
+- **Todos os testes**: `node extension/tests/run-all.cjs` (manifest, regras, registros, preferências e o
+  Chrome real). Prints em `extension/screenshots/2.10.2` (padrão, Personalizar, compacto, seções recolhidas).
+
 ### 2.10.1 — correção urgente: o painel não abria (desde a 2.9.2)
 - O manifest listava `rich-parts.js` em dois `content_scripts` (mundo MAIN e mundo isolado). O Chrome
   injeta o mesmo arquivo só uma vez por página: ele rodava só no MAIN, o mundo isolado ficava sem
