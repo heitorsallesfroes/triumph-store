@@ -1377,6 +1377,12 @@
       /* ═══ 2.10.0: follow-up ═══ */
       .ed-follow { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; padding: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); }
       .ed-check { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--fs-2); font-weight: 600; cursor: pointer; }
+      /* ═══ 2.10.5: venda do ERP ligada à compra do 📈 ═══ */
+      .cv-link { display: flex; flex-direction: column; gap: var(--s-1); margin-top: var(--s-1); }
+      .cv-linkrow, .cv-salerow { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); flex-wrap: wrap; }
+      .cv-linked { font-weight: 600; color: var(--ok); font-size: var(--fs-2); }
+      .cv-sale { font-size: var(--fs-2); min-width: 0; overflow-wrap: anywhere; }
+      .cv-link .bbtn { min-height: var(--hit); }
       /* ═══ 2.10.4: prévia — tirar partes deste envio ═══ */
       .pv-pt { display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-1) var(--s-2) var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); background: var(--card); }
       .pv-pt.off { opacity: .55; border-style: dashed; }
@@ -8119,7 +8125,7 @@
 
   const productLabel = (p) => `${p.model}${p.color ? ` · ${p.color}` : ''}`;
 
-  async function openSaleForm() {
+  async function openSaleForm(opts = {}) {
     vs.view = 'form';
     vs.msg = '';
     vs.err = false;
@@ -8143,6 +8149,8 @@
       warranty_months: '', origin: 'organico', ad: null, map: null, addressHint: null,
       moveLabels: true, clientLabel: labelRef('Cliente'), removeLabels: state.convLabelIds.filter((l) => autoLabels.includes(l)),
       dupAsk: false,
+      // 2.10.5: aberta pelo 📈 (nenhuma venda parecida): valor da compra e a compra para ligar depois
+      targetValue: Number(opts && opts.value) > 0 ? Math.round(Number(opts.value) * 100) / 100 : null, linkEventId: (opts && opts.linkEventId) || null,
     };
     const f = vs.form;
     adoptChat(chat, 'vs');
@@ -8238,6 +8246,7 @@
     const sec = el('section', 'crmsec');
     sec.append(el('div', 'wt-head', 'NOVA VENDA DESTA CONVERSA'));
     if (!f.chatId) sec.append(el('div', 'ed-note', 'Abra uma conversa individual no WhatsApp.'));
+    if (f.targetValue) sec.append(el('div', 'ed-note cv-target', `Valor da compra no 📈: ${TS.money(f.targetValue)}. O 1º produto entra com esse valor; ao registrar, a venda fica ligada à compra.`));
     if (cat.error) sec.append(el('div', 'ed-msg err', `Não consegui carregar os dados do ERP: ${cat.error}`));
 
     sec.append(el('div', 'crm-sub', '1. Cliente'));
@@ -8260,7 +8269,7 @@
         const b = fbtn('vd-prod', `${productLabel(p)} · estoque ${p.current_stock} · ${TS.money(p.price)}`, () => {
           const ex = f.items.find((x) => x.product_id === p.id);
           if (ex) ex.quantity += 1;
-          else f.items.push({ product_id: p.id, quantity: 1, unit_price: Number(p.price) || 0 });
+          else f.items.push({ product_id: p.id, quantity: 1, unit_price: f.targetValue && !f.items.length ? f.targetValue : Number(p.price) || 0 }); // 2.10.5: 1º produto com o valor da compra do 📈
           f.search = '';
           renderVendas();
         });
@@ -8512,6 +8521,7 @@
         afterLabelChange();
       } catch { /* a venda já está registrada */ }
       motor.state.lastEvalAt = 0; // automações "venda registrada" no próximo ciclo
+      if (f.linkEventId) call('linkSaleToPurchase', { eventId: f.linkEventId, saleId: res.id, fillPhone: false }).then(() => cv.links.delete(f.linkEventId)).catch(() => {}); // 2.10.5
       vs.done = { id: res.id, total: res.total, tinyFailed: res.tinyFailed };
       vs.view = 'done';
     } catch (e) {
@@ -9366,6 +9376,94 @@
     if (cv.open && cv.view === 'list') renderConversoes();
   }
 
+  // ── 2.10.5: Venda do ERP ligada à Compra do 📈 ──
+  // Compra REAL enviada → procura a venda no ERP: pelo telefone desta conversa (7 dias; achou 1 = liga sozinha;
+  // mais de 1 = você escolhe), senão pelo valor (±10%, 3 dias, vendas sem telefone ou com outro). Nenhuma: lança no 💰.
+  // Ligar só preenche wa_chat_id (e o telefone vazio) da venda; "Desligar" desfaz só isso.
+  cv.links = new Map(); // eventId → { loading, data, msg, err, busy, noAuto }
+  const saleShort = (sv) => `#${String(sv.id).slice(0, 8)}`;
+  const saleDay = (sv) => { const t = Date.parse(sv.sale_date); if (!Number.isFinite(t)) return ''; const d = new Date(t); return `${two(d.getDate())}/${two(d.getMonth() + 1)}`; };
+  const saleLabel = (sv) => (sv.missing ? `${saleShort(sv)} (venda apagada ou sem acesso)` : `${saleShort(sv)} · ${sv.customer_name || 'cliente sem nome'} · ${TS.money(sv.total_sale_price || 0)}`);
+  function linkSet(ev, patch) {
+    cv.links.set(ev.eventId, { ...(cv.links.get(ev.eventId) || {}), ...patch });
+    if (cv.open) renderConversoes();
+  }
+  async function loadSaleLink(ev, allowAuto, msg = '') {
+    if (cv.linkOff) return;
+    linkSet(ev, { loading: true, msg: '', err: false });
+    let r = null;
+    try { r = await call('purchaseSaleLink', { eventId: ev.eventId }); } catch (e) { linkSet(ev, { loading: false, data: null, msg: e.message, err: true }); return; }
+    if (!r || r.available === false) { cv.linkOff = true; linkSet(ev, { loading: false, data: { available: false } }); return; } // sem a migration: some
+    const chatId = (r.event && r.event.chat_id) || ev.chatId;
+    const phone = ev.phone || (/^\d+@c\.us$/.test(chatId || '') ? chatId.split('@')[0] : '');
+    const value = Number(r.event && r.event.value) || Number(ev.value) || 0;
+    const m = r.linked ? { byPhone: [], byValue: [] } : globalThis.TspEngine.matchSalesForPurchase({ sales: r.sales, chatId, phone, value, taken: r.taken });
+    const data = { linked: r.linked, byPhone: m.byPhone, byValue: m.byValue, value, chatId, phone };
+    const st = cv.links.get(ev.eventId) || {};
+    if (!data.linked && m.byPhone.length === 1 && allowAuto && !st.noAuto) { await doLinkSale(ev, data, m.byPhone[0], false, true); return; }
+    linkSet(ev, { loading: false, data, msg });
+  }
+  async function doLinkSale(ev, data, sale, fillPhone, auto = false) {
+    linkSet(ev, { busy: true, msg: '' });
+    try {
+      const r = await call('linkSaleToPurchase', { eventId: ev.eventId, saleId: sale.id, phone: fillPhone ? globalThis.TspEngine.salePhoneOf(data.phone) : null, fillPhone });
+      linkSet(ev, { busy: false, loading: false, data: { ...data, linked: r.linked, byPhone: [], byValue: [] }, msg: auto ? 'Ligada sozinha: era a única venda com o telefone desta conversa.' : 'Ligada ✓', err: false });
+    } catch (e) { linkSet(ev, { busy: false, loading: false, data, msg: e.message, err: true }); }
+  }
+  async function doUnlinkSale(ev) {
+    linkSet(ev, { busy: true, msg: '' });
+    try { await call('unlinkSaleFromPurchase', { eventId: ev.eventId }); } catch (e) { linkSet(ev, { busy: false, msg: e.message, err: true }); return; }
+    linkSet(ev, { busy: false, noAuto: true }); // não liga sozinha de novo a mesma venda
+    await loadSaleLink(ev, false, 'Desligada. Escolha a venda certa ou deixe sem ligar.');
+  }
+  function launchSaleFor(ev, data) {
+    if (chatNames.current && data.chatId && chatNames.current !== data.chatId) { linkSet(ev, { msg: 'Abra a conversa desta compra para lançar a venda.', err: true }); return; }
+    if (!state.open) setOpen(true);
+    setSection('vendas');
+    openSaleForm({ value: data.value, linkEventId: ev.eventId });
+  }
+  // ev: { eventId, chatId, phone?, value, sale? (já ligada, do histórico) }. auto: procura sozinha (📈 da conversa).
+  function saleLinkEl(ev, { auto = false } = {}) {
+    if (cv.linkOff) return null;
+    const st = cv.links.get(ev.eventId);
+    if (st && st.data && st.data.available === false) return null;
+    const box = el('div', 'fw-test cv-link');
+    box.dataset.event = ev.eventId;
+    box.append(el('div', 'fw-k', 'VENDA DO ERP'));
+    const btn = (cls, text, fn) => { const b = fbtn(cls, text, fn); b.disabled = !!(st && (st.busy || st.loading)); return b; };
+    const linkedEl = (sv) => { const l = el('div', 'cv-linkrow'); l.append(el('div', 'cv-linked', `Venda do ERP ligada: ${saleLabel(sv)}`), btn('bbtn cv-unlink', 'Desligar', () => doUnlinkSale(ev))); return l; };
+    if (!st) {
+      if (ev.sale) box.append(linkedEl(ev.sale));
+      else if (auto) { queueMicrotask(() => loadSaleLink(ev, true)); box.append(el('div', 'lt-none loading', 'Procurando a venda no ERP…')); }
+      else box.append(el('div', 'sc-prev', 'Nenhuma venda do ERP ligada.'), btn('bbtn cv-findsale', 'Ligar à venda do ERP', () => loadSaleLink(ev, true)));
+      return box;
+    }
+    if (st.loading) box.append(el('div', 'lt-none loading', 'Procurando a venda no ERP…'));
+    else if (st.data) {
+      const d = st.data;
+      const saleRow = (sv, fill) => {
+        const row = el('div', 'cv-salerow');
+        row.append(el('div', 'cv-sale', `${sv.customer_name || 'cliente sem nome'} · ${saleDay(sv)} · ${TS.money(sv.total_sale_price || 0)}${sv.customer_phone ? '' : ' · sem telefone'}`),
+          btn('bbtn primary cv-pick', 'É esta', () => doLinkSale(ev, d, sv, fill)));
+        return row;
+      };
+      if (d.linked) box.append(linkedEl(d.linked));
+      else if (d.byPhone.length) {
+        box.append(el('div', 'sc-prev', d.byPhone.length === 1 ? 'Achei 1 venda do ERP com o telefone desta conversa (últimos 7 dias). É esta compra?' : `Achei ${d.byPhone.length} vendas do ERP com o telefone desta conversa (últimos 7 dias). Qual é esta compra?`));
+        d.byPhone.forEach((sv) => box.append(saleRow(sv, false)));
+      } else if (d.byValue.length) {
+        box.append(el('div', 'sc-prev', `Não achei pelo telefone. Vendas dos últimos 3 dias com valor parecido (${TS.money(d.value)} ±10%):`));
+        d.byValue.forEach((sv) => box.append(saleRow(sv, true)));
+        box.append(el('div', 'ed-note', 'Escolhendo, a venda fica ligada a esta conversa (e ganha o telefone dela, se estiver sem).'));
+      } else {
+        box.append(el('div', 'sc-prev', 'Nenhuma venda parecida no ERP (telefone desta conversa nos últimos 7 dias, ou valor ±10% nos últimos 3).'),
+          btn('bbtn primary cv-launch', 'Lançar venda no ERP', () => launchSaleFor(ev, d)));
+      }
+    } else box.append(btn('bbtn cv-findsale', 'Tentar de novo', () => loadSaleLink(ev, true)));
+    if (st.msg) box.append(el('div', `ed-msg${st.err ? ' err' : ''}`, st.msg));
+    return box;
+  }
+
   const nowLocalInput = () => { const d = new Date(); d.setSeconds(0, 0); return `${dateInput(d)}T${timeInput(d)}`; };
 
   async function openConversionForm() {
@@ -9534,6 +9632,10 @@
     else f.history.forEach((h) => hist.append(el('div', `sc-prev cv-hrow st-${h.status === 'enviado' ? 'enviada' : 'falhou'}`,
       `${dmHm(h.created_at)} · ${h.event_name === 'Contact' ? 'Contato' : `Compra ${TS.money(h.value)}`} · ${h.test ? 'teste' : 'real'} · ${h.status}`)));
     sec.append(hist);
+    // 2.10.5: a última compra REAL já enviada desta conversa e a venda do ERP dela
+    const lastBuy = (f.history || []).find((h) => h.event_name !== 'Contact' && !h.test && h.status === 'enviado');
+    const lk = lastBuy && saleLinkEl({ eventId: lastBuy.event_id, chatId: f.chatId, phone: f.phone, value: Number(lastBuy.value) }, { auto: true });
+    if (lk) sec.append(lk);
     const adBox = el('div', 'fw-test');
     if (!f.adLoaded) adBox.append(el('div', null, 'Procurando o anúncio da conversa (pode levar alguns segundos em conversas longas)…'));
     else if (f.ad) adBox.append(el('div', null, `Anúncio: ${f.ad.title || '(sem título)'}${f.ad.sourceId ? ` · id ${f.ad.sourceId}` : ''}${f.ad.platform ? ` · ${f.ad.platform}` : ''}`));
@@ -9615,6 +9717,10 @@
     if (cv.view === 'done' && cv.done) {
       const sec = el('section', 'crmsec');
       sec.append(el('div', 'fw-test', cv.done.duplicate ? 'Esse evento já tinha sido enviado (não mandei de novo).' : `Enviado ✓ (o Facebook recebeu ${cv.done.events_received} evento${cv.done.events_received === 1 ? '' : 's'})${cv.done.test ? ' · modo teste' : ''}`));
+      // 2.10.5: compra real → liga à venda do ERP
+      const fd = cv.form;
+      const lk = !cv.done.test && fd && saleLinkEl({ eventId: fd.eventId, chatId: fd.chatId, phone: fd.phone, value: cv.done.value }, { auto: true });
+      if (lk) sec.append(lk);
       sec.append(fbtn('bbtn', 'Voltar', () => { cv.view = 'list'; loadConversions(); }));
       ctabEl.append(sec);
       return;
@@ -9681,6 +9787,11 @@
       const side = el('div', 'sc-side');
       side.append(el('span', 'sc-when', schedWhen(h.created_at)), el('span', 'sc-status', h.status));
       if (cv.bought && h.chat_id && cv.bought.has(h.chat_id)) main.append(el('span', 'cv-bought', '💰 compra enviada'));
+      // 2.10.5: compra real → venda do ERP ligada (ou "Ligar à venda do ERP")
+      if (h.linkAvailable && h.event_name !== 'Contact' && !h.test && h.status === 'enviado') {
+        const lk = saleLinkEl({ eventId: h.event_id, chatId: h.chat_id, value: Number(h.value), sale: h.sale });
+        if (lk) main.append(lk);
+      }
       line.append(main, side);
       sec.append(line);
     });

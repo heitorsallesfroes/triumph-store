@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { fetchAllRows } from '../../lib/resumoAnualCalc';
-import { conversionTotals, eventKind, hasAd, maskPhone, periodBounds, type ConversionRow, type ConversionTotals } from '../../lib/waConversions';
+import { conversionTotals, eventKind, hasAd, linkedSaleLabel, maskPhone, periodBounds, type ConversionRow, type ConversionTotals, type LinkedSale } from '../../lib/waConversions';
 import { btn, card, input, money, muted, ORANGE } from './shared';
 import { SectionHeader, StatCard, fmtInt } from './ui';
 
@@ -11,10 +11,13 @@ const PAGE = 50;
 const BASE_COLS = 'event_id,chat_id,contact_name,value,ad_id,ad_title,test,status,error,created_at';
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-// Com a coluna event_name (2.6.0) se existir; sem ela, as mesmas colunas de antes
+// Com a coluna event_name (2.6.0) e sale_id (2.10.5) se existirem; sem elas, as mesmas colunas de antes
 async function selectCols(): Promise<string> {
-  const { error } = await supabase.from('wa_conversion_events').select('event_name').limit(1);
-  return error ? BASE_COLS : `${BASE_COLS},event_name`;
+  const [{ error }, { error: saleErr }] = await Promise.all([
+    supabase.from('wa_conversion_events').select('event_name').limit(1),
+    supabase.from('wa_conversion_events').select('sale_id').limit(1),
+  ]);
+  return `${BASE_COLS}${error ? '' : ',event_name'}${saleErr ? '' : ',sale_id'}`;
 }
 
 export default function WaConversions() {
@@ -23,6 +26,7 @@ export default function WaConversions() {
   const [end, setEnd] = useState(ymd(today));
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<ConversionRow[] | null>(null);
+  const [sales, setSales] = useState<Record<string, LinkedSale>>({});
   const [total, setTotal] = useState(0);
   const [totals, setTotals] = useState<ConversionTotals | null>(null);
   const [error, setError] = useState('');
@@ -41,7 +45,17 @@ export default function WaConversions() {
         .range(page * PAGE, page * PAGE + PAGE - 1);
       if (e) throw e;
       if (!alive) return;
-      setRows((data || []) as unknown as ConversionRow[]);
+      const pageRows = (data || []) as unknown as ConversionRow[];
+      // 2.10.5: vendas do ERP ligadas às compras desta página
+      const saleIds = [...new Set(pageRows.map((r) => r.sale_id).filter(Boolean))] as string[];
+      const found: Record<string, LinkedSale> = {};
+      if (saleIds.length) {
+        const { data: rowsSales } = await supabase.from('sales').select('id, customer_name, total_sale_price').in('id', saleIds);
+        ((rowsSales || []) as LinkedSale[]).forEach((x) => { found[x.id] = x; });
+      }
+      if (!alive) return;
+      setSales(found);
+      setRows(pageRows);
       setTotal(count || 0);
       // Totais do período inteiro, em páginas de 1000
       const all = await fetchAllRows((f, t) => supabase.from('wa_conversion_events').select(cols)
@@ -74,11 +88,11 @@ export default function WaConversions() {
       <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
-            <tr>{['Data', 'Cliente', 'Telefone', 'Evento', 'Valor', 'Anúncio', 'Real/Teste', 'Status'].map((h) => <th key={h} style={th}>{h}</th>)}</tr>
+            <tr>{['Data', 'Cliente', 'Telefone', 'Evento', 'Valor', 'Anúncio', 'Real/Teste', 'Status', 'Venda do ERP'].map((h) => <th key={h} style={th}>{h}</th>)}</tr>
           </thead>
           <tbody>
-            {rows === null && !error && <tr><td style={td} colSpan={8}><span style={muted}>Carregando…</span></td></tr>}
-            {rows && rows.length === 0 && <tr><td style={td} colSpan={8}><span style={muted}>Nenhuma conversão no período.</span></td></tr>}
+            {rows === null && !error && <tr><td style={td} colSpan={9}><span style={muted}>Carregando…</span></td></tr>}
+            {rows && rows.length === 0 && <tr><td style={td} colSpan={9}><span style={muted}>Nenhuma conversão no período.</span></td></tr>}
             {(rows || []).map((r) => {
               const kind = eventKind(r);
               return (
@@ -91,6 +105,7 @@ export default function WaConversions() {
                   <td style={td}>{hasAd(r) ? 'Sim' : 'Não'}</td>
                   <td style={td}>{r.test ? 'Teste' : 'Real'}</td>
                   <td style={{ ...td, color: r.status === 'enviado' ? '#16a34a' : '#ef4444' }} title={r.error || ''}>{r.status}</td>
+                  <td style={{ ...td, color: r.sale_id ? 'var(--text-primary)' : 'var(--text-muted)' }} data-testid="conv-sale">{kind === 'Compra' ? linkedSaleLabel(r.sale_id, r.sale_id ? sales[r.sale_id] : undefined, money) : '—'}</td>
                 </tr>
               );
             })}

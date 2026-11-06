@@ -13,6 +13,16 @@ export interface ConversionRow {
   error: string | null;
   created_at: string;
   event_name?: string | null;
+  sale_id?: string | null; // 2.10.5: venda do ERP ligada pelo 📈
+}
+
+// 2.10.5: venda do ERP ligada à compra ("#abcd1234 · cliente · R$"), ou "—"
+export interface LinkedSale { id: string; customer_name: string | null; total_sale_price: number | string | null }
+export function linkedSaleLabel(saleId: string | null | undefined, sale: LinkedSale | undefined, money: (n: number) => string): string {
+  if (!saleId) return '—';
+  const short = `#${String(saleId).slice(0, 8)}`;
+  if (!sale) return `${short} (venda apagada ou sem acesso)`;
+  return `${short} · ${sale.customer_name || 'cliente sem nome'} · ${money(Number(sale.total_sale_price) || 0)}`;
 }
 
 // "Compra" ou "Contato": a coluna event_name (2.6.0) ou, sem ela, o Contato marcado no erro / sem valor

@@ -341,6 +341,45 @@
       topH: r.topH != null && Number.isFinite(h) ? Math.round(Math.min(2000, Math.max(48, h))) : null,
     };
   }
+  // ── 2.10.5: ligar a Compra do 📈 à venda do ERP ──
+  // Mesma normalização de telefone do painel do ERP: 10/11 dígitos ganham o 55; 12/13 começando com 55 ficam.
+  function normBrPhone(raw) {
+    const d = String(raw == null ? '' : raw).replace(/\D/g, '');
+    if (d.length === 10 || d.length === 11) return `55${d}`;
+    if ((d.length === 12 || d.length === 13) && d.startsWith('55')) return d;
+    return null;
+  }
+  const spDayOf = (ms) => new Date(ms - 3 * 3600000).toISOString().slice(0, 10);
+  const saleDayOf = (s) => { const t = Date.parse(s && s.sale_date); return Number.isFinite(t) ? spDayOf(t) : String((s && s.sale_date) || '').slice(0, 10); };
+  // byPhone: vendas dos últimos 7 dias com o telefone desta conversa (ou já desta conversa pelo 💰).
+  // byValue (só sem byPhone): vendas dos últimos 3 dias sem telefone ou com telefone diferente, com valor ±10%.
+  // Nunca: canceladas/reembolsadas, ligadas a outra conversa (wa_chat_id) ou a outra compra (taken).
+  function matchSalesForPurchase({ sales, chatId, phone, value, now = Date.now(), taken = [] }) {
+    const target = normBrPhone(phone);
+    const takenSet = new Set(taken || []);
+    const v = Number(value);
+    const from7 = spDayOf(now - 7 * 86400000);
+    const from3 = spDayOf(now - 3 * 86400000);
+    const ok = (s) => s && s.id && !['cancelado', 'reembolsado'].includes(s.status) && !takenSet.has(s.id) && (!s.wa_chat_id || s.wa_chat_id === chatId);
+    const newest = (a, b) => String(b.sale_date || '').localeCompare(String(a.sale_date || ''));
+    const list = Array.isArray(sales) ? sales : [];
+    const byPhone = list.filter((s) => ok(s) && saleDayOf(s) >= from7
+      && ((target && normBrPhone(s.customer_phone) === target) || (chatId && s.wa_chat_id === chatId))).sort(newest);
+    const byValue = byPhone.length || !(v > 0) ? [] : list.filter((s) => ok(s) && !s.wa_chat_id && saleDayOf(s) >= from3
+      && (!target || normBrPhone(s.customer_phone) !== target)
+      && Math.abs((Number(s.total_sale_price) || 0) - v) <= v * 0.1 + 0.005)
+      .sort((a, b) => Math.abs((Number(a.total_sale_price) || 0) - v) - Math.abs((Number(b.total_sale_price) || 0) - v) || newest(a, b))
+      .slice(0, 10);
+    return { byPhone, byValue };
+  }
+  // telefone que a ligação grava na venda sem telefone: "(11) 93333-4444" (o ERP normaliza do mesmo jeito)
+  function salePhoneOf(raw) {
+    const n = normBrPhone(raw);
+    if (!n) return null;
+    const m = /^55(\d{2})(\d{4,5})(\d{4})$/.exec(n);
+    return m ? `(${m[1]}) ${m[2]}-${m[3]}` : n;
+  }
+
   // ── 2.10.4: prévia — tirar partes (e fotos do álbum) só deste envio ──
   // skip: índices das partes tiradas; skipFiles: { [parte]: [índices das fotos tiradas] }. A mensagem salva não
   // muda. Álbum com 1 foto sobrando vira imagem/vídeo normal; com 0, a parte sai. O "esperar" e o "digitando"
@@ -1429,7 +1468,8 @@
     firstNameOf, chatIdOfContact, pickVariant, evaluateFollow,
     smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
     setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT, convTracker,
-    defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, previewSendPlan, sendLabelsApply, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,
+    defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, previewSendPlan, sendLabelsApply,
+    normBrPhone, matchSalesForPurchase, salePhoneOf, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,
     TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,

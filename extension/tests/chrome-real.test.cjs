@@ -119,9 +119,75 @@ async function main() {
   const errors = [];
   let sessionId = null;
   const done = () => { try { child.kill(); } catch { /* já saiu */ } setTimeout(() => { try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* arquivo preso */ } }, 1500); };
-  const timer = setTimeout(() => { console.log('FAIL tempo esgotado'); done(); process.exit(1); }, TIMEOUT_MS + 30000);
+  const timer = setTimeout(() => { console.log('FAIL tempo esgotado'); done(); process.exit(1); }, 240000);
   try {
+    // ── Supabase falso no service worker da extensão (2.10.5) ──
+    // Desligado (padrão): os pedidos do background seguem e falham como sem rede (nada muda nos outros testes).
+    // Ligado: responde só wa_conversion_events e sales, guardando o estado e cada PATCH para conferir.
+    const fake = { on: false, events: [], sales: [], patches: [], seen: [] };
+    let extId = null;
+    let swTarget = null;
+    const inVals = (v) => (String(v || '').match(/^in\.\((.*)\)$/) || [null, ''])[1].split(',').map((x) => x.replace(/^"|"$/g, '')).filter(Boolean);
+    function fakeSupabase(method, url, body) {
+      if (!url.pathname.startsWith('/rest/v1/')) return null;
+      const table = url.pathname.slice('/rest/v1/'.length);
+      const q = url.searchParams;
+      const sel = q.get('select') || '';
+      const eq = (k) => { const v = q.get(k); return v && v.startsWith('eq.') ? v.slice(3) : null; };
+      if (table === 'wa_conversion_events') {
+        if (method === 'PATCH') { const e = fake.events.find((x) => x.event_id === eq('event_id')); if (e) Object.assign(e, body); fake.patches.push({ table, id: eq('event_id'), body }); return [204, null]; }
+        if (sel === 'sale_id' || sel === 'event_name') return [200, []];
+        if (q.has('event_id')) return [200, fake.events.filter((x) => x.event_id === eq('event_id'))];
+        if (sel.startsWith('sale_id,event_id')) return [200, fake.events.filter((x) => x.sale_id).map((x) => ({ sale_id: x.sale_id, event_id: x.event_id }))];
+        if (sel.startsWith('event_id,chat_id,contact_name')) return [200, fake.events];
+        return [200, []];
+      }
+      if (table === 'sales') {
+        if (method === 'PATCH') {
+          const s0 = fake.sales.find((x) => x.id === eq('id'));
+          const wc = q.get('wa_chat_id'); const cp = q.get('customer_phone'); const or = q.get('or');
+          const okRow = s0 && (!wc || (wc === 'is.null' ? !s0.wa_chat_id : s0.wa_chat_id === wc.slice(3)))
+            && (!cp || s0.customer_phone === cp.slice(3)) && (!or || !String(s0.customer_phone || '').trim());
+          if (okRow) Object.assign(s0, body);
+          fake.patches.push({ table, id: eq('id'), body, applied: !!okRow });
+          return [204, null];
+        }
+        if (sel === 'wa_chat_id') return [200, []];
+        if (eq('id')) return [200, fake.sales.filter((x) => x.id === eq('id'))];
+        if (q.get('id')) { const ids = inVals(q.get('id')); return [200, fake.sales.filter((x) => ids.includes(x.id))]; }
+        return [200, fake.sales.filter((x) => !['cancelado', 'reembolsado'].includes(x.status))];
+      }
+      return null; // o resto (biblioteca etc.) continua "sem rede"
+    }
+    c.on((msg) => {
+      if (msg.method === 'Target.attachedToTarget' && !msg.sessionId) {
+        const { sessionId: sid, targetInfo: ti, waitingForDebugger } = msg.params;
+        fake.attached = [...(fake.attached || []), `${ti.type}:${ti.url.slice(0, 60)}:${waitingForDebugger}`];
+        (async () => {
+          if (ti.type === 'service_worker' && extId && ti.url.startsWith(`chrome-extension://${extId}/`)) {
+            swTarget = ti.targetId;
+            await c.send('Fetch.enable', { patterns: [{ urlPattern: '*supabase.co/*', requestStage: 'Request' }] }, sid).catch(() => {});
+          }
+          if (waitingForDebugger) await c.send('Runtime.runIfWaitingForDebugger', {}, sid).catch(() => {});
+        })();
+        return;
+      }
+      if (msg.method === 'Fetch.requestPaused' && msg.sessionId && msg.sessionId !== sessionId) {
+        const p = msg.params;
+        const sid = msg.sessionId;
+        if (fake.on) fake.seen.push(`${p.request.method} ${new URL(p.request.url).pathname}${new URL(p.request.url).search.slice(0, 80)}`);
+        if (!fake.on) { c.send('Fetch.continueRequest', { requestId: p.requestId }, sid).catch(() => {}); return; }
+        let body = null;
+        try { body = p.request.postData ? JSON.parse(p.request.postData) : null; } catch { body = null; }
+        const out = fakeSupabase(p.request.method, new URL(p.request.url), body);
+        if (!out) { c.send('Fetch.failRequest', { requestId: p.requestId, errorReason: 'NameNotResolved' }, sid).catch(() => {}); return; }
+        const [status, data] = out;
+        c.send('Fetch.fulfillRequest', { requestId: p.requestId, responseCode: status, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }], body: Buffer.from(data == null ? '' : JSON.stringify(data)).toString('base64') }, sid).catch(() => {});
+      }
+    });
     const ext = await c.send('Extensions.loadUnpacked', { path: EXT_DIR });
+    extId = ext && ext.id;
+    await c.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     ({ sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true }));
     const s = (m, p) => c.send(m, p, sessionId);
@@ -433,6 +499,66 @@ async function main() {
     const v6 = await pv();
     check('"Restaurar" volta todas as partes e fotos', v6.off.every((x) => !x) && v6.cellsOff.every((x) => !x) && /3 de 3/.test(v6.total), JSON.stringify(v6));
     check('nenhum erro no console na prévia', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 6. 📈 → venda do ERP (2.10.5), com o Supabase falso: achar pelo telefone, escolher por valor, nenhuma,
+    // mais de uma pelo telefone, desligar. Conferindo cada gravação: só wa_chat_id e telefone vazio na venda.
+    const iso = (daysAgo, h = 12) => new Date(Date.now() - daysAgo * 86400000 + (h - 12) * 3600000).toISOString();
+    const EV = (n, chat, value) => ({ event_id: `0000000${n}-0000-4000-8000-00000000000${n}`, chat_id: chat, contact_name: `Cliente ${n}`, value, ad_title: null, ad_id: null, method: 'chat', test: false, status: 'enviado', events_received: 1, error: null, created_at: iso(0), event_name: 'Purchase', sale_id: null, sale_link_set_chat: false, sale_link_set_phone: null });
+    const SL = (n, extra) => ({ id: `5a1e000${n}-0000-4000-8000-00000000000${n}`, customer_name: `Venda ${n}`, customer_phone: null, sale_date: iso(1), total_sale_price: 100, wa_chat_id: null, status: 'finalizado', ...extra });
+    fake.events = [EV(1, '5511911112222@c.us', 100), EV(2, '5511933334444@c.us', 200), EV(3, '5511955556666@c.us', 999), EV(4, '5511977770000@c.us', 150)];
+    fake.sales = [
+      SL(1, { customer_name: 'Maria', customer_phone: '(11) 91111-2222', total_sale_price: 100, sale_date: iso(2) }), // telefone da conversa 1
+      SL(2, { customer_name: 'Sem telefone', total_sale_price: 190, sale_date: iso(1) }), // valor parecido com a 2
+      SL(3, { customer_name: 'Longe', total_sale_price: 260, sale_date: iso(1) }), // valor fora dos 10%
+      SL(4, { customer_name: 'Ana A', customer_phone: '11977770000', total_sale_price: 150, sale_date: iso(1) }), // duas com o telefone da 4
+      SL(5, { customer_name: 'Ana B', customer_phone: '11977770000', total_sale_price: 140, sale_date: iso(3) }),
+    ];
+    fake.on = true;
+    await q(`sh.querySelector('.pnav [data-sec="conversoes"]').click(); await wait(300); return true;`);
+    const box = (n) => `.cv-link[data-event="${fake.events[n - 1].event_id}"]`;
+    const waitFor = async (js, ms = 12000) => { for (const stop = Date.now() + ms; Date.now() < stop;) { if (await q(js).catch(() => false)) return true; await sleep(250); } return false; };
+    const ready = await waitFor(`return sh.querySelectorAll('.cv-link').length >= 4;`);
+    check('📈 histórico: cada compra real mostra "Venda do ERP" com "Ligar à venda do ERP"', ready, `caixas: ${await q(`return sh.querySelectorAll('.cv-link').length;`)} · worker: ${swTarget ? 'sim' : 'não'} · pedidos: ${JSON.stringify(fake.seen.slice(0, 12))} · anexos: ${JSON.stringify(fake.attached)} · seção: ${await q(`return sh.querySelector('.panel').className;`)} · tela: ${(await q(`return sh.querySelector('.ctab').textContent.slice(0, 300);`)) }`);
+    const boxText = (n) => q(`const b = sh.querySelector('${box(n)}'); return b ? b.textContent : '';`);
+    const click = (n, sel, k = 0) => q(`const b = sh.querySelectorAll('${box(n)} ${sel}')[${k}]; if (!b) return false; b.click(); return true;`);
+    // a) uma pelo telefone: liga sozinha
+    await click(1, '.cv-findsale');
+    await waitFor(`return !!sh.querySelector('${box(1)} .cv-linked');`);
+    const t1 = await boxText(1);
+    const p1 = fake.patches.filter((x) => x.id === fake.sales[0].id || x.id === fake.events[0].event_id);
+    check('achar pelo telefone: liga sozinha e mostra "Venda do ERP ligada: #… · cliente · R$"', /Venda do ERP ligada: #5a1e0001 · Maria · R\$\s?100,00/.test(t1) && fake.sales[0].wa_chat_id === '5511911112222@c.us' && fake.events[0].sale_id === fake.sales[0].id,
+      `${t1} · ${JSON.stringify(p1)}`);
+    // b) nenhuma pelo telefone: escolher por valor (±10%, sem telefone) → preenche o telefone vazio
+    await click(2, '.cv-findsale');
+    await waitFor(`return !!sh.querySelector('${box(2)} .cv-pick');`);
+    const t2 = await boxText(2);
+    const picks2 = await q(`return sh.querySelectorAll('${box(2)} .cv-pick').length;`);
+    await click(2, '.cv-pick');
+    await waitFor(`return !!sh.querySelector('${box(2)} .cv-linked');`);
+    check('escolher por valor: lista só a venda parecida (±10%) e "É esta" liga e preenche o telefone vazio',
+      picks2 === 1 && /Sem telefone/.test(t2) && !/Longe/.test(t2) && fake.sales[1].wa_chat_id === '5511933334444@c.us' && fake.sales[1].customer_phone === '(11) 93333-4444' && fake.events[1].sale_id === fake.sales[1].id,
+      `${t2} · venda: ${JSON.stringify(fake.sales[1])}`);
+    // c) nenhuma: "Lançar venda no ERP"
+    await click(3, '.cv-findsale');
+    await waitFor(`return !!sh.querySelector('${box(3)} .cv-launch');`);
+    check('nenhuma venda parecida: botão "Lançar venda no ERP"', /Nenhuma venda parecida/.test(await boxText(3)) && await q(`return !!sh.querySelector('${box(3)} .cv-launch');`));
+    // d) mais de uma pelo telefone: escolher
+    await click(4, '.cv-findsale');
+    await waitFor(`return sh.querySelectorAll('${box(4)} .cv-pick').length >= 2;`);
+    const t4 = await boxText(4);
+    await click(4, '.cv-pick', 1);
+    await waitFor(`return !!sh.querySelector('${box(4)} .cv-linked');`);
+    check('mais de uma pelo telefone: mostra as duas para escolher e liga a escolhida', /Achei 2 vendas/.test(t4) && fake.events[3].sale_id === fake.sales[4].id && /Ana B/.test(await boxText(4)), t4);
+    // e) desligar: desfaz só o que a ligação preencheu e não liga sozinha de novo
+    await click(1, '.cv-unlink');
+    await waitFor(`return /Desligada/.test((sh.querySelector('${box(1)}') || {}).textContent || '');`);
+    const t5 = await boxText(1);
+    check('desligar: tira a ligação, limpa o wa_chat_id que ela preencheu e deixa escolher de novo (sem religar sozinha)',
+      fake.events[0].sale_id === null && fake.sales[0].wa_chat_id === null && /É esta/.test(t5) && !/Venda do ERP ligada/.test(t5), `${t5} · venda: ${JSON.stringify(fake.sales[0])}`);
+    const salePatches = fake.patches.filter((x) => x.table === 'sales');
+    check('a venda só recebe wa_chat_id e o telefone vazio (nunca valores, itens ou estoque)', salePatches.length > 0 && salePatches.every((x) => Object.keys(x.body || {}).every((k) => ['wa_chat_id', 'customer_phone'].includes(k))), JSON.stringify(salePatches.map((x) => x.body)));
+    fake.on = false;
+    check('nenhum erro no console ligando vendas', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

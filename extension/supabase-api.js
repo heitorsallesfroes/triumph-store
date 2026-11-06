@@ -2885,12 +2885,16 @@
   const convEventName = () => probe('wa_conversion_events.event_name', () => hasColumn(CONV_TABLE, 'event_name'), 30 * 60 * 1000);
   async function fetchConversions({ limit = 50 } = {}) {
     const lim = Math.min(200, Math.max(1, Math.floor(Number(limit) || 50)));
-    const cols = `event_id,chat_id,contact_name,value,ad_title,ad_id,method,test,status,events_received,error,created_at${(await convEventName()) ? ',event_name' : ''}`;
+    const withSale = await linkCols().catch(() => false); // 2.10.5
+    const cols = `event_id,chat_id,contact_name,value,ad_title,ad_id,method,test,status,events_received,error,created_at${(await convEventName()) ? ',event_name' : ''}${withSale ? ',sale_id' : ''}`;
     const rows = await convRest(`${CONV_TABLE}?select=${cols}&order=created_at.desc&limit=${lim}`);
+    const saleIds = [...new Set(rows.map((r) => r.sale_id).filter(Boolean))];
+    const sales = new Map();
+    if (saleIds.length) (await rest(`sales?select=${SALE_LINK_COLS}&id=in.${inList(saleIds)}`)).forEach((x) => sales.set(x.id, saleSummary(x)));
     return rows.map((r) => {
       const marked = typeof r.error === 'string' && /^evento: Contact/.test(r.error);
       const error = marked ? r.error.replace(/^evento: Contact( · )?/, '') || null : r.error;
-      return { ...r, event_name: r.event_name || (marked ? 'Contact' : 'Purchase'), error };
+      return { ...r, event_name: r.event_name || (marked ? 'Contact' : 'Purchase'), error, linkAvailable: !!withSale, sale: r.sale_id ? sales.get(r.sale_id) || { id: r.sale_id, missing: true } : null };
     });
   }
 
@@ -2961,6 +2965,74 @@
   }
 
   // Valor padrão: total da última venda desta conversa no ERP (pela conversa ou pelo telefone)
+  // ── 2.10.5: ligar a Compra do 📈 (wa_conversion_events) à venda do ERP (sales) ──
+  // Só preenche sales.wa_chat_id (vazio) e o telefone vazio; nunca valores, itens ou estoque. A escolha da venda
+  // (telefone/valor) é feita no painel (engine.js: matchSalesForPurchase) com as vendas recentes daqui.
+  const LINK_MISSING = 'Atualize o banco para usar este recurso';
+  const linkCols = async () => (await salesOrigin()) && probe('wa_conversion_events.sale_id', () => hasColumn(CONV_TABLE, 'sale_id'));
+  const SALE_LINK_COLS = 'id,customer_name,customer_phone,sale_date,total_sale_price,wa_chat_id,status';
+  const saleSummary = (s) => (s ? { id: s.id, customer_name: s.customer_name || null, customer_phone: s.customer_phone || null, sale_date: s.sale_date, total_sale_price: Number(s.total_sale_price) || 0, wa_chat_id: s.wa_chat_id || null, status: s.status || null } : null);
+  async function linkEvent(eventId) {
+    if (typeof eventId !== 'string' || !UUID_RE.test(eventId)) throw new Error('Compra inválida');
+    const rows = await convRest(`${CONV_TABLE}?select=event_id,chat_id,value,sale_id,sale_link_set_chat,sale_link_set_phone,test,status,created_at&event_id=eq.${eventId}&limit=1`);
+    if (!rows.length) throw new Error('Compra não encontrada');
+    return rows[0];
+  }
+  // A compra, a venda ligada (se houver) e as vendas candidatas (8 dias; o painel filtra 7 pelo telefone e 3 pelo valor)
+  async function purchaseSaleLink({ eventId }) {
+    if (!(await linkCols())) return { available: false };
+    const ev = await linkEvent(eventId);
+    const out = { available: true, event: { event_id: ev.event_id, chat_id: ev.chat_id, value: Number(ev.value) || 0, test: !!ev.test, status: ev.status, created_at: ev.created_at }, linked: null, sales: [], taken: [] };
+    if (ev.sale_id) {
+      const s = await rest(`sales?select=${SALE_LINK_COLS}&id=eq.${ev.sale_id}&limit=1`);
+      out.linked = saleSummary(s[0]) || { id: ev.sale_id, customer_name: null, total_sale_price: 0, missing: true };
+      return out;
+    }
+    const since = encodeURIComponent(new Date(Date.now() - 8 * 86400000).toISOString());
+    const [sales, taken] = await Promise.all([
+      rest(`sales?select=${SALE_LINK_COLS}&sale_date=gte.${since}&status=neq.cancelado&status=neq.reembolsado&order=sale_date.desc&limit=1000`),
+      convRest(`${CONV_TABLE}?select=sale_id,event_id&sale_id=not.is.null&limit=2000`),
+    ]);
+    out.sales = sales.map(saleSummary);
+    out.taken = taken.filter((t) => t.event_id !== eventId).map((t) => t.sale_id);
+    return out;
+  }
+  // Liga: grava sale_id na compra; preenche wa_chat_id da venda (se vazio) e, se pedido, o telefone (se vazio)
+  async function linkSaleToPurchase({ eventId, saleId, phone, fillPhone }) {
+    if (!(await linkCols())) throw new Error(LINK_MISSING);
+    if (typeof saleId !== 'string' || !UUID_RE.test(saleId)) throw new Error('Venda inválida');
+    const ev = await linkEvent(eventId);
+    if (ev.sale_id && ev.sale_id !== saleId) throw new Error('Esta compra já está ligada a outra venda: desligue antes');
+    if (!SCHED_CHAT_RE.test(ev.chat_id || '')) throw new Error('Conversa inválida');
+    const rows = await rest(`sales?select=${SALE_LINK_COLS}&id=eq.${saleId}&limit=1`);
+    const sale = rows[0];
+    if (!sale) throw new Error('Venda não encontrada');
+    if (['cancelado', 'reembolsado'].includes(sale.status)) throw new Error('Venda cancelada ou reembolsada');
+    if (sale.wa_chat_id && sale.wa_chat_id !== ev.chat_id) throw new Error('Esta venda já é de outra conversa');
+    const setChat = !sale.wa_chat_id;
+    if (setChat) await rest(`sales?id=eq.${saleId}&wa_chat_id=is.null`, json('PATCH', 'return=minimal', { wa_chat_id: ev.chat_id }));
+    const p = typeof phone === 'string' ? phone.trim() : '';
+    let setPhone = null;
+    if (fillPhone === true && p && !String(sale.customer_phone || '').trim()) {
+      if (!/^[\d() +-]{8,20}$/.test(p)) throw new Error('Telefone inválido');
+      await rest(`sales?id=eq.${saleId}&or=(customer_phone.is.null,customer_phone.eq.)`, json('PATCH', 'return=minimal', { customer_phone: p }));
+      setPhone = p;
+    }
+    await rest(`${CONV_TABLE}?event_id=eq.${ev.event_id}`, json('PATCH', 'return=minimal', { sale_id: saleId, sale_link_set_chat: setChat, sale_link_set_phone: setPhone }));
+    return { linked: saleSummary({ ...sale, wa_chat_id: ev.chat_id, customer_phone: setPhone || sale.customer_phone }) };
+  }
+  // Desliga: tira o sale_id e desfaz só o que a ligação preencheu (wa_chat_id / telefone, se ainda forem os mesmos)
+  async function unlinkSaleFromPurchase({ eventId }) {
+    if (!(await linkCols())) throw new Error(LINK_MISSING);
+    const ev = await linkEvent(eventId);
+    if (ev.sale_id) {
+      if (ev.sale_link_set_chat && ev.chat_id) await rest(`sales?id=eq.${ev.sale_id}&wa_chat_id=eq.${encodeURIComponent(ev.chat_id)}`, json('PATCH', 'return=minimal', { wa_chat_id: null }));
+      if (ev.sale_link_set_phone) await rest(`sales?id=eq.${ev.sale_id}&customer_phone=eq.${encodeURIComponent(ev.sale_link_set_phone)}`, json('PATCH', 'return=minimal', { customer_phone: null }));
+    }
+    await rest(`${CONV_TABLE}?event_id=eq.${ev.event_id}`, json('PATCH', 'return=minimal', { sale_id: null, sale_link_set_chat: false, sale_link_set_phone: null }));
+    return { unlinked: true };
+  }
+
   async function lastChatSaleValue({ chatId, phone }) {
     const cols = 'total_sale_price,sale_date';
     let rows = [];
@@ -2977,6 +3049,7 @@
     nativeLabelEvents, nativeLabelSweep, nativeLabelCandidates, activeEnrollments, enrollmentCandidates, enrollContact,
     leaveAutomation, chatAutomationState,
     metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,
+    purchaseSaleLink, linkSaleToPurchase, unlinkSaleFromPurchase,
     sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
     erpCatalog, createSaleFromChat, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve,

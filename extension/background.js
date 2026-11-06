@@ -131,6 +131,10 @@ const HANDLERS = {
   sendPurchaseEvent:     (m) => WaApi.sendPurchaseEvent({ event: m.event }),
   fetchConversions:      (m) => WaApi.fetchConversions({ limit: m.limit }),
   recentConversion:      (m) => WaApi.recentConversion({ chatId: m.chatId }),
+  // 2.10.5: ligar a Compra do 📈 à venda do ERP
+  purchaseSaleLink:       (m) => WaApi.purchaseSaleLink({ eventId: m.eventId }),
+  linkSaleToPurchase:     (m) => WaApi.linkSaleToPurchase({ eventId: m.eventId, saleId: m.saleId, phone: m.phone, fillPhone: m.fillPhone }),
+  unlinkSaleFromPurchase: (m) => WaApi.unlinkSaleFromPurchase({ eventId: m.eventId }),
   lastChatSaleValue:     (m) => WaApi.lastChatSaleValue({ chatId: m.chatId, phone: m.phone }),
   // 2.6.0: "Contato" automático (lead novo de anúncio) e nome/telefone do CRM da conversa
   sendContactEvent:      (m) => WaApi.sendContactEvent({ event: m.event }),

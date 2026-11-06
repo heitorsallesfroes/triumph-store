@@ -799,6 +799,31 @@ guardada.
 
 ## O que mudou
 
+### 2.10.5 — a Compra do 📈 ligada à venda do ERP (extensão + ERP)
+- Depois de enviar uma **Compra real** no 📈 (e também ao abrir o 📈 de uma conversa que já tem compra real
+  enviada), o painel procura a venda no ERP (`sales`):
+  1. **pelo telefone desta conversa** (mesma normalização do painel do ERP), vendas dos últimos **7 dias**:
+     achou **uma** → liga sozinha; achou **mais de uma** → mostra para você escolher;
+  2. não achou: vendas dos últimos **3 dias** sem telefone (ou com outro telefone) com **valor parecido
+     (±10%)**, com cliente, data e valor, e o botão **"É esta"** (preenche também o telefone da venda, se
+     estiver vazio);
+  3. nenhuma: **"Lançar venda no ERP"**, que abre o 💰 Venda desta conversa já com o valor (o 1º produto entra
+     com o valor da compra) e, ao registrar, liga a venda à compra.
+- No 📈 (e no HISTÓRICO da aba Conversões, botão "Ligar à venda do ERP"): **"Venda do ERP ligada: #id ·
+  cliente · R$"** com **"Desligar"** para corrigir engano (depois de desligar, não liga sozinha de novo).
+- Ligar **só** grava o `sale_id` na compra e preenche `wa_chat_id` da venda (se vazio) e o telefone (se
+  vazio). Nunca altera valores, itens ou estoque. "Desligar" desfaz só o que a ligação preencheu. Não liga
+  venda cancelada/reembolsada, de outra conversa ou já ligada a outra compra.
+- Banco: migration `20261106180000_wa_conversion_sale_link.sql` (`sale_id`, `sale_link_set_chat`,
+  `sale_link_set_phone` em `wa_conversion_events`; `notify pgrst`). Sem ela, o 📈 funciona como antes.
+- **ERP**: vendas ligadas assim já contam no **Painel** como vendas do WhatsApp (pelo `wa_chat_id`). A lista
+  **Conversões (Facebook)** ganhou a coluna **"Venda do ERP"** (ligada ou "—").
+- Testes: `tests/salelink.test.cjs` (achar pelo telefone, mais de uma, escolher por valor, nenhuma, ligar,
+  desligar, só os campos permitidos, sem a migration) e `scripts/tests/waConversions.test.ts`. O teste no
+  Chrome real ganhou um **Supabase falso dentro do service worker** da extensão (protocolo DevTools) e usa o
+  HISTÓRICO do 📈 de verdade: liga pelo telefone, escolhe por valor, nenhuma, mais de uma e desliga,
+  conferindo cada gravação.
+
 ### 2.10.4 — tirar partes na prévia (só deste envio)
 - A prévia da mensagem rápida agora mostra **todas as partes** na ordem em que vão sair (áudio, imagem,
   vídeo, PDF, álbum, cartões e texto editável), cada uma com um **✕** pequeno no canto ("Não enviar esta
