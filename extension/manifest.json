@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Triumph Store - Biblioteca WhatsApp",
-  "version": "2.9.1",
+  "version": "2.9.2",
   "description": "Painel lateral no WhatsApp Web com as mensagens, áudios e mídias da aba WhatsApp do ERP Triumph Store.",
   "minimum_chrome_version": "111",
   "permissions": ["storage"],
@@ -21,13 +21,13 @@
     },
     {
       "matches": ["https://web.whatsapp.com/*"],
-      "js": ["wa-before.js", "vendor/wppconnect-wa.js", "wa-bridge.js"],
+      "js": ["wa-before.js", "vendor/wppconnect-wa.js", "rich-parts.js", "wa-bridge.js"],
       "run_at": "document_idle",
       "world": "MAIN"
     },
     {
       "matches": ["https://web.whatsapp.com/*"],
-      "js": ["data/nomes-br.js", "sale-calc.js", "engine.js", "content.js"],
+      "js": ["data/nomes-br.js", "sale-calc.js", "rich-parts.js", "engine.js", "content.js"],
       "run_at": "document_idle"
     }
   ]

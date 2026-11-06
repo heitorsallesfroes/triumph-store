@@ -58,10 +58,14 @@
     video:     { label: 'Vídeo',     color: '#ef4444' },
     documento: { label: 'Documento', color: '#eab308' },
   };
+  // 2.9.2: localização, produto, catálogo, contato e Pix (rich-parts.js)
+  const Rich = globalThis.TspRich;
+  Rich.TYPES.forEach((t) => { TYPES[t] = { label: Rich.LABEL[t], color: Rich.COLOR[t] }; });
 
   const FILTERS = [
     ['tudo', 'Tudo'], ['mais_usadas', 'Mais usadas'], ['texto', 'Texto'], ['audio', 'Áudio'],
     ['imagem', 'Imagem'], ['video', 'Vídeo'], ['documento', 'Documento'],
+    ['localizacao', 'Localização'], ['produto', 'Produto'], ['catalogo', 'Catálogo'], ['contato', 'Contato'], ['pix', 'Pix'],
   ];
 
   // Cor de acento por categoria (escolhida pelo id, então não muda entre aberturas)
@@ -1343,6 +1347,26 @@
       .alb-pickok { align-self: flex-end; }
       .pv-album { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; max-width: 240px; align-self: flex-end; border-radius: var(--r-md); overflow: hidden; }
       .pv-album.n1 { grid-template-columns: 1fr; }
+      /* ═══ 2.9.2: localização, produto, catálogo, contato, Pix ═══ */
+      .rp-card { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2); border-radius: var(--r-md); background: var(--card); border: 1px solid var(--border); min-width: 0; }
+      .rp-ico { flex: none; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: var(--r-sm); background: var(--bg2); font-size: var(--fs-icon); }
+      .rp-thumb { flex: none; width: 56px; height: 56px; display: flex; align-items: center; justify-content: center; border-radius: var(--r-sm); overflow: hidden; background: var(--bg2); font-size: var(--fs-icon); }
+      .rp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .rp-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+      .rp-t { font-weight: 600; font-size: var(--fs-2); overflow-wrap: anywhere; }
+      .rp-s { font-size: var(--fs-1); color: var(--muted); overflow-wrap: anywhere; }
+      .rp-link { font-size: var(--fs-1); color: var(--accent); overflow-wrap: anywhere; }
+      .rp-ed { display: flex; flex-direction: column; gap: var(--s-2); }
+      .rp-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2); }
+      .rp-pick { display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-2); border-radius: var(--r-md); border: 1px dashed var(--border); }
+      .rp-list { display: flex; flex-direction: column; gap: var(--s-1); max-height: 260px; overflow-y: auto; }
+      .rp-prow, .rp-crow { display: block; width: 100%; padding: 0; border: none; background: none; text-align: left; color: inherit; cursor: pointer; border-radius: var(--r-md); }
+      .rp-prow.sel .rp-card { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+      .rp-prow:hover .rp-card, .rp-prow:focus-visible .rp-card { border-color: var(--accent); }
+      .rp-crow { display: flex; justify-content: space-between; gap: var(--s-2); padding: var(--s-1) var(--s-2); font-size: var(--fs-2); }
+      .rp-crow:hover, .rp-crow:focus-visible { background: var(--accent-soft); }
+      .rp-crow span { color: var(--muted); }
+      .ed-varhint.err { color: var(--err); }
       .pv-album .alb-thumb { position: relative; aspect-ratio: 1; background: var(--bg2); }
       .pv-more { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.5); color: #fff; font-size: var(--fs-4); font-weight: 700; }
       /* ═══ 2.8.5: arrastar para reordenar ═══ */
@@ -2721,7 +2745,9 @@
   });
 
   function renderFilters() {
+    if (Rich.isRich(state.filter) && !state.richAvailable) state.filter = 'tudo';
     filtersEl.querySelectorAll('.chip').forEach((c) => {
+      c.hidden = Rich.isRich(c.dataset.id) && !state.richAvailable; // 2.9.2: só com a migration
       const active = c.dataset.id === state.filter;
       c.classList.toggle('active', active);
       c.setAttribute('aria-pressed', String(active));
@@ -2778,6 +2804,7 @@
     if (typeof lib.partsAvailable === 'boolean') state.partsAvailable = lib.partsAvailable;
     if (typeof lib.removeAllAvailable === 'boolean') state.removeAllAvailable = lib.removeAllAvailable; // 2.8.6
     if (typeof lib.albumAvailable === 'boolean') state.albumAvailable = lib.albumAvailable; // 2.8.7
+    if (typeof lib.richAvailable === 'boolean') { state.richAvailable = lib.richAvailable; renderFilters(); } // 2.9.2
     state.loaded     = true;
     state.source     = source;
     state.syncedAt   = savedAt || null;
@@ -2838,6 +2865,8 @@
     let list = state.items.filter((i) => !q || i.title.toLowerCase().includes(q));
     if (state.filter === 'mais_usadas') {
       list = list.filter((i) => i.usage_count > 0).sort((a, b) => b.usage_count - a.usage_count);
+    } else if (Rich.isRich(state.filter)) {
+      list = list.filter((i) => partsOf(i).some((p) => p.type === state.filter)); // 2.9.2: em qualquer parte
     } else if (state.filter !== 'tudo') {
       list = list.filter((i) => i.type === state.filter);
     }
@@ -2980,6 +3009,7 @@
 
   // 2.8.1: tipo + resumo ("Áudio de voz · 0:40", "Imagem · foto.png · 161.0 KB")
   function subtitle(item) {
+    if (Rich.isRich(item.type)) return `${Rich.LABEL[item.type]} · ${Rich.summary(partsOf(item)[0])}`; // 2.9.2
     if (item.type === 'texto') return firstWords(item.body) || 'Sem texto';
     if (item.type === 'audio') {
       const dur = item.file_url && typeof mediaDur !== 'undefined' && mediaDur.has(item.file_url) ? fmtDur(mediaDur.get(item.file_url)) : formatSize(item.file_size);
@@ -2996,7 +3026,8 @@
 
     const row  = el('div', 'card-row');
     const type = el('span', 'type');
-    type.innerHTML = svg(ICONS[item.type] ? item.type : 'documento');
+    if (Rich.isRich(item.type)) type.textContent = Rich.EMOJI[item.type]; // 2.9.2
+    else type.innerHTML = svg(ICONS[item.type] ? item.type : 'documento');
     type.style.color = cfg.color;
     type.style.background = `${cfg.color}22`;
     type.title = cfg.label;
@@ -3105,7 +3136,8 @@
 
     // 2.8.7: álbum = grade das fotos como vai chegar
     partsOf(item).forEach((p) => { if (Array.isArray(p.files) && p.files.length > 1) pv.append(albumPreviewEl(p)); });
-    if (item.body || textPartsOf(item).length) {
+    const hasRich = partsOf(item).some((p) => Rich.isRich(p.type)); // 2.9.2: cartões na ordem, dentro da bolha
+    if (item.body || textPartsOf(item).length || hasRich) {
       const slot = el('div', 'bubble-slot');
       fillBubble(slot, item);
       pv.append(slot);
@@ -3209,11 +3241,20 @@
       slot.append(nameIn);
     }
     let unresolved = 0;
-    const multi = parts.length > 1 || (parts[0] && parts[0].p.type !== 'texto');
-    parts.forEach(({ p, i }) => {
+    // 2.9.2: localização/produto/catálogo/contato/Pix aparecem como cartão, na ordem das partes
+    const richParts = partsOf(item).map((p, i) => ({ p, i })).filter(({ p }) => Rich.isRich(p.type));
+    const textIdx = new Set(parts.map(({ i }) => i));
+    const order = [...parts, ...richParts.filter(({ i }) => !textIdx.has(i))].sort((a, b) => a.i - b.i);
+    const multi = order.length > 1 || (order[0] && order[0].p.type !== 'texto' && !Rich.isRich(order[0].p.type));
+    order.forEach(({ p, i }) => {
+      if (Rich.isRich(p.type)) {
+        if (multi) slot.append(el('div', 'pv-part', `Parte ${i + 1} (${Rich.LABEL[p.type]}${textIdx.has(i) ? ' + texto junto' : ''})`));
+        slot.append(richPreviewEl(p));
+        if (!textIdx.has(i)) return;
+      }
       const albumPart = Array.isArray(p.files) && p.files.length > 1;
       const albumBefore = albumPart && !!(p.files[0] && p.files[0].caption_before);
-      if (multi) slot.append(el('div', 'pv-part', `Parte ${i + 1}${albumPart ? (albumBefore ? ' (mensagem antes das fotos)' : ' (mensagem depois das fotos)') : p.type !== 'texto' ? ' (legenda)' : ''}`));
+      if (multi && !Rich.isRich(p.type)) slot.append(el('div', 'pv-part', `Parte ${i + 1}${albumPart ? (albumBefore ? ' (mensagem antes das fotos)' : ' (mensagem depois das fotos)') : p.type !== 'texto' ? ' (legenda)' : ''}`));
       const bubble = el('div', 'bubble');
       bubble.dataset.part = String(i);
       bubble.setAttribute('contenteditable', 'plaintext-only');
@@ -3233,7 +3274,7 @@
     if (parts.length) notes.push('Você pode editar o texto aqui: vale só para este envio.');
     if (usesName && !(st.name || detected) && chatNames.available !== false) slot.append(el('div', 'pv-warn', 'Sem nome para esta conversa (vai sair sem nome)'));
     if (notes.length) slot.append(el('div', 'pv-note', notes.join(' ')));
-    if (parts.length) {
+    if (parts.length || richParts.length) {
       const row = el('div', 'ed-add');
       const go = el('button', 'btn primary pv-send', 'Enviar só nesta conversa');
       go.type = 'button';
@@ -3768,6 +3809,58 @@
   // visível no rodapé com "Parar". Erro durante o envio de uma parte (ou sem resposta) = para tudo
   // e nunca reenvia sozinho.
 
+  // 2.9.2: cartão como vai chegar (localização, produto, catálogo, contato, Pix)
+  function richPreviewEl(p, { compact = false } = {}) {
+    const d = p.data || {};
+    const card = el('div', `rp-card rp-${p.type}`);
+    const ico = el('span', 'rp-ico', Rich.EMOJI[p.type]);
+    const body = el('div', 'rp-body');
+    const line = (cls, text) => { if (text) body.append(el('div', cls, text)); };
+    if (p.type === 'produto') {
+      const th = el('div', 'rp-thumb');
+      if (d.image_url) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.referrerPolicy = 'no-referrer';
+        img.addEventListener('error', () => { th.textContent = Rich.EMOJI.produto; }, { once: true });
+        img.src = d.image_url;
+        th.append(img);
+      } else th.textContent = Rich.EMOJI.produto; // produto sem foto
+      card.append(th);
+      line('rp-t', d.name || 'Produto do catálogo');
+      line('rp-s', d.price);
+      if (!compact) line('rp-link', 'wa.me/p/… (link do produto, com prévia)');
+    } else if (p.type === 'localizacao') {
+      card.append(ico);
+      line('rp-t', d.name || 'Localização');
+      line('rp-s', d.address);
+      if (d.lat !== '' && d.lat != null && d.lng !== '' && d.lng != null) {
+        const a = el('a', 'rp-link', `${d.lat}, ${d.lng} · abrir no mapa`);
+        a.href = Rich.mapsUrl(d.lat, d.lng);
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        body.append(a);
+      }
+    } else if (p.type === 'catalogo') {
+      card.append(ico);
+      line('rp-t', 'Catálogo no WhatsApp');
+      line('rp-s', 'Veja os nossos produtos (cartão do seu catálogo)');
+    } else if (p.type === 'contato') {
+      card.append(ico);
+      line('rp-t', d.name || 'Contato');
+      line('rp-s', Rich.fmtPhone(d.phone));
+      line('rp-link', 'Conversar · Adicionar contato');
+    } else if (p.type === 'pix') {
+      card.append(ico);
+      line('rp-t', 'Chave Pix');
+      line('rp-s', `${Rich.pixTypeLabel(d.key_type)}: ${d.key || '—'}`);
+      line('rp-s', d.name ? `Recebedor: ${d.name}` : '');
+      line('rp-link', 'Copiar chave Pix');
+    }
+    card.append(body);
+    return card;
+  }
+
   const SEQ_TEXT_MAX = 4096;
   let seq = null; // { total, index, phase: 'wait' | 'typing' | 'send', until, stop, reqId, label }
 
@@ -3819,6 +3912,14 @@
       if (!text.trim()) throw Object.assign(new Error('parte sem texto'), { code: 'empty', stage: 'before-send' });
       if (newChat) { await campaignSend({ kind: 'texto', text: text.slice(0, SEQ_TEXT_MAX) }); return; }
       await waRequest('sendText', { chatId, text: text.slice(0, SEQ_TEXT_MAX), typingMs: typingMs || 0 }, { id: reqId, timeout: (typingMs || 0) + 20000 });
+      return;
+    }
+    // 2.9.2: localização, produto, catálogo, contato e Pix (a ponte monta e confere antes de enviar)
+    if (Rich.isRich(part.type)) {
+      const text = Rich.allowsText(part.type) && part.body ? fillVars(part.body, firstName).slice(0, SEQ_TEXT_MAX) : '';
+      const rich = { kind: part.type, data: part.data || {}, text };
+      if (newChat) { await campaignSend(rich); return; }
+      await waRequest('sendRich', { chatId, ...rich, typingMs: typingMs || 0 }, { id: reqId, timeout: (typingMs || 0) + 60000 });
       return;
     }
     if (Array.isArray(part.files) && part.files.length > 1) return sendAlbum(part, i, chatId, firstName, reqId, newChat, typingMs);
@@ -3966,7 +4067,9 @@
     if (res.status === 'ok' && res.failedFiles && res.failedFiles.length) { toast(`Enviado, mas não consegui enviar: ${res.failedFiles.join(', ')}.`, 'warn', 10000); return; }
     if (res.status === 'ok') { toast(total > 1 ? `Enviado: ${total} partes.` : 'Enviado.', 'ok', 4000); return; }
     if (res.status === 'stopped') { toast(`Parado: ${res.sent} de ${total} enviada${res.sent === 1 ? '' : 's'}.`, 'warn', 6000); return; }
-    if (res.stage === 'sending') {
+    if (res.stage === 'sending' && (res.code === 'pix_failed' || res.code === 'rich_failed')) {
+      toast(`Parte ${res.failedAt}: ${res.message}`, 'error', 12000); // 2.9.2: erro claro do tipo novo
+    } else if (res.stage === 'sending') {
       toast(`Não consegui confirmar o envio da parte ${res.failedAt}. Confira a conversa antes de tentar de novo.`, 'error', 12000);
     } else {
       toast(`Parei antes da parte ${res.failedAt || 1}: ${res.message || 'erro'}.`, 'error', 8000);
@@ -4366,6 +4469,8 @@
       file_size: p.file_size ?? null, wait_seconds: Number(p.wait_seconds) || 0,
       typing_seconds: Number.isInteger(p.typing_seconds) ? p.typing_seconds : p.type === 'audio' ? 3 : 0,
       file: null, localUrl: null,
+      // 2.9.2: dados da localização/produto/contato/Pix (cópia; o original só muda ao salvar)
+      data: Rich.isRich(p.type) ? { ...Rich.empty(p.type), ...(p.data || {}) } : null,
     };
   }
 
@@ -4408,7 +4513,20 @@
 
   // ── 2.8.7: "Várias imagens" (álbum): até 10 fotos/vídeos numa parte ──
   const ALBUM_MAX = 10;
-  const edTypes = (cur) => (state.albumAvailable || cur === 'album' ? [...ED_TYPES.slice(0, 2), ['album', 'Várias imagens'], ...ED_TYPES.slice(2)] : ED_TYPES);
+  // 2.9.2: tipos novos só com a migration (data) e se a WA-JS desta conta envia (state.waRich; sem resposta = mostra)
+  const richOk = (t) => !!state.richAvailable && !(state.waRich && state.waRich[t] === false);
+  const edTypes = (cur) => [
+    ...(state.albumAvailable || cur === 'album' ? [...ED_TYPES.slice(0, 2), ['album', 'Várias imagens'], ...ED_TYPES.slice(2)] : ED_TYPES),
+    ...Rich.TYPES.filter((t) => richOk(t) || cur === t).map((t) => [t, `${Rich.EMOJI[t]} ${Rich.LABEL[t]}`]),
+  ];
+  function refreshWaRich(rerender) {
+    waRequest('richInfo', {}, { timeout: 2000 }).then((r) => {
+      if (!r || !r.types) return;
+      const before = JSON.stringify(state.waRich || null);
+      state.waRich = r.types;
+      if (JSON.stringify(r.types) !== before && rerender) rerender();
+    }).catch(() => {});
+  }
   function addAlbumFiles(p, list, ctx, i) {
     const files = [...(list || [])];
     for (const f of files) {
@@ -4562,6 +4680,210 @@
     return row;
   }
 
+  // ── 2.9.2: editor das partes Localização, Produto, Catálogo, Contato e Chave Pix ──
+  const catalog = { loading: false, products: null, reason: null, at: 0 };
+  const CATALOG_REASON = {
+    unavailable: 'Esta versão da biblioteca não lê o catálogo.', not_business: 'Catálogo só existe em conta WhatsApp Business.',
+    no_me: 'Não consegui ler o seu número no WhatsApp.', failed: 'Não consegui ler o catálogo agora. Tente de novo.',
+    not_ready: 'O WhatsApp ainda não está pronto. Tente de novo em instantes.',
+  };
+  function loadCatalog(force = false) {
+    if (catalog.loading || (!force && catalog.products && Date.now() - catalog.at < 5 * 60 * 1000)) return Promise.resolve();
+    catalog.loading = true;
+    return waRequest('catalogProducts', {}, { timeout: 20000 })
+      .then((r) => { catalog.products = (r && r.products) || []; catalog.reason = r && !r.ok ? r.reason : null; catalog.at = Date.now(); })
+      .catch((e) => { catalog.products = []; catalog.reason = e && e.code === 'not_ready' ? 'not_ready' : 'failed'; catalog.at = 0; })
+      .finally(() => { catalog.loading = false; });
+  }
+
+  function richField(labelText, value, onInput, { placeholder = '', maxLength = 100, aria = labelText, inputMode = null } = {}) {
+    const l = el('label', 'ed-field', labelText);
+    const input = el('input', 'ed-title');
+    input.type = 'text';
+    input.maxLength = maxLength;
+    input.value = value == null ? '' : String(value);
+    input.placeholder = placeholder;
+    if (inputMode) input.inputMode = inputMode;
+    input.setAttribute('aria-label', aria);
+    input.addEventListener('input', () => onInput(input.value));
+    l.append(input);
+    return { label: l, input };
+  }
+  function richTextField(p, i, placeholder) {
+    const cap = el('textarea', 'ed-caption');
+    cap.maxLength = 4096;
+    cap.rows = 2;
+    cap.value = p.body || '';
+    cap.placeholder = placeholder;
+    cap.setAttribute('aria-label', `Texto junto (parte ${i + 1})`);
+    cap.addEventListener('input', () => { p.body = cap.value; });
+    return [cap, varButtons(cap, (v) => { p.body = v; }, i)];
+  }
+
+  function richEditorEl(p, i, ctx) {
+    const wrap = el('div', 'rp-ed');
+    const d = p.data || (p.data = Rich.empty(p.type));
+    const n = i + 1;
+    if (p.type === 'localizacao') {
+      const status = el('div', 'ed-varhint', 'Cole o link do Google Maps: a latitude e a longitude são preenchidas sozinhas.');
+      const link = richField('Link do Google Maps', '', () => {}, { placeholder: 'Cole o link do Google Maps', maxLength: 2000, aria: `Link do Google Maps (parte ${n})` });
+      const name = richField('Nome do local', d.name, (v) => { d.name = v; }, { placeholder: 'Ex.: Triumph Store', aria: `Nome do local (parte ${n})` });
+      const addr = richField('Endereço', d.address, (v) => { d.address = v; }, { placeholder: 'Rua, número, bairro, cidade', maxLength: 200, aria: `Endereço (parte ${n})` });
+      const lat = richField('Latitude', d.lat, (v) => { d.lat = v.trim(); }, { placeholder: '-23.5505', maxLength: 20, aria: `Latitude (parte ${n})`, inputMode: 'decimal' });
+      const lng = richField('Longitude', d.lng, (v) => { d.lng = v.trim(); }, { placeholder: '-46.6333', maxLength: 20, aria: `Longitude (parte ${n})`, inputMode: 'decimal' });
+      link.input.addEventListener('input', () => {
+        const v = link.input.value.trim();
+        status.classList.remove('err');
+        if (!v) { status.textContent = 'Cole o link do Google Maps: a latitude e a longitude são preenchidas sozinhas.'; return; }
+        const c = Rich.parseMapsLink(v);
+        const place = Rich.placeNameFromLink(v);
+        if (place && !d.name) { d.name = place; name.input.value = place; }
+        if (c) {
+          d.lat = String(c.lat); d.lng = String(c.lng);
+          lat.input.value = d.lat; lng.input.value = d.lng;
+          status.textContent = `Coordenadas encontradas: ${c.lat}, ${c.lng}.`;
+        } else {
+          status.classList.add('err');
+          status.textContent = Rich.isShortMapsLink(v)
+            ? 'Link curto (maps.app.goo.gl) não traz as coordenadas: abra o link no navegador, copie o endereço completo da barra e cole aqui, ou digite a latitude e a longitude.'
+            : 'Não achei as coordenadas neste link. Digite a latitude e a longitude (no Google Maps: clique com o botão direito no ponto e copie os números).';
+        }
+      });
+      const coords = el('div', 'rp-row');
+      coords.append(lat.label, lng.label);
+      wrap.append(link.label, status, name.label, addr.label, coords);
+    } else if (p.type === 'produto') {
+      if (d.product_id) wrap.append(richPreviewEl({ type: 'produto', data: d }));
+      const btn = el('button', 'ed-mini', p.picking ? 'Fechar a lista' : d.product_id ? 'Trocar produto' : 'Escolher produto');
+      btn.type = 'button';
+      btn.disabled = ctx.saving();
+      btn.setAttribute('aria-label', `Escolher produto do catálogo (parte ${n})`);
+      btn.addEventListener('click', () => {
+        p.picking = !p.picking;
+        if (p.picking && !catalog.products) loadCatalog().then(() => ctx.rerender());
+        ctx.rerender();
+      });
+      wrap.append(btn);
+      if (p.picking) wrap.append(productPickerEl(p, i, ctx));
+      wrap.append(...richTextField(p, i, 'Texto junto (opcional; vai na mesma mensagem, antes do link do produto)'));
+      wrap.append(el('div', 'ed-varhint', 'Vai o link do produto (wa.me/p/…) com a prévia: foto, nome e preço. A WA-JS 4.7.2 não tem envio direto do cartão de produto.'));
+    } else if (p.type === 'catalogo') {
+      wrap.append(richPreviewEl({ type: 'catalogo', data: d }));
+      wrap.append(...richTextField(p, i, 'Texto junto (opcional)'));
+      wrap.append(el('div', 'ed-varhint', 'Envia o cartão do catálogo inteiro do seu WhatsApp Business.'));
+    } else if (p.type === 'contato') {
+      const name = richField('Nome', d.name, (v) => { d.name = v; }, { placeholder: 'Nome do contato', maxLength: 60, aria: `Nome do contato (parte ${n})` });
+      const phone = richField('Telefone', d.phone, (v) => { d.phone = v; }, { placeholder: '(11) 99999-9999', maxLength: 25, aria: `Telefone do contato (parte ${n})`, inputMode: 'tel' });
+      const pickBtn = el('button', 'ed-mini', p.picking ? 'Fechar contatos' : 'Escolher dos contatos do WhatsApp');
+      pickBtn.type = 'button';
+      pickBtn.disabled = ctx.saving();
+      pickBtn.addEventListener('click', () => { p.picking = !p.picking; ctx.rerender(); });
+      wrap.append(name.label, phone.label, pickBtn);
+      if (p.picking) wrap.append(contactPickerEl(p, i, ctx, name.input, phone.input));
+    } else if (p.type === 'pix') {
+      const tl = el('label', 'ed-field', 'Tipo da chave');
+      const sel = el('select', 'ed-cat');
+      sel.setAttribute('aria-label', `Tipo da chave Pix (parte ${n})`);
+      Rich.PIX_KEY_TYPES.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = d.key_type === v; sel.append(o); });
+      sel.addEventListener('change', () => { d.key_type = sel.value; });
+      tl.append(sel);
+      const key = richField('Chave', d.key, (v) => { d.key = v; }, { placeholder: 'CPF, CNPJ, telefone, e-mail ou chave aleatória', maxLength: 80, aria: `Chave Pix (parte ${n})` });
+      const name = richField('Nome do recebedor', d.name, (v) => { d.name = v; }, { placeholder: 'Como aparece no Pix', maxLength: 60, aria: `Nome do recebedor (parte ${n})` });
+      wrap.append(tl, key.label, name.label, el('div', 'ed-varhint', 'Só funciona em conta WhatsApp Business. Se o WhatsApp não aceitar, aparece um erro e a parte não é enviada.'));
+    }
+    return wrap;
+  }
+
+  function productPickerEl(p, i, ctx) {
+    const box = el('div', 'rp-pick');
+    if (catalog.loading && !catalog.products) { box.append(el('div', 'ed-note', 'Lendo o seu catálogo…')); return box; }
+    const list = catalog.products || [];
+    if (!list.length) {
+      box.append(el('div', 'ed-note', catalog.reason ? CATALOG_REASON[catalog.reason] || CATALOG_REASON.failed : 'Nenhum produto no seu catálogo.'));
+      const again = el('button', 'ed-mini', 'Tentar de novo');
+      again.type = 'button';
+      again.addEventListener('click', () => { loadCatalog(true).then(() => ctx.rerender()); ctx.rerender(); });
+      box.append(again);
+      return box;
+    }
+    const q = el('input', 'ed-title');
+    q.type = 'search';
+    q.placeholder = `Buscar entre ${list.length} produto${list.length === 1 ? '' : 's'}`;
+    q.setAttribute('aria-label', `Buscar produto (parte ${i + 1})`);
+    const rows = el('div', 'rp-list');
+    const draw = () => {
+      const term = q.value.trim().toLowerCase();
+      rows.textContent = '';
+      const shown = list.filter((x) => !term || x.name.toLowerCase().includes(term) || x.id.includes(term)).slice(0, 60);
+      if (!shown.length) rows.append(el('div', 'ed-note', 'Nenhum produto com esse nome.'));
+      shown.forEach((x) => {
+        const b = el('button', `rp-prow${p.data && p.data.product_id === x.id ? ' sel' : ''}`);
+        b.type = 'button';
+        b.setAttribute('aria-label', `Escolher ${x.name}${x.price ? `, ${x.price}` : ''}`);
+        b.append(richPreviewEl({ type: 'produto', data: { name: x.name, price: x.price, image_url: x.image_url } }, { compact: true }));
+        b.addEventListener('click', () => {
+          p.data = { product_id: x.id, name: x.name, price: x.price, image_url: x.image_url };
+          p.picking = false;
+          ctx.msg('');
+          ctx.rerender();
+        });
+        rows.append(b);
+      });
+    };
+    q.addEventListener('input', draw);
+    const reload = el('button', 'ed-mini', 'Atualizar lista');
+    reload.type = 'button';
+    reload.addEventListener('click', () => { loadCatalog(true).then(() => ctx.rerender()); });
+    box.append(q, rows, reload);
+    draw();
+    return box;
+  }
+
+  function contactPickerEl(p, i, ctx, nameIn, phoneIn) {
+    const box = el('div', 'rp-pick');
+    const q = el('input', 'ed-title');
+    q.type = 'search';
+    q.placeholder = 'Buscar contato salvo (nome ou número)';
+    q.setAttribute('aria-label', `Buscar contato (parte ${i + 1})`);
+    const rows = el('div', 'rp-list');
+    let timer = null;
+    let reqN = 0;
+    const search = () => {
+      const n = ++reqN;
+      rows.textContent = '';
+      rows.append(el('div', 'ed-note', 'Buscando…'));
+      waRequest('contactSearch', { q: q.value }, { timeout: 8000 }).then((list) => {
+        if (n !== reqN) return;
+        rows.textContent = '';
+        if (!Array.isArray(list) || !list.length) { rows.append(el('div', 'ed-note', 'Nenhum contato salvo com esse nome.')); return; }
+        list.forEach((c) => {
+          const b = el('button', 'rp-crow');
+          b.type = 'button';
+          b.append(el('b', null, c.name), el('span', null, Rich.fmtPhone(c.phone)));
+          b.addEventListener('click', () => {
+            p.data = { ...(p.data || {}), name: c.name, phone: c.phone };
+            nameIn.value = c.name;
+            phoneIn.value = Rich.fmtPhone(c.phone);
+            p.picking = false;
+            ctx.rerender();
+          });
+          rows.append(b);
+        });
+      }).catch(() => { if (n === reqN) { rows.textContent = ''; rows.append(el('div', 'ed-note', 'Não consegui ler os contatos do WhatsApp agora.')); } });
+    };
+    q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 250); });
+    box.append(q, rows);
+    search();
+    return box;
+  }
+
+  // valida a parte nova; devolve a parte pronta para gravar ou lança "Parte N: …"
+  function richPartForSave(p, i) {
+    let data;
+    try { data = Rich.normalize(p.type, p.data); } catch (e) { throw new Error(`Parte ${i + 1}: ${e.message}.`); }
+    return { type: p.type, body: Rich.allowsText(p.type) && String(p.body || '').trim() ? p.body : null, data, wait_seconds: p.wait_seconds, typing_seconds: p.typing_seconds };
+  }
+
   function edFileMime(type, file) {
     let m = (file.type || '').toLowerCase();
     const ext = (file.name.split('.').pop() || '').toLowerCase();
@@ -4589,6 +4911,7 @@
     };
     state.view = 'editor';
     if (!Array.isArray(state.waLabels)) refreshBar().then(() => { if (state.view === 'editor' && ed) renderEditor(); }).catch(() => {});
+    if (state.richAvailable) refreshWaRich(() => { if (state.view === 'editor' && ed) renderEditor(); }); // 2.9.2
     panel.classList.add('editing');
     renderBanner();
     listEl.scrollTop = 0;
@@ -4651,7 +4974,7 @@
     typeSel.addEventListener('change', () => {
       if (p.localUrl) URL.revokeObjectURL(p.localUrl);
       (p.files || []).forEach((f) => { if (f.localUrl) URL.revokeObjectURL(f.localUrl); });
-      Object.assign(p, { type: typeSel.value, file: null, localUrl: null, file_url: null, file_name: null, file_size: null, files: typeSel.value === 'album' ? [] : undefined, picking: false });
+      Object.assign(p, { type: typeSel.value, file: null, localUrl: null, file_url: null, file_name: null, file_size: null, files: typeSel.value === 'album' ? [] : undefined, picking: false, data: Rich.isRich(typeSel.value) ? Rich.empty(typeSel.value) : null });
       if (p.type === 'audio' && !p.typing_seconds) p.typing_seconds = 3;
       ctx.rerender();
     });
@@ -4672,6 +4995,8 @@
 
     if (p.type === 'album') {
       box.append(albumEditorEl(p, i, ctx));
+    } else if (Rich.isRich(p.type)) {
+      box.append(richEditorEl(p, i, ctx)); // 2.9.2
     } else if (p.type === 'texto') {
       const ta = el('textarea', 'ed-text');
       ta.maxLength = 4096;
@@ -4886,6 +5211,7 @@
       const p = ed.parts[i];
       if (p.type === 'texto' && !p.body.trim()) return `Parte ${i + 1}: escreva o texto.`;
       if (p.type === 'album' && !(p.files && p.files.length)) return `Parte ${i + 1}: escolha as fotos.`;
+      if (Rich.isRich(p.type)) { try { richPartForSave(p, i); } catch (e) { return e.message; } continue; } // 2.9.2
       if (p.type !== 'texto' && p.type !== 'album' && !p.file && !p.file_url) return `Parte ${i + 1}: escolha o arquivo.`;
     }
     return null;
@@ -4920,6 +5246,7 @@
       for (let i = 0; i < current.parts.length; i++) {
         const p = current.parts[i];
         if (p.type === 'album') { parts.push(await albumPartForSave(p, i, edMsg)); continue; }
+        if (Rich.isRich(p.type)) { parts.push(richPartForSave(p, i)); continue; } // 2.9.2
         let file = { file_url: p.file_url, file_name: p.file_name, file_size: p.file_size };
         if (p.type !== 'texto' && p.file) {
           edMsg(`Enviando o arquivo da parte ${i + 1}…`);
@@ -5773,6 +6100,7 @@
         out.push(await albumPartForSave(p, i, msg));
         continue;
       }
+      if (Rich.isRich(p.type)) { out.push(richPartForSave(p, i)); continue; } // 2.9.2
       if (p.type !== 'texto' && !p.file && !p.file_url) throw new Error(`Parte ${i + 1}: escolha o arquivo.`);
       let file = { file_url: p.file_url, file_name: p.file_name, file_size: p.file_size };
       if (p.type !== 'texto' && p.file) {
@@ -5797,7 +6125,7 @@
     const exclusive = f.mode === 'exclusiva';
     let parts = null;
     if (exclusive) {
-      parts = upload ? await partsForSave(f.parts, dpMsg) : f.parts.map((p) => ({ type: p.type, body: p.type === 'audio' ? null : p.body, file_url: p.file_url || (p.file ? 'pendente' : null), file_name: p.file_name, file_size: p.file_size, wait_seconds: p.wait_seconds, typing_seconds: p.typing_seconds }));
+      parts = upload ? await partsForSave(f.parts, dpMsg) : f.parts.map((p, i) => (Rich.isRich(p.type) ? richPartForSave(p, i) : { type: p.type, body: p.type === 'audio' ? null : p.body, file_url: p.file_url || (p.file ? 'pendente' : null), file_name: p.file_name, file_size: p.file_size, wait_seconds: p.wait_seconds, typing_seconds: p.typing_seconds }));
     }
     const v2 = v2Ready();
     return {
@@ -5858,6 +6186,7 @@
     const first = Array.isArray(c.parts) && c.parts.length ? c.parts[0] : (() => { const it = state.items.find((i) => i.id === c.item_id); return it ? partsOf(it)[0] : null; })();
     if (!first) return '(sem mensagem)';
     const text = first.body ? fillVars(first.body, name) : '';
+    if (Rich.isRich(first.type)) return `[${Rich.LABEL[first.type]}] ${Rich.summary(first)}${text ? ` · ${firstWords(text, 10)}` : ''}`; // 2.9.2
     const kind = first.type === 'texto' ? '' : `[${first.type}] `;
     return `${kind}${firstWords(text, 14)}`.trim() || `[${first.type}]`;
   }

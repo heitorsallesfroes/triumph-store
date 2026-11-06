@@ -42,6 +42,8 @@
   }
 
   const isReady = () => !!(wpp && wpp.isReady);
+  // 2.9.2: tipos novos de parte (rich-parts.js roda logo antes desta ponte, no mesmo mundo)
+  const Rich = window.TspRich || null;
 
   function activeChat() {
     if (!isReady()) return { kind: 'nenhuma', chatId: null };
@@ -472,7 +474,7 @@
   }
 
   // Valida, mostra "digitando…" e chama send() uma vez; stage vira 'sending' só na hora de enviar
-  async function sendJob(requestId, chatId, typingMs, send) {
+  async function sendJob(requestId, chatId, typingMs, send, onFail = null) {
     if (jobs.has(requestId)) throw new BridgeError('duplicate', 'Pedido repetido', 'before-send');
     const job = { cancelled: false, stage: 'before-send', wake: null };
     jobs.set(requestId, job);
@@ -485,12 +487,99 @@
       try {
         await send();
       } catch {
-        throw new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
+        throw onFail ? onFail() : new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
       }
       return { sent: true };
     } finally {
       jobs.delete(requestId);
     }
+  }
+
+  // ── 2.9.2: localização, produto, catálogo, contato e Pix ──
+  // A validação e a montagem ficam em rich-parts.js; aqui só a checagem antes de enviar (erro = nada saiu).
+  const RICH_FAIL = {
+    pix: 'Chave Pix: o WhatsApp não aceitou o envio nesta conta (precisa ser WhatsApp Business com Pix liberado). Confira a conversa.',
+    catalogo: 'Catálogo: o WhatsApp não aceitou o envio. Confira a conversa.',
+    produto: 'Produto: o WhatsApp não aceitou o envio. Confira a conversa.',
+    localizacao: 'Localização: o WhatsApp não aceitou o envio. Confira a conversa.',
+    contato: 'Contato: o WhatsApp não aceitou o envio. Confira a conversa.',
+  };
+  async function richSendFn(chatId, p, opts) {
+    if (!Rich) throw new BridgeError('rich_unavailable', 'Tipo de parte indisponível nesta versão', 'before-send');
+    if (p.text != null && (typeof p.text !== 'string' || p.text.length > TEXT_MAX)) throw new BridgeError('invalid_text', 'Texto inválido', 'before-send');
+    try {
+      return await Rich.prepareSend(wpp, chatId, { kind: p.kind, data: p.data, text: p.text }, opts);
+    } catch (e) {
+      // só mensagens nossas (richCode); erro da biblioteca vira genérico
+      if (e && e.richCode) throw new BridgeError(e.richCode, e.message, 'before-send');
+      throw new BridgeError('rich_prepare', 'Não consegui preparar a mensagem', 'before-send');
+    }
+  }
+  const richFail = (kind) => () => new BridgeError(kind === 'pix' ? 'pix_failed' : 'rich_failed', RICH_FAIL[kind] || 'O WhatsApp não confirmou o envio', 'sending');
+
+  async function sendRich(requestId, payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const p = payload || {};
+    if (!Rich || !Rich.isRich(p.kind)) throw new BridgeError('invalid_kind', 'Tipo de parte inválido', 'before-send');
+    const ms = typingMsOf(p.typingMs);
+    await individualLoadedChat(p.chatId);
+    const send = await richSendFn(p.chatId, p, { createChat: false, markIsRead: false });
+    return sendJob(requestId, p.chatId, ms, send, richFail(p.kind));
+  }
+
+  function richInfo() {
+    if (!isReady() || !Rich) return { ready: isReady(), types: null };
+    return { ready: true, types: Rich.availability(wpp) };
+  }
+
+  // Produtos do MEU catálogo (só leitura; foto, nome, preço). Sem catálogo / conta comum: lista vazia com motivo.
+  const CATALOG_MAX = 500;
+  async function catalogProducts() {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    if (!Rich || !wpp.catalog || typeof wpp.catalog.getProducts !== 'function') return { ok: false, reason: 'unavailable', products: [] };
+    if (businessAccount() === false) return { ok: false, reason: 'not_business', products: [] };
+    let me = null;
+    try { me = wpp.conn.getMyUserId(); } catch { me = null; }
+    if (!me) return { ok: false, reason: 'no_me', products: [] };
+    const meId = String(me._serialized || me);
+    let raw = null;
+    try { raw = await withTimeout(Promise.resolve().then(() => wpp.catalog.getProducts(meId, CATALOG_MAX)), 15000); } catch { raw = null; }
+    if (!Array.isArray(raw) || !raw.length) {
+      // o que o WhatsApp já tem carregado do catálogo
+      const cat = await Promise.resolve().then(() => (typeof wpp.catalog.getMyCatalog === 'function' ? wpp.catalog.getMyCatalog() : null)).catch(() => null);
+      const models = safe(() => cat.productCollection.getModelsArray(), null) || safe(() => cat.productCollection._models, null);
+      if (Array.isArray(models)) raw = models;
+    }
+    if (!Array.isArray(raw)) return { ok: false, reason: 'failed', products: [] };
+    const seen = new Set();
+    const products = [];
+    for (const r of raw.slice(0, CATALOG_MAX)) {
+      const n = safe(() => Rich.normalizeProduct(r), null);
+      if (n && !seen.has(n.id)) { seen.add(n.id); products.push(n); }
+    }
+    return { ok: true, reason: null, products };
+  }
+
+  // Contatos salvos (nome + número) para a parte "Contato"; só @c.us, até 20, filtrados aqui
+  async function contactSearch(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const q = payload && typeof payload.q === 'string' ? payload.q.trim().toLowerCase().slice(0, 60) : '';
+    const qd = q.replace(/\D/g, '');
+    let list = null;
+    try { list = await withTimeout(Promise.resolve().then(() => wpp.contact.list({ onlyMyContacts: true })), LIST_TIMEOUT_MS); } catch { list = null; }
+    if (!Array.isArray(list)) list = safe(() => wpp.whatsapp.ContactStore.getModelsArray().filter((c) => c.isMyContact), []) || [];
+    const out = [];
+    for (const c of list) {
+      const id = safe(() => c.id._serialized, '') || '';
+      const m = /^(\d{8,15})@c\.us$/.exec(id);
+      if (!m) continue;
+      const name = String(safe(() => c.name, '') || safe(() => c.pushname, '') || '').trim().slice(0, 60);
+      if (!name) continue;
+      if (q && !name.toLowerCase().includes(q) && !(qd.length >= 3 && m[1].includes(qd))) continue;
+      out.push({ name, phone: m[1] });
+      if (out.length >= 20) break;
+    }
+    return out;
   }
 
   async function sendText(requestId, payload) {
@@ -1051,7 +1140,11 @@
     if (typeof p.chatId !== 'string' || !/^\d{8,15}@c\.us$/.test(p.chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida (só números @c.us)', 'before-send');
     let send;
     const newChat = { createChat: true, markIsRead: false };
-    if (p.kind === 'texto') {
+    let onFail = null;
+    if (Rich && Rich.isRich(p.kind)) {
+      send = null; // 2.9.2: montado depois de confirmar o número
+      onFail = richFail(p.kind);
+    } else if (p.kind === 'texto') {
       if (typeof p.text !== 'string' || !p.text.trim() || p.text.length > TEXT_MAX) throw new BridgeError('invalid_text', 'Texto inválido (1 a 4096 caracteres)', 'before-send');
       send = () => wpp.chat.sendTextMessage(p.chatId, p.text, newChat);
     } else if (p.kind === 'voz') {
@@ -1084,12 +1177,13 @@
         throw new BridgeError('query_failed', 'Não consegui confirmar se o número tem WhatsApp', 'before-send');
       }
       if (!exists) throw new BridgeError('no_whatsapp', 'Número sem WhatsApp', 'before-send');
+      if (!send) send = await richSendFn(p.chatId, p, newChat);
       if (job.cancelled) throw new BridgeError('cancelled', 'Envio cancelado', 'before-send');
       job.stage = 'sending';
       try {
         await send();
       } catch {
-        throw new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
+        throw onFail ? onFail() : new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
       }
       return { sent: true };
     } finally {
@@ -1129,6 +1223,10 @@
     myMessages: () => mineQueue.splice(0, mineQueue.length),
     adAttributions: (payload) => adAttributions(payload),
     labelChatIds: (payload) => labelChatIds(payload),
+    sendRich: (payload, requestId) => sendRich(requestId, payload),
+    richInfo: () => richInfo(),
+    catalogProducts: () => catalogProducts(),
+    contactSearch: (payload) => contactSearch(payload),
   };
 
   function reply(request, ok, data, error) {

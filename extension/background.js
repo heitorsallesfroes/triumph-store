@@ -1,6 +1,6 @@
 // Service worker: faz as chamadas ao Supabase pelo painel (content.js),
 // fora das regras de CSP/CORS da página do WhatsApp.
-importScripts('config.js', 'auth.js', 'sale-calc.js', 'supabase-api.js');
+importScripts('config.js', 'auth.js', 'sale-calc.js', 'rich-parts.js', 'supabase-api.js');
 
 const HANDLERS = {
   fetchLibrary:   ()  => WaApi.fetchLibrary(),

@@ -110,17 +110,26 @@
 
   // Partes de todos os itens; null = tabela wa_item_parts ainda não existe.
   // 2.8.7: pede também files (álbum; migration 20261105190000); sem a coluna, busca sem ela.
+  // 2.9.2: pede também data (tipos novos; migration 20261106120000); sem a coluna, busca sem ela.
   let partFilesCol = false;
+  let partDataCol = false;
   async function fetchParts() {
-    for (const withFiles of [true, false]) {
+    let optional = ['files', 'data'];
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const rows = await rest(`wa_item_parts?select=${PART_COLUMNS}${withFiles ? ',files' : ''}&order=item_id.asc,position.asc&limit=10000`);
-        partFilesCol = withFiles;
+        const rows = await rest(`wa_item_parts?select=${PART_COLUMNS}${optional.map((c) => `,${c}`).join('')}&order=item_id.asc,position.asc&limit=10000`);
+        partFilesCol = optional.includes('files');
+        partDataCol = optional.includes('data');
         return rows;
       } catch (err) {
+        // coluna nova que ainda não existe ("column wa_item_parts.data does not exist"): busca sem ela.
+        // Vem antes do teste da tabela, porque a mensagem da coluna também tem "does not exist".
+        const gone = /^Supabase 400:/.test(err.message) ? optional.filter((c) => new RegExp(`column\\s+[\\w."]*\\b${c}\\b`).test(err.message)) : [];
+        if (gone.length) { optional = optional.filter((c) => !gone.includes(c)); continue; }
         if (missingTable(err, 'wa_item_parts')) return null;
-        if (withFiles && /^Supabase 400:/.test(err.message) && /\bfiles\b/.test(err.message)) continue;
-        throw err;
+        const loose = /^Supabase 400:/.test(err.message) ? optional.filter((c) => new RegExp(`\\b${c}\\b`).test(err.message)) : [];
+        if (!loose.length) throw err;
+        optional = optional.filter((c) => !loose.includes(c));
       }
     }
     return null;
@@ -141,11 +150,16 @@
       items.forEach((i) => {
         const list = (byItem.get(i.id) || []).sort((a, b) => a.position - b.position);
         if (list.length) i.parts = list;
+        // 2.9.2: 1ª parte de um tipo novo: wa_items guarda 'texto' com um resumo; o painel vê o tipo de verdade
+        if (list.length && Rich.isRich(list[0].type)) { i.type = list[0].type; i.body = list[0].body || null; }
       });
     }
     // 2.8.6: a opção "Todas (menos a que vai colocar)" só aparece com as colunas no banco
     // (sem consulta extra: vale se a leitura das mensagens conseguiu pedir as colunas novas)
-    return { categories, items, partsAvailable: parts !== null, removeAllAvailable: itemOptionalCols.includes('on_send_remove_all_crm'), albumAvailable: parts !== null && partFilesCol };
+    return {
+      categories, items, partsAvailable: parts !== null, removeAllAvailable: itemOptionalCols.includes('on_send_remove_all_crm'),
+      albumAvailable: parts !== null && partFilesCol, richAvailable: parts !== null && partDataCol,
+    };
   }
 
   async function incrementUsage(id) {
@@ -551,7 +565,8 @@
 
   // ── Biblioteca: editor do painel (1.9.0). Só a pedido de um clique; tudo validado aqui ──
 
-  const ITEM_TYPES = ['texto', 'audio', 'imagem', 'video', 'documento'];
+  const Rich = root.TspRich; // 2.9.2 (rich-parts.js, carregado antes pelo background)
+  const ITEM_TYPES = ['texto', 'audio', 'imagem', 'video', 'documento', ...Rich.TYPES];
   const MAX_PARTS = 10;
   const TEXT_MAX = 4096;
   const TITLE_MAX = 80;
@@ -583,6 +598,17 @@
     if (p.type === 'texto') {
       if (typeof p.body !== 'string' || !p.body.trim() || p.body.length > TEXT_MAX) throw new Error(`Parte ${n}: texto de 1 a ${TEXT_MAX} caracteres`);
       return { type: 'texto', body: p.body, file_url: null, file_name: null, file_size: null, wait_seconds, typing_seconds };
+    }
+    // 2.9.2: localização, produto, catálogo, contato e Pix: os dados vão em data (jsonb)
+    if (Rich.isRich(p.type)) {
+      let data;
+      try { data = Rich.normalize(p.type, p.data); } catch (e) { throw new Error(`Parte ${n}: ${e.message}`); }
+      let body = null;
+      if (Rich.allowsText(p.type) && typeof p.body === 'string' && p.body.trim()) {
+        if (p.body.length > TEXT_MAX) throw new Error(`Parte ${n}: texto até ${TEXT_MAX} caracteres`);
+        body = p.body;
+      }
+      return { type: p.type, body, file_url: null, file_name: null, file_size: null, wait_seconds, typing_seconds, data };
     }
     // 2.8.7: álbum = parte 'imagem' com até 10 arquivos (fotos e vídeos MP4); a parte guarda o 1º arquivo
     let files = null;
@@ -658,9 +684,14 @@
     if ((allCrm || allWa) && !allCols) throw new Error('Atualize o banco para usar este recurso');
     const hasTable = await partsTableExists();
     if (!hasTable && list.length > 1) throw new Error(PARTS_MISSING);
+    // 2.9.2: tipos novos só com a coluna data (e a regra do tipo trocada, na mesma migration)
+    const anyData = list.some((p) => p.data);
+    if (anyData && !(hasTable && (await probe('wa_item_parts.data', () => hasColumn('wa_item_parts', 'data'))))) throw new Error(PARTS_MISSING);
     const first = list[0];
+    // 1ª parte de um tipo novo: wa_items fica como texto com o resumo (a regra do tipo em wa_items não muda)
+    const mirror = Rich.isRich(first.type) ? { type: 'texto', body: Rich.mirrorText(first) } : { type: first.type, body: first.body };
     const fields = {
-      category_id, title: cleanTitle, type: first.type, body: first.body,
+      category_id, title: cleanTitle, type: mirror.type, body: mirror.body,
       file_url: first.file_url, file_name: first.file_name, file_size: first.file_size,
       ...(labelCols ? { on_send_add_label_id: addLabel, on_send_remove_label_id: removeLabel } : {}),
       ...(waCols ? { on_send_add_wa_label_id: addWa, on_send_remove_wa_label_id: removeWa } : {}),
@@ -681,7 +712,7 @@
       // 2.8.7: com álbum, todas as linhas levam files (o PostgREST pede as mesmas chaves em todas)
       const anyFiles = list.some((p) => p.files);
       if (anyFiles && !(await probe('wa_item_parts.files', () => hasColumn('wa_item_parts', 'files')))) throw new Error('Atualize o banco para usar este recurso');
-      await rest('wa_item_parts', json('POST', 'return=minimal', list.map((p, i) => ({ ...p, ...(anyFiles ? { files: p.files || null } : {}), item_id: itemId, position: i }))));
+      await rest('wa_item_parts', json('POST', 'return=minimal', list.map((p, i) => ({ ...p, ...(anyFiles ? { files: p.files || null } : {}), ...(anyData ? { data: p.data || null } : {}), item_id: itemId, position: i }))));
     }
     return { id: itemId };
   }

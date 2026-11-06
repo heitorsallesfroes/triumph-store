@@ -799,6 +799,47 @@ guardada.
 
 ## O que mudou
 
+### 2.9.2
+- **Tipos novos de parte** nas mensagens rápidas (botões em "+ Adicionar" e no tipo da
+  parte; também na mensagem exclusiva do disparo):
+  - **📍 Localização**: nome do local, endereço, latitude e longitude. Cole o link do
+    Google Maps e a latitude/longitude são preenchidas sozinhas (formatos `@lat,long`,
+    `?q=lat,long`, `query=`, e o ponto exato `!3d…!4d…` dos links de lugar; o nome do
+    lugar também vem do link). Link curto (`maps.app.goo.gl`) não traz as coordenadas:
+    o painel avisa para abrir o link e colar o endereço completo, ou digitar os números.
+    Envio com `sendLocationMessage` (nome e endereço no cartão).
+  - **🛍️ Produto do catálogo**: "Escolher produto" lista os produtos do SEU catálogo do
+    WhatsApp Business (foto, nome, preço; produto oculto fica de fora) com busca. A
+    WA-JS 4.7.2 **não tem envio de produto**: vai o link `https://wa.me/p/<id>/<seu número>`
+    com o cartão de prévia (foto, nome e preço atuais do catálogo), montado do mesmo jeito
+    que a própria WA-JS faz no `sendCatalogMessage`. Produto sem foto vai sem miniatura.
+    Texto opcional na mesma mensagem.
+  - **📒 Catálogo**: cartão do catálogo inteiro (`sendCatalogMessage`), com texto opcional.
+  - **👤 Contato**: nome e telefone, ou escolha de um contato salvo no WhatsApp (busca por
+    nome ou número; só contatos com número). Envio com `sendVCardContactMessage`.
+  - **💠 Chave Pix**: tipo (CPF, CNPJ, telefone, e-mail, aleatória), chave e nome do
+    recebedor; a chave é conferida antes de salvar (CPF 11 números, CNPJ 14, telefone com
+    DDD, e-mail, chave aleatória de 36 caracteres). Envio com `sendPixKeyMessage`. Em conta
+    que não é WhatsApp Business: erro claro e a parte **não é enviada**; se o WhatsApp
+    recusar no envio: "Chave Pix: o WhatsApp não aceitou o envio nesta conta…".
+- Funcionam em todos os caminhos (seta, prévia "Enviar só nesta conversa", agendamento,
+  automação, follow e disparo, inclusive conversa nova), respeitam "esperar" e "digitando",
+  e aparecem na prévia como cartão, na ordem das partes. {nome} e {saudacao} valem no
+  texto junto do produto e do catálogo.
+- Filtros da aba: **Localização, Produto, Catálogo, Contato, Pix** (a mensagem entra no
+  filtro se tiver uma parte daquele tipo).
+- Banco: migration `20261106120000_wa_item_parts_rich.sql` (coluna `data` jsonb em
+  `wa_item_parts` e os tipos novos na regra do tipo; `notify pgrst`). **Sem ela, os tipos
+  novos e os filtros não aparecem e tudo funciona como antes.** `wa_items` não muda:
+  quando a 1ª parte é de um tipo novo, ele guarda um texto com o resumo (o ERP mostra
+  "📍 Localização: …").
+- Um tipo some do editor quando a WA-JS desta conta não tem a função dele (ex.: Produto,
+  Catálogo e Pix em conta que não é Business).
+- `rich-parts.js` (novo): validação, link do Maps e montagem do envio, usado pelo painel,
+  pelo service worker e pela ponte. Testes: `node extension/tests/rich-parts.test.cjs`
+  (salvar com e sem a migration, prévia, envio simulado com uma WA-JS falsa, links do Maps
+  com e sem coordenadas, produto sem foto).
+
 ### 2.9.1
 - **Nome aprendido mais rígido** (o "Olá!! Bommmm dia, tudo bem?" ensinava
   "Bommmm"). Agora só aprende quando o nome vem **direto** depois do cumprimento,
@@ -1265,6 +1306,7 @@ WhatsApp Web (mundo da página, "world": "MAIN")
   mic-bridge.js ............ document_start: ponte do microfone (plano B)
   wa-before.js ............. document_idle: desliga telemetria/servidores, guarda WPP de outra extensão
   vendor/wppconnect-wa.js .. biblioteca WA-JS 4.7.2, sem alterações (ver vendor/README.md)
+  rich-parts.js ............ tipos novos de parte: validação e montagem do envio (2.9.2)
   wa-bridge.js ............. fala com a WA-JS (cópia privada do WPP)
         ▲  window.postMessage (dois protocolos separados:
         │  'tsp-wa-content'/'tsp-wa-bridge' e 'tsp-wajs-content'/'tsp-wajs-bridge')
@@ -1272,6 +1314,7 @@ WhatsApp Web (mundo da página, "world": "MAIN")
 Mundo isolado da extensão
   data/nomes-br.js ......... lista de nomes comuns para o {nome} (2.1.0)
   sale-calc.js ............. cálculos da venda copiados do ERP (2.3.0; também no background)
+  rich-parts.js ............ o mesmo arquivo (2.9.2; também no background)
   engine.js ................ motor de envios (lógica pura + fila; sem rede, sem DOM)
   content.js ............... painel; áudio: rápido (WA-JS) → plano B (microfone) → plano C (arquivo)
         ▲  chrome.runtime.sendMessage
