@@ -285,15 +285,23 @@
 
   // 2.8.3: aprender o nome da SUA mensagem: cumprimento + nome ("Olá, Fernanda!!", "Oi Fernanda", "Bom dia, Fernanda").
   // Só a 1ª palavra depois do cumprimento, com maiúscula, só letras, 2–20; palavras que não são nome ficam de fora.
-  const LEARN_GREETING = /^\s*(?:ol[áa]+|oi+e?|bo[mn]+\s+dia|boa\s+tarde|boa\s+noite|opa|e\s+a[íi])(?=[\s,!.;:-])[\s,!.;:-]*/i;
-  const NOT_NAMES = new Set(['tudo', 'todos', 'todas', 'pessoal', 'amigo', 'amiga', 'querido', 'querida', 'cliente', 'bem', 'bom', 'boa', 'uma', 'um', 'td', 'tudo']);
-  function learnNameFrom(text) {
+  // 2.9.1: o nome vem DIRETO depois do cumprimento (só vírgula/espaço no meio: "Olá!! Bommmm" não conta) e
+  // depois dele só fim do texto ou pontuação (! , . ?), com ou sem espaço antes ("Bommmm dia" não é nome).
+  const LEARN_RE = /^\s*(?:ol[áa]+|oi+e?|bo[mn]+\s+dia|boa\s+tarde|boa\s+noite|opa|e\s+a[íi])[ \t]*,?[ \t]*(?<=[ \t,])([^\s,!?.;:]+)(?=$|[ \t]*[!,.?])/iu;
+  const NOT_NAMES = new Set(['tudo', 'todos', 'todas', 'pessoal', 'amigo', 'amiga', 'querido', 'querida', 'cliente', 'bem', 'bom', 'boa', 'uma', 'um', 'td',
+    'otima', 'otimo', 'excelente', 'feliz', 'dia', 'tarde', 'noite']);
+  const normWord = (w) => stripAccents(w).toLowerCase();
+  // palavras dos 3 textos da {saudacao} (wa_greetings) também nunca são nome
+  const greetWords = (cfg) => new Set(Object.values(cfg || {}).flatMap((t) => String(t || '').split(/[^\p{L}]+/u)).filter(Boolean).map(normWord));
+  function learnNameFrom(text, { greetings = null } = {}) {
     const s = String(text || '').slice(0, 200);
-    const m = LEARN_GREETING.exec(s);
+    const m = LEARN_RE.exec(s);
     if (!m) return null;
-    const word = (s.slice(m[0].length).match(/^[^\s,!?.;:]+/) || [''])[0];
+    const word = m[1];
     if (!/^\p{Lu}\p{L}{1,19}$/u.test(word)) return null;
-    if (NOT_NAMES.has(stripAccents(word).toLowerCase())) return null;
+    const w = normWord(word);
+    if (NOT_NAMES.has(w) || /^bo[ma]/.test(w)) return null;
+    if (greetWords(greetings || greetCfg).has(w)) return null;
     return capName(word);
   }
   const hasNameVar = (text) => /\{[^{}]*?\bnome\b[^{}]*?\}/i.test(String(text || ''));

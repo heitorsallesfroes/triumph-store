@@ -2118,13 +2118,15 @@
     refreshOpenBubble();
   }
   // Aprender da SUA mensagem (fila da ponte: só o começo do texto, só na memória)
+  const noLearnUntil = new Map(); // 2.9.1: chatId → até quando não aprende (envio com {nome} vazio)
+  const learnBlocked = (chatId) => { const u = noLearnUntil.get(chatId); if (u == null) return false; if (u > Date.now()) return true; noLearnUntil.delete(chatId); return false; };
   async function learnTick() {
     if (chatNames.available === false) return;
     let got = null;
     try { got = await waRequest('myMessages', {}, { timeout: 2000 }); } catch { got = null; }
     if (!Array.isArray(got) || !got.length) return;
     const last = new Map();
-    got.forEach((x) => { const n = x && globalThis.TspEngine.learnNameFrom(x.head); if (n && CHAT_ID_OK.test(x.chatId)) last.set(x.chatId, n); });
+    got.forEach((x) => { const n = x && globalThis.TspEngine.learnNameFrom(x.head); if (n && CHAT_ID_OK.test(x.chatId) && !learnBlocked(x.chatId)) last.set(x.chatId, n); });
     for (const [chatId, name] of last) {
       let r = null;
       try { r = await call('setChatName', { chatId, name, source: 'aprendido' }); } catch { r = null; }
@@ -3261,7 +3263,8 @@
     state.busyId = item.id;
     setSendButtonsDisabled(true);
     try {
-      const res = await runSequence({ parts, chatId, firstName: name });
+      const noLearn = !name && partsOf(item).some((p) => globalThis.TspEngine.hasNameVar(p.body)); // 2.9.1
+      const res = await runSequence({ parts, chatId, firstName: name, noLearn });
       sequenceToast(res, parts.length);
       if (res.status === 'ok') { registerUse(item); applyItemLabels(item, targetForOpenChat(chatId)); }
     } finally {
@@ -3909,8 +3912,12 @@
   }
 
   // Resultado: { status: 'ok' | 'stopped' | 'failed', sent, failedAt, stage, message }
-  async function runSequence({ parts, chatId, firstName = '', label = '', onStop = null, newChat = false }) {
+  async function runSequence({ parts, chatId, firstName = '', label = '', onStop = null, newChat = false, noLearn = false }) {
     if (seq) return { status: 'failed', sent: 0, stage: 'before-send', message: 'já existe um envio em andamento' };
+    // 2.9.1: mensagem com {nome} que saiu com o nome VAZIO não ensina nome (durante o envio e um pouco depois)
+    const hasVar = (t) => globalThis.TspEngine.hasNameVar(t);
+    const quiet = noLearn || (!firstName && (parts || []).some((p) => hasVar(p && p.body) || (Array.isArray(p && p.files) && p.files.some((f) => hasVar(f && f.caption)))));
+    if (quiet && chatId) noLearnUntil.set(chatId, Infinity);
     seq = { total: parts.length, index: 0, phase: 'wait', until: 0, stop: false, reqId: null, label, typingLabel: 'digitando', onStop };
     const ticker = setInterval(renderSeq, 250);
     renderSeq();
@@ -3951,6 +3958,7 @@
       clearInterval(ticker);
       seq = null;
       renderSeq();
+      if (quiet && chatId) noLearnUntil.set(chatId, Date.now() + 20000);
     }
   }
 

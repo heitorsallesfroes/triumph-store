@@ -799,6 +799,22 @@ guardada.
 
 ## O que mudou
 
+### 2.9.1
+- **Nome aprendido mais rígido** (o "Olá!! Bommmm dia, tudo bem?" ensinava
+  "Bommmm"). Agora só aprende quando o nome vem **direto** depois do cumprimento,
+  separado só por vírgula e/ou espaço ("Olá, Fernanda", "Oi Fernanda", "Oii,
+  Fernanda!"); com "!", "?", "." ou quebra de linha no meio, não aprende.
+- Depois do nome só pode vir fim do texto ou pontuação (! , . ?), com ou sem
+  espaço antes: "Bom dia", "Bommmm dia", "Olá Fernanda tudo bem" não ensinam.
+- Nunca viram nome: palavras que começam com "Bom"/"Boa" (Bom, Bommmm, Boaa…),
+  "Ótima", "Ótimo", "Uma", "Excelente", "Feliz" e todas as palavras dos 3 textos
+  da {saudacao} (`wa_greetings`).
+- Mensagem rápida com {nome} que saiu com o nome **vazio** não ensina nada
+  (a conversa fica sem aprender durante o envio e 20 s depois).
+- Exemplos: "Olá!! Bommmm dia, tudo bem?" → nada; "Olá, Fernanda!! Bommmm dia" →
+  Fernanda; "Bom dia, Fernanda" → Fernanda; "Olá!! Uma ótima tarde" → nada;
+  "Oi Bommmm" → nada.
+
 ### 2.9.0
 - 📈 da conversa: no topo, **Já enviado nesta conversa** (compras e contatos desta
   conversa: data/hora, valor, real ou teste, status) ou "Nenhuma compra enviada
