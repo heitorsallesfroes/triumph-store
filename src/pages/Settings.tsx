@@ -2,52 +2,19 @@ import { useEffect, useState } from 'react';
 import { Download, Loader2, Save, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/resumoAnualCalc';
+import {
+  BACKUP_TABLES, LAST_BACKUP_KEY, buildBackupSummary, extensionVersionFromManifest, formatBackupWhen, isBackupStale,
+} from '../lib/backup';
+import extensionManifestRaw from '../../extension/manifest.json?raw';
 
 import { getConfigDefaults, refreshSystemConfig } from '../lib/systemConfig';
 
 const INSTALLMENTS = Array.from({ length: 12 }, (_, i) => i + 1);
 
-// Backup completo: todas as tabelas do ERP e do WhatsApp/CRM, uma de cada vez, em páginas de 1000.
-// order = colunas para paginar sem pular nem repetir linhas (a maioria tem id).
-const BACKUP_TABLES: { name: string; order: string[] }[] = [
-  // ERP
-  { name: 'products', order: ['id'] },
-  { name: 'accessories', order: ['id'] },
-  { name: 'sales', order: ['id'] },
-  { name: 'sale_items', order: ['id'] },
-  { name: 'sale_accessories', order: ['id'] },
-  { name: 'small_sales', order: ['id'] },
-  { name: 'suppliers', order: ['id'] },
-  { name: 'supplier_orders', order: ['id'] },
-  { name: 'cities', order: ['id'] },
-  { name: 'neighborhoods', order: ['id'] },
-  { name: 'motoboys', order: ['id'] },
-  { name: 'motoboy_payments', order: ['id'] },
-  { name: 'ad_spend', order: ['id'] },
-  { name: 'operational_costs', order: ['id'] },
-  { name: 'operational_cost_payments', order: ['id'] },
-  { name: 'operational_costs_avulsos', order: ['id'] },
-  { name: 'stock_orders', order: ['id'] },
-  { name: 'stock_movements', order: ['id'] },
-  { name: 'system_config', order: ['key'] },
-  // WhatsApp / CRM
-  { name: 'wa_categories', order: ['id'] },
-  { name: 'wa_items', order: ['id'] },
-  { name: 'wa_item_parts', order: ['id'] },
-  { name: 'wa_labels', order: ['id'] },
-  { name: 'wa_contacts', order: ['id'] },
-  { name: 'wa_contact_labels', order: ['contact_id', 'label_id'] },
-  { name: 'wa_schedules', order: ['id'] },
-  { name: 'wa_settings', order: ['id'] },
-  { name: 'wa_send_log', order: ['id'] },
-  { name: 'wa_flows', order: ['id'] },
-  { name: 'wa_flow_variants', order: ['id'] },
-  { name: 'wa_campaigns', order: ['id'] },
-  { name: 'wa_campaign_targets', order: ['id'] },
-  { name: 'wa_automations', order: ['id'] },
-  { name: 'wa_automation_runs', order: ['id'] },
-  { name: 'wa_conversion_events', order: ['id'] },
-];
+// Backup completo: a lista de tabelas fica em src/lib/backup.ts (o teste scripts/tests/backup.test.ts confere
+// que toda tabela das migrations está nela). Uma tabela de cada vez, em páginas de 1000.
+const EXTENSION_VERSION = extensionVersionFromManifest(extensionManifestRaw);
+const MEDIA_BUCKET = 'wa-media';
 
 // Tabela que não existe no banco (migration não aplicada): pula e anota
 const isMissingTable = (e: any) => !!e && (e.code === 'PGRST205' || e.code === '42P01' || /does not exist|could not find the table/i.test(String(e.message || '')));
@@ -74,6 +41,16 @@ const fromPercentDisplay = (pct: string) => {
 export default function Settings() {
   const [isExporting, setIsExporting] = useState(false);
   const [backupProgress, setBackupProgress] = useState('');
+  const [includeMedia, setIncludeMedia] = useState(false);
+  // "Último backup baixado" fica guardado só neste navegador
+  const [lastBackupAt, setLastBackupAt] = useState<number | null>(() => {
+    try {
+      const n = Number(localStorage.getItem(LAST_BACKUP_KEY));
+      return Number.isFinite(n) && n > 0 ? n : null;
+    } catch {
+      return null;
+    }
+  });
 
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -187,31 +164,68 @@ export default function Settings() {
         }
       }
 
-      const backup = {
-        version: '2.0',
-        exportDate: new Date().toISOString(),
-        // Resumo no topo do arquivo: cada tabela com a quantidade de linhas
-        tables,
-        totalRows: tables.reduce((sum, t) => sum + t.rows, 0),
-        skipped,
-        data,
-      };
+      // Opcional: só a LISTA dos arquivos do bucket wa-media (nome, tamanho, link), num arquivo separado
+      let media: { path: string; name: string; size: number | null; mimetype: string | null; updated_at: string | null; url: string }[] | null = null;
+      if (includeMedia) {
+        media = [];
+        const folders = [''];
+        while (folders.length) {
+          const prefix = folders.shift() as string;
+          for (let offset = 0; ; offset += 1000) {
+            setBackupProgress(`Lista de mídias: ${media.length.toLocaleString('pt-BR')} arquivos…`);
+            const { data: items, error } = await supabase.storage.from(MEDIA_BUCKET).list(prefix, { limit: 1000, offset, sortBy: { column: 'name', order: 'asc' } });
+            if (error) throw new Error(`lista de mídias: ${error.message}`);
+            for (const it of items || []) {
+              const path = prefix ? `${prefix}/${it.name}` : it.name;
+              if (!it.id) { folders.push(path); continue; } // pasta
+              const meta = (it.metadata || {}) as { size?: number; mimetype?: string };
+              media.push({
+                path,
+                name: it.name,
+                size: typeof meta.size === 'number' ? meta.size : null,
+                mimetype: meta.mimetype || null,
+                updated_at: it.updated_at || null,
+                url: supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path).data.publicUrl,
+              });
+            }
+            if (!items || items.length < 1000) break;
+          }
+        }
+      }
+
+      const now = Date.now();
+      // Resumo no começo do arquivo: data/hora, linhas por tabela e a versão da extensão
+      const summary = buildBackupSummary({ now, extensionVersion: EXTENSION_VERSION, tables, skipped, mediaFiles: media ? media.length : null });
+      const backup = { version: '2.1', summary, ...summary, data };
 
       setBackupProgress('Gerando o arquivo…');
-      const blob = new Blob([JSON.stringify(backup, null, 2)], {
-        type: 'application/json'
-      });
+      const day = new Date(now).toISOString().split('T')[0];
+      const download = (content: unknown, filename: string) => {
+        const blob = new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      };
+      download(backup, `triumph-store-backup-${day}.json`);
+      if (media) {
+        download({
+          bucket: MEDIA_BUCKET,
+          exportDate: summary.exportDate,
+          exportDateLocal: summary.exportDateLocal,
+          files: media.length,
+          totalBytes: media.reduce((s, m) => s + (m.size || 0), 0),
+          list: media,
+        }, `triumph-store-midias-${day}.json`);
+      }
+      try { localStorage.setItem(LAST_BACKUP_KEY, String(now)); } catch { /* navegador sem armazenamento */ }
+      setLastBackupAt(now);
 
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `triumph-store-backup-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-
-      setBackupProgress(`Concluído: ${tables.length} tabelas, ${backup.totalRows.toLocaleString('pt-BR')} linhas${skipped.length ? ` (puladas: ${skipped.map((x) => x.name).join(', ')})` : ''}.`);
+      setBackupProgress(`Concluído: ${tables.length} tabelas, ${summary.totalRows.toLocaleString('pt-BR')} linhas${media ? `, ${media.length.toLocaleString('pt-BR')} arquivos de mídia na lista` : ''}${skipped.length ? ` (puladas: ${skipped.map((x) => x.name).join(', ')})` : ''}.`);
       alert('Backup exportado com sucesso!');
     } catch (error) {
       console.error('Erro ao exportar backup:', error);
@@ -443,6 +457,26 @@ export default function Settings() {
                 estoque, fornecedores, custos, anúncios, motoboys, configurações e todo o WhatsApp/CRM.
                 Cada tabela é buscada por vez, sem cortar linhas. Use este arquivo para restaurar o sistema posteriormente.
               </p>
+
+              <p className="text-sm text-gray-300 mb-2">
+                Último backup baixado: {lastBackupAt ? formatBackupWhen(lastBackupAt) : 'nenhum neste navegador'}
+              </p>
+              {isBackupStale(lastBackupAt, Date.now()) && (
+                <div className="mb-4 p-3 rounded border border-yellow-600 bg-yellow-900/30 text-yellow-300 text-sm">
+                  {lastBackupAt ? 'Faz mais de 7 dias desde o último backup.' : 'Nenhum backup baixado neste navegador ainda.'} Baixe um agora.
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 mb-4 text-sm text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeMedia}
+                  onChange={(e) => setIncludeMedia(e.target.checked)}
+                  disabled={isExporting}
+                  className="accent-orange-500"
+                />
+                Incluir lista de arquivos de mídia (nome, tamanho e link do bucket wa-media, num arquivo separado; não baixa os arquivos)
+              </label>
 
               <button
                 onClick={exportBackup}
