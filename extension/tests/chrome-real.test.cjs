@@ -128,6 +128,37 @@ async function main() {
     let extId = null;
     let swTarget = null;
     const inVals = (v) => (String(v || '').match(/^in\.\((.*)\)$/) || [null, ''])[1].split(',').map((x) => x.replace(/^"|"$/g, '')).filter(Boolean);
+    // 2.11.0: banco em memória (qualquer tabela): GET/HEAD com filtros eq/neq/is/in, POST, PATCH e DELETE
+    fake.db = {};
+    const tbl = (t) => fake.db[t] || (fake.db[t] = []);
+    function genericSupabase(method, url, body) {
+      const table = url.pathname.slice('/rest/v1/'.length);
+      const q = url.searchParams;
+      const filters = [];
+      for (const [k, v] of q) {
+        if (['select', 'order', 'limit', 'offset', 'on_conflict', 'or', 'and'].includes(k)) continue;
+        const m = /^(eq|neq|is|in|gte|lte|gt|lt|like|not)\.(.*)$/.exec(v);
+        if (m) filters.push([k, m[1], m[2]]);
+      }
+      const match = (r) => filters.every(([k, op, val]) => {
+        const x = r[k];
+        if (op === 'eq') return String(x) === val;
+        if (op === 'neq') return String(x) !== val;
+        if (op === 'is') return val === 'null' ? x == null : true;
+        if (op === 'in') return inVals(`in.${val}`).includes(String(x));
+        return true;
+      });
+      if (method === 'HEAD') return [200, null, tbl(table).filter(match).length];
+      if (method === 'GET') { let rows = tbl(table).filter(match); const lim = Number(q.get('limit')); if (lim) rows = rows.slice(0, lim); return [200, rows]; }
+      if (method === 'POST') {
+        const list = (Array.isArray(body) ? body : [body]).map((r) => ({ id: require('crypto').randomUUID(), created_at: new Date().toISOString(), ...r }));
+        tbl(table).push(...list);
+        return [201, list];
+      }
+      if (method === 'PATCH') { const rows = tbl(table).filter(match); rows.forEach((r) => Object.assign(r, body)); return [200, rows]; }
+      if (method === 'DELETE') { fake.db[table] = tbl(table).filter((r) => !match(r)); return [204, null]; }
+      return null;
+    }
     function fakeSupabase(method, url, body) {
       if (!url.pathname.startsWith('/rest/v1/')) return null;
       const table = url.pathname.slice('/rest/v1/'.length);
@@ -157,6 +188,7 @@ async function main() {
         if (q.get('id')) { const ids = inVals(q.get('id')); return [200, fake.sales.filter((x) => ids.includes(x.id))]; }
         return [200, fake.sales.filter((x) => !['cancelado', 'reembolsado'].includes(x.status))];
       }
+      if (fake.generic) return genericSupabase(method, url, body); // 2.11.0: banco em memória para qualquer tabela
       return null; // o resto (biblioteca etc.) continua "sem rede"
     }
     c.on((msg) => {
@@ -181,8 +213,9 @@ async function main() {
         try { body = p.request.postData ? JSON.parse(p.request.postData) : null; } catch { body = null; }
         const out = fakeSupabase(p.request.method, new URL(p.request.url), body);
         if (!out) { c.send('Fetch.failRequest', { requestId: p.requestId, errorReason: 'NameNotResolved' }, sid).catch(() => {}); return; }
-        const [status, data] = out;
-        c.send('Fetch.fulfillRequest', { requestId: p.requestId, responseCode: status, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }], body: Buffer.from(data == null ? '' : JSON.stringify(data)).toString('base64') }, sid).catch(() => {});
+        const [status, data, count] = out;
+        const headers = [{ name: 'Content-Type', value: 'application/json' }, ...(count != null ? [{ name: 'Content-Range', value: `*/${count}` }] : [])];
+        c.send('Fetch.fulfillRequest', { requestId: p.requestId, responseCode: status, responseHeaders: headers, body: Buffer.from(data == null ? '' : JSON.stringify(data)).toString('base64') }, sid).catch(() => {});
       }
     });
     const ext = await c.send('Extensions.loadUnpacked', { path: EXT_DIR });
@@ -559,6 +592,72 @@ async function main() {
     check('a venda só recebe wa_chat_id e o telefone vazio (nunca valores, itens ou estoque)', salePatches.length > 0 && salePatches.every((x) => Object.keys(x.body || {}).every((k) => ['wa_chat_id', 'customer_phone'].includes(k))), JSON.stringify(salePatches.map((x) => x.body)));
     fake.on = false;
     check('nenhum erro no console ligando vendas', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 7. automações (2.11.0) com o banco falso: modelo "Pós-venda" no passo a passo, criando a mensagem DENTRO da
+    // automação (o mesmo editor das mensagens rápidas), e a validação do editor avançado (mostra onde está o erro)
+    fake.on = true;
+    fake.generic = true;
+    fake.db.wa_settings = [{ id: 1, paused_all: false, max_per_hour: 30, max_per_day: 150, min_interval_s: 45, max_interval_s: 120, business_start: '09:00', business_end: '19:00', business_days: [1, 2, 3, 4, 5, 6], runner_id: null, lease_until: null, updated_at: new Date().toISOString() }];
+    // a extensão começa do zero com o banco falso (as seções sem rede deixaram guardado "tabela não existe")
+    await c.send('Extensions.loadUnpacked', { path: EXT_DIR });
+    await sleep(1200);
+    await s('Page.reload', { ignoreCache: true });
+    await sleep(1500);
+    for (const stop = Date.now() + TIMEOUT_MS; Date.now() < stop;) {
+      const opened = await evalPage(`(() => { const sh = document.getElementById('tsp-wa-host')?.shadowRoot; const t = sh && sh.querySelector('.toggle'); if (t && !sh.querySelector('.root.open')) t.click(); return !!(sh && sh.querySelector('.root.open')); })()`).catch(() => false);
+      if (opened) break;
+      await sleep(300);
+    }
+    await sleep(800);
+    await q(`sh.querySelector('[data-sec="follows"]').click(); await wait(300); return true;`);
+    const listOk = await waitFor(`return !!sh.querySelector('.fw-new');`, 15000);
+    check('automações: a lista abre com "+ Nova automação"', listOk, `${(await q(`return (sh.querySelector('.ftab') || {}).textContent || '';`)).slice(0, 120)}`);
+    await q(`sh.querySelector('.fw-new').click(); await wait(200); return true;`);
+    const models = await q(`return [...sh.querySelectorAll('.fw-model')].map((b) => b.dataset.wizard || 'branco');`);
+    check('"+ Nova automação": 4 modelos com explicação + "Em branco (avançado)"', JSON.stringify(models) === JSON.stringify(['posvenda', 'followup', 'lead', 'sumido', 'branco']), JSON.stringify(models));
+    await q(`sh.querySelector('.fw-model[data-wizard="posvenda"]').click(); await wait(200); sh.querySelector('.wiz-next').click(); await wait(150); sh.querySelector('.wiz-next').click(); await wait(200); return true;`);
+    const step3 = await q(`return !!sh.querySelector('.fw-wizard .fw-newmsg') && /O que mandar/.test(sh.querySelector('.fw-wizard').textContent);`);
+    check('passo a passo: Quem → Quando → O quê (com "+ Criar mensagem aqui")', step3);
+    // "+ Criar mensagem aqui": o mesmo editor das mensagens rápidas, na categoria "Automações"
+    await q(`sh.querySelector('.fw-wizard .fw-newmsg').click(); return true;`);
+    const edOpen = await waitFor(`return !!sh.querySelector('.editor .ed-forauto');`, 10000);
+    const cat = (fake.db.wa_categories || []).find((x) => x.name === 'Automações');
+    const catSel = await q(`const s = sh.querySelector('.editor select.ed-cat'); return s ? s.options[s.selectedIndex].textContent : '';`);
+    check('"+ Criar mensagem aqui" abre o editor das mensagens rápidas na categoria "Automações" (criada)', edOpen && !!cat && catSel === 'Automações', `editor: ${edOpen} · categoria: ${catSel}`);
+    await q(`const t = sh.querySelector('.editor input.ed-title'); t.value = 'Pedido de avaliação'; t.dispatchEvent(new Event('input', { bubbles: true }));
+      const x = sh.querySelector('.editor textarea.ed-text'); x.value = 'Oi {nome}! Pode avaliar a gente? https://g.page/r/teste'; x.dispatchEvent(new Event('input', { bubbles: true }));
+      sh.querySelector('.editor .ed-actions .btn.primary').click(); return true;`);
+    const back = await waitFor(`const s = sh.querySelector('.fw-wizard select[aria-label="Mensagem"]'); return !!(s && s.value);`, 15000);
+    const item = (fake.db.wa_items || []).find((x) => x.title === 'Pedido de avaliação');
+    const chosen = await q(`const s = sh.querySelector('.fw-wizard select[aria-label="Mensagem"]'); return s ? s.value : '';`);
+    check('ao salvar, volta para a automação com a mensagem nova já escolhida', back && !!item && chosen === item.id && item.category_id === (cat && cat.id), `escolhida: ${chosen} · salva: ${JSON.stringify(item && { id: item.id, category_id: item.category_id })}`);
+    await q(`sh.querySelector('.wiz-next').click(); await wait(200); return true;`);
+    const sentence = await q(`return (sh.querySelector('.fw-wizard .fw-sentence') || {}).textContent || '';`);
+    check('resumo em uma frase', /Quando uma venda for registrada pela conversa, 7 dias depois manda “Pedido de avaliação”\./.test(sentence), sentence);
+    const autoBefore = (fake.db.wa_automations || []).length;
+    await q(`sh.querySelector('.wiz-off').click(); return true;`);
+    await waitFor(`return !sh.querySelector('.fw-wizard') && !!sh.querySelector('.fw-new');`, 15000);
+    const auto = (fake.db.wa_automations || [])[autoBefore];
+    check('"Salvar desligada" grava a automação certa (venda registrada, 7 dias, a mensagem criada)',
+      !!auto && auto.trigger_type === 'venda_registrada' && auto.wait_minutes === 10080 && auto.active === false && auto.actions[0].type === 'enviar' && auto.actions[0].item_id === (item && item.id),
+      JSON.stringify(auto && { trigger_type: auto.trigger_type, wait_minutes: auto.wait_minutes, active: auto.active, actions: auto.actions }));
+    const card = await waitFor(`return [...sh.querySelectorAll('.fw-card')].some((c) => /Pós-venda/.test(c.textContent) && c.querySelector('.fw-sentence') && c.querySelector('.fw-stats'));`, 15000);
+    const cardTxt = await q(`const c = [...sh.querySelectorAll('.fw-card')].find((x) => /Pós-venda/.test(x.textContent)); return c ? c.textContent : '';`);
+    check('lista: frase-resumo, DESLIGADA, na fila e já receberam', card && /DESLIGADA/.test(cardTxt) && /Já receberam: 0/.test(cardTxt), cardTxt.slice(0, 300));
+    // editor avançado: "Colocar uma etiqueta" sem etiqueta não salva e mostra onde
+    const nAuto = (fake.db.wa_automations || []).length;
+    await q(`sh.querySelector('.fw-new').click(); await wait(200); sh.querySelector('.fw-blank').click(); await wait(300);
+      const n = sh.querySelector('.fw-editor input.ed-title'); n.value = 'Teste validação'; n.dispatchEvent(new Event('input', { bubbles: true }));
+      const a = sh.querySelector('.fw-editor select[aria-label="Ação 1"]'); a.value = 'adicionar_etiqueta'; a.dispatchEvent(new Event('change', { bubbles: true })); await wait(200);
+      [...sh.querySelectorAll('.fw-editor .bbtn.primary')].find((b) => /Salvar/.test(b.textContent)).click(); await wait(400); return true;`);
+    const inv = await q(`const bad = [...sh.querySelectorAll('.fw-editor .fw-invalid')]; return { n: bad.length, action: bad.some((b) => /Ação 1: escolha a etiqueta/.test(b.textContent) && b.querySelector('select[aria-label="Ação 1"]')),
+      trigger: bad.some((b) => /etiqueta do gatilho/.test(b.textContent)), msg: (sh.querySelector('.fw-editor .ed-msg') || {}).textContent || '', i: sh.querySelectorAll('.fw-editor .fw-i').length };`);
+    check('validação: não salva e marca em vermelho onde está cada problema (ação sem etiqueta, etiqueta do gatilho)',
+      inv.n >= 2 && inv.action && inv.trigger && /escolha a etiqueta/i.test(inv.msg) && (fake.db.wa_automations || []).length === nAuto, JSON.stringify(inv));
+    check('editor avançado com frases e (i) explicando as opções', inv.i >= 3 && await q(`return /Para quem está na etiqueta/.test(sh.querySelector('.fw-editor').textContent) && !/tempo corrido\\)/.test(sh.querySelector('.fw-editor').textContent);`), `(i): ${inv.i}`);
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console nas automações', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

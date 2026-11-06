@@ -605,6 +605,10 @@
       if (manual && Number(last.t) * 1000 < enteredAt) return { action: 'none', reason: 'ainda não respondeu', chatId };
       runKey = labelKey;
     } else if (saleTrigger) {
+      // 2.11.0: "X dias depois da venda" (tempo corrido desde o registro); sem espera = na hora
+      const waitMs = (Number(a.wait_minutes) || 0) * MIN_MS;
+      const saleAt = Date.parse(contact.sale_at || '');
+      if (waitMs > 0 && Number.isFinite(saleAt) && now < saleAt + waitMs) return { action: 'wait', reason: 'aguardando', chatId, dueAt: saleAt + waitMs, leftMs: saleAt + waitMs - now, entry };
       runKey = `venda@${contact.sale_id}`; // uma vez por venda
     } else if (a.trigger_type === 'dia_hora') {
       const t = parseHM(a.schedule_time);
@@ -657,7 +661,7 @@
     if (a.trigger_type === 'sem_resposta') quando = `Quando o contato da etiqueta ${trig} fica ${formatWait(a.wait_minutes)} úteis sem responder (${scheduleText(settings)})`;
     else if (a.trigger_type === 'entrou_etiqueta') quando = `Quando faz ${waitPhrase(a.wait_minutes)} que o contato entrou na etiqueta ${trig}`;
     else if (a.trigger_type === 'respondeu') quando = `Quando o contato da etiqueta ${trig} responde`;
-    else if (a.trigger_type === 'venda_registrada') quando = `Quando uma venda for registrada pela conversa${a.trigger_label_id ? ` (só quem está na etiqueta ${lab(a.trigger_label_id)})` : ''}`;
+    else if (a.trigger_type === 'venda_registrada') quando = `Quando uma venda for registrada pela conversa${Number(a.wait_minutes) > 0 ? `, ${waitPhrase(a.wait_minutes)} depois` : ''}${a.trigger_label_id ? ` (só quem está na etiqueta ${lab(a.trigger_label_id)})` : ''}`;
     else if (a.trigger_type === 'dia_hora') quando = `Toda ${formatDays(a.schedule_days || [])} às ${String(a.schedule_time || '').slice(0, 5) || '?'}, para quem está na etiqueta ${trig}`;
     else quando = 'Quando (gatilho não escolhido)';
     const conds = (a.conditions || []).map((c) => {
@@ -700,6 +704,137 @@
       help: 'Quem respondeu sai da régua e aparece na coluna Responder do Quadro para você decidir o próximo passo.',
       actions: [{ type: 'remover_etiqueta', followsTrigger: true }, { type: 'adicionar_etiqueta', label: 'Responder' }] },
   ];
+
+  // ── 2.11.0: modelos com passo a passo (Quem → Quando → O quê) ──
+  // Cada modelo vira uma ou mais automações do editor avançado (as mesmas regras de segurança de sempre).
+  // Etiquetas podem vir como "new:Nome" (criadas ao ligar).
+  const WIZARDS = [
+    { key: 'posvenda', title: 'Pós-venda: pedir avaliação', help: 'Quando uma venda for registrada pela conversa (💰), espera alguns dias e manda a mensagem (ex.: link de avaliação do Google).',
+      who: 'venda', unit: 'dias', amount: 7, stages: 1 },
+    { key: 'followup', title: 'Follow-up em etapas', help: 'Quem entra em "Follow Up 1" e não responde no tempo combinado recebe a mensagem e vai para "Follow Up 2", e assim por diante (até 4 etapas). Se responder, para.',
+      who: 'etiqueta', label: 'Follow Up 1', unit: 'dias', amount: 1, stages: 2, maxStages: 4 },
+    { key: 'lead', title: 'Lead novo sem resposta', help: 'Lead novo (de anúncio ou não) na etiqueta escolhida que não respondeu à sua mensagem em algumas horas recebe outra mensagem.',
+      who: 'etiqueta', label: 'Lead novo', waLabel: 'Novo cliente', unit: 'horas', amount: 3, stages: 1 },
+    { key: 'sumido', title: 'Cliente sumido', help: 'Conversa parada há alguns dias (você falou por último e o cliente não respondeu), com a etiqueta escolhida, recebe uma mensagem.',
+      who: 'etiqueta', label: 'Cliente', unit: 'dias', amount: 15, stages: 1 },
+  ];
+  // minutos de expediente num dia (o "sem responder" conta só o horário comercial)
+  function businessMinutesPerDay(settings) {
+    const s = ns(settings);
+    return Math.max(60, s.endMin - s.startMin);
+  }
+  // "1 dia", "3 horas" → minutos. useful: dia = um dia de expediente (horário comercial)
+  function wizardMinutes(amount, unit, { useful = false, settings } = {}) {
+    const n = Math.max(1, Math.floor(Number(amount) || 0));
+    if (unit === 'horas') return n * 60;
+    return n * (useful ? businessMinutesPerDay(settings) : 1440);
+  }
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  function wizardWhen(w) {
+    const n = Math.max(1, Math.floor(Number(w.amount) || 0));
+    return w.unit === 'horas' ? plural(n, 'hora', 'horas') : plural(n, w.useful ? 'dia útil' : 'dia', w.useful ? 'dias úteis' : 'dias');
+  }
+  // w: { name, trigger: { source: 'crm'|'whatsapp', id }, amount, unit, stages: [{ itemId, labelId }], itemId, moveTo, testChatId }
+  function wizardToAutomations(kind, w, { settings } = {}) {
+    const name = String(w.name || '').trim() || (WIZARDS.find((x) => x.key === kind) || {}).title || 'Automação';
+    const base = { active: false, conditions: [], schedule_days: null, schedule_time: null, ignore_older_days: 15, test_chat_id: w.testChatId || null };
+    const trig = w.trigger || {};
+    const trigFields = trig.source === 'whatsapp'
+      ? { trigger_label_source: 'whatsapp', trigger_wa_label_id: trig.id || null, trigger_label_id: null }
+      : { trigger_label_source: 'crm', trigger_wa_label_id: null, trigger_label_id: trig.id || null };
+    const moveAfter = (to) => (to ? [{ type: 'mover', label_id: to }] : []);
+    if (kind === 'posvenda') {
+      return [{ ...base, name: name.slice(0, 60), trigger_type: 'venda_registrada', trigger_label_source: 'crm', trigger_wa_label_id: null,
+        trigger_label_id: trig.source === 'crm' && trig.id ? trig.id : null, wait_minutes: wizardMinutes(w.amount, w.unit),
+        actions: [{ type: 'enviar', item_id: w.itemId || null, variants: [] }, ...(w.moveTo ? [{ type: 'adicionar_etiqueta', label_id: w.moveTo }] : [])] }];
+    }
+    const wait = wizardMinutes(w.amount, w.unit, { useful: true, settings });
+    // conversas paradas há mais que isso não contam: a espera em dias corridos + 15
+    const older = Math.min(365, Math.max(15, Math.ceil(wait / businessMinutesPerDay(settings)) * 2 + 15));
+    if (kind === 'followup') {
+      const stages = (w.stages || []).slice(0, 4);
+      return stages.map((st, k) => {
+        const label = k === 0 ? trigFields : { trigger_label_source: 'crm', trigger_wa_label_id: null, trigger_label_id: st.labelId || null };
+        const next = stages[k + 1];
+        const after = next ? [{ type: 'mover', label_id: next.labelId || null }] : w.moveTo ? [{ type: 'mover', label_id: w.moveTo }]
+          : (label.trigger_label_source === 'whatsapp' ? [{ type: 'remover_etiqueta_wa', wa_label_id: label.trigger_wa_label_id }] : [{ type: 'remover_etiqueta', label_id: label.trigger_label_id }]);
+        return { ...base, ...label, name: `${name} · etapa ${k + 1}`.slice(0, 60), trigger_type: 'sem_resposta', wait_minutes: wait, ignore_older_days: older,
+          actions: [{ type: 'enviar', item_id: st.itemId || null, variants: [] }, ...after] };
+      });
+    }
+    // lead / sumido: sem resposta há X → manda (e move, se escolher)
+    const trigger = { ...trigFields };
+    return [{ ...base, ...trigger, name: name.slice(0, 60), trigger_type: 'sem_resposta', wait_minutes: wait, ignore_older_days: older,
+      actions: [{ type: 'enviar', item_id: w.itemId || null, variants: [] }, ...moveAfter(w.moveTo)] }];
+  }
+  // Frase-resumo do passo a passo
+  function wizardSentence(kind, w, { labelName = (id) => id, waLabelName = (id) => id, itemTitle = (id) => id } = {}) {
+    const q = (s) => `“${s}”`;
+    const lab = (id) => q(id ? labelName(id) : '?');
+    const who = w.trigger && w.trigger.id ? (w.trigger.source === 'whatsapp' ? `${q(waLabelName(w.trigger.id))} (etiqueta do WhatsApp)` : lab(w.trigger.id)) : '?';
+    const msg = (id) => (id ? q(itemTitle(id)) : 'a mensagem (escolha no passo 3)');
+    const when = wizardWhen({ ...w, useful: kind !== 'posvenda' });
+    if (kind === 'posvenda') {
+      return `Quando uma venda for registrada pela conversa${w.trigger && w.trigger.id ? ` (só quem está em ${lab(w.trigger.id)})` : ''}, ${when} depois manda ${msg(w.itemId)}${w.moveTo ? ` e coloca em ${lab(w.moveTo)}` : ''}.`;
+    }
+    if (kind === 'followup') {
+      const stages = (w.stages || []).slice(0, 4);
+      const parts = stages.map((st, k) => {
+        const from = k === 0 ? who : lab(st.labelId);
+        const to = stages[k + 1] ? ` e vai para ${lab(stages[k + 1].labelId)}` : w.moveTo ? ` e vai para ${lab(w.moveTo)}` : ' e sai do follow-up';
+        return `quem está em ${from} e não responde em ${when} recebe ${msg(st.itemId)}${to}`;
+      });
+      return `${parts.map((p, k) => (k ? p : p.charAt(0).toUpperCase() + p.slice(1))).join('; ')}. Se o cliente responder, para.`;
+    }
+    const intro = kind === 'sumido' ? `Quem está em ${who} e está há ${when} sem responder à sua última mensagem` : `Lead em ${who} que não respondeu à sua mensagem em ${when}`;
+    return `${intro} recebe ${msg(w.itemId)}${w.moveTo ? ` e vai para ${lab(w.moveTo)}` : ''}. Só uma vez por entrada na etiqueta.`;
+  }
+
+  // ── 2.11.0: validação do editor avançado antes de salvar (diz ONDE está o problema) ──
+  // where: 'name' | 'trigger' | 'wait' | 'days' | 'time' | 'test' | 'cond:i' | 'action:i' | 'variant:i:j'
+  function validateAutomationDraft(a, { testOn = false } = {}) {
+    const out = [];
+    const add = (where, msg) => out.push({ where, msg });
+    const empty = (v) => v == null || v === '';
+    if (!String(a.name || '').trim()) add('name', 'Dê um nome para a automação.');
+    if (!TRIGGER_TYPES.includes(a.trigger_type)) add('trigger', 'Escolha quando a automação roda.');
+    const sale = a.trigger_type === 'venda_registrada';
+    if (!sale) {
+      if (a.trigger_label_source === 'whatsapp' ? empty(a.trigger_wa_label_id) : empty(a.trigger_label_id)) add('trigger', 'Escolha a etiqueta do gatilho.');
+    }
+    if ((a.trigger_type === 'sem_resposta' || a.trigger_type === 'entrou_etiqueta') && !(Number(a.wait_minutes) >= 1)) add('wait', 'Escolha depois de quanto tempo.');
+    if (a.trigger_type === 'dia_hora') {
+      if (!(a.schedule_days || []).length) add('days', 'Escolha pelo menos um dia da semana.');
+      if (parseHM(a.schedule_time) == null) add('time', 'Escolha a hora.');
+    }
+    if (testOn && empty(a.test_chat_id)) add('test', 'Escolha a conversa de teste.');
+    (a.conditions || []).forEach((c, i) => {
+      if ((c.type === 'tem_etiqueta' || c.type === 'nao_tem_etiqueta') && empty(c.label_id)) add(`cond:${i}`, `Condição ${i + 1}: escolha a etiqueta.`);
+      if (c.type === 'anuncio' && !String(c.keyword || '').trim()) add(`cond:${i}`, `Condição ${i + 1}: escreva a palavra do anúncio.`);
+      if (c.type === 'parada_max_dias' && !(Number(c.days) >= 1)) add(`cond:${i}`, `Condição ${i + 1}: escolha os dias.`);
+    });
+    const acts = a.actions || [];
+    if (!acts.some((x) => x.type !== 'parar')) add('action:0', 'Escolha pelo menos uma ação.');
+    acts.forEach((x, i) => {
+      const n = `Ação ${i + 1}`;
+      if (x.type === 'enviar') {
+        const vs = x.variants || [];
+        if (empty(x.item_id) && !vs.length) add(`action:${i}`, `${n}: escolha a mensagem (ou crie uma aqui).`);
+        vs.forEach((v, j) => {
+          if (empty(v.item_id)) add(`variant:${i}:${j}`, `${n}, variante ${j + 1}: escolha a mensagem.`);
+          if (v.when === 'etiqueta' && empty(v.label_id)) add(`variant:${i}:${j}`, `${n}, variante ${j + 1}: escolha a etiqueta.`);
+          if (v.when === 'anuncio' && !String(v.keyword || '').trim()) add(`variant:${i}:${j}`, `${n}, variante ${j + 1}: escreva a palavra do anúncio.`);
+        });
+      } else if (WA_LABEL_ACTIONS.includes(x.type)) {
+        if (empty(x.wa_label_id)) add(`action:${i}`, `${n}: escolha a etiqueta do WhatsApp.`);
+      } else if (x.type !== 'parar') {
+        if (empty(x.label_id)) add(`action:${i}`, `${n}: escolha a etiqueta.`);
+        else if (x.type === 'mover' && !sale && a.trigger_label_source !== 'whatsapp' && x.label_id === a.trigger_label_id) add(`action:${i}`, `${n}: mover para uma etiqueta diferente da do gatilho.`);
+        else if (x.type === 'mover' && sale && empty(a.trigger_label_id)) add(`action:${i}`, `${n}: sem etiqueta no gatilho, use "Adicionar etiqueta".`);
+      }
+    });
+    return out;
+  }
 
   // ── Limites ──────────────────────────────────────────────────────────────
 
@@ -1158,7 +1293,9 @@
       }
       // 2.3.0: "venda registrada": um candidato por venda registrada pela conversa (últimos 2 dias)
       let buyers = [];
-      if (saleList.length) { try { buyers = await api('saleTriggerCandidates', { sinceDays: 2 }); } catch { buyers = []; } }
+      // 2.11.0: com "X dias depois da venda", busca vendas de até X + 2 dias (no máximo 90)
+      const saleDays = Math.min(90, 2 + Math.max(0, ...saleList.map((a) => Math.ceil((Number(a.wait_minutes) || 0) / 1440))));
+      if (saleList.length) { try { buyers = await api('saleTriggerCandidates', { sinceDays: saleDays }); } catch { buyers = []; } }
       if (!Array.isArray(buyers)) buyers = [];
       if (!people.length && !buyers.length) return [];
       let ran = [];
@@ -1441,6 +1578,22 @@
     }
 
     // Simular: nada é enviado nem gravado
+    // 2.11.0: por automação ativa, quantos estão esperando (wait) e prontos para rodar agora (run). Só leitura.
+    async function queueCounts() {
+      await loadSettings();
+      if (!st.available || !st.automationsAvailable) return {};
+      await loadAutomations();
+      const rows = await evaluateAutomations();
+      const out = {};
+      rows.forEach((r) => {
+        if (!r.automation) return;
+        const o = out[r.automation.id] || (out[r.automation.id] = { waiting: 0, ready: 0 });
+        if (r.ev.action === 'wait') o.waiting++;
+        else if (r.ev.action === 'run') o.ready++;
+      });
+      return out;
+    }
+
     async function simulate(limit = 200) {
       await loadSettings();
       if (!st.available) return { available: false, rows: [] };
@@ -1455,7 +1608,7 @@
     }
 
     return {
-      state: st, runnerId, start, stop, tick, leaseTick, poke, refreshActivity, setPaused, saveSettings, simulate, loadSettings, loadFlows,
+      state: st, runnerId, start, stop, tick, leaseTick, poke, refreshActivity, setPaused, saveSettings, simulate, queueCounts, loadSettings, loadFlows,
       refreshCounts, evaluate, ensureNoSendLabel, loadAutomations, evaluateAutomations,
       setWaLabel, // 2.7.1: a mensagem rápida usa a mesma troca de etiqueta do WhatsApp das automações
     };
@@ -1473,6 +1626,7 @@
     TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
+    WIZARDS, wizardToAutomations, wizardSentence, wizardMinutes, businessMinutesPerDay, validateAutomationDraft,
     limitCheck, randomGapMs, estimateDuration, estimateText,
     createMotor,
   };

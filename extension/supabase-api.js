@@ -1991,6 +1991,8 @@
       test_chat_id: a.test_chat_id == null || a.test_chat_id === '' ? null : (typeof a.test_chat_id === 'string' && SCHED_CHAT_RE.test(a.test_chat_id) ? a.test_chat_id : (() => { throw new Error('Escolha a conversa de teste'); })()),
     };
     if (a.trigger_type === 'sem_resposta' || a.trigger_type === 'entrou_etiqueta') row.wait_minutes = intIn(a.wait_minutes, 1, 525600, 'Espera (minutos)');
+    // 2.11.0: "X dias depois da venda" (opcional; até 90 dias)
+    if (a.trigger_type === 'venda_registrada' && a.wait_minutes != null && a.wait_minutes !== '' && Number(a.wait_minutes) > 0) row.wait_minutes = intIn(a.wait_minutes, 1, 129600, 'Espera depois da venda (até 90 dias)');
     if (a.trigger_type === 'dia_hora') {
       const days = Array.isArray(a.schedule_days) ? [...new Set(a.schedule_days)] : null;
       if (!days || !days.length || days.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) throw new Error('Escolha pelo menos um dia da semana');
@@ -2076,6 +2078,17 @@
   }
 
   // Execuções já feitas das automações (para não repetir): "automação:contato:run_key"
+  // 2.11.0: quantas pessoas cada automação já atendeu (execuções gravadas; "tirado da automação" não conta)
+  async function automationSentCounts({ automationIds }) {
+    if (!Array.isArray(automationIds) || automationIds.length > 100) throw new Error('Lista inválida');
+    const out = {};
+    for (const id of automationIds) {
+      checkUuid(id, 'Automação inválida');
+      try { out[id] = await countRows(`wa_automation_runs?select=id&automation_id=eq.${id}&run_key=not.like.fora@*`); } catch { out[id] = null; }
+    }
+    return out;
+  }
+
   async function automationRuns({ automationIds, contactIds }) {
     if (!Array.isArray(automationIds) || automationIds.length > 100) throw new Error('Lista inválida');
     automationIds.forEach((a) => checkUuid(a, 'Automação inválida'));
@@ -2639,7 +2652,7 @@
   // Gatilho "venda registrada": contatos das vendas registradas pela extensão nos últimos dias
   async function saleTriggerCandidates({ sinceDays = 2 } = {}) {
     if (!(await salesOrigin())) return [];
-    const days = intIn(Number(sinceDays) || 2, 1, 30, 'Dias');
+    const days = intIn(Number(sinceDays) || 2, 1, 92, 'Dias'); // 2.11.0: "X dias depois da venda" (até 90)
     const since = encodeURIComponent(new Date(Date.now() - days * 86400000).toISOString());
     const sales = await rest(`sales?select=id,wa_chat_id,created_at&wa_chat_id=not.is.null&created_at=gte.${since}&order=created_at.asc&limit=500`);
     if (!sales.length) return [];
@@ -3052,7 +3065,7 @@
     purchaseSaleLink, linkSaleToPurchase, unlinkSaleFromPurchase,
     sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
     erpCatalog, createSaleFromChat, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
-    fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve,
+    fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
     automationUnreserve, applySendLabels, getContactName,
     fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,

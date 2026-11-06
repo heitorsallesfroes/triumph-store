@@ -799,6 +799,44 @@ guardada.
 
 ## O que mudou
 
+### 2.11.0 — automações mais simples + criar mensagem dentro da automação
+- **"+ Nova automação"** agora começa por modelos com uma frase explicando cada um:
+  - **Pós-venda: pedir avaliação** — venda registrada pelo 💰 → espera X dias → manda a mensagem (e,
+    opcional, coloca numa etiqueta);
+  - **Follow-up em etapas** — quem entra em "Follow Up 1" e não responde em X recebe a mensagem e vai para
+    "Follow Up 2"… (1 a 4 etapas; vira uma automação por etapa; a última sai da etiqueta ou vai para a
+    escolhida). Se o cliente responder, para;
+  - **Lead novo sem resposta** — lead (anúncio ou não) da etiqueta escolhida (CRM ou do WhatsApp, ex.:
+    "Novo cliente") que não respondeu em X horas recebe a mensagem;
+  - **Cliente sumido** — quem está na etiqueta e não responde à sua última mensagem há X dias úteis recebe a
+    mensagem;
+  - **Em branco (avançado)** — o editor completo. Os modelos antigos ficam em "Mais modelos (editor avançado)".
+- Passo a passo em 3 telas: **Quem** (etiqueta, com quantos estão nela hoje e o aviso de que só vale para quem
+  entrar depois de ligar), **Quando** ("7 dias depois da venda", "3 horas sem responder"; o "sem responder"
+  conta só o horário comercial) e **O quê** (mensagem: escolher ou criar aqui; para onde mover depois). No fim,
+  o **resumo em uma frase** e os botões **Testar comigo** (modo teste com a conversa escolhida), **Ligar** e
+  **Salvar desligada**. Etiquetas que ainda não existem são criadas ao ligar.
+- **Criar mensagem na hora**: na ação "Enviar mensagem" (no passo a passo e no editor avançado), além de
+  escolher uma pronta, **"+ Criar mensagem aqui"** abre o MESMO editor das mensagens rápidas (texto, áudio,
+  imagem, álbum, vídeo, PDF, localização, produto, catálogo, contato, Pix, {nome}, {saudacao},
+  esperar/digitando). Ao salvar, a mensagem é criada na categoria **"Automações"** (criada se não existir) e
+  já fica escolhida na ação; Cancelar volta sem mudar nada. **"Editar esta mensagem"** ao lado da escolhida.
+- **Editor avançado mais claro**: frases em vez de termos técnicos ("Algum tempo depois de entrar na
+  etiqueta", "Não respondeu à sua mensagem por algum tempo", "Colocar uma etiqueta CRM"…), um **(i)** explicando
+  cada opção, as **variantes** atrás de "Mais opções" e **validação antes de salvar**: o que falta fica marcado
+  em vermelho no lugar (ex.: "Ação 2: escolha a etiqueta") e nada é salvo. O gatilho "venda registrada" ganhou
+  "esperar X dias depois da venda" (0 = na hora, como antes; até 90).
+- **Lista**: cada automação mostra a frase-resumo, LIGADA/DESLIGADA, EM TESTE, **quantos estão na fila agora**
+  (esperando + prontos, calculado como o "Simular", sem enviar) e **quantos já receberam**.
+- Segurança igual: só daqui pra frente, nunca para "Não enviar", limites e horário comercial. As automações
+  existentes continuam funcionando e abrem no editor avançado. Sem migration nova.
+- Regras em `engine.js` (`WIZARDS`, `wizardToAutomations`, `wizardSentence`, `validateAutomationDraft`; espera
+  da venda em `evaluateAutomation`). Testes: `tests/automations.test.cjs` (cada modelo gera a automação certa,
+  frase, validação no lugar certo, espera da venda, as geradas passam na validação do servidor). O teste no
+  Chrome real usa um banco falso em memória: abre "+ Nova automação" → Pós-venda → os 3 passos → "+ Criar
+  mensagem aqui" (editor das mensagens rápidas, categoria "Automações") → volta com a mensagem escolhida →
+  resumo → "Salvar desligada" (confere a automação gravada) e a validação do editor avançado.
+
 ### 2.10.5 — a Compra do 📈 ligada à venda do ERP (extensão + ERP)
 - Depois de enviar uma **Compra real** no 📈 (e também ao abrir o 📈 de uma conversa que já tem compra real
   enviada), o painel procura a venda no ERP (`sales`):
