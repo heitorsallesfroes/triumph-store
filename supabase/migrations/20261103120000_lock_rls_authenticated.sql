@@ -106,7 +106,9 @@ declare
     -- extensão 2.8.3 (nome para mensagens: migration 20261105150000)
     'wa_chat_names',
     -- extensão 2.10.0 (painel de resultados: migration 20261106150000)
-    'wa_leads', 'wa_replies'
+    'wa_leads', 'wa_replies',
+    -- extensão 2.12.0 (sequências: migration 20261106210000)
+    'wa_sequence_runs'
   ];
 begin
   foreach t in array tables loop

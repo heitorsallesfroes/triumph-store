@@ -799,6 +799,41 @@ guardada.
 
 ## O que mudou
 
+### 2.12.0 — automação em SEQUÊNCIA com caminhos "Respondeu / Não respondeu"
+- Dois modelos novos em "+ Nova automação": **Sequência (respondeu / não respondeu)** e **Follow-up de lead
+  novo**. Abrem um editor visual em lista vertical (de cima para baixo, como uma receita):
+  - **Começo (quem entra)**: "Lead novo chamou" (automático, pelos leads registrados — `wa_leads` — sem precisar
+    de etiqueta; todos / só de anúncio / só orgânicos), "Entrou na etiqueta" (CRM ou WhatsApp), "Venda
+    registrada (💰)" ou "Adicionei manualmente" (🔁 Automação da conversa → Adicionar à automação).
+  - **Passos**: ✉️ Enviar mensagem (escolher ou "+ Criar mensagem aqui"), 🏷️ Colocar/tirar etiqueta (CRM ou
+    WhatsApp, com "Tirar todas as outras (menos a que vai colocar)") e ⏳ **Esperar resposta** por X
+    minutos/horas/dias.
+  - Todo "Esperar resposta" abre **dois caminhos** coloridos: ✅ **Respondeu** e ❌ **Não respondeu**, cada um
+    com os seus passos (pode ter outra espera dentro, até 5 níveis). Cada caminho termina em **Fim** (sai da
+    automação) ou **Continuar para…** (outro passo; a validação não deixa um laço sem espera).
+  - **Respondeu** = o cliente mandou qualquer mensagem depois do nosso último envio desta sequência (pela conversa
+    e pelas respostas registradas em `wa_replies`). Se você mandar outra mensagem durante a espera, o tempo
+    recomeça dela. Opção "Contar a partir da MINHA última mensagem" (espera você responder antes) e
+    **"Contar o tempo das esperas só no horário comercial"**.
+- **Follow-up de lead novo** (tudo editável): lead novo chamou → (você responde à mão) → espera resposta 2h depois
+  da SUA última mensagem → ❌ Follow 1 → espera 1 dia → ❌ Follow 2 → espera 2 dias → ❌ Follow 3 → Fim; em
+  qualquer ✅ → coloca "Em atendimento" e Fim.
+- **Painel da conversa**: se a conversa está numa sequência, aparece "🔁 Na automação X · passo: esperando
+  resposta (faltam 1h20)" com **Tirar da automação** e **Pular espera** (segue pelo ❌ no próximo ciclo).
+- **Lista de automações**: cada sequência mostra quantos estão em cada passo agora e quantos saíram por ✅ e ❌.
+- **Segurança igual**: só daqui pra frente (quem já estava antes de ligar não entra), "Não enviar" tira a conversa
+  da sequência, limites por hora/dia, intervalo entre envios, horário comercial e "Testar comigo". Cada envio
+  trava o passo antes de mandar (`version`), então duas abas/PCs nunca mandam o mesmo passo. As automações de
+  sempre continuam funcionando.
+- Banco: migration `20261106210000_wa_sequences.sql` (`kind` e `sequence` em `wa_automations`; `trigger_type` aceita
+  `sequencia`; tabela nova `wa_sequence_runs` com o passo de cada conversa, mesmas políticas, registrada na Fase 2
+  e no rollback; `notify pgrst`). Sem ela, as sequências não aparecem e o resto funciona como antes.
+- Regras em `engine.js` (`seqStep`, `seqValidate`, `seqDescribe`, `seqTemplate`) e no motor (entrada, decisão,
+  etiquetas e envio). Testes: `tests/sequence.test.cjs` (respondeu no 1º passo, não respondeu até o fim, resposta
+  durante a espera, horário comercial, "Não enviar", "Pular espera", "Continuar para…", trava de versão, modo
+  teste, só daqui pra frente, painel e servidor) e o Chrome real (modelo no editor visual, validação por passo,
+  salvar e os números da lista).
+
 ### 2.11.0 — automações mais simples + criar mensagem dentro da automação
 - **"+ Nova automação"** agora começa por modelos com uma frase explicando cada um:
   - **Pós-venda: pedir avaliação** — venda registrada pelo 💰 → espera X dias → manda a mensagem (e,

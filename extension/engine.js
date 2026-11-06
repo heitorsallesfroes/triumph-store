@@ -705,6 +705,185 @@
       actions: [{ type: 'remover_etiqueta', followsTrigger: true }, { type: 'adicionar_etiqueta', label: 'Responder' }] },
   ];
 
+  // ── 2.12.0: SEQUÊNCIA com caminhos "Respondeu / Não respondeu" ──
+  // def = { start, business, steps: [passo] } — passos (lista de cima para baixo):
+  //   { id, type: 'enviar', item_id }
+  //   { id, type: 'etiqueta', op: 'colocar'|'tirar', source: 'crm'|'whatsapp', label_id | wa_label_id, remove_others? (colocar: tira todas as outras) }
+  //   { id, type: 'esperar', amount, unit: 'minutos'|'horas'|'dias', after_mine?, yes: [passos], no: [passos] }
+  //   { id, type: 'fim' } | { id, type: 'ir', to: id }   (fim da lista = Fim)
+  // start = { type: 'lead'|'etiqueta'|'venda'|'manual', origin: 'todos'|'anuncio'|'organico', source, label_id, wa_label_id }
+  const SEQ_MAX_DEPTH = 5;
+  const SEQ_UNIT_MIN = { minutos: 1, horas: 60, dias: 1440 };
+  function seqIndex(def) {
+    const map = new Map();
+    const walk = (list, depth, parent) => (list || []).forEach((n, i) => {
+      if (!n || !n.id) return;
+      map.set(n.id, { node: n, list, i, depth, parent });
+      if (n.type === 'esperar') { walk(n.yes, depth + 1, { id: n.id, branch: 'yes' }); walk(n.no, depth + 1, { id: n.id, branch: 'no' }); }
+    });
+    walk(def && def.steps, 1, null);
+    return map;
+  }
+  const seqNextOf = (idx, id) => { const e = idx.get(id); const n = e && e.list[e.i + 1]; return n ? n.id : null; };
+  const seqFirstOf = (list) => (list && list[0] ? list[0].id : null);
+  const seqOutcome = (branches) => { const b = (branches || [])[branches.length - 1]; return b ? (b.result === 'sim' ? 'respondeu' : 'nao_respondeu') : 'fim'; };
+  // Respondeu = mensagem do cliente depois do último envio nosso desta sequência (ou do começo da espera)
+  function seqReplied(ref, chat, replies) {
+    if (chat && chat.last && !chat.last.fromMe && Number(chat.last.t) * 1000 > ref) return true;
+    return (replies || []).some((t) => Number(t) > ref);
+  }
+  // Decide o que fazer agora com UMA conversa na sequência. Não envia nem grava nada.
+  // run = { node, wait_started_at (ms), last_sent_at (ms), skip_wait, branches }
+  // → { status: 'run' (mandar send.itemId e ir para node) | 'progress' (só gravar node/espera/etiquetas) | 'wait' | 'end',
+  //     node, waitStart, ops: [etiquetas], send, branches (novas), outcome, dueAt, reason }
+  function seqStep({ def, run, chat, replies, now, settings }) {
+    const idx = seqIndex(def);
+    const ops = [];
+    const branches = [];
+    let id = run.node || seqFirstOf(def.steps);
+    let skip = !!run.skip_wait;
+    const waitStart = Number(run.wait_started_at) || null;
+    const lastSent = Number(run.last_sent_at) || null;
+    const all = [...(run.branches || [])];
+    const end = (reason) => ({ status: 'end', node: null, ops, branches, outcome: seqOutcome([...all, ...branches]), reason });
+    for (let guard = 0; guard < 100; guard++) {
+      if (!id) return end('fim');
+      const e = idx.get(id);
+      if (!e) return end('passo não existe mais');
+      const n = e.node;
+      if (n.type === 'fim') return end('fim');
+      if (n.type === 'ir') { id = n.to; continue; }
+      if (n.type === 'etiqueta') { ops.push({ op: n.op, source: n.source, label_id: n.label_id || null, wa_label_id: n.wa_label_id || null, remove_others: !!n.remove_others }); id = seqNextOf(idx, id); continue; }
+      if (n.type === 'enviar') return { status: 'run', node: seqNextOf(idx, id), sendNode: id, send: { itemId: n.item_id || null }, ops, branches, waitStart: null };
+      if (n.type === 'esperar') {
+        // chegou agora na espera: grava o começo (a decisão vem no próximo ciclo)
+        if (run.node !== id || !waitStart) return { status: 'progress', node: id, waitStart: now, ops, branches };
+        if (!chat || !chat.loaded) return { status: 'wait', node: id, ops, branches, reason: 'conversa não carregada' };
+        const ref = lastSent && lastSent <= waitStart ? lastSent : waitStart;
+        if (!skip && seqReplied(ref, chat, replies)) {
+          branches.push({ node: id, result: 'sim', at: now });
+          id = seqFirstOf(n.yes);
+          skip = false;
+          if (!id) return end('respondeu');
+          continue;
+        }
+        const lastMine = chat.last && chat.last.fromMe ? Number(chat.last.t) * 1000 : 0;
+        const mine = Math.max(lastMine > waitStart ? lastMine : 0, lastSent && lastSent > waitStart ? lastSent : 0);
+        const need = Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60) * MIN_MS;
+        let timedOut = skip;
+        let dueAt = null;
+        if (!timedOut) {
+          if (n.after_mine && !mine) return { status: 'wait', node: id, ops, branches, reason: 'esperando a sua mensagem', dueAt: null };
+          const from = Math.max(waitStart, mine);
+          if (def.business) {
+            timedOut = businessMsBetween(from, now, settings) >= need;
+            dueAt = addBusinessMs(from, need, settings);
+          } else {
+            timedOut = now - from >= need;
+            dueAt = from + need;
+          }
+        }
+        if (!timedOut) return { status: 'wait', node: id, ops, branches, dueAt, reason: 'esperando resposta' };
+        branches.push({ node: id, result: 'nao', at: now });
+        id = seqFirstOf(n.no);
+        skip = false;
+        if (!id) return end('não respondeu');
+        continue;
+      }
+      id = seqNextOf(idx, id); // tipo desconhecido: pula
+    }
+    return end('laço sem espera');
+  }
+  // Quem entra: a chave da entrada (um percurso por entrada; entrar de novo = outro percurso)
+  function seqStartMatches(start, lead) {
+    const o = (start && start.origin) || 'todos';
+    return o === 'todos' || (o === 'anuncio' ? lead.origin === 'anuncio' : lead.origin !== 'anuncio');
+  }
+  // Validação (diz em qual passo): [{ node, msg }]
+  function seqValidate(def) {
+    const out = [];
+    const st = (def && def.start) || {};
+    if (!['lead', 'etiqueta', 'venda', 'manual'].includes(st.type)) out.push({ node: 'start', msg: 'Escolha quem entra na sequência.' });
+    if (st.type === 'etiqueta' && !(st.source === 'whatsapp' ? st.wa_label_id : st.label_id)) out.push({ node: 'start', msg: 'Escolha a etiqueta de quem entra.' });
+    const idx = seqIndex(def);
+    if (!(def && def.steps && def.steps.length)) out.push({ node: 'start', msg: 'Adicione pelo menos um passo.' });
+    let sends = 0;
+    idx.forEach(({ node: n, depth }) => {
+      if (n.type === 'enviar') { sends++; if (!n.item_id) out.push({ node: n.id, msg: 'Escolha ou crie a mensagem.' }); }
+      if (n.type === 'etiqueta' && !(n.source === 'whatsapp' ? n.wa_label_id : n.label_id)) out.push({ node: n.id, msg: 'Escolha a etiqueta.' });
+      if (n.type === 'esperar') {
+        if (!(Number(n.amount) >= 1)) out.push({ node: n.id, msg: 'Escolha quanto tempo esperar.' });
+        if (depth > SEQ_MAX_DEPTH) out.push({ node: n.id, msg: `No máximo ${SEQ_MAX_DEPTH} esperas uma dentro da outra.` });
+      }
+      if (n.type === 'ir') {
+        if (!n.to || !idx.has(n.to)) out.push({ node: n.id, msg: 'Escolha para onde continuar.' });
+        else {
+          // "Continuar para…" precisa passar por uma espera antes de voltar ao mesmo lugar
+          let cur = n.to;
+          const seen = new Set();
+          let loop = false;
+          for (let g = 0; g < 200 && cur; g++) {
+            const e = idx.get(cur);
+            if (!e || e.node.type === 'esperar' || e.node.type === 'fim') break;
+            if (seen.has(cur)) { loop = true; break; }
+            seen.add(cur);
+            cur = e.node.type === 'ir' ? e.node.to : seqNextOf(idx, cur);
+          }
+          if (loop) out.push({ node: n.id, msg: 'Esse "Continuar para…" volta sem passar por uma espera (ficaria em laço).' });
+        }
+      }
+    });
+    if (def && def.steps && def.steps.length && !sends && ![...idx.values()].some((e) => e.node.type === 'etiqueta')) out.push({ node: 'start', msg: 'A sequência não faz nada: adicione uma mensagem ou etiqueta.' });
+    return out;
+  }
+  // Texto do passo atual de uma conversa ("esperando resposta (faltam 1h20)")
+  function seqDescribe(def, run, now, { itemTitle = (id) => id } = {}) {
+    if (!run) return '';
+    if (run.status && run.status !== 'ativo') return run.outcome === 'respondeu' ? 'saiu: respondeu' : run.outcome === 'nao_respondeu' ? 'saiu: não respondeu' : 'saiu';
+    const idx = seqIndex(def);
+    const e = idx.get(run.node || seqFirstOf(def.steps));
+    if (!e) return 'terminando';
+    const n = e.node;
+    if (n.type === 'esperar') {
+      const due = Number(run.due_at) || null;
+      if (n.after_mine && !due) return 'esperando a sua mensagem';
+      return due ? `esperando resposta (faltam ${formatLeft(Math.max(0, due - now))})` : 'esperando resposta';
+    }
+    if (n.type === 'enviar') return `vai mandar “${itemTitle(n.item_id)}”`;
+    if (n.type === 'etiqueta') return 'vai mexer nas etiquetas';
+    return 'continuando';
+  }
+  // Nome curto de cada passo (lista de automações: "quantos estão em cada passo")
+  function seqNodeLabel(def, id, { itemTitle = (x) => x } = {}) {
+    const e = seqIndex(def).get(id);
+    if (!e) return 'passo removido';
+    const n = e.node;
+    if (n.type === 'esperar') return `Esperando resposta (${n.amount} ${n.unit === 'minutos' ? 'min' : n.unit === 'horas' ? 'h' : n.amount === 1 ? 'dia' : 'dias'})`;
+    if (n.type === 'enviar') return `Antes de mandar “${itemTitle(n.item_id)}”`;
+    return n.type;
+  }
+  let seqCounter = 0;
+  const seqId = () => `n${Date.now().toString(36)}${(seqCounter++).toString(36)}`;
+  // Modelos prontos: em branco e "Follow-up de lead novo" (etiquetas como "new:Nome")
+  function seqTemplate(kind) {
+    if (kind === 'lead_followup') {
+      const tag = () => ({ id: seqId(), type: 'etiqueta', op: 'colocar', source: 'crm', label_id: 'new:Em atendimento' });
+      return {
+        start: { type: 'lead', origin: 'todos' }, business: true,
+        steps: [{ id: seqId(), type: 'esperar', amount: 2, unit: 'horas', after_mine: true, yes: [tag()], no: [
+          { id: seqId(), type: 'enviar', item_id: '', hint: 'Follow 1' },
+          { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', yes: [tag()], no: [
+            { id: seqId(), type: 'enviar', item_id: '', hint: 'Follow 2' },
+            { id: seqId(), type: 'esperar', amount: 2, unit: 'dias', yes: [tag()], no: [
+              { id: seqId(), type: 'enviar', item_id: '', hint: 'Follow 3' },
+            ] },
+          ] },
+        ] }],
+      };
+    }
+    return { start: { type: 'lead', origin: 'todos' }, business: true, steps: [{ id: seqId(), type: 'enviar', item_id: '' }, { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', yes: [], no: [] }] };
+  }
+
   // ── 2.11.0: modelos com passo a passo (Quem → Quando → O quê) ──
   // Cada modelo vira uma ou mais automações do editor avançado (as mesmas regras de segurança de sempre).
   // Etiquetas podem vir como "new:Nome" (criadas ao ligar).
@@ -953,6 +1132,7 @@
       st.automationsAvailable = s.automations === true;
       st.salesOrigin = s.salesOrigin === true; // 2.3.0: colunas de origem da venda + gatilho "venda registrada"
       st.automationsV25 = s.automationsV25 === true; // 2.5.0: etiqueta do WhatsApp no gatilho + inscrição manual
+      st.sequencesAvailable = s.sequences === true; // 2.12.0: sequências (respondeu / não respondeu)
       return true;
     }
 
@@ -1266,7 +1446,7 @@
 
     // Avalia as automações ativas para os contatos das etiquetas dos gatilhos (só leitura)
     async function evaluateAutomations(source) {
-      const list = (Array.isArray(source) ? source : st.automations).filter((a) => a.active).sort((a, b) => (a.position || 0) - (b.position || 0));
+      const list = (Array.isArray(source) ? source : st.automations).filter((a) => a.active && a.kind !== 'sequencia').sort((a, b) => (a.position || 0) - (b.position || 0));
       if (!list.length) return [];
       const labelList = list.filter((a) => a.trigger_type !== 'venda_registrada');
       const saleList = list.filter((a) => a.trigger_type === 'venda_registrada');
@@ -1372,6 +1552,193 @@
         return { kind: 'automacao', automation: r.automation, contact, ev };
       }
       return null;
+    }
+
+    // ── 2.12.0: sequências ("Respondeu / Não respondeu") ──
+    // A cada FOLLOW_EVAL_MS (só a aba com a trava): cria o percurso de quem entrou (só daqui pra frente),
+    // decide cada conversa (seqStep) e grava o que não manda nada na hora (espera, caminhos, etiquetas, fim).
+    // Envio: um por ciclo, pelo mesmo caminho das automações (limites, intervalo, horário, Não enviar, log).
+    const seqActive = () => (st.activeAutomations || []).filter((a) => a.kind === 'sequencia' && a.sequence && a.active);
+    const seqKnown = new Set(); // entradas já criadas nesta aba (não manda de novo a cada ciclo)
+    const msOf = (iso) => { const t = Date.parse(iso || ''); return Number.isFinite(t) ? t : null; };
+    function seqRunState(r) {
+      return { node: r.node, wait_started_at: msOf(r.wait_started_at), last_sent_at: msOf(r.last_sent_at), skip_wait: !!r.skip_wait, branches: r.branches || [], due_at: msOf(r.due_at) };
+    }
+    async function seqEnter(seqs) {
+      const items = [];
+      const add = (a, chatId, key, contactId) => {
+        if (!chatId || (a.test_chat_id && chatId !== a.test_chat_id)) return;
+        const k = `${a.id}|${chatId}|${key}`;
+        if (seqKnown.has(k)) return;
+        items.push({ automation_id: a.id, chat_id: chatId, entry_key: key, contact_id: contactId || null, node: seqIndexFirst(a.sequence) });
+        seqKnown.add(k);
+      };
+      const since = (a) => msOf(a.activated_at); // só daqui pra frente (sem ativação: ninguém entra)
+      const leadSeqs = seqs.filter((a) => a.sequence.start.type === 'lead' && since(a));
+      if (leadSeqs.length) {
+        let leads = [];
+        try { leads = await api('seqLeads', { since: new Date(Math.min(...leadSeqs.map(since))).toISOString() }); } catch { leads = []; }
+        leadSeqs.forEach((a) => (leads || []).forEach((l) => { if (msOf(l.first_message_at) >= since(a) && seqStartMatches(a.sequence.start, l)) add(a, l.chat_id, 'lead'); }));
+      }
+      const labelSeqs = seqs.filter((a) => a.sequence.start.type === 'etiqueta' && since(a));
+      if (labelSeqs.length) {
+        const crm = [...new Set(labelSeqs.filter((a) => a.sequence.start.source !== 'whatsapp').map((a) => a.sequence.start.label_id).filter(Boolean))];
+        const wa = [...new Set(labelSeqs.filter((a) => a.sequence.start.source === 'whatsapp').map((a) => String(a.sequence.start.wa_label_id)).filter(Boolean))];
+        let people = [];
+        try { if (crm.length) people = people.concat(await api('flowCandidates', { labelIds: crm }) || []); } catch { /* próximo ciclo */ }
+        try { if (wa.length && st.automationsV25) people = people.concat(await api('nativeLabelCandidates', { waLabelIds: wa }) || []); } catch { /* próximo ciclo */ }
+        labelSeqs.forEach((a) => {
+          const st0 = a.sequence.start;
+          const fake = { trigger_label_source: st0.source === 'whatsapp' ? 'whatsapp' : 'crm', trigger_label_id: st0.label_id || null, trigger_wa_label_id: st0.wa_label_id || null };
+          people.forEach((c) => {
+            const entry = automationEntry(fake, c, { ignoreEnrollment: true });
+            if (!entry || !Number.isFinite(entry.at)) return;
+            if (!a.include_existing && entry.at < since(a)) return;
+            add(a, chatIdOfContact(c), `lbl:${entry.key}`.slice(0, 120), c.id);
+          });
+        });
+      }
+      const saleSeqs = seqs.filter((a) => a.sequence.start.type === 'venda' && since(a));
+      if (saleSeqs.length) {
+        let buyers = [];
+        try { buyers = await api('saleTriggerCandidates', { sinceDays: 2 }) || []; } catch { buyers = []; }
+        saleSeqs.forEach((a) => buyers.forEach((c) => {
+          if (msOf(c.sale_at) < since(a)) return;
+          if (a.sequence.start.label_id && !(c.labelIds || []).includes(a.sequence.start.label_id)) return;
+          add(a, chatIdOfContact(c), `venda@${c.sale_id}`, c.id);
+        }));
+      }
+      const manualSeqs = seqs.filter((a) => a.sequence.start.type === 'manual');
+      if (manualSeqs.length && st.automationsV25) {
+        let enr = [];
+        try { enr = await api('activeEnrollments', { automationIds: manualSeqs.map((a) => a.id) }) || []; } catch { enr = []; }
+        const byId = new Map(manualSeqs.map((a) => [a.id, a]));
+        enr.forEach((e) => { const a = byId.get(e.automation_id); if (a && e.chat_id) add(a, e.chat_id, `insc@${msOf(e.enrolled_at) || 0}`, e.contact_id); });
+      }
+      for (let i = 0; i < items.length; i += 500) {
+        try { await api('seqCreateRuns', { items: items.slice(i, i + 500) }); } catch { items.slice(i, i + 500).forEach((it) => seqKnown.delete(`${it.automation_id}|${it.chat_id}|${it.entry_key}`)); }
+      }
+    }
+    const seqIndexFirst = (def) => (def && def.steps && def.steps[0] ? def.steps[0].id : null);
+    async function seqPatch(run, patch) {
+      let r = null;
+      try { r = await api('seqUpdateRun', { id: run.id, version: run.version, patch }); } catch { r = null; }
+      return r && r.ok ? r.run : null;
+    }
+    // etiquetas da sequência (CRM pelo banco, cria o contato se preciso; WhatsApp pela ponte)
+    async function seqLabelOps(run, ops) {
+      for (const op of ops || []) {
+        try {
+          if (op.source === 'whatsapp') {
+            if (op.op === 'tirar') { await setWaLabel(run.chat_id, { remove: op.wa_label_id }); continue; }
+            await setWaLabel(run.chat_id, { add: op.wa_label_id });
+            if (op.remove_others && deps.wa.chatLabels) {
+              const cur = await deps.wa.chatLabels({ chatId: run.chat_id });
+              const ids = ((cur && cur.labelIds) || []).map(String).filter((id) => id !== String(op.wa_label_id));
+              for (const id of ids) await setWaLabel(run.chat_id, { remove: id });
+            }
+            continue;
+          }
+          const name = run.contact && run.contact.name;
+          if (op.op === 'tirar') { await api('saleContactLabels', { chatId: run.chat_id, name, removeLabelIds: [op.label_id] }); continue; }
+          const r = await api('saleContactLabels', { chatId: run.chat_id, name, addLabelId: op.label_id, removeLabelIds: [] });
+          if (op.remove_others && r && Array.isArray(r.labelIds)) {
+            const others = r.labelIds.filter((l) => l !== op.label_id && l !== st.noSendLabelId);
+            if (others.length) await api('saleContactLabels', { chatId: run.chat_id, name, removeLabelIds: others });
+          }
+        } catch { /* segue: etiqueta não impede o resto */ }
+      }
+      if ((ops || []).length && deps.onLabelsChanged) deps.onLabelsChanged();
+    }
+    async function refreshSequences() {
+      st.seqEvalAt = now();
+      st.seqQueue = [];
+      const seqs = seqActive();
+      if (!seqs.length || !st.sequencesAvailable) return;
+      await seqEnter(seqs);
+      let runs = null;
+      try { runs = await api('seqRuns', { automationIds: seqs.map((a) => a.id) }); } catch { runs = null; }
+      if (!Array.isArray(runs) || !runs.length) return;
+      const byId = new Map(seqs.map((a) => [a.id, a]));
+      const chatIds = [...new Set(runs.map((r) => r.chat_id))];
+      const chats = {};
+      for (let i = 0; i < chatIds.length; i += 500) {
+        let r = null;
+        try { r = await deps.wa.chatsInfo({ chatIds: chatIds.slice(i, i + 500), keywords: [] }); } catch { r = null; }
+        Object.assign(chats, (r && r.chats) || {});
+      }
+      const starts = runs.map((r) => msOf(r.wait_started_at) || msOf(r.last_sent_at)).filter(Boolean);
+      let replies = {};
+      if (starts.length) { try { replies = await api('seqReplies', { chatIds, since: new Date(Math.min(...starts) - 60 * 1000).toISOString() }) || {}; } catch { replies = {}; } }
+      const t = now();
+      for (const r of runs) {
+        const a = byId.get(r.automation_id);
+        if (!a) continue;
+        if (a.test_chat_id && r.chat_id !== a.test_chat_id) continue; // modo teste: só a conversa escolhida
+        // nunca para quem tem "Não enviar": sai da sequência
+        if (st.noSendLabelId && r.contact && (r.contact.labelIds || []).includes(st.noSendLabelId)) { await seqPatch(r, { status: 'saiu', outcome: 'nao_enviar' }); continue; }
+        const res = seqStep({ def: a.sequence, run: seqRunState(r), chat: chats[r.chat_id] || null, replies: replies[r.chat_id] || [], now: t, settings: st.settings });
+        if (res.status === 'wait') {
+          const due = res.dueAt || null;
+          if ((due || null) !== (msOf(r.due_at) || null) && Math.abs((due || 0) - (msOf(r.due_at) || 0)) > 60 * 1000) await seqPatch(r, { due_at: due });
+          continue;
+        }
+        if (res.status === 'run') {
+          const until = failedRecently.get(`seq:${r.id}`);
+          if (!(until && until > t)) st.seqQueue.push({ automation: a, run: r, res });
+          continue;
+        }
+        // espera nova, caminho tomado sem envio, etiquetas ou fim: grava já (nada sai)
+        const patch = { branches: [...(r.branches || []), ...res.branches], skip_wait: false };
+        if (res.status === 'progress') Object.assign(patch, { node: res.node, wait_started_at: res.waitStart, due_at: null });
+        else Object.assign(patch, { status: 'fim', outcome: res.outcome, node: null, due_at: null });
+        const saved = await seqPatch(r, patch);
+        if (saved) await seqLabelOps(r, res.ops);
+      }
+    }
+    async function sequenceJob() {
+      if (!st.seqEvalAt || now() - st.seqEvalAt >= FOLLOW_EVAL_MS) await refreshSequences();
+      const job = (st.seqQueue || []).shift();
+      return job ? { kind: 'sequencia', ...job } : null;
+    }
+    async function runSequenceJob({ automation, run, res }) {
+      const def = automation.sequence;
+      const t = now();
+      const nextIsWait = res.node && (seqIndex(def).get(res.node) || {}).node && seqIndex(def).get(res.node).node.type === 'esperar';
+      const branches = [...(run.branches || []), ...res.branches];
+      // trava: avança o percurso ANTES de mandar (só uma aba/PC consegue esta versão)
+      const claimed = await seqPatch(run, { node: res.node, wait_started_at: nextIsWait ? t : null, due_at: null, skip_wait: false, branches, last_sent_at: t,
+        ...(res.node ? {} : { status: 'fim', outcome: seqOutcome(branches) }) });
+      if (!claimed) return;
+      await seqLabelOps(run, res.ops);
+      const entry = { source: 'follow', source_id: automation.id, contact_id: run.contact ? run.contact.id : null, chat_id: run.chat_id, item_id: res.send.itemId };
+      const item = res.send.itemId ? await deps.itemById(res.send.itemId) : null;
+      if (!item) { await logSkip(entry, 'sem mensagem'); if (res.node) await seqPatch(claimed, { status: 'fim', outcome: 'sem_mensagem' }); return; }
+      const logId = await logStart(entry);
+      st.current = { source: 'automacao' };
+      changed();
+      let sendRes;
+      try {
+        const nm = run.contact ? run.contact.name : null;
+        sendRes = await deps.sendParts({ parts: deps.partsOf(item), chatId: run.chat_id, firstName: deps.nameFor ? await deps.nameFor(run.chat_id, smartFirstName({ crmName: nm })) : smartFirstName({ crmName: nm }), label: 'Automação' });
+      } catch {
+        sendRes = { status: 'failed', stage: 'sending', sent: 0 };
+      } finally {
+        st.current = null;
+      }
+      const out = outcome(sendRes);
+      await logFinish(logId, out.status, out.reason);
+      if (out.status !== 'pulado') afterAttempt();
+      if (out.status !== 'enviado') {
+        // nada saiu: volta para o passo do envio e tenta mais tarde
+        if (out.retry && !(sendRes && sendRes.sent)) {
+          await seqPatch(claimed, { node: res.sendNode, status: 'ativo', outcome: null, wait_started_at: msOf(run.wait_started_at), last_sent_at: msOf(run.last_sent_at), branches: run.branches || [] });
+          failedRecently.set(`seq:${run.id}`, now() + RETRY_AFTER_FAIL_MS);
+        }
+        return;
+      }
+      if (deps.onItemUsed) deps.onItemUsed(item);
+      if (deps.onItemSent) { try { await deps.onItemSent(item, { contactId: run.contact ? run.contact.id : null, chatId: run.chat_id }); } catch { /* etiqueta do item */ } }
     }
 
     // 2.5.0: põe/tira UMA etiqueta nativa que já existe (a ponte recusa etiqueta desconhecida)
@@ -1495,6 +1862,7 @@
         if (st.automationsAvailable) job = st.active.automations ? await automationJob() : null;
         else job = st.active.flows ? await followJob() : null;
       }
+      if (!job && st.sequencesAvailable && seqActive().length) job = await sequenceJob(); // 2.12.0
       if (!job) return false;
       st.workAt = 0; // achou trabalho: o próximo ciclo pode procurar de novo (o intervalo entre envios continua valendo)
       // A trava ainda é nossa? (renova antes de enviar)
@@ -1503,6 +1871,7 @@
       if (job.kind === 'agendado') await runScheduleJob(job);
       else if (job.kind === 'follow') await runFollowJob(job);
       else if (job.kind === 'automacao') await runAutomationJob(job);
+      else if (job.kind === 'sequencia') await runSequenceJob(job);
       else if (deps.runCampaignJob) {
         st.current = { source: 'disparo' };
         changed();
@@ -1609,6 +1978,8 @@
 
     return {
       state: st, runnerId, start, stop, tick, leaseTick, poke, refreshActivity, setPaused, saveSettings, simulate, queueCounts, loadSettings, loadFlows,
+      // 2.12.0 (só testes): um ciclo das sequências (entrada, decisão, gravação e os envios da fila), sem o laço do motor
+      _sequencesOnce: async () => { await refreshSequences(); const done = []; while ((st.seqQueue || []).length) { const j = st.seqQueue.shift(); await runSequenceJob(j); done.push(j); } return done; },
       refreshCounts, evaluate, ensureNoSendLabel, loadAutomations, evaluateAutomations,
       setWaLabel, // 2.7.1: a mensagem rápida usa a mesma troca de etiqueta do WhatsApp das automações
     };
@@ -1627,6 +1998,7 @@
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
     WIZARDS, wizardToAutomations, wizardSentence, wizardMinutes, businessMinutesPerDay, validateAutomationDraft,
+    seqIndex, seqStep, seqValidate, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
     limitCheck, randomGapMs, estimateDuration, estimateText,
     createMotor,
   };

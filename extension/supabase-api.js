@@ -1177,6 +1177,7 @@
       available: true, settings: rows[0], campaigns, campaignsV2: campaigns && (await campaignsV2()), automations: await automationTables(),
       salesOrigin: await salesOrigin(),
       automationsV25: await automationsV25(),
+      sequences: await automationsV212(), // 2.12.0
     };
   }
 
@@ -1872,12 +1873,69 @@
   // 2.8.8 (migration 20261105200000): ativação ("só daqui pra frente"), incluir quem já estava e modo teste
   const AUTOMATION_V288_COLUMNS = 'activated_at,include_existing,test_chat_id';
   const automationsV288 = () => probe('automations.v288', () => hasColumn('wa_automations', 'activated_at'), 30 * 60 * 1000);
+  // 2.12.0: sequências (migration 20261106210000): kind, sequence e a tabela wa_sequence_runs
+  const automationsV212 = () => probe('automations.v212', async () => {
+    if (!(await hasColumn('wa_automations', 'kind'))) return false;
+    try { await rest('wa_sequence_runs?select=id&limit=1'); return true; } catch (err) { if (tableMissing(err, ['wa_sequence_runs'])) return false; throw err; }
+  }, 30 * 60 * 1000);
   const autoCols = async () => {
     let cols = AUTOMATION_COLUMNS;
     if (await automationsV25()) cols += `,${AUTOMATION_V25_COLUMNS}`;
     if (await automationsV288()) cols += `,${AUTOMATION_V288_COLUMNS}`;
+    if (await automationsV212()) cols += ',kind,sequence';
     return cols;
   };
+
+  // ── 2.12.0: validação da sequência (o painel valida antes; aqui é a última barreira) ──
+  const SEQ_ID_RE = /^[a-z0-9]{1,40}$/i;
+  function checkSequence(seq) {
+    const q = seq && typeof seq === 'object' ? seq : {};
+    const st = q.start && typeof q.start === 'object' ? q.start : {};
+    if (!['lead', 'etiqueta', 'venda', 'manual'].includes(st.type)) throw new Error('Sequência: escolha quem entra');
+    const start = { type: st.type };
+    if (st.type === 'lead') start.origin = ['todos', 'anuncio', 'organico'].includes(st.origin) ? st.origin : 'todos';
+    if (st.type === 'etiqueta' || (st.type === 'venda' && st.label_id)) {
+      start.source = st.source === 'whatsapp' && st.type === 'etiqueta' ? 'whatsapp' : 'crm';
+      if (start.source === 'whatsapp') start.wa_label_id = checkWaLabel(st.wa_label_id, 'Sequência: escolha a etiqueta do WhatsApp de quem entra');
+      else start.label_id = checkUuid(st.label_id, 'Sequência: escolha a etiqueta de quem entra');
+    }
+    const ids = new Set();
+    let count = 0;
+    const gotos = [];
+    const walk = (list, depth, what) => {
+      if (!Array.isArray(list)) throw new Error(`${what}: passos inválidos`);
+      if (depth > 5) throw new Error('Sequência: no máximo 5 esperas uma dentro da outra');
+      return list.map((n, i) => {
+        if (++count > 80) throw new Error('Sequência: no máximo 80 passos');
+        const w = `${what}, passo ${i + 1}`;
+        if (!n || typeof n !== 'object' || typeof n.id !== 'string' || !SEQ_ID_RE.test(n.id) || ids.has(n.id)) throw new Error(`${w}: identificador inválido`);
+        ids.add(n.id);
+        if (n.type === 'enviar') return { id: n.id, type: 'enviar', item_id: checkUuid(n.item_id, `${w}: escolha a mensagem`) };
+        if (n.type === 'etiqueta') {
+          const op = n.op === 'tirar' ? 'tirar' : 'colocar';
+          const source = n.source === 'whatsapp' ? 'whatsapp' : 'crm';
+          const out = { id: n.id, type: 'etiqueta', op, source };
+          if (source === 'whatsapp') out.wa_label_id = checkWaLabel(n.wa_label_id, `${w}: escolha a etiqueta do WhatsApp`);
+          else out.label_id = checkUuid(n.label_id, `${w}: escolha a etiqueta`);
+          if (op === 'colocar' && n.remove_others === true) out.remove_others = true;
+          return out;
+        }
+        if (n.type === 'esperar') {
+          const unit = ['minutos', 'horas', 'dias'].includes(n.unit) ? n.unit : 'horas';
+          const amount = intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`);
+          return { id: n.id, type: 'esperar', amount, unit, ...(n.after_mine === true ? { after_mine: true } : {}),
+            yes: walk(n.yes || [], depth + 1, `${w} (respondeu)`), no: walk(n.no || [], depth + 1, `${w} (não respondeu)`) };
+        }
+        if (n.type === 'fim') return { id: n.id, type: 'fim' };
+        if (n.type === 'ir') { gotos.push([n.to, w]); return { id: n.id, type: 'ir', to: String(n.to || '') }; }
+        throw new Error(`${w}: tipo inválido`);
+      });
+    };
+    const steps = walk(q.steps, 1, 'Sequência');
+    if (!steps.length) throw new Error('Sequência: adicione pelo menos um passo');
+    gotos.forEach(([to, w]) => { if (!ids.has(to)) throw new Error(`${w}: escolha para onde continuar`); });
+    return { start, business: q.business !== false, steps };
+  }
   const checkWaLabel = (v, what) => { if (typeof v !== 'string' || !WA_LABEL_RE.test(v)) throw new Error(what); return v; };
   const RUN_KEY_RE = /^[\w:@.+-]{1,120}$/;
 
@@ -1972,6 +2030,16 @@
 
   function checkAutomation(input) {
     const a = input || {};
+    // 2.12.0: sequência (trigger 'sequencia'; os passos ficam em sequence)
+    if (a.kind === 'sequencia') {
+      const sequence = checkSequence(a.sequence);
+      return {
+        name: cleanText(a.name, 60, 'Nome da automação'), active: a.active === true, kind: 'sequencia', sequence,
+        trigger_type: 'sequencia', trigger_label_source: 'crm', trigger_wa_label_id: null, trigger_label_id: null,
+        wait_minutes: null, schedule_days: null, schedule_time: null, ignore_older_days: 15, conditions: [], actions: [],
+        test_chat_id: a.test_chat_id == null || a.test_chat_id === '' ? null : (typeof a.test_chat_id === 'string' && SCHED_CHAT_RE.test(a.test_chat_id) ? a.test_chat_id : (() => { throw new Error('Escolha a conversa de teste'); })()),
+      };
+    }
     if (!TRIGGERS.includes(a.trigger_type)) throw new Error('Escolha o gatilho (Quando)');
     // 2.5.0: etiqueta do gatilho do CRM (padrão) ou do WhatsApp
     const source = a.trigger_label_source === 'whatsapp' ? 'whatsapp' : 'crm';
@@ -2018,6 +2086,7 @@
     const row = checkAutomation(automation);
     const testChat = row.test_chat_id;
     delete row.test_chat_id;
+    if (row.kind === 'sequencia' && !(await automationsV212())) throw new Error(ENGINE_MISSING); // 2.12.0
     if (row.trigger_type === 'venda_registrada' && !(await salesOrigin())) throw new Error(ENGINE_MISSING);
     // 2.5.0: sem a migration 20261104120000, etiqueta do WhatsApp não dá; o resto salva como antes
     if (!(await automationsV25())) {
@@ -2086,6 +2155,109 @@
       checkUuid(id, 'Automação inválida');
       try { out[id] = await countRows(`wa_automation_runs?select=id&automation_id=eq.${id}&run_key=not.like.fora@*`); } catch { out[id] = null; }
     }
+    return out;
+  }
+
+  // ── 2.12.0: percursos das sequências (wa_sequence_runs) ──
+  const SEQ_RUN_COLS = 'id,automation_id,chat_id,contact_id,entry_key,node,status,outcome,wait_started_at,due_at,last_sent_at,skip_wait,branches,version,created_at,updated_at,ended_at';
+  async function seqRest(path, init) {
+    try { return await rest(path, init); } catch (err) { if (tableMissing(err, ['wa_sequence_runs'])) throw new Error(ENGINE_MISSING); throw err; }
+  }
+  // percursos ativos das sequências, com as etiquetas CRM de cada conversa (para o "Não enviar")
+  async function seqRuns({ automationIds }) {
+    if (!Array.isArray(automationIds) || automationIds.length > 100) throw new Error('Lista inválida');
+    automationIds.forEach((a) => checkUuid(a, 'Automação inválida'));
+    if (!automationIds.length) return [];
+    const runs = await restAll(`wa_sequence_runs?select=${SEQ_RUN_COLS}&automation_id=in.${inList(automationIds)}&status=eq.ativo&order=id.asc`);
+    const byChat = await contactsByChats([...new Set(runs.map((r) => r.chat_id))]);
+    const ids = [...new Set(Object.values(byChat).map((c) => c.id))];
+    const labels = {};
+    for (let i = 0; i < ids.length; i += 100) {
+      (await restAll(`wa_contact_labels?select=contact_id,label_id&contact_id=in.${inList(ids.slice(i, i + 100))}&order=contact_id.asc,label_id.asc`))
+        .forEach((l) => { (labels[l.contact_id] = labels[l.contact_id] || []).push(l.label_id); });
+    }
+    return runs.map((r) => { const c = byChat[r.chat_id]; return { ...r, contact: c ? { id: c.id, name: c.name || null, phone: c.phone || null, labelIds: labels[c.id] || [] } : null }; });
+  }
+  // cria os percursos de quem entrou (a mesma entrada nunca duplica)
+  async function seqCreateRuns({ items }) {
+    if (!Array.isArray(items) || items.length > 500) throw new Error('Lista inválida');
+    const rows = items.filter((it) => it && SCHED_CHAT_RE.test(it.chat_id || '') && RUN_KEY_RE.test(it.entry_key || '')).map((it) => ({
+      automation_id: checkUuid(it.automation_id, 'Automação inválida'), chat_id: it.chat_id, entry_key: it.entry_key,
+      contact_id: it.contact_id ? checkUuid(it.contact_id, 'Contato inválido') : null, node: typeof it.node === 'string' && it.node.length <= 40 ? it.node : null,
+    }));
+    if (rows.length) await seqRest('wa_sequence_runs?on_conflict=automation_id,chat_id,entry_key', json('POST', 'resolution=ignore-duplicates,return=minimal', rows));
+    return { created: rows.length };
+  }
+  // avança um percurso SÓ se ninguém mexeu antes (version): evita envio duplicado entre abas/PCs
+  async function seqUpdateRun({ id, version, patch }) {
+    checkUuid(id, 'Percurso inválido');
+    if (!Number.isInteger(version) || version < 0) throw new Error('Versão inválida');
+    const p = patch || {};
+    const out = { version: version + 1, updated_at: new Date().toISOString() };
+    if (p.node !== undefined) out.node = p.node == null ? null : String(p.node).slice(0, 40);
+    if (p.status !== undefined) { if (!['ativo', 'fim', 'saiu'].includes(p.status)) throw new Error('Status inválido'); out.status = p.status; if (p.status !== 'ativo') out.ended_at = new Date().toISOString(); }
+    if (p.outcome !== undefined) out.outcome = p.outcome == null ? null : String(p.outcome).slice(0, 30);
+    ['wait_started_at', 'due_at', 'last_sent_at'].forEach((k) => { if (p[k] !== undefined) out[k] = p[k] == null ? null : new Date(Number(p[k])).toISOString(); });
+    if (p.skip_wait !== undefined) out.skip_wait = p.skip_wait === true;
+    if (p.branches !== undefined) { if (!Array.isArray(p.branches) || p.branches.length > 50) throw new Error('Caminhos inválidos'); out.branches = p.branches.map((b) => ({ node: String(b.node).slice(0, 40), result: b.result === 'sim' ? 'sim' : 'nao', at: Number(b.at) || null })); }
+    const rows = await seqRest(`wa_sequence_runs?id=eq.${id}&version=eq.${version}`, json('PATCH', 'return=representation', out));
+    return { ok: rows.length === 1, run: rows[0] || null };
+  }
+  // respostas dos clientes (wa_replies, 2.10.0) dessas conversas desde "since"; sem a tabela: nenhuma
+  async function seqReplies({ chatIds, since }) {
+    const ids = (Array.isArray(chatIds) ? chatIds : []).filter((c) => SCHED_CHAT_RE.test(c || '')).slice(0, 1000);
+    const t = Date.parse(since || '');
+    if (!ids.length || !Number.isFinite(t)) return {};
+    const out = {};
+    try {
+      for (let i = 0; i < ids.length; i += 100) {
+        (await restAll(`wa_replies?select=chat_id,replied_at&chat_id=in.${inList(ids.slice(i, i + 100))}&replied_at=gte.${encodeURIComponent(new Date(t).toISOString())}&order=chat_id.asc,replied_at.asc`))
+          .forEach((r) => { (out[r.chat_id] = out[r.chat_id] || []).push(Date.parse(r.replied_at)); });
+      }
+    } catch { return {}; }
+    return out;
+  }
+  // leads novos (wa_leads, 2.10.0) desde "since" (a ativação)
+  async function seqLeads({ since }) {
+    const t = Date.parse(since || '');
+    if (!Number.isFinite(t)) return [];
+    try {
+      return await rest(`wa_leads?select=chat_id,phone,first_message_at,origin&first_message_at=gte.${encodeURIComponent(new Date(t).toISOString())}&order=first_message_at.asc&limit=500`);
+    } catch { return []; }
+  }
+  // painel da conversa: em que sequência ela está
+  async function seqChatRuns({ chatId }) {
+    if (!SCHED_CHAT_RE.test(chatId || '') || !(await automationsV212())) return [];
+    const runs = await seqRest(`wa_sequence_runs?select=${SEQ_RUN_COLS}&chat_id=eq.${encodeURIComponent(chatId)}&status=eq.ativo&order=created_at.desc&limit=10`);
+    if (!runs.length) return [];
+    const autos = await autoRest(`wa_automations?select=id,name,sequence,test_chat_id&id=in.${inList([...new Set(runs.map((r) => r.automation_id))])}`);
+    const byId = new Map(autos.map((a) => [a.id, a]));
+    return runs.filter((r) => byId.has(r.automation_id)).map((r) => ({ ...r, automation: byId.get(r.automation_id) }));
+  }
+  async function seqRunAction({ id, action }) {
+    checkUuid(id, 'Percurso inválido');
+    const rows = await seqRest(`wa_sequence_runs?select=id,version&id=eq.${id}&status=eq.ativo`);
+    if (!rows.length) throw new Error('A conversa não está mais nesta automação');
+    const patch = action === 'sair' ? { status: 'saiu', outcome: 'manual' } : action === 'pular' ? { skip_wait: true } : null;
+    if (!patch) throw new Error('Ação inválida');
+    const r = await seqUpdateRun({ id, version: rows[0].version, patch });
+    if (!r.ok) throw new Error('Mudou agora há pouco: tente de novo');
+    return { ok: true };
+  }
+  // lista: quantos em cada passo agora e quantos saíram por ✅ / ❌
+  async function seqStats({ automationIds }) {
+    if (!Array.isArray(automationIds) || automationIds.length > 100 || !(await automationsV212())) return {};
+    automationIds.forEach((a) => checkUuid(a, 'Automação inválida'));
+    if (!automationIds.length) return {};
+    const runs = await restAll(`wa_sequence_runs?select=automation_id,node,status,outcome&automation_id=in.${inList(automationIds)}&order=id.asc`);
+    const out = {};
+    runs.forEach((r) => {
+      const o = out[r.automation_id] || (out[r.automation_id] = { nodes: {}, active: 0, yes: 0, no: 0, other: 0 });
+      if (r.status === 'ativo') { o.active++; o.nodes[r.node || 'inicio'] = (o.nodes[r.node || 'inicio'] || 0) + 1; }
+      else if (r.outcome === 'respondeu') o.yes++;
+      else if (r.outcome === 'nao_respondeu') o.no++;
+      else o.other++;
+    });
     return out;
   }
 
@@ -3066,6 +3238,7 @@
     sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
     erpCatalog, createSaleFromChat, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
+    seqRuns, seqCreateRuns, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqRunAction, seqStats,
     automationUnreserve, applySendLabels, getContactName,
     fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,

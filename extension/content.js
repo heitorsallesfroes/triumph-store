@@ -1377,6 +1377,29 @@
       /* ═══ 2.10.0: follow-up ═══ */
       .ed-follow { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; padding: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); }
       .ed-check { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--fs-2); font-weight: 600; cursor: pointer; }
+      /* ═══ 2.12.0: sequências ═══ */
+      .sq-list { display: flex; flex-direction: column; gap: var(--s-2); }
+      .sq-node { display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); background: var(--card); }
+      .sq-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+      .sq-title { font-weight: 700; font-size: var(--fs-2); }
+      .sq-ctl { display: inline-flex; gap: 2px; }
+      .sq-esperar { border-color: var(--accent); }
+      .sq-branches { display: grid; grid-template-columns: 1fr; gap: var(--s-2); margin-top: var(--s-1); }
+      .panel:not(.w-narrow) .sq-branches { grid-template-columns: 1fr 1fr; }
+      .sq-branch { padding: var(--s-2); border-radius: var(--r-md); border-left: 4px solid; min-width: 0; }
+      .sq-yes { border-color: var(--ok); background: var(--ok-soft); }
+      .sq-no { border-color: var(--err); background: var(--err-soft); }
+      .sq-btitle { font-weight: 700; font-size: var(--fs-2); margin-bottom: var(--s-1); }
+      .sq-end { font-size: var(--fs-1); color: var(--muted); font-weight: 600; }
+      .sq-add { flex-wrap: wrap; }
+      .sq-stats .sq-yes, .sq-stats .sq-no { background: none; padding: 0; border: none; }
+      .sq-stats .sq-yes { color: var(--ok); }
+      .sq-stats .sq-no { color: var(--err); }
+      .cseq { margin: 0 var(--s-3) var(--s-2); display: flex; flex-direction: column; gap: var(--s-1); }
+      .cseq[hidden] { display: none; }
+      .cseq-line { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); flex-wrap: wrap; padding: var(--s-1) var(--s-2); border-radius: var(--r-md); background: var(--accent-soft); font-size: var(--fs-1); font-weight: 600; }
+      .cseq-btns { display: inline-flex; gap: var(--s-1); }
+      .panel.sec-labels .cseq, .panel.sec-sched .cseq, .panel.sec-disparos .cseq, .panel.sec-vendas .cseq, .panel.sec-midias .cseq, .panel.editing .cseq, .panel.diag .cseq { display: none; }
       /* ═══ 2.11.0: automações mais simples ═══ */
       .fw-models { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s-2); }
       button.fw-model { text-align: left; cursor: pointer; font: inherit; color: inherit; display: flex; flex-direction: column; gap: var(--s-1); }
@@ -1624,6 +1647,7 @@
         </div>
         <div class="cname" role="group" aria-label="Nome para mensagens" hidden></div>
         <div class="cbuy" hidden>💰 compra enviada</div>
+        <div class="cseq" hidden></div>
         <div class="name-note" hidden title="Sem telefone visível nesta conversa: a etiqueta fica ligada ao nome do contato. Se o nome mudar, ela não acompanha.">identificado só pelo nome</div>
         <div class="tools">
           <div class="trow">
@@ -2245,6 +2269,7 @@
     const chatId = CHAT_ID_OK.test(id || '') ? id : null;
     chatNames.current = chatId;
     loadChatBought(chatId);
+    try { loadChatSequence(chatId).catch(() => {}); } catch { /* 2.12.0: ainda iniciando */ }
     cn.editing = false;
     renderNameRow();
     if (!chatId) return;
@@ -6208,6 +6233,7 @@
       labelEvents: () => waRequest('labelEvents', {}, { timeout: 2000 }),
       labelChatIds: (p) => waRequest('labelChatIds', p, { timeout: 8000 }),
       setChatLabels: (p) => waRequest('setChatLabels', p, { timeout: 15000 }),
+      chatLabels: (p) => waRequest('chatLabels', p, { timeout: 5000 }), // 2.12.0: "Todas menos a que vai colocar" (WhatsApp)
     },
     sendParts: (o) => runSequence(o),
     partsOf: (item) => partsOf(item),
@@ -7017,11 +7043,13 @@
     if (!automationsReady() || fl.statsBusy || (!force && fl.statsAt && Date.now() - fl.statsAt < 60 * 1000)) return;
     fl.statsBusy = true;
     const ids = motor.state.automations.map((a) => a.id).slice(0, 100);
-    const [queue, sent] = await Promise.all([
+    const seqIds = motor.state.automations.filter((a) => a.kind === 'sequencia').map((a) => a.id).slice(0, 100);
+    const [queue, sent, seq] = await Promise.all([
       motor.queueCounts().catch(() => null),
       ids.length ? call('automationSentCounts', { automationIds: ids }).catch(() => null) : {},
+      seqIds.length ? call('seqStats', { automationIds: seqIds }).catch(() => null) : {},
     ]);
-    fl.stats = { queue: queue || {}, sent: sent || {} };
+    fl.stats = { queue: queue || {}, sent: sent || {}, seq: seq || {} };
     fl.statsAt = Date.now();
     fl.statsBusy = false;
     if (fl.open && fl.view === 'list') renderFollows();
@@ -7143,6 +7171,7 @@
 
   // 2.11.0: "Quando …, se …: faz …" numa frase
   function automationSentence(a) {
+    if (a.kind === 'sequencia') return seqSentence(a); // 2.12.0
     const s = summaryOf(a);
     const low = (t) => t.charAt(0).toLowerCase() + t.slice(1);
     const se = s.se === 'Sem condições' ? '' : ` e ${low(s.se.replace(/^Se /, 'se '))}`;
@@ -7159,16 +7188,17 @@
     if (a.active && a.activated_at) card.append(el('div', 'crm-intro', `Vale daqui pra frente: desde ${new Date(a.activated_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}${a.include_existing ? ' (incluiu quem já estava na etiqueta)' : ''}.`));
     // 2.11.0: uma frase só
     card.append(el('div', 'fw-txt fw-sentence', automationSentence(a)));
-    const qc = fl.stats && fl.stats.queue ? fl.stats.queue[a.id] : null;
+    if (a.kind === 'sequencia') card.append(seqStatsEl(a)); // 2.12.0: quantos em cada passo e saídas por ✅/❌
+    const qc = a.kind === 'sequencia' ? null : fl.stats && fl.stats.queue ? fl.stats.queue[a.id] : null;
     const sent = fl.stats && fl.stats.sent ? fl.stats.sent[a.id] : null;
     const st = el('div', 'fw-stats');
-    st.append(el('span', null, a.active ? (qc ? `Na fila agora: ${qc.waiting + qc.ready}${qc.ready ? ` (${qc.ready} prontos)` : ''}` : fl.stats ? 'Na fila agora: 0' : 'Na fila agora: …') : 'Na fila: — (desligada)'),
+    if (a.kind !== 'sequencia') st.append(el('span', null, a.active ? (qc ? `Na fila agora: ${qc.waiting + qc.ready}${qc.ready ? ` (${qc.ready} prontos)` : ''}` : fl.stats ? 'Na fila agora: 0' : 'Na fila agora: …') : 'Na fila: — (desligada)'),
       el('span', null, `Já receberam: ${sent == null ? (fl.stats ? '—' : '…') : sent}`));
     card.append(st);
     const actions = el('div', 'ed-add');
     const confirmKey = `del:${a.id}`;
     actions.append(
-      fbtn('ed-mini', 'Editar', () => openAutomationEditor(a)),
+      fbtn('ed-mini', 'Editar', () => (a.kind === 'sequencia' ? openSeqEditor(a) : openAutomationEditor(a))),
       fbtn('ed-mini', a.active ? 'Desligar' : 'Ligar', async () => {
         // 2.8.8: ligar mostra antes quem já está na etiqueta (e NÃO vai receber)
         if (!a.active) { fl.activating = { id: a.id, include: false, info: null }; renderFollows(); loadActivationInfo(a); return; }
@@ -7179,7 +7209,7 @@
         renderFollows();
         renderFootPause();
       }),
-      fbtn('ed-mini', 'Duplicar', () => openAutomationEditor({ ...a, id: null, name: `${a.name} (cópia)`.slice(0, 60), active: false })),
+      fbtn('ed-mini', 'Duplicar', () => (a.kind === 'sequencia' ? openSeqEditor({ ...a, id: null, name: `${a.name} (cópia)`.slice(0, 60), active: false }) : openAutomationEditor({ ...a, id: null, name: `${a.name} (cópia)`.slice(0, 60), active: false }))),
       fbtn('ed-mini', fl.confirmDelete === confirmKey ? 'Confirmar exclusão' : 'Excluir', async () => {
         if (fl.confirmDelete !== confirmKey) { fl.confirmDelete = confirmKey; renderFollows(); return; }
         fl.confirmDelete = false;
@@ -7241,7 +7271,8 @@
     const box = el('div', 'fw-block act-box');
     box.setAttribute('role', 'group');
     box.setAttribute('aria-label', 'Ligar a automação');
-    if (a.trigger_type === 'dia_hora') box.append(el('div', 'crm-intro', 'Vale a partir do próximo dia e hora depois de ligar.'));
+    if (a.kind === 'sequencia') box.append(el('div', 'crm-intro', 'Vale só para quem entrar daqui pra frente (quem já estava não entra).')); // 2.12.0
+    else if (a.trigger_type === 'dia_hora') box.append(el('div', 'crm-intro', 'Vale a partir do próximo dia e hora depois de ligar.'));
     else if (a.trigger_type === 'venda_registrada') box.append(el('div', 'crm-intro', 'Só vendas registradas depois de ligar disparam (as antigas não).'));
     else if (act.info == null) box.append(el('div', 'lt-none loading', act.infoErr ? `Não consegui ver quem já está na etiqueta: ${act.infoErr}` : 'Carregando…'));
     else {
@@ -7290,6 +7321,7 @@
     }
     if (fl.view === 'templates') { renderTemplates(); return; }
     if (fl.view === 'wizard' && fl.wiz) { renderWizard(); return; } // 2.11.0
+    if (fl.view === 'seq' && fl.seq) { renderSeqEditor(); return; } // 2.12.0
     if (fl.view === 'edit') { renderAutomationEditor(); return; }
     if (fl.view === 'settings') { renderSettings(); return; }
     if (fl.view === 'simulate') { renderSimulation(); return; }
@@ -7375,6 +7407,336 @@
     return box;
   }
 
+  // ── 2.12.0: SEQUÊNCIA (respondeu / não respondeu) ──
+  const SEQ_START = { lead: 'Lead novo chamou', etiqueta: 'Entrou na etiqueta', venda: 'Venda registrada (💰)', manual: 'Adicionei manualmente (🔁 Automação da conversa)' };
+  const SEQ_ORIGIN = { todos: 'todos os leads', anuncio: 'só leads de anúncio', organico: 'só leads orgânicos' };
+  const seqLabelName = (src, id) => (src === 'whatsapp' ? waLabelName(id) : String(id || '').startsWith(NEW_LABEL) ? String(id).slice(NEW_LABEL.length) : labelName(id));
+  function seqStartText(st) {
+    if (!st) return '?';
+    if (st.type === 'lead') return `quando um lead novo chama (${SEQ_ORIGIN[st.origin || 'todos']})`;
+    if (st.type === 'etiqueta') return `quando entra na etiqueta “${seqLabelName(st.source, st.source === 'whatsapp' ? st.wa_label_id : st.label_id)}”`;
+    if (st.type === 'venda') return `quando uma venda é registrada pela conversa${st.label_id ? ` (só quem está em “${seqLabelName('crm', st.label_id)}”)` : ''}`;
+    return 'quando você adiciona a conversa pelo 🔁';
+  }
+  function seqSentence(a) {
+    const def = a.sequence || {};
+    const idx = E.seqIndex(def);
+    const n = [...idx.values()];
+    const sends = n.filter((e) => e.node.type === 'enviar').length;
+    const waits = n.filter((e) => e.node.type === 'esperar').length;
+    return `Sequência: começa ${seqStartText(def.start)}; ${sends} mensage${sends === 1 ? 'm' : 'ns'} e ${waits} espera${waits === 1 ? '' : 's'} de resposta${def.business ? ' (tempo só no horário comercial)' : ''}.`;
+  }
+  function seqStatsEl(a) {
+    const box = el('div', 'fw-stats sq-stats');
+    const st = fl.stats && fl.stats.seq ? fl.stats.seq[a.id] : null;
+    if (!st) { box.append(el('span', null, fl.stats ? 'Ninguém entrou ainda.' : 'Carregando os números…')); return box; }
+    const nodes = Object.entries(st.nodes || {});
+    box.append(el('span', null, `Agora: ${st.active}`));
+    nodes.forEach(([id, k]) => box.append(el('span', 'sq-at', `${E.seqNodeLabel(a.sequence, id, { itemTitle })}: ${k}`)));
+    box.append(el('span', 'sq-yes', `Saíram por ✅: ${st.yes}`), el('span', 'sq-no', `por ❌: ${st.no}`));
+    return box;
+  }
+  const clone = (x) => JSON.parse(JSON.stringify(x));
+  function openSeqEditor(a, templateKey = null) {
+    const def = a && a.sequence ? clone(a.sequence) : E.seqTemplate(templateKey === 'lead_followup' ? 'lead_followup' : 'blank');
+    fl.seq = {
+      id: a ? a.id : null, name: a ? a.name : templateKey === 'lead_followup' ? 'Follow-up de lead novo' : 'Sequência', active: !!(a && a.active), wasActive: !!(a && a.id && a.active),
+      testOn: !!(a && a.test_chat_id), test_chat_id: (a && a.test_chat_id) || '', def, msg: '', err: false, triedSave: false, invalid: [],
+    };
+    fl.view = 'seq';
+    if (!Array.isArray(state.waLabels)) refreshBar().then(() => { if (fl.view === 'seq') renderFollows(); }).catch(() => {});
+    renderFollows();
+  }
+  const seqNew = (type) => {
+    const id = E.seqId();
+    if (type === 'enviar') return { id, type, item_id: '' };
+    if (type === 'etiqueta') return { id, type, op: 'colocar', source: 'crm', label_id: '' };
+    if (type === 'esperar') return { id, type, amount: 1, unit: 'dias', yes: [], no: [] };
+    if (type === 'ir') return { id, type, to: '' };
+    return { id, type: 'fim' };
+  };
+  // título curto de um passo (para "Continuar para…")
+  function seqNodeTitle(def, id) {
+    const e = E.seqIndex(def).get(id);
+    if (!e) return '?';
+    const n = e.node;
+    if (n.type === 'enviar') return `Mandar “${n.item_id ? itemTitle(n.item_id) : '(sem mensagem)'}”`;
+    if (n.type === 'esperar') return `Esperar resposta (${n.amount} ${n.unit})`;
+    if (n.type === 'etiqueta') return `${n.op === 'tirar' ? 'Tirar' : 'Colocar'} etiqueta`;
+    return n.type === 'fim' ? 'Fim' : 'Continuar';
+  }
+  function seqLabelPick(n, label) {
+    const box = el('div', 'sc-row');
+    const src = el('select', 'ed-cat');
+    src.setAttribute('aria-label', `${label}: tipo de etiqueta`);
+    [['crm', 'CRM'], ['whatsapp', 'WhatsApp']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = (n.source || 'crm') === v; src.append(o); });
+    src.addEventListener('change', () => { n.source = src.value; n.label_id = ''; n.wa_label_id = ''; renderFollows(); });
+    box.append(src);
+    if (n.source === 'whatsapp') {
+      const ws = waLabelSelect(n.wa_label_id || '', label);
+      ws.addEventListener('change', () => { n.wa_label_id = ws.value; });
+      box.append(ws);
+    } else box.append(labelPicker(n.label_id, (v) => { n.label_id = v; }, { aria: label }));
+    return box;
+  }
+  function seqListEl(f, list, depth) {
+    const wrap = el('div', 'sq-list');
+    const bad = (id) => (f.invalid || []).filter((x) => x.node === id).map((x) => x.msg).join(' ');
+    list.forEach((n, i) => {
+      const node = el('div', `sq-node sq-${n.type}`);
+      node.dataset.node = n.id;
+      const head = el('div', 'sq-head');
+      const title = { enviar: '✉️ Enviar mensagem', etiqueta: '🏷️ Etiqueta', esperar: '⏳ Esperar resposta', fim: '⏹ Fim (sai da automação)', ir: '↪ Continuar para…' }[n.type] || n.type;
+      head.append(el('span', 'sq-title', title));
+      const ctl = el('span', 'sq-ctl');
+      const up = fbtn('ed-mini', '↑', () => { list.splice(i - 1, 0, list.splice(i, 1)[0]); renderFollows(); });
+      up.disabled = i === 0;
+      up.setAttribute('aria-label', 'Subir passo');
+      const down = fbtn('ed-mini', '↓', () => { list.splice(i + 1, 0, list.splice(i, 1)[0]); renderFollows(); });
+      down.disabled = i === list.length - 1;
+      down.setAttribute('aria-label', 'Descer passo');
+      const rm = fbtn('ed-mini', '✕', () => { list.splice(i, 1); renderFollows(); });
+      rm.setAttribute('aria-label', 'Remover passo');
+      ctl.append(up, down, rm);
+      head.append(ctl);
+      node.append(head);
+      if (n.type === 'enviar') {
+        node.append(msgPickerEl(n.item_id, (id) => { n.item_id = id; }, { aria: `Mensagem do passo ${i + 1}` }));
+        if (n.hint && !n.item_id) node.append(el('div', 'ed-note', `Sugestão: ${n.hint}.`));
+      } else if (n.type === 'etiqueta') {
+        const op = el('select', 'ed-cat');
+        op.setAttribute('aria-label', 'Colocar ou tirar');
+        [['colocar', 'Colocar'], ['tirar', 'Tirar']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = n.op === v; op.append(o); });
+        op.addEventListener('change', () => { n.op = op.value; if (n.op === 'tirar') delete n.remove_others; renderFollows(); });
+        node.append(op, seqLabelPick(n, 'Etiqueta do passo'));
+        if (n.op !== 'tirar') {
+          const l = el('label', 'sc-radio');
+          const cb = el('input');
+          cb.type = 'checkbox';
+          cb.checked = !!n.remove_others;
+          cb.addEventListener('change', () => { n.remove_others = cb.checked; });
+          l.append(cb, ' Tirar todas as outras (menos a que vai colocar)');
+          node.append(l);
+        }
+      } else if (n.type === 'esperar') {
+        const r = el('div', 'sc-row');
+        const amount = numberInput(n.amount, 1, 8760, 'Quanto tempo esperar');
+        amount.addEventListener('input', () => { n.amount = Math.floor(Number(amount.value) || 0); });
+        const unit = el('select', 'ed-cat');
+        unit.setAttribute('aria-label', 'Unidade');
+        ['minutos', 'horas', 'dias'].forEach((u) => { const o = el('option', null, u); o.value = u; o.selected = n.unit === u; unit.append(o); });
+        unit.addEventListener('change', () => { n.unit = unit.value; });
+        r.append(el('span', null, 'por'), amount, unit);
+        node.append(r);
+        const l = el('label', 'sc-radio');
+        const cb = el('input');
+        cb.type = 'checkbox';
+        cb.checked = !!n.after_mine;
+        cb.addEventListener('change', () => { n.after_mine = cb.checked; });
+        l.append(cb, ' Contar a partir da MINHA última mensagem (espera você responder antes)');
+        node.append(l, infoTip('Respondeu = o cliente mandou qualquer mensagem depois do nosso último envio desta sequência. Se você mandar outra mensagem durante a espera, o tempo recomeça dela.'));
+        const yes = el('div', 'sq-branch sq-yes');
+        yes.append(el('div', 'sq-btitle', '✅ Respondeu'), seqListEl(f, n.yes, depth + 1));
+        const no = el('div', 'sq-branch sq-no');
+        no.append(el('div', 'sq-btitle', '❌ Não respondeu'), seqListEl(f, n.no, depth + 1));
+        const branches = el('div', 'sq-branches');
+        branches.append(yes, no);
+        node.append(branches);
+      } else if (n.type === 'ir') {
+        const sel = el('select', 'ed-cat');
+        sel.setAttribute('aria-label', 'Continuar para');
+        const none = el('option', null, 'Escolha o passo…');
+        none.value = '';
+        sel.append(none);
+        [...E.seqIndex(f.def).keys()].filter((id) => id !== n.id).forEach((id) => { const o = el('option', null, seqNodeTitle(f.def, id)); o.value = id; o.selected = n.to === id; sel.append(o); });
+        sel.addEventListener('change', () => { n.to = sel.value; });
+        node.append(sel);
+      }
+      const m = bad(n.id);
+      if (m) { node.classList.add('fw-invalid'); node.append(el('div', 'fw-errmsg', m)); }
+      wrap.append(node);
+    });
+    const last = list[list.length - 1];
+    if (!last || (last.type !== 'fim' && last.type !== 'ir')) wrap.append(el('div', 'sq-end', '↳ Fim (sai da automação)'));
+    const add = el('div', 'ed-add sq-add');
+    [['enviar', '+ Mensagem'], ['etiqueta', '+ Etiqueta'], ['esperar', '+ Esperar resposta'], ['fim', '+ Fim'], ['ir', '+ Continuar para…']].forEach(([t, txt]) => {
+      const b = fbtn(`ed-mini sq-add-${t}`, txt, () => { list.push(seqNew(t)); renderFollows(); });
+      if (t === 'esperar' && depth >= E.SEQ_MAX_DEPTH) { b.disabled = true; b.title = `No máximo ${E.SEQ_MAX_DEPTH} esperas uma dentro da outra`; }
+      add.append(b);
+    });
+    wrap.append(add);
+    return wrap;
+  }
+  function renderSeqEditor() {
+    const f = fl.seq;
+    if (f.triedSave) f.invalid = E.seqValidate(f.def);
+    const sec = el('section', 'crmsec fw-editor sq-editor');
+    sec.append(el('div', 'wt-head', f.id ? 'EDITAR SEQUÊNCIA' : 'NOVA SEQUÊNCIA'));
+    sec.append(el('div', 'crm-intro', 'De cima para baixo, como uma receita. Cada "Esperar resposta" abre dois caminhos: ✅ Respondeu e ❌ Não respondeu.'));
+    const name = el('input', 'ed-title');
+    name.maxLength = 60;
+    name.value = f.name;
+    name.setAttribute('aria-label', 'Nome da sequência');
+    name.addEventListener('input', () => { f.name = name.value; });
+    sec.append(schedField('Nome', name));
+    // Começo
+    const st = f.def.start;
+    const start = el('div', 'fw-block sq-start');
+    start.append(el('div', 'fw-k', 'COMEÇO (QUEM ENTRA)'));
+    const type = el('select', 'ed-cat');
+    type.setAttribute('aria-label', 'Quem entra');
+    Object.entries(SEQ_START).forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = st.type === v; type.append(o); });
+    type.addEventListener('change', () => { f.def.start = { type: type.value, ...(type.value === 'lead' ? { origin: 'todos' } : type.value === 'etiqueta' ? { source: 'crm', label_id: '' } : {}) }; renderFollows(); });
+    start.append(type);
+    if (st.type === 'lead') {
+      const o = el('select', 'ed-cat');
+      o.setAttribute('aria-label', 'Quais leads');
+      Object.entries(SEQ_ORIGIN).forEach(([v, t]) => { const op = el('option', null, t); op.value = v; op.selected = (st.origin || 'todos') === v; o.append(op); });
+      o.addEventListener('change', () => { st.origin = o.value; });
+      start.append(o, el('div', 'crm-intro', 'Automático: a 1ª mensagem de uma conversa nova (registrada pela extensão), sem precisar de etiqueta.'));
+    } else if (st.type === 'etiqueta') start.append(seqLabelPick(st, 'Etiqueta de quem entra'));
+    else if (st.type === 'venda') start.append(schedField('Só quem estiver na etiqueta CRM (opcional)', labelPicker(st.label_id || '', (v) => { st.label_id = v; }, { empty: '(qualquer cliente)', aria: 'Etiqueta (opcional)' })));
+    else start.append(el('div', 'crm-intro', 'Entra quem você adicionar pela conversa: botão 🔁 Automação → Adicionar à automação.'));
+    start.append(el('div', 'ed-note', 'Só vale daqui pra frente: quem já estava antes de ligar não entra.'));
+    const sbad = (f.invalid || []).filter((x) => x.node === 'start').map((x) => x.msg).join(' ');
+    if (sbad) { start.classList.add('fw-invalid'); start.append(el('div', 'fw-errmsg', sbad)); }
+    sec.append(start);
+    const biz = el('label', 'sc-radio');
+    const bcb = el('input');
+    bcb.type = 'checkbox';
+    bcb.checked = f.def.business !== false;
+    bcb.addEventListener('change', () => { f.def.business = bcb.checked; });
+    biz.append(bcb, ` Contar o tempo das esperas só no horário comercial (${E.scheduleText(motor.state.settings)})`);
+    sec.append(biz);
+    const steps = el('div', 'fw-block');
+    steps.append(el('div', 'fw-k', 'PASSOS'));
+    steps.append(seqListEl(f, f.def.steps, 1));
+    sec.append(steps);
+    // ligar / testar
+    const on = el('label', 'sc-radio');
+    const ocb = el('input');
+    ocb.type = 'checkbox';
+    ocb.checked = f.active;
+    ocb.addEventListener('change', () => { f.active = ocb.checked; });
+    on.append(ocb, ' Ligada');
+    const test = el('label', 'sc-radio');
+    const tcb = el('input');
+    tcb.type = 'checkbox';
+    tcb.checked = f.testOn;
+    tcb.addEventListener('change', async () => {
+      f.testOn = tcb.checked;
+      if (f.testOn && !fl.recentChats) { try { fl.recentChats = await waRequest('recentChats', { limit: 30 }, { timeout: 6000 }); } catch { fl.recentChats = []; } }
+      renderFollows();
+    });
+    test.append(tcb, ' Testar comigo (só a conversa escolhida)');
+    sec.append(on, test);
+    if (f.testOn) {
+      const sel = el('select', 'ed-cat');
+      sel.setAttribute('aria-label', 'Conversa de teste');
+      const none = el('option', null, (fl.recentChats || []).length ? 'Escolha a conversa de teste…' : 'Nenhuma conversa carregada no WhatsApp');
+      none.value = '';
+      sel.append(none);
+      (fl.recentChats || []).forEach((c) => { const o = el('option', null, c.name || c.id.split('@')[0]); o.value = c.id; o.selected = c.id === f.test_chat_id; sel.append(o); });
+      sel.addEventListener('change', () => { f.test_chat_id = sel.value; });
+      sec.append(sel);
+    }
+    sec.append(el('div', 'crm-intro', 'Segurança de sempre: nunca para "Não enviar" (sai da sequência), limites por hora/dia, horário comercial e o WhatsApp Web aberto.'));
+    const row = el('div', 'ed-add');
+    const save = fbtn('bbtn primary sq-save', fl.saving ? 'Salvando…' : 'Salvar', () => saveSeq());
+    save.disabled = fl.saving;
+    row.append(save, fbtn('bbtn', 'Cancelar', () => { fl.seq = null; backToList(); }));
+    sec.append(row, el('div', `ed-msg${f.err ? ' err' : ''}`, f.msg));
+    ftabEl.append(sec);
+  }
+  async function saveSeq() {
+    const f = fl.seq;
+    if (!f || fl.saving) return;
+    f.triedSave = true;
+    const problems = E.seqValidate(f.def);
+    if (!String(f.name || '').trim()) problems.unshift({ node: 'name', msg: 'Dê um nome para a sequência.' });
+    if (f.testOn && !f.test_chat_id) problems.unshift({ node: 'test', msg: 'Escolha a conversa de teste.' });
+    if (problems.length) {
+      f.msg = problems.length === 1 ? problems[0].msg : `${problems[0].msg} (e mais ${problems.length - 1} marcado${problems.length === 2 ? '' : 's'} em vermelho)`;
+      f.err = true;
+      renderFollows();
+      const first = ftabEl.querySelector('.fw-invalid');
+      if (first) first.scrollIntoView({ block: 'center' });
+      return;
+    }
+    fl.saving = true;
+    f.msg = '';
+    renderFollows();
+    try {
+      const def = clone(f.def);
+      // etiquetas que ainda não existem ("new:Nome"): cria agora
+      const fake = [{ trigger_label_id: def.start.label_id || null, actions: [] }];
+      E.seqIndex(def).forEach(({ node: n }) => { if (n.type === 'etiqueta' && n.source !== 'whatsapp') fake[0].actions.push(n); });
+      await resolveNewLabels(fake);
+      if (def.start.label_id) def.start.label_id = fake[0].trigger_label_id;
+      E.seqIndex(def).forEach(({ node: n }) => { if (n.hint) delete n.hint; });
+      await call('saveAutomation', { id: f.id || undefined, automation: { kind: 'sequencia', name: f.name, active: f.active, sequence: def, test_chat_id: f.testOn ? f.test_chat_id : null }, includeExisting: false });
+      await motor.loadAutomations();
+      fl.statsAt = 0;
+      flash(f.active ? (f.testOn ? 'Sequência ligada em teste: só a conversa escolhida.' : 'Sequência ligada: vale para quem entrar daqui pra frente.') : 'Sequência salva (desligada).');
+      fl.seq = null;
+      fl.saving = false;
+      backToList();
+      renderFootPause();
+      return;
+    } catch (e) {
+      f.msg = e.message;
+      f.err = true;
+    }
+    fl.saving = false;
+    renderFollows();
+  }
+
+  // painel da conversa: "Na automação X · passo: esperando resposta (faltam 1h20)"
+  const cseq = { chatId: null, runs: [], busy: false };
+  async function loadChatSequence(chatId) {
+    const box = shadow.querySelector('.cseq');
+    cseq.chatId = chatId;
+    if (!box) return;
+    if (!chatId || motor.state.sequencesAvailable !== true) { box.hidden = true; cseq.runs = []; return; }
+    let runs = [];
+    try { runs = await call('seqChatRuns', { chatId }); } catch { runs = []; }
+    if (cseq.chatId !== chatId) return;
+    cseq.runs = Array.isArray(runs) ? runs : [];
+    renderChatSequence();
+  }
+  function renderChatSequence() {
+    const box = shadow.querySelector('.cseq');
+    if (!box) return;
+    box.textContent = '';
+    box.hidden = !cseq.runs.length;
+    cseq.runs.forEach((r) => {
+      const def = r.automation.sequence || {};
+      const run = { ...r, due_at: Date.parse(r.due_at || '') || null };
+      const line = el('div', 'cseq-line');
+      line.append(el('span', 'cseq-t', `🔁 Na automação ${r.automation.name} · passo: ${E.seqDescribe(def, run, Date.now(), { itemTitle })}`));
+      const e = E.seqIndex(def).get(r.node);
+      const btns = el('span', 'cseq-btns');
+      const out = fbtn('ed-mini cseq-out', 'Tirar da automação', () => chatSeqAction(r, 'sair'));
+      btns.append(out);
+      if (e && e.node.type === 'esperar') btns.append(fbtn('ed-mini cseq-skip', 'Pular espera', () => chatSeqAction(r, 'pular')));
+      btns.querySelectorAll('button').forEach((b) => { b.disabled = cseq.busy; });
+      line.append(btns);
+      box.append(line);
+    });
+  }
+  async function chatSeqAction(r, action) {
+    if (cseq.busy) return;
+    cseq.busy = true;
+    renderChatSequence();
+    try {
+      await call('seqRunAction', { id: r.id, action });
+      toast(action === 'sair' ? `Conversa tirada de "${r.automation.name}".` : 'Espera pulada: no próximo ciclo segue pelo ❌ Não respondeu.', 'ok', 4000);
+    } catch (e) { toast(e.message, 'error', 5000); }
+    cseq.busy = false;
+    await loadChatSequence(cseq.chatId);
+  }
+  setInterval(() => { if (state.open && cseq.chatId && cseq.runs.length && !document.hidden) renderChatSequence(); }, 30 * 1000); // "faltam…" anda sozinho
+
   // ── 2.11.0: "+ Nova automação": modelos com passo a passo (Quem → Quando → O quê) ──
   function renderTemplates() {
     const sec = el('section', 'crmsec');
@@ -7387,6 +7749,17 @@
       card.dataset.wizard = t.key;
       card.append(el('div', 'fw-name', t.title), el('div', 'fw-txt', t.help));
       card.addEventListener('click', () => openWizard(t.key));
+      grid.append(card);
+    });
+    // 2.12.0: sequências (respondeu / não respondeu)
+    [['seq_blank', 'Sequência (respondeu / não respondeu)', 'Monte uma receita de cima para baixo: manda, espera a resposta e segue por ✅ Respondeu ou ❌ Não respondeu (pode repetir).'],
+      ['lead_followup', 'Follow-up de lead novo', 'Lead novo chamou → você responde → se não responder em 2h, Follow 1 → 1 dia → Follow 2 → 2 dias → Follow 3. Respondeu: "Em atendimento".']].forEach(([key, title, help]) => {
+      const card = el('button', 'fw-card fw-model fw-seq');
+      card.type = 'button';
+      card.dataset.seq = key;
+      card.append(el('div', 'fw-name', title), el('div', 'fw-txt', help));
+      if (motor.state.sequencesAvailable !== true) { card.disabled = true; card.append(el('div', 'ed-note', 'Atualize o banco para usar (migration 20261106210000).')); }
+      card.addEventListener('click', () => openSeqEditor(null, key));
       grid.append(card);
     });
     const blank = el('button', 'fw-card fw-model fw-blank');
@@ -8279,7 +8652,7 @@
     const contact = st.contact || { id: null, name: null, phone: open.identity.phone || null, chat_id: open.chatId, labelIds: [], links: [], waSeen: st.waSeen || {}, enrolled: {}, enrollmentIds: {} };
     if (!contact.chat_id) contact.chat_id = open.chatId;
     const ranKeys = new Set(st.ranKeys || []);
-    const mine = automations.filter((a) => a.trigger_type !== 'venda_registrada' && E.automationEntry(a, contact));
+    const mine = automations.filter((a) => a.kind !== 'sequencia' && a.trigger_type !== 'venda_registrada' && E.automationEntry(a, contact));
     let chat = null;
     if (mine.length) {
       const keywords = [...new Set(mine.flatMap(E.automationKeywords))].slice(0, 20);
@@ -8357,7 +8730,7 @@
     const none = el('option', null, 'Escolha a automação…');
     none.value = '';
     sel.append(none);
-    [...motor.state.automations].filter((a) => a.trigger_type !== 'venda_registrada').sort((a, b) => (a.position || 0) - (b.position || 0)).forEach((a) => {
+    [...motor.state.automations].filter((a) => (a.kind === 'sequencia' ? a.sequence && a.sequence.start && a.sequence.start.type === 'manual' : a.trigger_type !== 'venda_registrada')).sort((a, b) => (a.position || 0) - (b.position || 0)).forEach((a) => {
       const o = el('option', null, `${a.name}${a.active ? '' : ' (desligada)'}`);
       o.value = a.id;
       o.selected = a.id === c.pick;

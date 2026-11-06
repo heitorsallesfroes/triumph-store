@@ -153,6 +153,7 @@ async function main() {
       if (method === 'POST') {
         const list = (Array.isArray(body) ? body : [body]).map((r) => ({ id: require('crypto').randomUUID(), created_at: new Date().toISOString(), ...r }));
         tbl(table).push(...list);
+        if (table === 'wa_automations' && fake.onAutomationPost) list.forEach((r) => fake.onAutomationPost(r));
         return [201, list];
       }
       if (method === 'PATCH') { const rows = tbl(table).filter(match); rows.forEach((r) => Object.assign(r, body)); return [200, rows]; }
@@ -613,8 +614,8 @@ async function main() {
     const listOk = await waitFor(`return !!sh.querySelector('.fw-new');`, 15000);
     check('automações: a lista abre com "+ Nova automação"', listOk, `${(await q(`return (sh.querySelector('.ftab') || {}).textContent || '';`)).slice(0, 120)}`);
     await q(`sh.querySelector('.fw-new').click(); await wait(200); return true;`);
-    const models = await q(`return [...sh.querySelectorAll('.fw-model')].map((b) => b.dataset.wizard || 'branco');`);
-    check('"+ Nova automação": 4 modelos com explicação + "Em branco (avançado)"', JSON.stringify(models) === JSON.stringify(['posvenda', 'followup', 'lead', 'sumido', 'branco']), JSON.stringify(models));
+    const models = await q(`return [...sh.querySelectorAll('.fw-model')].map((b) => b.dataset.wizard || b.dataset.seq || 'branco');`);
+    check('"+ Nova automação": 4 modelos + 2 sequências + "Em branco (avançado)"', JSON.stringify(models) === JSON.stringify(['posvenda', 'followup', 'lead', 'sumido', 'seq_blank', 'lead_followup', 'branco']), JSON.stringify(models));
     await q(`sh.querySelector('.fw-model[data-wizard="posvenda"]').click(); await wait(200); sh.querySelector('.wiz-next').click(); await wait(150); sh.querySelector('.wiz-next').click(); await wait(200); return true;`);
     const step3 = await q(`return !!sh.querySelector('.fw-wizard .fw-newmsg') && /O que mandar/.test(sh.querySelector('.fw-wizard').textContent);`);
     check('passo a passo: Quem → Quando → O quê (com "+ Criar mensagem aqui")', step3);
@@ -655,9 +656,49 @@ async function main() {
     check('validação: não salva e marca em vermelho onde está cada problema (ação sem etiqueta, etiqueta do gatilho)',
       inv.n >= 2 && inv.action && inv.trigger && /escolha a etiqueta/i.test(inv.msg) && (fake.db.wa_automations || []).length === nAuto, JSON.stringify(inv));
     check('editor avançado com frases e (i) explicando as opções', inv.i >= 3 && await q(`return /Para quem está na etiqueta/.test(sh.querySelector('.fw-editor').textContent) && !/tempo corrido\\)/.test(sh.querySelector('.fw-editor').textContent);`), `(i): ${inv.i}`);
+    check('nenhum erro no console nas automações', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 8. sequência (2.12.0): modelo "Follow-up de lead novo" no editor visual, validação por passo, salvar e os
+    // números da lista (quantos em cada passo e saídas por ✅ / ❌)
+    await q(`const b = [...sh.querySelectorAll('.fw-editor .bbtn')].find((x) => x.textContent === 'Cancelar'); if (b) b.click(); await wait(200); sh.querySelector('.fw-new').click(); await wait(200);
+      sh.querySelector('.fw-seq[data-seq="lead_followup"]').click(); await wait(300); return true;`);
+    const seqOpen = await q(`const e = sh.querySelector('.sq-editor'); return e ? { nodes: e.querySelectorAll('.sq-node').length, yes: e.querySelectorAll('.sq-branch.sq-yes').length, no: e.querySelectorAll('.sq-branch.sq-no').length,
+      start: e.querySelector('.sq-start select').value, sends: e.querySelectorAll('.sq-enviar').length, waits: e.querySelectorAll('.sq-esperar').length } : null;`);
+    check('sequência: "Follow-up de lead novo" abre no editor (começo lead, 3 esperas com ✅/❌, 3 mensagens)',
+      !!seqOpen && seqOpen.start === 'lead' && seqOpen.waits === 3 && seqOpen.sends === 3 && seqOpen.yes === 3 && seqOpen.no === 3 && seqOpen.nodes === 9, JSON.stringify(seqOpen));
+    const nAuto2 = (fake.db.wa_automations || []).length;
+    await q(`sh.querySelector('.sq-save').click(); await wait(300); return true;`);
+    const seqInv = await q(`return { bad: [...sh.querySelectorAll('.sq-editor .sq-enviar.fw-invalid')].length, msg: (sh.querySelector('.sq-editor .ed-msg') || {}).textContent || '' };`);
+    check('sequência: sem as mensagens não salva e marca cada passo de envio', seqInv.bad === 3 && /Escolha ou crie a mensagem/.test(seqInv.msg) && (fake.db.wa_automations || []).length === nAuto2, JSON.stringify(seqInv));
+    const itemId = item && item.id;
+    for (let k = 0; k < 3; k++) {
+      await q(`const s = sh.querySelectorAll('.sq-editor .sq-enviar select')[${k}]; s.value = '${itemId}'; s.dispatchEvent(new Event('change', { bubbles: true })); await wait(150); return true;`);
+    }
+    let savedSeq = null;
+    fake.onAutomationPost = (row) => {
+      if (row.kind !== 'sequencia') return;
+      savedSeq = row;
+      const first = row.sequence.steps[0].id;
+      const r = (status, extra) => ({ id: require('crypto').randomUUID(), automation_id: row.id, chat_id: `55119000000${String(Math.random()).slice(2, 4)}@c.us`, entry_key: 'lead', node: first, status, branches: [], version: 0, ...extra });
+      fake.db.wa_sequence_runs = [...(fake.db.wa_sequence_runs || []), r('ativo'), r('ativo'), r('fim', { node: null, outcome: 'respondeu' }), r('fim', { node: null, outcome: 'nao_respondeu' }), r('fim', { node: null, outcome: 'nao_respondeu' })];
+    };
+    await q(`sh.querySelector('.sq-save').click(); return true;`);
+    await waitFor(`return !sh.querySelector('.sq-editor') && !!sh.querySelector('.fw-new');`, 15000);
+    const lbl = (fake.db.wa_labels || []).find((l) => l.name === 'Em atendimento');
+    const flat = [];
+    const walk = (list) => (list || []).forEach((n) => { flat.push(n); if (n.type === 'esperar') { walk(n.yes); walk(n.no); } });
+    if (savedSeq) walk(savedSeq.sequence.steps);
+    check('sequência salva: kind "sequencia", começo lead, 3 envios com a mensagem e "Em atendimento" criada nos ✅',
+      !!savedSeq && savedSeq.trigger_type === 'sequencia' && savedSeq.sequence.start.type === 'lead' && savedSeq.sequence.business === true
+      && flat.filter((n) => n.type === 'enviar' && n.item_id === itemId).length === 3 && !!lbl && flat.filter((n) => n.type === 'etiqueta' && n.label_id === lbl.id).length === 3
+      && savedSeq.sequence.steps[0].after_mine === true && savedSeq.sequence.steps[0].amount === 2,
+      JSON.stringify(savedSeq && { trigger_type: savedSeq.trigger_type, start: savedSeq.sequence.start, nodes: flat.map((n) => n.type) }));
+    const statsOk = await waitFor(`return [...sh.querySelectorAll('.fw-card')].some((c) => /Follow-up de lead novo/.test(c.textContent) && /Saíram por ✅: 1/.test(c.textContent));`, 15000);
+    const seqCard = await q(`const c = [...sh.querySelectorAll('.fw-card')].find((x) => /Follow-up de lead novo/.test(x.textContent)); return c ? c.textContent : '';`);
+    check('lista: sequência com quantos em cada passo agora e saídas por ✅ e ❌', statsOk && /Agora: 2/.test(seqCard) && /Esperando resposta \(2 h\): 2/.test(seqCard) && /por ❌: 2/.test(seqCard) && /Sequência: começa quando um lead novo chama/.test(seqCard), seqCard.slice(0, 400));
     fake.on = false;
     fake.generic = false;
-    check('nenhum erro no console nas automações', errors.length === 0, errors.slice(0, 8).join(' | '));
+    check('nenhum erro no console nas sequências', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

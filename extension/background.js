@@ -93,6 +93,15 @@ const HANDLERS = {
   deleteAutomation:     (m) => WaApi.deleteAutomation({ id: m.id }),
   automationRuns:       (m) => WaApi.automationRuns({ automationIds: m.automationIds, contactIds: m.contactIds }),
   automationSentCounts: (m) => WaApi.automationSentCounts({ automationIds: m.automationIds }), // 2.11.0
+  // 2.12.0: sequências
+  seqRuns:        (m) => WaApi.seqRuns({ automationIds: m.automationIds }),
+  seqCreateRuns:  (m) => WaApi.seqCreateRuns({ items: m.items }),
+  seqUpdateRun:   (m) => WaApi.seqUpdateRun({ id: m.id, version: m.version, patch: m.patch }),
+  seqReplies:     (m) => WaApi.seqReplies({ chatIds: m.chatIds, since: m.since }),
+  seqLeads:       (m) => WaApi.seqLeads({ since: m.since }),
+  seqChatRuns:    (m) => WaApi.seqChatRuns({ chatId: m.chatId }),
+  seqRunAction:   (m) => WaApi.seqRunAction({ id: m.id, action: m.action }),
+  seqStats:       (m) => WaApi.seqStats({ automationIds: m.automationIds }),
   automationReserve:    (m) => WaApi.automationReserve({ automationId: m.automationId, contactId: m.contactId, runKey: m.runKey }),
   automationUnreserve:  (m) => WaApi.automationUnreserve({ id: m.id }),
   applySendLabels:      (m) => WaApi.applySendLabels({ addLabelId: m.addLabelId, removeLabelId: m.removeLabelId, removeAll: m.removeAll === true, contactId: m.contactId, identity: m.identity, chatId: m.chatId, name: m.name }),
