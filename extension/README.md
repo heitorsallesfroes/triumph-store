@@ -799,6 +799,15 @@ guardada.
 
 ## O que mudou
 
+### 2.10.1 — correção urgente: o painel não abria (desde a 2.9.2)
+- O manifest listava `rich-parts.js` em dois `content_scripts` (mundo MAIN e mundo isolado). O Chrome
+  injeta o mesmo arquivo só uma vez por página: ele rodava só no MAIN, o mundo isolado ficava sem
+  `TspRich` e o `content.js` quebrava ao abrir ("Cannot read properties of undefined (reading 'TYPES')").
+- Agora o mundo isolado carrega `rich-parts-iso.js`, cópia idêntica de `rich-parts.js` (só com um
+  comentário no topo). **Ao mudar `rich-parts.js`, copie também para `rich-parts-iso.js`.**
+- Teste novo: `node extension/tests/manifest.test.cjs` falha se algum arquivo aparecer em mais de uma
+  entrada de `content_scripts` ou se `rich-parts-iso.js` ficar diferente de `rich-parts.js`.
+
 ### 2.10.0 — Painel de resultados (extensão + ERP)
 **Extensão: registros novos** (só a aba que tem a trava grava; sem a migration, nada muda):
 - **Lead novo** (`wa_leads`, uma linha por conversa): a 1ª mensagem do cliente numa conversa
@@ -1362,7 +1371,7 @@ WhatsApp Web (mundo da página, "world": "MAIN")
 Mundo isolado da extensão
   data/nomes-br.js ......... lista de nomes comuns para o {nome} (2.1.0)
   sale-calc.js ............. cálculos da venda copiados do ERP (2.3.0; também no background)
-  rich-parts.js ............ o mesmo arquivo (2.9.2; também no background)
+  rich-parts-iso.js ........ cópia idêntica de rich-parts.js para este mundo (2.10.1; o background usa rich-parts.js)
   engine.js ................ motor de envios (lógica pura + fila; sem rede, sem DOM)
   content.js ............... painel; áudio: rápido (WA-JS) → plano B (microfone) → plano C (arquivo)
         ▲  chrome.runtime.sendMessage
