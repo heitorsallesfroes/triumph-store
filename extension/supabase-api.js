@@ -2675,18 +2675,20 @@
     return Object.fromEntries(rows.filter((r) => FEE_KEY_RE.test(r.key)).map((r) => [r.key, r.value]));
   }
 
-  // Listas do ERP para o formulário (produtos com estoque e preço, acessórios, motoboys, cidades, bairros)
+  // Listas do ERP para o formulário (produtos com estoque, preço e custo, acessórios, motoboys, fornecedores,
+  // cidades, bairros, taxas)
   async function erpCatalog() {
-    const [products, accessories, motoboys, cities, neighborhoods, fees, originAvailable] = await Promise.all([
+    const [products, accessories, motoboys, suppliers, cities, neighborhoods, fees, originAvailable] = await Promise.all([
       rest('products?select=id,model,color,category,price,cost,current_stock&order=model.asc&limit=5000'),
       rest('accessories?select=id,name,cost&order=name.asc&limit=2000'),
       rest('motoboys?select=id,name&order=name.asc'),
+      rest('suppliers?select=id,name&order=name.asc&limit=2000').catch(() => []), // 2.12.3
       rest('cities?select=id,name&order=name.asc&limit=5000'),
       rest('neighborhoods?select=id,name&order=name.asc&limit=10000'),
       feeConfig(),
       salesOrigin(),
     ]);
-    return { products, accessories, motoboys, cities, neighborhoods, fees, originAvailable, erpUrl: (root.WA_CONFIG && root.WA_CONFIG.ERP_URL) || null };
+    return { products, accessories, motoboys, suppliers, cities, neighborhoods, fees, originAvailable, erpUrl: (root.WA_CONFIG && root.WA_CONFIG.ERP_URL) || null };
   }
 
   // Cidade/bairro novos entram na lista do ERP (o ERP faz o mesmo ao salvar a venda)
@@ -2701,87 +2703,172 @@
     }
   }
 
+  // 2.12.3: a venda chega como a tela "Nova Venda" do ERP: data da venda, produtos com custo (editável),
+  // acessórios com custo, itens manuais, CPF, fornecedor (ou um por smartwatch), várias formas de pagamento.
+  const SALE_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const realDay = (d) => SALE_DAY_RE.test(d) && new Date(`${d}T12:00:00Z`).toISOString().slice(0, 10) === d;
+  function checkPayments(s, S) {
+    const methods = S.PAYMENT_METHODS.map(([k]) => k);
+    // pedido antigo (uma forma só): como o estado inicial do ERP, valor 0
+    const list = Array.isArray(s.payments) ? s.payments
+      : s.payment_method ? [{ method: s.payment_method, card_brand: s.card_brand, installments: s.installments, amount: 0 }] : [];
+    if (!list.length || list.length > 6) throw new Error('Escolha a forma de pagamento');
+    return list.map((pm, i) => {
+      const p = pm || {};
+      if (!methods.includes(p.method)) throw new Error(`Forma de pagamento ${i + 1} inválida`);
+      const card = S.CARD_METHODS.includes(p.method);
+      const out = {
+        method: p.method,
+        card_brand: card && S.CARD_BRANDS.some(([k]) => k === p.card_brand) ? p.card_brand : '',
+        installments: S.INSTALLMENT_METHODS.includes(p.method) ? intIn(Number(p.installments) || 0, 0, 12, 'Parcelas') : 0,
+        amount: numIn(p.amount ?? 0, 0, 1000000, `Valor da forma de pagamento ${i + 1}`),
+      };
+      if (p.net_amount != null && p.net_amount !== '') out.net_amount = numIn(p.net_amount, 0, 1000000, `Valor líquido da forma de pagamento ${i + 1}`);
+      return out;
+    });
+  }
+
   function checkSaleInput(s) {
     const S = SALE();
     const deliveryTypes = S.DELIVERY_TYPES.map(([k]) => k);
-    const methods = S.PAYMENT_METHODS.map(([k]) => k);
     if (!deliveryTypes.includes(s.delivery_type)) throw new Error('Tipo de entrega inválido');
-    if (!methods.includes(s.payment_method)) throw new Error('Forma de pagamento inválida');
-    const card = ['credit_card', 'debit_card', 'payment_link'].includes(s.payment_method);
-    const brand = card && S.CARD_BRANDS.some(([k]) => k === s.card_brand) ? s.card_brand : '';
-    const installments = s.payment_method === 'credit_card' || s.payment_method === 'payment_link' ? intIn(Number(s.installments) || 0, 0, 12, 'Parcelas') : 0;
-    if (!Array.isArray(s.items) || !s.items.length || s.items.length > 30) throw new Error('Adicione pelo menos um produto');
+    const payments = checkPayments(s, S);
+    const rawItems = Array.isArray(s.items) ? s.items : [];
+    const rawManual = Array.isArray(s.manual_items) ? s.manual_items : [];
+    if (rawItems.length > 30 || rawManual.length > 30) throw new Error('Itens demais');
     const merged = new Map();
-    s.items.forEach((it, i) => {
+    rawItems.forEach((it, i) => {
       const id = checkUuid(it && it.product_id, `Produto ${i + 1} inválido`);
       const quantity = intIn(Number(it.quantity), 1, 999, `Quantidade do produto ${i + 1}`);
-      const unit_price = numIn(it.unit_price, 0, 1000000, `Valor do produto ${i + 1}`);
+      const unit_price = numIn(it.unit_price, 0, 1000000, `Preço do produto ${i + 1}`);
+      const unit_cost = it.unit_cost == null || it.unit_cost === '' ? null : numIn(it.unit_cost, 0, 1000000, `Custo do produto ${i + 1}`);
       // Como o ERP: o mesmo produto de novo soma na quantidade
       if (merged.has(id)) merged.get(id).quantity += quantity;
-      else merged.set(id, { product_id: id, quantity, unit_price });
+      else merged.set(id, { product_id: id, quantity, unit_price, unit_cost });
     });
     const accs = Array.isArray(s.accessories) ? s.accessories : [];
     if (accs.length > 30) throw new Error('Acessórios demais');
-    const accessories = accs.map((a, i) => ({ accessory_id: checkUuid(a && a.accessory_id, `Acessório ${i + 1} inválido`), quantity: intIn(Number(a.quantity), 1, 999, `Quantidade do acessório ${i + 1}`) }));
+    const accessories = accs.map((a, i) => ({
+      accessory_id: checkUuid(a && a.accessory_id, `Acessório ${i + 1} inválido`),
+      quantity: intIn(Number(a.quantity), 1, 999, `Quantidade do acessório ${i + 1}`),
+      cost: a.cost == null || a.cost === '' ? null : numIn(a.cost, 0, 1000000, `Custo do acessório ${i + 1}`),
+    }));
+    const manualItems = rawManual.map((m, i) => {
+      const name = clip(m && m.name, 100);
+      if (!name) throw new Error(`Nome do item manual ${i + 1}`);
+      return { name, price: numIn(m.price, 0, 1000000, `Preço do item "${name}"`), cost: numIn(m.cost ?? 0, 0, 1000000, `Custo do item "${name}"`), quantity: intIn(Number(m.quantity), 1, 999, `Quantidade do item "${name}"`) };
+    });
+    const cpf = S.cleanCpf(s.customer_cpf).slice(0, 11);
+    const day = typeof s.sale_date === 'string' && realDay(s.sale_date) ? s.sale_date : S.todayInBrazil();
     const form = {
+      sale_date: day,
       customer_name: clip(s.customer_name, 100) || '',
       customer_phone: clip(s.customer_phone, 30),
+      customer_cpf: cpf || '',
       address_street: clip(s.address_street, 200),
       address_number: clip(s.address_number, 30),
       address_complement: clip(s.address_complement, 200),
       city: clip(s.city, 80) || '',
       neighborhood: clip(s.neighborhood, 80) || '',
-      state: clip(s.state, 30),
-      zip_code: clip(s.zip_code, 12),
+      state: (clip(s.state, 2) || '').toUpperCase() || null,
+      zip_code: clip(String(s.zip_code == null ? '' : s.zip_code).replace(/\D/g, ''), 8),
       delivery_type: s.delivery_type,
       motoboy_id: s.delivery_type === 'motoboy' && s.motoboy_id ? checkUuid(s.motoboy_id, 'Motoboy inválido') : null,
-      delivery_fee: s.delivery_type === 'motoboy' ? numIn(s.delivery_fee ?? S.DEFAULT_DELIVERY_FEE, 0, 10000, 'Taxa do motoboy') : 0,
-      delivery_cost: s.delivery_type === 'correios' ? numIn(s.delivery_cost ?? 0, 0, 10000, 'Frete') : 0,
+      delivery_fee: s.delivery_type === 'motoboy' ? numIn(s.delivery_fee ?? S.DEFAULT_DELIVERY_FEE, 0, 10000, 'Taxa de entrega') : 0,
+      delivery_cost: s.delivery_type === 'correios' ? numIn(s.delivery_cost ?? 0, 0, 10000, 'Custo Correios') : 0,
       delivery_notes: clipText(s.delivery_notes, 1000),
       payment_status: s.payment_status === 'pago' ? 'pago' : 'a_cobrar',
     };
-    const v = S.validateAddress(form.delivery_type, form);
-    if (!v.isValid) throw new Error(v.message);
+    const items = [...merged.values()];
+    // mesmas validações do ERP (custo ainda não importa aqui)
+    const err = S.validateSale({ form, items, manualItems, payments });
+    if (err) throw new Error(err);
+    const suppliers = {
+      id: s.supplier_id ? checkUuid(s.supplier_id, 'Fornecedor inválido') : null,
+      name: clip(s.supplier_name, 100),
+      perItem: {},
+    };
+    if (s.item_suppliers && typeof s.item_suppliers === 'object') {
+      Object.entries(s.item_suppliers).slice(0, 30).forEach(([pid, sid]) => { if (merged.has(pid) && sid) suppliers.perItem[pid] = checkUuid(sid, 'Fornecedor inválido'); });
+    }
+    const ad = s.ad && typeof s.ad === 'object' ? s.ad : null;
     const extra = {
       wa_chat_id: typeof s.wa_chat_id === 'string' && SCHED_CHAT_RE.test(s.wa_chat_id) ? s.wa_chat_id : null,
-      origin: s.origin === 'anuncio' ? 'anuncio' : 'organico',
-      ad_source: clip(s.ad_source, 60),
-      ad_title: clip(s.ad_title, 300),
-      ad_url: typeof s.ad_url === 'string' && /^https?:\/\/\S{1,500}$/.test(s.ad_url) ? s.ad_url : null,
-      wa_warranty_months: s.warranty_months == null || s.warranty_months === '' ? null : intIn(Number(s.warranty_months), 0, 120, 'Garantia (meses)'),
+      ad: ad ? { title: clip(ad.title, 300), source: clip(ad.platform || ad.sourceType, 60), url: typeof ad.url === 'string' && /^https?:\/\/\S{1,500}$/.test(ad.url) ? ad.url : null } : null,
     };
-    return { form, items: [...merged.values()], accessories, payment: { method: s.payment_method, card_brand: brand, installments }, extra };
+    return { form, items, accessories, manualItems, payments, suppliers, extra };
+  }
+
+  // 2.12.3: origem automática: anúncio se a conversa tem anúncio registrado (wa_ad_attribution) ou se o
+  // WhatsApp mostrou o anúncio nas mensagens; senão orgânico
+  async function saleOrigin(chatId, seen) {
+    let row = null;
+    if (chatId) {
+      try { row = (await rest(`${AD_TABLE}?select=ad_title,source_app,source_url&chat_id=eq.${encodeURIComponent(chatId)}&limit=1`))[0] || null; } catch { row = null; }
+    }
+    if (row) return { origin: 'anuncio', ad_source: clip(row.source_app, 60), ad_title: clip(row.ad_title, 300), ad_url: typeof row.source_url === 'string' && /^https?:\/\/\S{1,500}$/.test(row.source_url) ? row.source_url : null };
+    if (seen) return { origin: 'anuncio', ad_source: seen.source, ad_title: seen.title, ad_url: seen.url };
+    return { origin: 'organico', ad_source: null, ad_title: null, ad_url: null };
+  }
+
+  // Fornecedor como o ERP: 2+ smartwatches → o do 1º smartwatch; senão o escolhido, ou pelo nome (cria se não existir)
+  async function resolveSupplier(sup) {
+    if (sup.id) return sup.id;
+    if (!sup.name) return null;
+    const rows = await rest('suppliers?select=id,name&limit=5000');
+    const found = rows.find((r) => String(r.name).toLowerCase() === sup.name.toLowerCase());
+    if (found) return found.id;
+    const created = await rest('suppliers', json('POST', 'return=representation', { name: sup.name }));
+    return created[0].id;
   }
 
   async function createSaleFromChat({ sale }) {
     const S = SALE();
-    const { form, items, accessories, payment, extra } = checkSaleInput(sale || {});
-    // Dados frescos do banco: custo (unit_cost) e categoria do produto, custo do acessório, taxas
-    const products = await rest(`products?select=id,model,color,category,price,cost,current_stock,tiny_id&id=in.${inList(items.map((i) => i.product_id))}`);
+    const { form, items, accessories, manualItems, payments, suppliers, extra } = checkSaleInput(sale || {});
+    // Dados frescos do banco: categoria (volumes/fornecedor), custo padrão, estoque e Tiny do produto; custo do acessório
+    const products = items.length ? await rest(`products?select=id,model,color,category,price,cost,current_stock,tiny_id&id=in.${inList(items.map((i) => i.product_id))}`) : [];
     const byId = new Map(products.map((p) => [p.id, p]));
     items.forEach((it) => { if (!byId.has(it.product_id)) throw new Error('Produto não encontrado'); });
     const accRows = accessories.length ? await rest(`accessories?select=id,name,cost&id=in.${inList(accessories.map((a) => a.accessory_id))}`) : [];
     const accById = new Map(accRows.map((a) => [a.id, a]));
     accessories.forEach((a) => { if (!accById.has(a.accessory_id)) throw new Error('Acessório não encontrado'); });
     const cfg = await feeConfig();
-    const calcItems = items.map((it) => ({ ...it, unit_cost: Number(byId.get(it.product_id).cost) || 0, category: byId.get(it.product_id).category }));
-    const calcAcc = accessories.map((a) => ({ ...a, cost: Number(accById.get(a.accessory_id).cost) || 0 }));
-    // Igual ao estado inicial do ERP: uma forma de pagamento, valor 0 (= o total da venda)
-    const payments = [{ method: payment.method, card_brand: payment.card_brand, installments: payment.installments, amount: 0 }];
+    // custo do item: o da tela (o ERP preenche com o custo do produto e deixa editar)
+    const calcItems = items.map((it) => ({ product_id: it.product_id, quantity: it.quantity, unit_price: it.unit_price, unit_cost: it.unit_cost != null ? it.unit_cost : Number(byId.get(it.product_id).cost) || 0, category: byId.get(it.product_id).category }));
+    const calcAcc = accessories.map((a) => ({ accessory_id: a.accessory_id, quantity: a.quantity, cost: a.cost != null ? a.cost : Number(accById.get(a.accessory_id).cost) || 0 }));
+    const multi = S.isMultiSupplier(calcItems);
+    const supplierId = multi ? null : await resolveSupplier(suppliers);
     await ensurePlace('cities', form.city);
     await ensurePlace('neighborhoods', form.neighborhood);
-    const { row, saleItems, saleAccessories } = S.buildSale({ form, items: calcItems, accessories: calcAcc, payments, cfg });
-    if (await salesOrigin()) Object.assign(row, extra);
+    const { row, saleItems, saleAccessories } = S.buildSale({ form, items: calcItems, accessories: calcAcc, manualItems, payments, cfg, supplierId, itemSuppliers: suppliers.perItem });
+    if (await salesOrigin()) Object.assign(row, { wa_chat_id: extra.wa_chat_id }, await saleOrigin(extra.wa_chat_id, extra.ad));
     const created = await rest('sales', json('POST', 'return=representation', row));
     const saleId = created[0].id;
     try {
-      await rest('sale_items', json('POST', 'return=minimal', saleItems.map((x) => ({ ...x, sale_id: saleId }))));
-      if (saleAccessories.length) await rest('sale_accessories', json('POST', 'return=minimal', saleAccessories.map((x) => ({ ...x, sale_id: saleId }))));
+      if (saleItems.length) await rest('sale_items', json('POST', 'return=minimal', saleItems.map((x) => ({ sale_id: saleId, ...x }))));
+      if (saleAccessories.length) await rest('sale_accessories', json('POST', 'return=minimal', saleAccessories.map((x) => ({ sale_id: saleId, ...x }))));
     } catch (err) {
       // Sem itens a venda ficaria errada no ERP: desfaz (o estoque ainda não foi mexido)
       await rest(`sale_items?sale_id=eq.${saleId}`, { method: 'DELETE' }).catch(() => {});
+      await rest(`sale_accessories?sale_id=eq.${saleId}`, { method: 'DELETE' }).catch(() => {});
       await rest(`sales?id=eq.${saleId}`, { method: 'DELETE' }).catch(() => {});
       throw err;
+    }
+    // Itens manuais: como o ERP, viram produto "acessorio" (estoque 0) se ainda não existir um com o mesmo nome
+    if (manualItems.length) {
+      const acc = await rest('products?select=id,model&category=eq.acessorio&limit=5000').catch(() => []);
+      for (const mi of manualItems) {
+        const model = mi.name.trim();
+        if (acc.some((p) => String(p.model || '').toLowerCase() === model.toLowerCase())) continue;
+        await rest('products', json('POST', 'return=minimal', { category: 'acessorio', model, color: '', cost: mi.cost, price: mi.price, current_stock: 0 })).catch(() => {});
+        acc.push({ model });
+      }
+    }
+    // Custo editado: o ERP grava o novo custo no produto (saveProductCost)
+    for (const it of calcItems) {
+      if (it.unit_cost !== (Number(byId.get(it.product_id).cost) || 0)) {
+        await rest(`products?id=eq.${it.product_id}`, json('PATCH', 'return=minimal', { cost: it.unit_cost })).catch(() => {});
+      }
     }
     // Estoque: o ERP baixa na criação da venda (products.current_stock) e avisa o Tiny
     let tinyFailed = 0;
@@ -2799,7 +2886,21 @@
         } catch { tinyFailed++; }
       }
     }
-    return { id: saleId, total: row.total_sale_price, status: row.status, tinyFailed };
+    return { id: saleId, total: row.total_sale_price, status: row.status, tinyFailed, origin: row.origin || null };
+  }
+
+  // 2.12.3: fetchAddressByCep do ERP (src/lib/viaCep.ts): só o CEP (8 dígitos) sai; volta rua, bairro, cidade e UF
+  async function lookupCep({ cep }) {
+    const d = String(cep == null ? '' : cep).replace(/\D/g, '');
+    if (d.length !== 8) return null;
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${d}/json/`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data || data.erro) return null;
+      const s = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+      return { logradouro: s(data.logradouro, 200), bairro: s(data.bairro, 80), localidade: s(data.localidade, 80), uf: s(data.uf, 2).toUpperCase() };
+    } catch { return null; }
   }
 
   // Venda desta conversa nas últimas 24 h (para avisar antes de registrar outra)
@@ -3259,7 +3360,7 @@
     metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,
     purchaseSaleLink, linkSaleToPurchase, unlinkSaleFromPurchase,
     sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
-    erpCatalog, createSaleFromChat, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
+    erpCatalog, createSaleFromChat, lookupCep, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
     seqRuns, seqCreateRuns, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqRunAction, seqStats,
     automationUnreserve, applySendLabels, getContactName,

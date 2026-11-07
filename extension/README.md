@@ -799,6 +799,41 @@ guardada.
 
 ## O que mudou
 
+### 2.12.3 — 💰 Venda pelo WhatsApp igual à "Nova Venda" do ERP
+- O formulário do 💰 agora espelha a tela **Nova Venda** do ERP (`src/pages/Sales.tsx`), compacto, com as
+  seções recolhíveis (clique no título; o que foi digitado fica) e campos lado a lado quando o painel está largo:
+  - **Data da venda** (padrão hoje; as taxas do link de pagamento seguem essa data, como no ERP).
+  - **Produtos**: a mesma busca do ERP (modelo, cor ou acessório; sem resultado → "Adicionar manualmente").
+    Cada produto com **Qtd**, **Custo (R$)** (vem o custo do produto e dá para editar) e **Preço venda (R$)**;
+    **Acessórios** com Qtd e custo; **Itens manuais** com nome, Qtd, custo e preço.
+  - **Cliente**: nome (o aprendido/salvo da conversa ou o do WhatsApp), telefone desta conversa (trava da 2.6.3),
+    CPF (opcional, validado), **📋 Colar formulário** (a mesma leitura do ERP), "Pegar endereço da conversa",
+    CEP (com 8 dígitos busca rua, UF, cidade e bairro no ViaCEP, como o ERP), UF, Rua, Número, Complemento,
+    Cidade, Bairro e **Fornecedor** (com 2 ou mais smartwatches, um fornecedor por smartwatch).
+  - **Pagamento**: várias formas ("+ Adicionar forma de pagamento"), as mesmas opções, bandeiras e parcelas com a
+    taxa, valor bruto/líquido em "Outros", a taxa de cada forma, **Pago / A cobrar** e "Total da venda · Alocado ·
+    Falta alocar".
+  - **Entrega**: tipo (Loja Física, Motoboy, Correios), motoboy, taxa de entrega, custo Correios (começa em
+    R$ 13,11, como no ERP), observações e os volumes (automático).
+  - **Resumo financeiro** igual ao do ERP: valor total, taxa do cartão, valor recebido, lucro final e o
+    detalhamento dos custos.
+- Saíram **Horário de entrega**, **Garantia (meses)** e **Origem**. A origem é automática: **anúncio** se a conversa
+  tem anúncio registrado (`wa_ad_attribution`) ou o WhatsApp mostra o anúncio nas mensagens; senão **orgânico**.
+- Ficaram os extras do chat: "Tirar das automações e pôr na etiqueta CRM", "Gerar mensagem do entregador" (sem a
+  linha de horário; com complemento e observações), "Abrir esta venda no ERP" e a ligação com o 📈 (2.10.5).
+- Gravação exatamente como o `handleSubmit` do ERP: mesmas colunas de `sales` (CPF, fornecedor, `payment_methods`,
+  itens manuais, volumes, status "Em separação", data escolhida + hora de agora), `sale_items` com o custo de cada
+  item (e o fornecedor por smartwatch), `sale_accessories` com o custo, fornecedor novo criado pelo nome, cidade e
+  bairro novos, item manual novo vira produto "acessório", custo editado gravado no produto (como o ERP faz ao
+  sair do campo), estoque baixado e o Tiny avisado. Mesmas validações (sem item, CPF inválido, motoboy sem bairro/
+  cidade, total alocado diferente do total).
+- Permissão nova: `https://viacep.com.br/*` (só o CEP vai para lá).
+- Testes: `scripts/tests/saleParity.test.ts` (recorta o código de verdade do `Sales.tsx`, `cardFees.ts`,
+  `systemConfig.ts` e `cpfValidation.ts` e compara o objeto gravado com o da extensão para a mesma venda: 2
+  produtos com custo editado, 2 formas de pagamento, Correios, link pela data da venda, 2 smartwatches, "Outros";
+  e o "Colar formulário"), `tests/sale.test.cjs` (a gravação de ponta a ponta com banco falso) e o Chrome real
+  (formulário, colar formulário + CEP, resumo, recolher, registrar e conferir o que foi gravado).
+
 ### 2.12.2 — Rastreamento no ERP (última mensagem e sinais de compra)
 - **Precisa da migration `20261107120000_wa_leads_tracking.sql`** (colunas `last_message_at` e `buy_signal_at` em
   `wa_leads`). Sem ela a extensão segue como antes e não grava esses dois dados.
@@ -1638,7 +1673,8 @@ Service worker
 ### Arquivos
 
 - `manifest.json`: configuração da extensão (Manifest V3). Acesso só a
-  `web.whatsapp.com` e ao domínio do Supabase.
+  `web.whatsapp.com`, ao domínio do Supabase e (2.12.3) ao `viacep.com.br` — só o CEP
+  digitado/colado na venda vai para lá, como no ERP.
 - `config.js`: URL e anon key do Supabase (os mesmos valores do `.env` do ERP;
   a anon key é pública por design).
 - `background.js` e `supabase-api.js`: buscam os dados e os arquivos no
@@ -1669,9 +1705,12 @@ Service worker
   Não faz conexões de rede.
 - `sale-calc.js` (2.3.0): cópia dos cálculos da tela "Nova Venda" do ERP
   (`src/pages/Sales.tsx`, `src/lib/cardFees.ts`, `src/lib/systemConfig.ts`,
-  `src/lib/addressValidation.ts`, `src/lib/dateUtils.ts`). Se o ERP mudar a
-  conta, mude aqui também. O background recalcula a venda com os dados frescos
-  do banco antes de gravar.
+  `src/lib/addressValidation.ts`, `src/lib/dateUtils.ts`; 2.12.3: também
+  `src/lib/cpfValidation.ts`, o "Colar formulário", itens manuais, várias formas
+  de pagamento e o fornecedor por smartwatch). Se o ERP mudar a conta, mude aqui
+  também: `scripts/tests/saleParity.test.ts` roda o código do `Sales.tsx` e o
+  daqui com a mesma venda e falha se o objeto gravado ficar diferente. O
+  background confere tudo de novo antes de gravar.
 - Conversões (2.4.0): a extensão só chama a Edge Function
   `supabase/functions/meta-purchase-event` (mesmo host do Supabase, com o JWT
   do usuário; a função recusa quem não está logado) e lê `wa_conversion_events`

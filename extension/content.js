@@ -848,6 +848,55 @@
       .vd-prod { text-align: left; padding: 4px 8px ; border-radius: var(--r-sm) ; border: 1px solid var(--border); background: var(--card); font-size: var(--fs-2); }
       .vd-prod:hover { border-color: var(--accent); }
       .vd-total { font-size: var(--fs-3); }
+      /* 2.12.3: formulário igual à Nova Venda do ERP, compacto, com seções recolhíveis */
+      .vd-form { gap: 6px ; }
+      .vd-sec { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--card); }
+      .vd-sec-head { width: 100%; display: flex; align-items: center; gap: 6px; padding: 7px 10px; border: none; background: transparent; color: var(--fg); font: inherit; font-size: var(--fs-2); font-weight: 700; text-align: left; cursor: pointer; border-radius: var(--r-md); }
+      .vd-sec-head:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
+      .vd-sec-arrow { width: 12px; color: var(--muted); }
+      .vd-sec-sum { margin-left: auto; color: var(--muted); font-weight: 600; font-size: var(--fs-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+      .vd-sec-body { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 10px; }
+      .vd-grid2 { display: grid; grid-template-columns: 1fr; gap: 6px; }
+      .panel.w-wide .vd-grid2 { grid-template-columns: 1fr 1fr; }
+      .vd-item { gap: 4px; padding: 6px 8px; }
+      .vd-item-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+      .vd-item .sc-row .ed-field { min-width: 70px; }
+      .vd-stock { font-size: var(--fs-1); color: var(--muted); white-space: nowrap; }
+      .vd-item-end { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+      .vd-sub { font-weight: 800; color: var(--accent-text, var(--accent)); }
+      .vd-pay { gap: 6px; }
+      .vd-pay .sc-row > select { flex: 1; min-width: 120px; }
+      .vd-pay .sc-row > input { width: 110px; }
+      .vd-fee { font-size: var(--fs-1); color: var(--err); }
+      .vd-fee:empty { display: none; }
+      .vd-paystatus { flex-wrap: nowrap; }
+      .vd-ps { flex: 1; }
+      .vd-ps.on[data-ps="pago"] { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+      .vd-ps.on[data-ps="a_cobrar"] { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+      .vd-alloc, .vd-fin { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+      .vd-fin { grid-template-columns: repeat(2, 1fr); border-top: none; }
+      .panel.w-wide .vd-fin { grid-template-columns: repeat(4, 1fr); }
+      .vd-alloc-l, .vd-fin-l { font-size: var(--fs-1); color: var(--muted); }
+      .vd-alloc-v { font-weight: 800; }
+      .vd-alloc-c.ok .vd-alloc-v { color: var(--ok); }
+      .vd-alloc-c.warn .vd-alloc-v { color: var(--warn); }
+      .vd-alloc-c.bad .vd-alloc-v { color: var(--err); }
+      .vd-fin-c { padding: 6px 8px; border-radius: var(--r-sm); background: var(--bg2); border: 1px solid var(--border); }
+      .vd-fin-v { font-size: var(--fs-3); font-weight: 800; }
+      .vd-fin-c.bad .vd-fin-v { color: var(--err); }
+      .vd-fin-c.profit { border-color: var(--accent); }
+      .vd-fin-c.profit .vd-fin-v { color: var(--ok); }
+      .vd-fin-c.profit.neg .vd-fin-v { color: var(--err); }
+      .vd-fin-h { font-size: var(--fs-1); color: var(--muted); font-weight: 700; }
+      .vd-fin-det { display: grid; grid-template-columns: 1fr; gap: 2px 12px; font-size: var(--fs-1); }
+      .panel.w-wide .vd-fin-det { grid-template-columns: 1fr 1fr; }
+      .vd-fin-line { display: flex; justify-content: space-between; gap: 6px; color: var(--muted); }
+      .vd-fin-line b { color: var(--fg2); }
+      .vd-cpf-err:empty { display: none; }
+      .vd-paste { width: 100%; box-sizing: border-box; border-color: var(--accent); }
+      .vd-supplier-row { align-items: center; }
+      .vd-supplier-row select { flex: 1; min-width: 120px; }
+      .vd-actions { position: sticky; bottom: 0; background: var(--bg, var(--card)); padding: 6px 0; z-index: 1; }
       .vd-sale { width: 100%; text-align: left; border: none; }
       .vd-row { display: flex; align-items: center; gap: 8px ; }
       .vd-row .vd-sale { flex: 1; min-width: 0; }
@@ -8980,6 +9029,10 @@
 
   const productLabel = (p) => `${p.model}${p.color ? ` · ${p.color}` : ''}`;
 
+  // 2.12.3: o formulário espelha a tela "Nova Venda" do ERP (src/pages/Sales.tsx): data da venda, produtos com
+  // custo e preço, acessórios e itens manuais, cliente com CPF/"Colar formulário"/CEP/endereço/fornecedor, várias
+  // formas de pagamento, entrega e o resumo financeiro. A origem é automática (anúncio registrado ou orgânico).
+  const SALE_SECTIONS = ['produtos', 'cliente', 'pagamento', 'entrega', 'resumo', 'opcoes'];
   async function openSaleForm(opts = {}) {
     vs.view = 'form';
     vs.msg = '';
@@ -8996,14 +9049,19 @@
     // Etiquetas de gatilho das automações ativas (carrega se o motor ainda não leu)
     if (!motor.state.automations.length) await motor.loadAutomations();
     const autoLabels = activeAutomations().map((a) => a.trigger_label_id).filter(Boolean);
+    const prevOpen = vs.form && vs.form.open; // seções abertas/fechadas ficam como estavam
     vs.form = {
-      chatId, customer_name: '', customer_phone: phone || '',
-      items: [], search: '', accessories: [], payment_method: 'credit_card', card_brand: 'visa_mastercard', installments: 10, payment_status: 'a_cobrar',
-      delivery_type: 'motoboy', motoboy_id: '', delivery_fee: TS.DEFAULT_DELIVERY_FEE, delivery_cost: 0,
-      city: '', neighborhood: '', address_street: '', address_number: '', address_complement: '', reference: '', zip_code: '', schedule: '', notes: '',
-      warranty_months: '', origin: 'organico', ad: null, map: null, addressHint: null,
+      chatId, sale_date: TS.todayInBrazil(),
+      customer_name: '', customer_phone: phone || '', customer_cpf: '', cpfDisplay: '', cpfError: '',
+      items: [], accessories: [], manual: [], search: '',
+      address_street: '', address_number: '', address_complement: '', city: '', neighborhood: '', state: '', zip_code: '', cepError: '', cepLoading: false,
+      supplier_name: '', item_suppliers: {},
+      payments: [TS.initialPayment()], payment_status: 'a_cobrar',
+      delivery_type: 'motoboy', motoboy_id: '', delivery_fee: TS.DEFAULT_DELIVERY_FEE, delivery_cost: 0, delivery_notes: '',
+      ad: null, map: null, addressHint: null, pasteOpen: false,
       moveLabels: true, clientLabel: labelRef('Cliente'), removeLabels: state.convLabelIds.filter((l) => autoLabels.includes(l)),
       dupAsk: false,
+      open: prevOpen || Object.fromEntries(SALE_SECTIONS.map((k) => [k, true])),
       // 2.10.5: aberta pelo 📈 (nenhuma venda parecida): valor da compra e a compra para ligar depois
       targetValue: Number(opts && opts.value) > 0 ? Math.round(Number(opts.value) * 100) / 100 : null, linkEventId: (opts && opts.linkEventId) || null,
     };
@@ -9015,14 +9073,20 @@
     if (chatId) {
       try {
         const info = await waRequest('chatSaleInfo', { chatId }, { timeout: 4000 });
-        if (vs.form === f && info && info.ad) { f.ad = info.ad; f.origin = 'anuncio'; }
+        if (vs.form === f && info && info.ad) f.ad = info.ad;
         if (vs.form === f && info) f.saleInfo = info;
-      } catch { /* sem origem detectada */ }
-      // 2.6.0/2.6.3: telefone verdadeiro desta conversa (@lid pelo WhatsApp) e o nome desta conversa
-      const pn = await chatPhoneName(chatId);
+      } catch { /* sem anúncio nas mensagens carregadas */ }
+      // anúncio registrado da conversa (wa_ad_attribution): a origem fica "anúncio" sozinha
+      try {
+        const r = await call('getAdAttribution', { chatId });
+        if (vs.form === f && r && r.row) f.ad = { title: r.row.ad_title || (f.ad && f.ad.title) || null, platform: r.row.source_app || (f.ad && f.ad.platform) || null, url: r.row.source_url || (f.ad && f.ad.url) || null, registered: true };
+      } catch { /* sem a tabela */ }
+      // 2.6.0/2.6.3: telefone verdadeiro desta conversa (@lid pelo WhatsApp); nome: o aprendido/salvo desta
+      // conversa (2.8.3) ou o do WhatsApp
+      const [pn, learned] = await Promise.all([chatPhoneName(chatId), loadChatName(chatId).catch(() => null)]);
       if (vs.form === f) {
         if (!f.customer_phone && pn.phone) f.customer_phone = pn.phone;
-        if (!f.customer_name && pn.name) f.customer_name = pn.name;
+        if (!f.customer_name) f.customer_name = (learned && learned.name) || pn.name || '';
         f.phoneChecked = true;
       }
       renderVendas();
@@ -9059,33 +9123,41 @@
     return null;
   }
 
+  // Itens no formato das contas (sale-calc.js = calculateTotals do ERP)
+  function saleCalcInput(f) {
+    const cat = vs.catalog || {};
+    const items = f.items.map((it) => { const p = (cat.products || []).find((x) => x.id === it.product_id) || {}; return { ...it, category: p.category }; });
+    return { items, accessories: f.accessories, manualItems: f.manual, payments: f.payments };
+  }
   function saleTotals(f) {
     const cat = vs.catalog || {};
-    const items = f.items.map((it) => { const p = (cat.products || []).find((x) => x.id === it.product_id) || {}; return { ...it, unit_cost: Number(p.cost) || 0, category: p.category }; });
-    const accessories = f.accessories.map((a) => { const x = (cat.accessories || []).find((y) => y.id === a.accessory_id) || {}; return { ...a, cost: Number(x.cost) || 0 }; });
-    const payments = [{ method: f.payment_method, card_brand: f.card_brand, installments: Number(f.installments) || 0, amount: 0 }];
-    return TS.computeTotals({ items, accessories, payments, delivery_type: f.delivery_type, delivery_fee: Number(f.delivery_fee) || 0, delivery_cost: Number(f.delivery_cost) || 0, cfg: cat.fees || {} });
+    const x = saleCalcInput(f);
+    return TS.computeTotals({ ...x, delivery_type: f.delivery_type, delivery_fee: Number(f.delivery_fee) || 0, delivery_cost: Number(f.delivery_cost) || 0, cfg: cat.fees || {}, saleDate: f.sale_date });
   }
 
-  function deliveryNotes(f) {
-    const lines = [];
-    if (f.reference.trim()) lines.push(`Referência: ${f.reference.trim()}`);
-    if (f.schedule.trim()) lines.push(`Horário: ${f.schedule.trim()}`);
-    if (f.map) lines.push(`Mapa: ${f.map.url}${f.map.name ? ` (${f.map.name})` : ''}`);
-    if (f.notes.trim()) lines.push(f.notes.trim());
-    return lines.join('\n');
-  }
-
-  const inputField = (label, value, onInput, { type = 'text', max = 200, aria, list, need = false } = {}) => {
+  const inputField = (label, value, onInput, { type = 'text', max = 200, aria, list, need = false, placeholder } = {}) => {
     const i = el('input', `ed-title${need ? ' need' : ''}`);
     i.type = type;
     i.maxLength = max;
     i.value = value;
     i.setAttribute('aria-label', aria || label);
+    if (placeholder) i.placeholder = placeholder;
     if (list) i.setAttribute('list', list);
-    i.addEventListener('input', () => onInput(i.value));
+    i.addEventListener('input', () => onInput(i.value, i));
     return schedField(label, i);
   };
+  // R$ com centavos (type=number, step 0.01, mínimo 0), como os campos do ERP
+  function moneyInput(value, aria, onInput, { placeholder } = {}) {
+    const i = el('input', 'ed-title');
+    i.type = 'number';
+    i.step = '0.01';
+    i.min = '0';
+    i.value = value === '' || value == null ? '' : String(value);
+    if (placeholder) i.placeholder = placeholder;
+    i.setAttribute('aria-label', aria);
+    i.addEventListener('input', () => onInput(i.value === '' ? 0 : Math.max(0, Number(i.value) || 0)));
+    return i;
+  }
 
   function selectOf(options, value, aria, onChange) {
     const sel = el('select', 'ed-cat');
@@ -9095,231 +9167,416 @@
     return sel;
   }
 
+  // Seção recolhível do formulário (o estado fica no formulário enquanto ele estiver aberto)
+  function saleSection(f, key, title, summary, build) {
+    const sec = el('div', `vd-sec${f.open[key] ? '' : ' vd-closed'}`);
+    sec.dataset.vdSec = key;
+    const head = el('button', 'vd-sec-head');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', f.open[key] ? 'true' : 'false');
+    head.append(el('span', 'vd-sec-arrow', f.open[key] ? '▾' : '▸'), el('span', 'vd-sec-title', title));
+    const sum = el('span', 'vd-sec-sum', summary || '');
+    head.append(sum);
+    head.addEventListener('click', () => { f.open[key] = !f.open[key]; renderVendas(); });
+    sec.append(head);
+    if (f.open[key]) {
+      const body = el('div', 'vd-sec-body');
+      build(body, sum);
+      sec.append(body);
+    }
+    return sec;
+  }
+
+  const productLabelErp = (p) => `${p.model}${p.color ? ` - ${p.color}` : ''}`;
+  const pctLabel = (cat, f, method, brand, n) => TS.feeLabel(cat.fees || {}, method, brand, n, f.sale_date);
+
   function renderSaleForm() {
     const f = vs.form;
     const cat = vs.catalog || {};
-    const sec = el('section', 'crmsec');
-    sec.append(el('div', 'wt-head', 'NOVA VENDA DESTA CONVERSA'));
-    if (!f.chatId) sec.append(el('div', 'ed-note', 'Abra uma conversa individual no WhatsApp.'));
-    if (f.targetValue) sec.append(el('div', 'ed-note cv-target', `Valor da compra no 📈: ${TS.money(f.targetValue)}. O 1º produto entra com esse valor; ao registrar, a venda fica ligada à compra.`));
-    if (cat.error) sec.append(el('div', 'ed-msg err', `Não consegui carregar os dados do ERP: ${cat.error}`));
+    const root = el('section', 'crmsec vd-form');
+    root.append(el('div', 'wt-head', 'NOVA VENDA DESTA CONVERSA'));
+    if (!f.chatId) root.append(el('div', 'ed-note', 'Abra uma conversa individual no WhatsApp.'));
+    if (f.targetValue) root.append(el('div', 'ed-note cv-target', `Valor da compra no 📈: ${TS.money(f.targetValue)}. O 1º produto entra com esse valor; ao registrar, a venda fica ligada à compra.`));
+    if (cat.error) root.append(el('div', 'ed-msg err', `Não consegui carregar os dados do ERP: ${cat.error}`));
 
-    sec.append(el('div', 'crm-sub', '1. Cliente'));
-    const r1 = el('div', 'sc-row');
-    r1.append(inputField('Nome', f.customer_name, (v) => { f.customer_name = v; }, { max: 100, aria: 'Nome do cliente' }), inputField('Telefone', f.customer_phone, (v) => { f.customer_phone = v; }, { max: 30, aria: 'Telefone do cliente', need: !!f.phoneChecked && !f.customer_phone }));
-    sec.append(r1);
+    // Contas ao vivo: os pedaços que mudam sem redesenhar tudo (para não perder o cursor)
+    const live = [];
+    const refresh = () => { const t = saleTotals(f); live.forEach((fn) => fn(t)); };
 
-    // Produtos
-    sec.append(el('div', 'crm-sub', '2. Produtos'));
-    const search = el('input', 'ed-title');
-    search.value = f.search;
-    search.placeholder = 'Buscar produto (modelo ou cor)';
-    search.setAttribute('aria-label', 'Buscar produto');
-    const results = el('div', 'vd-results');
-    const showResults = () => {
-      results.textContent = '';
-      const q = globalThis.TspEngine.stripAccents(f.search).toLowerCase().trim();
-      if (!q) return;
-      (cat.products || []).filter((p) => globalThis.TspEngine.stripAccents(productLabel(p)).toLowerCase().includes(q)).slice(0, 8).forEach((p) => {
-        const b = fbtn('vd-prod', `${productLabel(p)} · estoque ${p.current_stock} · ${TS.money(p.price)}`, () => {
+    // Data da venda
+    const dr = el('div', 'sc-row vd-date');
+    const d = el('input', 'ed-title');
+    d.type = 'date';
+    d.value = f.sale_date;
+    d.setAttribute('aria-label', 'Data da venda');
+    d.addEventListener('change', () => { f.sale_date = /^\d{4}-\d{2}-\d{2}$/.test(d.value) ? d.value : TS.todayInBrazil(); refresh(); });
+    dr.append(schedField('Data da venda', d));
+    root.append(dr);
+
+    // ── Produtos ──
+    const nItems = f.items.length + f.accessories.length + f.manual.length;
+    root.append(saleSection(f, 'produtos', 'Produtos', nItems ? `${nItems} ite${nItems === 1 ? 'm' : 'ns'}` : 'nenhum item', (body, sum) => {
+      const search = el('input', 'ed-title vd-search');
+      search.value = f.search;
+      search.placeholder = 'Digite modelo, cor ou nome do acessório...';
+      search.setAttribute('aria-label', 'Buscar produto, acessório ou item manual');
+      const results = el('div', 'vd-results');
+      const norm = (v) => globalThis.TspEngine.stripAccents(String(v || '')).toLowerCase();
+      const showResults = () => {
+        results.textContent = '';
+        const q = norm(f.search).trim();
+        if (!q) return;
+        const prods = (cat.products || []).filter((p) => norm(p.model).includes(q) || norm(p.color).includes(q)).slice(0, 8);
+        const accs = (cat.accessories || []).filter((a) => norm(a.name).includes(q)).slice(0, 5);
+        prods.forEach((p) => results.append(fbtn('vd-prod', `${productLabelErp(p)} · estoque ${p.current_stock} · ${TS.money(p.price)}`, () => {
           const ex = f.items.find((x) => x.product_id === p.id);
           if (ex) ex.quantity += 1;
-          else f.items.push({ product_id: p.id, quantity: 1, unit_price: f.targetValue && !f.items.length ? f.targetValue : Number(p.price) || 0 }); // 2.10.5: 1º produto com o valor da compra do 📈
+          // 2.10.5: 1º produto com o valor da compra do 📈
+          else f.items.push({ product_id: p.id, quantity: 1, unit_price: f.targetValue && !f.items.length ? f.targetValue : Number(p.price) || 0, unit_cost: Number(p.cost) || 0 });
           f.search = '';
           renderVendas();
-        });
-        results.append(b);
+        })));
+        accs.forEach((a) => results.append(fbtn('vd-prod vd-acc', `Acessório: ${a.name} · custo ${TS.money(a.cost)}`, () => {
+          const ex = f.accessories.find((x) => x.accessory_id === a.id);
+          if (ex) ex.quantity += 1; else f.accessories.push({ accessory_id: a.id, quantity: 1, cost: Number(a.cost) || 0 });
+          f.search = '';
+          renderVendas();
+        })));
+        if (!prods.length && !accs.length) {
+          results.append(fbtn('vd-prod vd-manual', `Adicionar manualmente: "${f.search.trim()}"`, () => {
+            f.manual.push({ name: f.search.trim().slice(0, 100), price: 0, cost: 0, quantity: 1 });
+            f.search = '';
+            renderVendas();
+          }));
+        }
+      };
+      search.addEventListener('input', () => { f.search = search.value; showResults(); });
+      search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const b = results.querySelector('button'); if (b) b.click(); } });
+      body.append(search, results);
+      showResults();
+
+      const subtotal = (n) => el('div', 'vd-sub', TS.money(n));
+      // Produtos selecionados: Qtd · Custo (R$) · Preço venda (R$) · subtotal
+      f.items.forEach((it, i) => {
+        const p = (cat.products || []).find((x) => x.id === it.product_id) || { model: 'produto' };
+        const row = el('div', 'fw-variant vd-item');
+        row.dataset.vdItem = String(i);
+        const top = el('div', 'vd-item-top');
+        top.append(el('div', 'sc-who', productLabelErp(p)), el('span', 'vd-stock', p.current_stock != null ? `Estoque: ${p.current_stock}` : ''));
+        const st = subtotal(it.unit_price * it.quantity);
+        const r = el('div', 'sc-row');
+        const q = numberInput(it.quantity, 1, Math.max(Number(p.current_stock) || 0, it.quantity, 999), `Qtd do produto ${i + 1}`);
+        q.addEventListener('input', () => { it.quantity = Math.max(1, Math.floor(Number(q.value) || 1)); st.textContent = TS.money(it.unit_price * it.quantity); refresh(); });
+        const c = moneyInput(it.unit_cost, `Custo do produto ${i + 1}`, (v) => { it.unit_cost = v; refresh(); });
+        const pr = moneyInput(it.unit_price, `Preço venda do produto ${i + 1}`, (v) => { it.unit_price = v; st.textContent = TS.money(it.unit_price * it.quantity); refresh(); });
+        r.append(schedField('Qtd', q), schedField('Custo (R$)', c), schedField('Preço venda (R$)', pr));
+        const end = el('div', 'vd-item-end');
+        end.append(st, fbtn('ed-mini', '✕', () => { f.items.splice(i, 1); delete f.item_suppliers[it.product_id]; renderVendas(); }));
+        row.append(top, r, end);
+        body.append(row);
       });
-    };
-    search.addEventListener('input', () => { f.search = search.value; showResults(); });
-    sec.append(search, results);
-    showResults();
-    f.items.forEach((it, i) => {
-      const p = (cat.products || []).find((x) => x.id === it.product_id) || { model: 'produto' };
-      const row = el('div', 'fw-variant');
-      row.append(el('div', 'sc-who', `${productLabel(p)}${p.current_stock != null ? ` · estoque ${p.current_stock}` : ''}`));
-      const r = el('div', 'sc-row');
-      const q = numberInput(it.quantity, 1, 999, `Quantidade do produto ${i + 1}`);
-      q.addEventListener('input', () => { it.quantity = Math.max(1, Math.floor(Number(q.value) || 1)); renderTotal(); });
-      const pr = el('input', 'ed-title');
-      pr.type = 'number';
-      pr.step = '0.01';
-      pr.min = '0';
-      pr.value = String(it.unit_price);
-      pr.setAttribute('aria-label', `Valor unitário do produto ${i + 1}`);
-      pr.addEventListener('input', () => { it.unit_price = Math.max(0, Number(pr.value) || 0); renderTotal(); });
-      r.append(schedField('Qtd.', q), schedField('Valor unitário (R$)', pr), fbtn('ed-mini', '✕', () => { f.items.splice(i, 1); renderVendas(); }));
-      row.append(r);
-      sec.append(row);
-    });
-    // Acessórios (como no ERP: só custo, não entram no valor da venda)
-    if ((cat.accessories || []).length) {
-      const ar = el('div', 'sc-row');
-      const accSel = selectOf([['', '+ acessório (brinde, entra só no custo)'], ...cat.accessories.map((a) => [a.id, a.name])], '', 'Adicionar acessório', (v) => {
-        if (!v) return;
-        const ex = f.accessories.find((x) => x.accessory_id === v);
-        if (ex) ex.quantity += 1; else f.accessories.push({ accessory_id: v, quantity: 1 });
-        renderVendas();
-      });
-      ar.append(accSel);
-      sec.append(ar);
+      if (f.accessories.length) body.append(el('div', 'crm-sub', 'Acessórios'));
       f.accessories.forEach((a, i) => {
-        const x = cat.accessories.find((y) => y.id === a.accessory_id) || { name: 'acessório' };
-        const row = el('div', 'sc-row');
-        const q = numberInput(a.quantity, 1, 999, `Quantidade do acessório ${i + 1}`);
-        q.addEventListener('input', () => { a.quantity = Math.max(1, Math.floor(Number(q.value) || 1)); renderTotal(); });
-        row.append(el('span', 'sc-who', x.name), q, fbtn('ed-mini', '✕', () => { f.accessories.splice(i, 1); renderVendas(); }));
-        sec.append(row);
+        const x = (cat.accessories || []).find((y) => y.id === a.accessory_id) || { name: 'acessório' };
+        const row = el('div', 'fw-variant vd-item');
+        const st = subtotal(a.cost * a.quantity);
+        const r = el('div', 'sc-row');
+        const q = numberInput(a.quantity, 1, 999, `Qtd do acessório ${i + 1}`);
+        q.addEventListener('input', () => { a.quantity = Math.max(1, Math.floor(Number(q.value) || 1)); st.textContent = TS.money(a.cost * a.quantity); refresh(); });
+        const c = moneyInput(a.cost, `Custo do acessório ${i + 1}`, (v) => { a.cost = v; st.textContent = TS.money(a.cost * a.quantity); refresh(); });
+        r.append(schedField('Qtd', q), schedField('Custo (R$)', c));
+        const end = el('div', 'vd-item-end');
+        end.append(st, fbtn('ed-mini', '✕', () => { f.accessories.splice(i, 1); renderVendas(); }));
+        row.append(el('div', 'sc-who', x.name), r, end);
+        body.append(row);
       });
-    }
-
-    // Pagamento
-    sec.append(el('div', 'crm-sub', '3. Pagamento'));
-    const pr = el('div', 'sc-row');
-    pr.append(selectOf(TS.PAYMENT_METHODS, f.payment_method, 'Forma de pagamento', (v) => {
-      f.payment_method = v;
-      // como o ERP: fora de cartão, sem bandeira e sem parcelas
-      if (!['credit_card', 'debit_card', 'payment_link'].includes(v)) { f.card_brand = ''; f.installments = 0; }
-      if (v !== 'credit_card' && v !== 'payment_link') f.installments = 0;
-      if (['credit_card', 'debit_card', 'payment_link'].includes(v) && !f.card_brand) f.card_brand = 'visa_mastercard';
-      renderVendas();
+      if (f.manual.length) body.append(el('div', 'crm-sub', 'Itens manuais'));
+      f.manual.forEach((m, i) => {
+        const row = el('div', 'fw-variant vd-item vd-manual-item');
+        const st = subtotal(m.price * m.quantity);
+        const r = el('div', 'sc-row');
+        const q = numberInput(m.quantity, 1, 999, `Qtd do item manual ${i + 1}`);
+        q.addEventListener('input', () => { m.quantity = Math.max(1, Math.floor(Number(q.value) || 1)); st.textContent = TS.money(m.price * m.quantity); refresh(); });
+        const c = moneyInput(m.cost, `Custo do item manual ${i + 1}`, (v) => { m.cost = v; refresh(); });
+        const pr = moneyInput(m.price, `Preço venda do item manual ${i + 1}`, (v) => { m.price = v; st.textContent = TS.money(m.price * m.quantity); refresh(); });
+        r.append(schedField('Qtd', q), schedField('Custo (R$)', c), schedField('Preço venda (R$)', pr));
+        const end = el('div', 'vd-item-end');
+        end.append(st, fbtn('ed-mini', '✕', () => { f.manual.splice(i, 1); renderVendas(); }));
+        const top = el('div', 'vd-item-top');
+        top.append(el('div', 'sc-who', m.name), el('span', 'vd-stock', 'Item personalizado'));
+        row.append(top, r, end);
+        body.append(row);
+      });
+      live.push((t) => { sum.textContent = nItems ? `${nItems} ite${nItems === 1 ? 'm' : 'ns'} · ${TS.money(t.totalSalePrice)}` : 'nenhum item'; });
     }));
-    if (['credit_card', 'debit_card', 'payment_link'].includes(f.payment_method)) {
-      pr.append(selectOf([['', 'Bandeira (definir depois)'], ...TS.CARD_BRANDS], f.card_brand, 'Bandeira', (v) => { f.card_brand = v; renderTotal(); }));
-    }
-    if (f.payment_method === 'credit_card' || f.payment_method === 'payment_link') {
-      pr.append(selectOf([['0', 'Parcelas (definir depois)'], ...Array.from({ length: 12 }, (_, i) => [String(i + 1), `${i + 1}x`])], String(f.installments), 'Parcelas', (v) => { f.installments = Number(v) || 0; renderTotal(); }));
-    }
-    sec.append(pr);
-    const ps = el('div', 'sc-row');
-    [['a_cobrar', 'A cobrar'], ['pago', 'Já pago']].forEach(([k, t]) => {
-      const l = el('label', 'sc-radio');
-      const r = el('input');
-      r.type = 'radio';
-      r.name = 'vd-paystatus';
-      r.checked = f.payment_status === k;
-      r.addEventListener('change', () => { f.payment_status = k; });
-      l.append(r, t);
-      ps.append(l);
-    });
-    sec.append(ps);
-    const totalEl = el('div', 'fw-count vd-total');
-    const renderTotal = () => {
-      const t = saleTotals(f);
-      totalEl.textContent = `Total: ${TS.money(t.totalSalePrice)} · taxa ${TS.money(t.cardFee)} · líquido ${TS.money(t.netReceived)}`;
-    };
-    renderTotal();
-    sec.append(totalEl);
 
-    // Entrega
-    sec.append(el('div', 'crm-sub', '4. Entrega'));
-    const dr = el('div', 'sc-row');
-    dr.append(selectOf(TS.DELIVERY_TYPES, f.delivery_type, 'Tipo de entrega', (v) => { f.delivery_type = v; renderVendas(); }));
-    if (f.delivery_type === 'motoboy') {
-      dr.append(selectOf([['', 'Selecionar Motoboy'], ...(cat.motoboys || []).map((m) => [m.id, m.name])], f.motoboy_id, 'Motoboy', (v) => { f.motoboy_id = v; }));
-      const fee = numberInput(f.delivery_fee, 0, 10000, 'Taxa do motoboy');
-      fee.addEventListener('input', () => { f.delivery_fee = Math.max(0, Number(fee.value) || 0); renderTotal(); });
-      dr.append(schedField('Taxa do motoboy (R$)', fee));
-    }
-    if (f.delivery_type === 'correios') {
-      const cost = numberInput(f.delivery_cost, 0, 10000, 'Frete');
-      cost.addEventListener('input', () => { f.delivery_cost = Math.max(0, Number(cost.value) || 0); renderTotal(); });
-      dr.append(schedField('Frete (R$)', cost));
-    }
-    sec.append(dr);
-    const dl = (id, list) => { const d = el('datalist'); d.id = id; list.forEach((x) => { const o = el('option'); o.value = x.name; d.append(o); }); return d; };
-    sec.append(dl('vd-cities', cat.cities || []), dl('vd-neigh', cat.neighborhoods || []));
-    const ar2 = el('div', 'sc-row');
-    ar2.append(inputField('Cidade', f.city, (v) => { f.city = v; }, { max: 80, list: 'vd-cities' }), inputField('Bairro', f.neighborhood, (v) => { f.neighborhood = v; }, { max: 80, list: 'vd-neigh' }));
-    sec.append(ar2);
-    const ar3 = el('div', 'sc-row');
-    ar3.append(inputField('Rua', f.address_street, (v) => { f.address_street = v; }), inputField('Número', f.address_number, (v) => { f.address_number = v; }, { max: 30 }));
-    sec.append(ar3);
-    const ar4 = el('div', 'sc-row');
-    ar4.append(inputField('Complemento', f.address_complement, (v) => { f.address_complement = v; }), inputField('Referência', f.reference, (v) => { f.reference = v; }), inputField('CEP (opcional)', f.zip_code, (v) => { f.zip_code = v; }, { max: 12 }));
-    sec.append(ar4);
-    sec.append(inputField('Horário de entrega', f.schedule, (v) => { f.schedule = v; }, { max: 80 }));
-    const sh = el('div', 'ed-add');
-    ['hoje 15h', 'hoje à tarde', 'amanhã manhã', 'amanhã tarde'].forEach((t) => sh.append(fbtn('ed-mini', t, () => { f.schedule = t; renderVendas(); })));
-    sec.append(sh);
-    sec.append(fbtn('bbtn', 'Pegar endereço da conversa', () => pickAddressFromChat()));
-    if (f.map) sec.append(el('div', 'fw-test', `Localização: ${f.map.name || 'sem nome'} · ${f.map.url}`));
-    if (f.addressHint) {
-      const hint = el('div', 'fw-test');
-      hint.append(el('div', null, `O cliente escreveu: "${f.addressHint}"`), fbtn('ed-mini', 'Usar como rua', () => { f.address_street = f.addressHint.slice(0, 200); f.addressHint = null; renderVendas(); }));
-      sec.append(hint);
-    }
-    sec.append(inputField('Observações para a entrega', f.notes, (v) => { f.notes = v; }, { max: 500 }));
+    // ── Cliente ──
+    root.append(saleSection(f, 'cliente', 'Cliente', [f.customer_name, f.city].filter(Boolean).join(' · '), (body) => {
+      const g = el('div', 'vd-grid2');
+      g.append(inputField('Nome do cliente', f.customer_name, (v) => { f.customer_name = v; }, { max: 100, need: !!f.triedSubmit && !f.customer_name.trim() }),
+        inputField('Telefone', f.customer_phone, (v) => { f.customer_phone = v; }, { max: 30, aria: 'Telefone do cliente', need: !!f.phoneChecked && !f.customer_phone, placeholder: 'Telefone (opcional)' }));
+      const cpf = inputField('CPF (opcional)', f.cpfDisplay, (v, i) => {
+        f.cpfDisplay = TS.formatCpf(v);
+        f.customer_cpf = TS.cleanCpf(v).slice(0, 11);
+        if (i.value !== f.cpfDisplay) i.value = f.cpfDisplay;
+        f.cpfError = f.customer_cpf.length === 11 && !TS.validateCpf(f.customer_cpf) ? 'CPF inválido' : '';
+        cpfErr.textContent = f.cpfError;
+        i.classList.toggle('need', !!f.cpfError);
+      }, { max: 14, aria: 'CPF do cliente', need: !!f.cpfError });
+      const cpfErr = el('div', 'ed-msg err vd-cpf-err', f.cpfError);
+      cpf.append(cpfErr);
+      g.append(cpf);
+      body.append(g);
+      // "📋 Colar formulário" (mesma leitura do ERP) e o endereço da conversa
+      const tools = el('div', 'ed-add');
+      tools.append(fbtn('ed-mini vd-paste-btn', '📋 Colar formulário', () => { f.pasteOpen = !f.pasteOpen; renderVendas(); if (f.pasteOpen) { const t = vtabEl.querySelector('.vd-paste'); if (t) t.focus(); } }),
+        fbtn('ed-mini vd-pick-addr', 'Pegar endereço da conversa', () => pickAddressFromChat()));
+      body.append(tools);
+      if (f.pasteOpen) {
+        const ta = el('textarea', 'ed-text vd-paste');
+        ta.rows = 5;
+        ta.placeholder = 'Cole o texto do formulário aqui e os campos serão preenchidos automaticamente...';
+        ta.setAttribute('aria-label', 'Colar formulário do cliente');
+        ta.addEventListener('paste', (e) => {
+          e.preventDefault();
+          const text = (e.clipboardData && e.clipboardData.getData('text')) || '';
+          applyPastedForm(text);
+        });
+        body.append(ta);
+      }
+      if (f.map) body.append(el('div', 'fw-test', `Localização: ${f.map.name || 'sem nome'} · ${f.map.url}`));
+      if (f.addressHint) {
+        const hint = el('div', 'fw-test');
+        hint.append(el('div', null, `O cliente escreveu: "${f.addressHint}"`), fbtn('ed-mini', 'Usar como rua', () => { f.address_street = f.addressHint.slice(0, 200); f.addressHint = null; renderVendas(); }));
+        body.append(hint);
+      }
+      const motoboy = f.delivery_type === 'motoboy';
+      const g2 = el('div', 'vd-grid2');
+      const cep = inputField(`CEP${f.delivery_type === 'loja_fisica' ? ' (opcional)' : ''}${f.cepLoading ? ' · buscando…' : ''}`, f.zip_code, (v, i) => {
+        const clean = v.replace(/\D/g, '').slice(0, 8);
+        if (i.value !== clean) i.value = clean;
+        f.zip_code = clean;
+        f.cepError = '';
+        if (clean.length === 8) lookupSaleCep(clean);
+      }, { max: 9, aria: 'CEP' });
+      if (f.cepError) cep.append(el('div', 'ed-msg err', f.cepError));
+      g2.append(cep, inputField('Estado (UF)', f.state, (v, i) => { f.state = v.toUpperCase().slice(0, 2); if (i.value !== f.state) i.value = f.state; }, { max: 2, aria: 'Estado (UF)' }));
+      body.append(g2);
+      const g3 = el('div', 'vd-grid2');
+      g3.append(inputField(motoboy ? 'Rua (opcional)' : 'Rua', f.address_street, (v) => { f.address_street = v; }, { aria: 'Rua' }),
+        inputField('Número', f.address_number, (v) => { f.address_number = v; }, { max: 30, aria: 'Número' }));
+      body.append(g3);
+      body.append(inputField('Complemento (opcional)', f.address_complement, (v) => { f.address_complement = v; }, { max: motoboy ? 200 : 18, aria: 'Complemento' }));
+      const dl = (id, list) => { const x = el('datalist'); x.id = id; list.forEach((it) => { const o = el('option'); o.value = it.name; x.append(o); }); return x; };
+      body.append(dl('vd-cities', cat.cities || []), dl('vd-neigh', cat.neighborhoods || []), dl('vd-suppliers', cat.suppliers || []));
+      const req = f.delivery_type === 'correios' || motoboy;
+      const g4 = el('div', 'vd-grid2');
+      g4.append(inputField(req ? 'Cidade*' : 'Cidade', f.city, (v) => { f.city = v; }, { max: 80, list: 'vd-cities', aria: 'Cidade', need: !!f.triedSubmit && req && !f.city.trim() }),
+        inputField(req ? 'Bairro*' : 'Bairro', f.neighborhood, (v) => { f.neighborhood = v; }, { max: 80, list: 'vd-neigh', aria: 'Bairro', need: !!f.triedSubmit && req && !f.neighborhood.trim() }));
+      body.append(g4);
+      // Fornecedor: um por smartwatch quando há 2 ou mais (como o ERP); senão um só (cria pelo nome se não existir)
+      const sw = TS.smartwatchItems(saleCalcInput(f).items);
+      if (sw.length >= 2) {
+        body.append(el('div', 'crm-sub', 'Fornecedor por smartwatch'));
+        sw.forEach((it) => {
+          const p = (cat.products || []).find((x) => x.id === it.product_id) || { model: 'produto' };
+          const r = el('div', 'sc-row vd-supplier-row');
+          r.append(el('span', 'sc-who', productLabelErp(p)), selectOf([['', 'Selecionar fornecedor'], ...(cat.suppliers || []).map((s) => [s.id, s.name])], f.item_suppliers[it.product_id] || '', `Fornecedor de ${productLabelErp(p)}`, (v) => { f.item_suppliers[it.product_id] = v; }));
+          body.append(r);
+        });
+      } else {
+        body.append(inputField('Fornecedor', f.supplier_name, (v) => { f.supplier_name = v; }, { max: 100, list: 'vd-suppliers', aria: 'Fornecedor', placeholder: 'Selecionar fornecedor' }));
+      }
+    }));
 
-    // Garantia, origem e etiquetas
-    sec.append(el('div', 'crm-sub', '5. Garantia'));
-    const w = numberInput(f.warranty_months === '' ? '' : f.warranty_months, 0, 120, 'Garantia (meses)');
-    w.placeholder = 'meses';
-    w.addEventListener('input', () => { f.warranty_months = w.value === '' ? '' : Math.max(0, Math.min(120, Math.floor(Number(w.value) || 0))); });
-    sec.append(schedField('Garantia (meses)', w));
-    if (cat.originAvailable === false) sec.append(el('div', 'ed-note', 'Garantia, origem e conversa da venda: atualize o banco para guardar (a venda é registrada mesmo assim).'));
-    sec.append(el('div', 'crm-sub', '6. Origem'));
-    const or = el('div', 'sc-row');
-    [['anuncio', 'Veio de anúncio'], ['organico', 'Orgânico']].forEach(([k, t]) => {
-      const l = el('label', 'sc-radio');
-      const r = el('input');
-      r.type = 'radio';
-      r.name = 'vd-origin';
-      r.checked = f.origin === k;
-      r.addEventListener('change', () => { f.origin = k; });
-      l.append(r, t);
-      or.append(l);
-    });
-    sec.append(or);
-    if (f.ad) {
-      const ad = el('div', 'fw-test');
-      ad.append(el('div', null, `Veio do anúncio: ${f.ad.title || '(sem título)'}${f.ad.platform ? ` · ${f.ad.platform}` : ''}`));
-      if (f.ad.url) {
+    // ── Pagamento ──
+    root.append(saleSection(f, 'pagamento', 'Pagamento', `${f.payments.length} forma${f.payments.length === 1 ? '' : 's'} · ${f.payment_status === 'pago' ? 'Pago' : 'A cobrar'}`, (body) => {
+      f.payments.forEach((pm, i) => {
+        const box = el('div', 'fw-variant vd-pay');
+        box.dataset.vdPay = String(i);
+        const r1 = el('div', 'sc-row');
+        r1.append(selectOf(TS.PAYMENT_METHODS, pm.method, `Forma de pagamento ${i + 1}`, (v) => {
+          f.payments[i] = TS.updatePayment(pm, 'method', v);
+          renderVendas();
+        }));
+        if (pm.method !== 'outros') r1.append(moneyInput(pm.amount || '', `Valor da forma ${i + 1} (R$)`, (v) => { pm.amount = v; refresh(); }, { placeholder: 'Valor (R$)' }));
+        if (f.payments.length > 1) r1.append(fbtn('ed-mini', '✕', () => { f.payments.splice(i, 1); renderVendas(); }));
+        box.append(r1);
+        if (TS.CARD_METHODS.includes(pm.method)) {
+          const r2 = el('div', 'sc-row');
+          r2.append(selectOf([['', 'Bandeira (definir depois)'], ...TS.CARD_BRANDS], pm.card_brand, `Bandeira da forma ${i + 1}`, (v) => { f.payments[i] = TS.updatePayment(pm, 'card_brand', v); renderVendas(); }));
+          if (TS.INSTALLMENT_METHODS.includes(pm.method)) {
+            r2.append(selectOf([['0', 'Parcelas (definir depois)'], ...(pm.card_brand ? Array.from({ length: 12 }, (_, k) => [String(k + 1), `${k + 1}x (${pctLabel(cat, f, pm.method, pm.card_brand, k + 1)})`]) : [])], String(pm.installments), `Parcelas da forma ${i + 1}`, (v) => { f.payments[i] = TS.updatePayment(pm, 'installments', Number(v) || 0); renderVendas(); }));
+          }
+          box.append(r2);
+        }
+        if (pm.method === 'outros') {
+          const r3 = el('div', 'sc-row');
+          r3.append(schedField('Valor Bruto (R$)', moneyInput(pm.amount || '', `Valor bruto da forma ${i + 1}`, (v) => { pm.amount = v; refresh(); }, { placeholder: 'Valor Bruto (R$)' })),
+            schedField('Valor Líquido (R$)', moneyInput(pm.net_amount || '', `Valor líquido da forma ${i + 1}`, (v) => { pm.net_amount = v; refresh(); }, { placeholder: 'Valor Líquido (R$)' })));
+          box.append(r3);
+        }
+        const fee = el('div', 'vd-fee');
+        box.append(fee);
+        live.push(() => {
+          if (TS.CARD_METHODS.includes(pm.method) && pm.amount > 0 && pm.card_brand) {
+            const v = TS.paymentFee(cat.fees || {}, pm, pm.amount, f.sale_date);
+            fee.textContent = `Taxa: R$ ${v.toFixed(2)} (${pctLabel(cat, f, pm.method, pm.card_brand, pm.installments)})`;
+          } else if (pm.method === 'outros' && pm.amount > 0 && (pm.net_amount || 0) > 0) {
+            fee.textContent = `Taxa: R$ ${(pm.amount - (pm.net_amount || 0)).toFixed(2)} (${(((pm.amount - (pm.net_amount || 0)) / pm.amount) * 100).toFixed(2)}%)`;
+          } else fee.textContent = '';
+        });
+        body.append(box);
+      });
+      body.append(fbtn('ed-mini vd-add-pay', '+ Adicionar forma de pagamento', () => { f.payments.push(TS.newPaymentEntry()); renderVendas(); }));
+      const st = el('div', 'sc-row vd-paystatus');
+      [['pago', 'Pago'], ['a_cobrar', 'A cobrar']].forEach(([k, t]) => {
+        const b = fbtn(`ed-mini vd-ps${f.payment_status === k ? ' on' : ''}`, t, () => { f.payment_status = k; renderVendas(); });
+        b.setAttribute('aria-pressed', f.payment_status === k ? 'true' : 'false');
+        b.dataset.ps = k;
+        st.append(b);
+      });
+      body.append(schedField('Status do pagamento', st));
+      const alloc = el('div', 'vd-alloc');
+      body.append(alloc);
+      live.push((t) => {
+        const a = TS.allocation(f.payments, t.totalSalePrice);
+        alloc.textContent = '';
+        const cls = (x) => (!a.hasAmounts ? '' : a.balanced ? ' ok' : x);
+        [['Total da venda', `R$ ${t.totalSalePrice.toFixed(2)}`, ''], ['Alocado', `R$ ${a.allocated.toFixed(2)}`, cls(' warn')], ['Falta alocar', `R$ ${(a.balanced ? 0 : a.remaining).toFixed(2)}`, cls(a.remaining > 0 ? ' warn' : ' bad')]].forEach(([l, v, c]) => {
+          const cell = el('div', `vd-alloc-c${c}`);
+          cell.append(el('div', 'vd-alloc-l', l), el('div', 'vd-alloc-v', v));
+          alloc.append(cell);
+        });
+      });
+    }));
+
+    // ── Entrega ──
+    const dlabel = (TS.DELIVERY_TYPES.find(([k]) => k === f.delivery_type) || [null, ''])[1];
+    root.append(saleSection(f, 'entrega', 'Entrega', dlabel, (body) => {
+      const r = el('div', 'vd-grid2');
+      r.append(schedField('Tipo de entrega', selectOf(TS.DELIVERY_TYPES, f.delivery_type, 'Tipo de entrega', (v) => { Object.assign(f, TS.deliveryChange(v)); renderVendas(); })));
+      if (f.delivery_type === 'motoboy') {
+        r.append(schedField('Motoboy', selectOf([['', 'Selecionar Motoboy'], ...(cat.motoboys || []).map((m) => [m.id, m.name])], f.motoboy_id, 'Motoboy', (v) => { f.motoboy_id = v; })));
+        r.append(schedField('Taxa de entrega (R$)', moneyInput(f.delivery_fee, 'Taxa de entrega (R$)', (v) => { f.delivery_fee = v; refresh(); })));
+      }
+      if (f.delivery_type === 'correios') r.append(schedField('Custo Correios (R$)', moneyInput(f.delivery_cost, 'Custo Correios (R$)', (v) => { f.delivery_cost = v; refresh(); })));
+      body.append(r);
+      body.append(inputField('Observações', f.delivery_notes, (v) => { f.delivery_notes = v; }, { max: 200, aria: 'Observações da entrega', placeholder: '📝 Ex.: Deixar na portaria, Entregar para Bernardo' }));
+      const vol = el('div', 'crm-intro vd-volumes');
+      body.append(vol);
+      live.push(() => { vol.textContent = `Volumes: ${TS.volumesOf(saleCalcInput(f).items)} (calculado automaticamente)${f.delivery_type === 'correios' ? ' · Envio padrão: Envelope até 300g | Seguro: R$150' : ''}`; });
+    }));
+
+    // ── Resumo financeiro (igual ao do ERP) ──
+    root.append(saleSection(f, 'resumo', 'Resumo financeiro', '', (body, sum) => {
+      const grid = el('div', 'vd-fin');
+      const cell = (label, cls) => { const c = el('div', `vd-fin-c${cls ? ` ${cls}` : ''}`); const v = el('div', 'vd-fin-v'); c.append(el('div', 'vd-fin-l', label), v); grid.append(c); return v; };
+      const vTotal = cell('Valor total');
+      const vFee = cell('Taxa do cartão', 'bad');
+      const vNet = cell('Valor recebido', 'net');
+      const vProfit = cell('Lucro final', 'profit');
+      const det = el('div', 'vd-fin-det');
+      body.append(grid, el('div', 'vd-fin-h', 'Detalhamento de custos'), det);
+      live.push((t) => {
+        vTotal.textContent = `R$ ${t.totalSalePrice.toFixed(2)}`;
+        vFee.textContent = `- R$ ${t.cardFee.toFixed(2)}`;
+        vNet.textContent = `R$ ${t.netReceived.toFixed(2)}`;
+        vProfit.textContent = `R$ ${t.profit.toFixed(2)}`;
+        vProfit.parentElement.classList.toggle('neg', t.profit < 0);
+        det.textContent = '';
+        [['Custo produtos', t.totalProductCost], ['Custo acessórios', t.totalAccessoryCost], ...(t.totalManualCost > 0 ? [['Custo itens manuais', t.totalManualCost]] : []), ['Taxa motoboy', t.deliveryFee], ['Custo Correios', t.deliveryCost]].forEach(([l, v]) => {
+          const line = el('div', 'vd-fin-line');
+          line.append(el('span', null, l), el('b', null, `R$ ${v.toFixed(2)}`));
+          det.append(line);
+        });
+        sum.textContent = `lucro R$ ${t.profit.toFixed(2)}`;
+      });
+    }));
+
+    // ── Conversa (extras do chat) ──
+    root.append(saleSection(f, 'opcoes', 'Conversa', f.ad ? 'origem: anúncio' : 'origem: orgânico', (body) => {
+      const o = el('div', 'fw-test vd-origin');
+      o.append(el('div', null, f.ad ? `Origem: anúncio${f.ad.title ? ` · ${f.ad.title}` : ''}${f.ad.platform ? ` · ${f.ad.platform}` : ''} (automática)` : 'Origem: orgânico (automática: a conversa não tem anúncio registrado)'));
+      if (f.ad && f.ad.url) {
         const a = el('a', null, 'abrir anúncio');
         a.href = f.ad.url;
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
-        ad.append(a);
+        o.append(a);
       }
-      sec.append(ad);
-    }
-    sec.append(el('div', 'crm-sub', '7. Opções'));
-    const ml = el('label', 'sc-radio');
-    const mc = el('input');
-    mc.type = 'checkbox';
-    mc.checked = f.moveLabels;
-    mc.addEventListener('change', () => { f.moveLabels = mc.checked; renderVendas(); });
-    ml.append(mc, 'Tirar das automações e pôr na etiqueta CRM:');
-    sec.append(ml);
-    if (f.moveLabels) {
-      sec.append(labelPicker(f.clientLabel, (v) => { f.clientLabel = v; }, { aria: 'Etiqueta do cliente', rerender: renderVendas, onError: (m) => { vs.msg = m; vs.err = true; } }));
-      const cur = state.convLabelIds.filter((l) => l !== f.clientLabel);
-      if (cur.length) {
-        sec.append(el('div', 'crm-intro', 'Tirar destas etiquetas CRM:'));
-        const box = el('div', 'ed-add');
-        cur.forEach((l) => {
-          const lab = el('label', 'sc-radio');
-          const c = el('input');
-          c.type = 'checkbox';
-          c.checked = f.removeLabels.includes(l);
-          c.addEventListener('change', () => { f.removeLabels = c.checked ? [...new Set([...f.removeLabels, l])] : f.removeLabels.filter((x) => x !== l); });
-          lab.append(c, labelName(l));
-          box.append(lab);
-        });
-        sec.append(box);
+      if (cat.originAvailable === false) o.append(el('div', 'ed-note', 'Origem e conversa da venda: atualize o banco para guardar (a venda é registrada mesmo assim).'));
+      body.append(o);
+      const ml = el('label', 'sc-radio');
+      const mc = el('input');
+      mc.type = 'checkbox';
+      mc.checked = f.moveLabels;
+      mc.addEventListener('change', () => { f.moveLabels = mc.checked; renderVendas(); });
+      ml.append(mc, 'Tirar das automações e pôr na etiqueta CRM:');
+      body.append(ml);
+      if (f.moveLabels) {
+        body.append(labelPicker(f.clientLabel, (v) => { f.clientLabel = v; }, { aria: 'Etiqueta do cliente', rerender: renderVendas, onError: (m) => { vs.msg = m; vs.err = true; } }));
+        const cur = state.convLabelIds.filter((l) => l !== f.clientLabel);
+        if (cur.length) {
+          body.append(el('div', 'crm-intro', 'Tirar destas etiquetas CRM:'));
+          const box = el('div', 'ed-add');
+          cur.forEach((l) => {
+            const lab = el('label', 'sc-radio');
+            const c = el('input');
+            c.type = 'checkbox';
+            c.checked = f.removeLabels.includes(l);
+            c.addEventListener('change', () => { f.removeLabels = c.checked ? [...new Set([...f.removeLabels, l])] : f.removeLabels.filter((x) => x !== l); });
+            lab.append(c, labelName(l));
+            box.append(lab);
+          });
+          body.append(box);
+        }
       }
-    }
+    }));
+
     if (f.dupAsk) {
       const dup = el('div', 'fw-test');
       dup.append(el('div', 'ed-note', 'Já existe uma venda desta conversa hoje. Registrar outra?'), fbtn('bbtn primary', 'Registrar outra', () => registerSale(true)), fbtn('bbtn', 'Cancelar', () => { f.dupAsk = false; renderVendas(); }));
-      sec.append(dup);
+      root.append(dup);
     }
-    const actions = el('div', 'ed-add');
-    const go = fbtn('bbtn primary', vs.busy ? 'Registrando…' : 'Registrar venda', () => registerSale(false));
-    go.disabled = vs.busy || !f.chatId || !f.items.length;
-    actions.append(go, fbtn('bbtn', 'Gerar mensagem do entregador', () => openCourier()), fbtn('bbtn', 'Cancelar', () => { vs.view = 'list'; loadChatSales(); }));
-    sec.append(actions, el('div', `ed-msg${vs.err ? ' err' : ''}`, vs.msg));
-    vtabEl.append(sec);
+    const actions = el('div', 'ed-add vd-actions');
+    const go = fbtn('bbtn primary vd-register', vs.busy ? 'Registrando…' : 'Registrar venda', () => registerSale(false));
+    go.disabled = vs.busy || !f.chatId || (!f.items.length && !f.manual.length);
+    actions.append(go, fbtn('bbtn vd-courier', 'Gerar mensagem do entregador', () => openCourier()), fbtn('bbtn', 'Cancelar', () => { vs.view = 'list'; loadChatSales(); }));
+    root.append(actions, el('div', `ed-msg vd-msg${vs.err ? ' err' : ''}`, vs.msg));
+    vtabEl.append(root);
+    refresh();
+  }
+
+  // "📋 Colar formulário": a leitura do ERP (parsearFormulario) e, com CEP, o endereço do CEP
+  function applyPastedForm(text) {
+    const f = vs.form;
+    if (!f) return;
+    const up = TS.parseForm(text);
+    Object.assign(f, up);
+    if (up.customer_cpf != null) {
+      f.cpfDisplay = TS.formatCpf(up.customer_cpf);
+      f.cpfError = up.customer_cpf.length === 11 && !TS.validateCpf(up.customer_cpf) ? 'CPF inválido' : '';
+    }
+    f.pasteOpen = false;
+    renderVendas();
+    if (up.zip_code) lookupSaleCep(up.zip_code.replace(/\D/g, ''));
+  }
+
+  // handleCepChange do ERP: 8 dígitos → ViaCEP (pelo background) → rua, UF, cidade e bairro
+  async function lookupSaleCep(cep) {
+    const f = vs.form;
+    if (!f || cep.length !== 8) return;
+    f.cepLoading = true;
+    f.cepError = '';
+    let addr = null;
+    try { addr = await call('lookupCep', { cep }); } catch { addr = null; }
+    if (vs.form !== f) return;
+    f.cepLoading = false;
+    if (addr) Object.assign(f, TS.applyCep(f, addr));
+    else f.cepError = 'CEP inválido';
+    renderVendas();
+    if (addr) { const n = vtabEl.querySelector('input[aria-label="Número"]'); if (n) n.focus(); }
   }
 
   async function pickAddressFromChat() {
@@ -9328,34 +9585,41 @@
     let info = null;
     try { info = await waRequest('chatSaleInfo', { chatId: f.chatId }, { timeout: 4000 }); } catch { info = null; }
     if (!info) { vs.msg = 'Não consegui ler a conversa.'; vs.err = true; renderVendas(); return; }
-    if (info.location) f.map = { url: TS.mapUrl(info.location.lat, info.location.lng), name: info.location.name || null };
+    if (info.location) {
+      f.map = { url: TS.mapUrl(info.location.lat, info.location.lng), name: info.location.name || null };
+      // o mapa vai nas observações (o ERP não tem campo de mapa)
+      if (f.map.url && !f.delivery_notes.includes(f.map.url)) f.delivery_notes = [f.delivery_notes.trim(), `Mapa: ${f.map.url}`].filter(Boolean).join(' · ').slice(0, 200);
+    }
     if (info.addressText) f.addressHint = info.addressText;
     vs.msg = info.location || info.addressText ? '' : 'Nenhuma localização ou endereço nas mensagens carregadas.';
     vs.err = false;
     renderVendas();
   }
 
+  // O que a extensão manda gravar (o background confere tudo e grava como o handleSubmit do ERP)
   function salePayload(f) {
     return {
-      customer_name: f.customer_name, customer_phone: f.customer_phone,
-      items: f.items.map((i) => ({ product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price })),
-      accessories: f.accessories.map((a) => ({ accessory_id: a.accessory_id, quantity: a.quantity })),
-      payment_method: f.payment_method, card_brand: f.card_brand, installments: f.installments, payment_status: f.payment_status,
-      delivery_type: f.delivery_type, motoboy_id: f.motoboy_id || null, delivery_fee: f.delivery_fee, delivery_cost: f.delivery_cost,
+      sale_date: f.sale_date,
+      customer_name: f.customer_name, customer_phone: f.customer_phone, customer_cpf: f.customer_cpf,
+      items: f.items.map((i) => ({ product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price, unit_cost: i.unit_cost })),
+      accessories: f.accessories.map((a) => ({ accessory_id: a.accessory_id, quantity: a.quantity, cost: a.cost })),
+      manual_items: f.manual.map((m) => ({ name: m.name, price: m.price, cost: m.cost, quantity: m.quantity })),
+      payments: f.payments.map((pm) => ({ ...pm })), payment_status: f.payment_status,
+      delivery_type: f.delivery_type, motoboy_id: f.motoboy_id || null, delivery_fee: f.delivery_fee, delivery_cost: f.delivery_cost, delivery_notes: f.delivery_notes,
       city: f.city, neighborhood: f.neighborhood, address_street: f.address_street, address_number: f.address_number,
-      address_complement: f.address_complement, zip_code: f.zip_code, delivery_notes: deliveryNotes(f),
-      wa_chat_id: f.chatId, origin: f.origin, ad_source: f.origin === 'anuncio' && f.ad ? f.ad.platform || f.ad.sourceType || null : null,
-      ad_title: f.origin === 'anuncio' && f.ad ? f.ad.title : null, ad_url: f.origin === 'anuncio' && f.ad ? f.ad.url : null,
-      warranty_months: f.warranty_months === '' ? null : f.warranty_months,
+      address_complement: f.address_complement, state: f.state, zip_code: f.zip_code,
+      supplier_name: f.supplier_name, item_suppliers: f.item_suppliers,
+      wa_chat_id: f.chatId, ad: f.ad ? { title: f.ad.title || null, platform: f.ad.platform || f.ad.sourceType || null, url: f.ad.url || null } : null,
     };
   }
 
   async function registerSale(confirmedDup) {
     const f = vs.form;
     if (vs.busy || !f || !f.chatId) return;
-    if (!f.items.length) { vs.msg = 'Adicione pelo menos um produto.'; vs.err = true; renderVendas(); return; }
-    const v = TS.validateAddress(f.delivery_type, f);
-    if (!v.isValid) { vs.msg = v.message; vs.err = true; renderVendas(); return; }
+    f.triedSubmit = true;
+    const x = saleCalcInput(f);
+    const problem = TS.validateSale({ form: f, items: x.items, manualItems: x.manualItems, payments: x.payments });
+    if (problem) { vs.msg = problem; vs.err = true; renderVendas(); return; }
     if (f.moveLabels && String(f.clientLabel || '').startsWith('new:')) { vs.msg = 'Crie a etiqueta do cliente (botão "Criar agora") ou desmarque a opção.'; vs.err = true; renderVendas(); return; }
     vs.busy = true;
     vs.msg = '';
@@ -9390,7 +9654,7 @@
   function renderSaleDone() {
     const sec = el('section', 'crmsec');
     sec.append(el('div', 'wt-head', 'VENDA REGISTRADA'));
-    sec.append(el('div', 'fw-test', `Venda registrada (pendente). Finalize no ERP. Total ${TS.money(vs.done.total)}.`));
+    sec.append(el('div', 'fw-test vd-done', `Venda registrada (Em separação). Finalize no ERP. Total ${TS.money(vs.done.total)}.`));
     const url = erpLink({ pagina: 'historico', venda: vs.done.id });
     if (url) sec.append(erpAnchor('Abrir esta venda no ERP', url, 'bbtn primary vd-open'));
     else sec.append(el('div', 'crm-intro', 'No ERP: Histórico de Vendas.'));
@@ -9399,17 +9663,19 @@
     vtabEl.append(sec);
   }
 
-  // ── Mensagem do entregador (só monta o texto; enviar é um clique) ──
+  // ── Mensagem do entregador (só monta o texto; enviar é um clique). 2.12.3: sem a linha de horário ──
   async function openCourier() {
     const f = vs.form;
     if (!f) return;
     const cat = vs.catalog || {};
     const t = saleTotals(f);
+    const notes = String(f.delivery_notes || '').trim();
     const text = TS.courierMessage({
       customer_name: f.customer_name, customer_phone: f.customer_phone, address_street: f.address_street, address_number: f.address_number,
-      neighborhood: f.neighborhood, city: f.city, reference: f.reference, schedule: f.schedule,
-      items: f.items.map((i) => { const p = (cat.products || []).find((x) => x.id === i.product_id); return { quantity: i.quantity, name: p ? productLabel(p) : 'produto' }; }),
-      total: t.totalSalePrice, payment_method: f.payment_method, payment_status: f.payment_status, map_url: f.map ? f.map.url : null,
+      address_complement: f.address_complement, neighborhood: f.neighborhood, city: f.city,
+      items: [...f.items.map((i) => { const p = (cat.products || []).find((x) => x.id === i.product_id); return { quantity: i.quantity, name: p ? productLabel(p) : 'produto' }; }), ...f.manual.map((m) => ({ quantity: m.quantity, name: m.name }))],
+      total: t.totalSalePrice, payment_method: (f.payments[0] || {}).method, payment_status: f.payment_status,
+      notes, map_url: f.map && !notes.includes(f.map.url) ? f.map.url : null,
     });
     vs.courier = { text, back: vs.view, chats: null, target: '' };
     vs.view = 'courier';

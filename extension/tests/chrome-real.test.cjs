@@ -72,6 +72,16 @@ document.getElementById('main').addEventListener('click', (e) => { if (e.target.
 const ICONS = document.querySelector('#main header .icons').outerHTML;
 window.__rebuildHeader = (icons = true) => { const h = document.querySelector('#main header'); const n = document.createElement('header'); n.className = 'hdr'; n.innerHTML = h.innerHTML; n.querySelectorAll('.tsp-hdr, .icons').forEach((x) => x.remove()); if (icons) n.insertAdjacentHTML('beforeend', ICONS); h.replaceWith(n); };
 window.__group = (on) => { document.querySelector('#main .msgs').innerHTML = on ? '<div data-id="false_120363000000000000@g.us_ABC">oi</div>' : ''; };
+// 2.12.3: ponte da WA-JS simulada (desligada por padrão): responde só os pedidos listados em __fakeBridge, antes da
+// ponte de verdade (que, sem o WhatsApp, responderia "não está pronta")
+window.__fakeBridge = null;
+window.addEventListener('message', (e) => {
+  const d = e.data; const fb = window.__fakeBridge;
+  if (!fb || e.source !== window || !d || d.source !== 'tsp-wajs-content' || !Object.prototype.hasOwnProperty.call(fb, d.type)) return;
+  e.stopImmediatePropagation();
+  const v = typeof fb[d.type] === 'function' ? fb[d.type](d.payload) : fb[d.type];
+  window.postMessage({ source: 'tsp-wajs-bridge', id: d.id, type: d.type, ok: true, data: v }, location.origin);
+});
 </script></body></html>`;
 
 // ── CDP por pipe (fd 3 = escrita, fd 4 = leitura; mensagens separadas por \0) ──
@@ -169,6 +179,8 @@ async function main() {
       return null;
     }
     function fakeSupabase(method, url, body) {
+      // 2.12.3: ViaCEP falso (o background busca o endereço do CEP como o ERP)
+      if (url.hostname === 'viacep.com.br') { fake.cep = [...(fake.cep || []), url.pathname]; return [200, /\/24220000\//.test(url.pathname) ? { cep: '24220-000', logradouro: 'Rua Gavião Peixoto', bairro: 'Icaraí', localidade: 'Niterói', uf: 'RJ' } : { erro: true }]; }
       if (!url.pathname.startsWith('/rest/v1/')) return null;
       const table = url.pathname.slice('/rest/v1/'.length);
       if (fake.fail && fake.fail[table] > 0) { fake.fail[table]--; fake.failed = (fake.failed || 0) + 1; return [503, { message: 'Service Unavailable' }]; } // 2.12.1
@@ -184,6 +196,8 @@ async function main() {
         return [200, []];
       }
       if (table === 'sales') {
+        if (method === 'POST') { const list = (Array.isArray(body) ? body : [body]).map((r) => ({ id: require('crypto').randomUUID(), created_at: new Date().toISOString(), ...r })); fake.sales.push(...list); return [201, list]; } // 2.12.3
+        if (method === 'DELETE') { fake.sales = fake.sales.filter((x) => x.id !== eq('id')); return [204, null]; }
         if (method === 'PATCH') {
           const s0 = fake.sales.find((x) => x.id === eq('id'));
           const wc = q.get('wa_chat_id'); const cp = q.get('customer_phone'); const or = q.get('or');
@@ -208,7 +222,7 @@ async function main() {
         (async () => {
           if (ti.type === 'service_worker' && extId && ti.url.startsWith(`chrome-extension://${extId}/`)) {
             swTarget = ti.targetId;
-            await c.send('Fetch.enable', { patterns: [{ urlPattern: '*supabase.co/*', requestStage: 'Request' }] }, sid).catch(() => {});
+            await c.send('Fetch.enable', { patterns: [{ urlPattern: '*supabase.co/*', requestStage: 'Request' }, { urlPattern: '*viacep.com.br/*', requestStage: 'Request' }] }, sid).catch(() => {});
           }
           if (waitingForDebugger) await c.send('Runtime.runIfWaitingForDebugger', {}, sid).catch(() => {});
         })();
@@ -819,6 +833,127 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console nos atalhos do cabeçalho', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 10. 💰 venda pelo WhatsApp igual à "Nova Venda" do ERP (2.12.3), com a ponte da WA-JS simulada (conversa aberta,
+    // telefone conferido) e o banco falso: 2 produtos com o custo editado, 2 formas de pagamento, Correios, "Colar
+    // formulário" com CEP, seções na ordem do ERP, recolher, resumo financeiro e a gravação de ponta a ponta
+    fake.on = true;
+    fake.generic = true;
+    fake.sales = [];
+    fake.cep = [];
+    const CH = '5521987654321@c.us';
+    const PA = uuid(); const PB = uuid(); const AC = uuid(); const SUPP = uuid();
+    Object.assign(fake.db, {
+      products: [
+        { id: PA, model: 'Smartwatch Ultra', color: 'Preto', category: 'smartwatch', price: 499.9, cost: 210, current_stock: 4, tiny_id: null },
+        { id: PB, model: 'Pulseira Milanese', color: 'Prata', category: 'pulseira', price: 59.9, cost: 12.5, current_stock: 9, tiny_id: null },
+      ],
+      accessories: [{ id: AC, name: 'Caixa presente', cost: 3.2 }], motoboys: [{ id: uuid(), name: 'João Moto' }], suppliers: [{ id: SUPP, name: 'Fornecedor SP' }],
+      cities: [{ id: uuid(), name: 'Niterói' }], neighborhoods: [], system_config: [{ key: 'fee_ea_credit_6', value: '0.0726' }],
+      sale_items: [], sale_accessories: [],
+      wa_ad_attribution: [{ id: uuid(), chat_id: CH, phone: '5521987654321', contact_name: 'Maria WhatsApp', ad_id: 'AD1', ad_title: 'Relógio Promo', source_app: 'Instagram', source_url: 'https://fb.me/ad1', first_message_at: new Date().toISOString() }],
+      wa_chat_names: [{ chat_id: CH, name: 'Maria', source: 'aprendido', updated_at: new Date().toISOString() }],
+    });
+    await pg(`window.__fakeBridge = { activeChat: { kind: 'individual', chatId: ${JSON.stringify(CH)} }, chatPhone: { phone: '5521987654321', name: 'Maria WhatsApp', via: 'numero' },
+      verifyChatPhone: { active: true, match: true }, chatSaleInfo: { location: null, addressText: null, ad: null }, recentChats: [] }; return true;`);
+    await openChat('Cliente 6');
+    await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(200); sh.querySelector('.pnav [data-sec="vendas"]').click(); await wait(300);
+      const b = [...sh.querySelectorAll('.vtab button')].find((x) => x.textContent.includes('Nova venda desta conversa')); if (b) b.click(); return !!b;`);
+    const formReady = await waitFor(`return !!sh.querySelector('.vd-form') && /Maria/.test((sh.querySelector('.vd-form input[aria-label="Nome do cliente"]') || {}).value || '') && /anúncio/.test(sh.querySelector('.vd-form').textContent);`, 15000);
+    const layout = await q(`const f = sh.querySelector('.vd-form'); const t = f.textContent;
+      return { titles: [...f.querySelectorAll('.vd-sec-title')].map((x) => x.textContent), date: (f.querySelector('input[aria-label="Data da venda"]') || {}).value,
+        name: f.querySelector('input[aria-label="Nome do cliente"]').value, phone: f.querySelector('input[aria-label="Telefone do cliente"]').value,
+        removed: ['Horário de entrega', 'Garantia', 'Veio de anúncio'].filter((x) => t.includes(x)), originRadio: !!f.querySelector('input[name="vd-origin"]'),
+        origin: (f.querySelector('.vd-origin') || {}).textContent || '', fields: ['CPF do cliente', 'CEP', 'Estado (UF)', 'Rua', 'Número', 'Complemento', 'Cidade', 'Bairro', 'Fornecedor'].filter((a) => !f.querySelector('[aria-label="' + a + '"]')) };`);
+    check('💰 formulário: Data da venda (hoje) e as seções do ERP na ordem; sem Horário, Garantia e Origem; nome aprendido e telefone desta conversa; origem automática do anúncio',
+      formReady && JSON.stringify(layout.titles) === '["Produtos","Cliente","Pagamento","Entrega","Resumo financeiro","Conversa"]' && /^\d{4}-\d{2}-\d{2}$/.test(layout.date)
+      && layout.name === 'Maria' && layout.phone === '5521987654321' && !layout.removed.length && !layout.originRadio && /anúncio · Relógio Promo/.test(layout.origin) && !layout.fields.length, JSON.stringify(layout));
+    // produtos: buscar e adicionar 2, editar o custo do 1º e a quantidade do 2º
+    const setVal = (sel, v, ev = 'input') => q(`const i = sh.querySelector('.vd-form ' + ${JSON.stringify(sel)}); if (!i) return false; i.value = ${JSON.stringify(String(v))}; i.dispatchEvent(new Event(${JSON.stringify(ev)}, { bubbles: true })); await wait(120); return true;`);
+    const pick = async (term, text) => { await setVal('.vd-search', term); return q(`const b = [...sh.querySelectorAll('.vd-form .vd-results button')].find((x) => x.textContent.includes(${JSON.stringify(text)})); if (!b) return false; b.click(); await wait(200); return true;`); };
+    const added = [await pick('ultra', 'Smartwatch Ultra - Preto'), await pick('milanese', 'Pulseira Milanese - Prata')];
+    const costPre = await q(`return sh.querySelector('.vd-form input[aria-label="Custo do produto 1"]').value;`);
+    await setVal('input[aria-label="Custo do produto 1"]', '199.5');
+    await setVal('input[aria-label="Qtd do produto 2"]', '2');
+    // pagamento: PIX R$ 300 + crédito Elo/Amex 6x R$ 319,70
+    await setVal('select[aria-label="Forma de pagamento 1"]', 'pix', 'change');
+    await setVal('input[aria-label="Valor da forma 1 (R$)"]', '300');
+    await q(`sh.querySelector('.vd-form .vd-add-pay').click(); await wait(200); return true;`);
+    await setVal('select[aria-label="Forma de pagamento 2"]', 'credit_card', 'change');
+    await setVal('select[aria-label="Bandeira da forma 2"]', 'elo_amex', 'change');
+    const inst = await q(`return [...sh.querySelector('.vd-form select[aria-label="Parcelas da forma 2"]').options].map((o) => o.textContent);`);
+    await setVal('select[aria-label="Parcelas da forma 2"]', '6', 'change');
+    await setVal('input[aria-label="Valor da forma 2 (R$)"]', '319.7');
+    const pay = await q(`const f = sh.querySelector('.vd-form'); return { alloc: f.querySelector('.vd-alloc').textContent, ok: !!f.querySelector('.vd-alloc-c.ok'), fee: f.querySelectorAll('.vd-fee')[1].textContent };`);
+    check('💰 produtos com Qtd · Custo (preenchido com o do produto, editável) · Preço; 2 formas de pagamento com bandeira, parcelas com a taxa e "Total · Alocado · Falta alocar"',
+      added.every(Boolean) && costPre === '210' && inst.includes('6x (7.26%)') && /Total da vendaR\$ 619\.70AlocadoR\$ 619\.70Falta alocarR\$ 0\.00/.test(pay.alloc) && pay.ok && pay.fee === 'Taxa: R$ 23.21 (7.26%)',
+      JSON.stringify({ added, costPre, inst: inst.slice(0, 7), pay }));
+    // entrega: Correios (o ERP põe R$ 13,11) → R$ 15
+    await setVal('select[aria-label="Tipo de entrega"]', 'correios', 'change');
+    const correios = await q(`return sh.querySelector('.vd-form input[aria-label="Custo Correios (R$)"]').value;`);
+    await setVal('input[aria-label="Custo Correios (R$)"]', '15');
+    await setVal('input[aria-label="Observações da entrega"]', 'Deixar na portaria');
+    // cliente: "Colar formulário" (com CEP → ViaCEP) e o fornecedor
+    await q(`sh.querySelector('.vd-form .vd-paste-btn').click(); await wait(200); return true;`);
+    await q(`const ta = sh.querySelector('.vd-form .vd-paste'); const dt = new DataTransfer(); dt.setData('text/plain', 'Nome: Maria Souza\\nRua: Rua das Flores\\nNúmero: 120\\nComplemento: Ap 302\\nBairro: Centro\\nCidade: Niterói\\nCEP: 24220-000\\nCPF: 529.982.247-25');
+      ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); return true;`);
+    const cepDone = await waitFor(`return (sh.querySelector('.vd-form input[aria-label="Rua"]') || {}).value === 'Rua Gavião Peixoto';`, 8000);
+    await setVal('input[aria-label="Fornecedor"]', 'Fornecedor SP');
+    const client = await q(`const f = sh.querySelector('.vd-form'); const v = (a) => (f.querySelector('[aria-label="' + a + '"]') || {}).value;
+      return { name: v('Nome do cliente'), cpf: v('CPF do cliente'), cep: v('CEP'), uf: v('Estado (UF)'), rua: v('Rua'), num: v('Número'), comp: v('Complemento'), city: v('Cidade'), bairro: v('Bairro') };`);
+    check('💰 "Colar formulário" preenche como o ERP e o CEP completa rua, UF, cidade e bairro (ViaCEP pelo background); Correios começa em R$ 13,11',
+      cepDone && correios === '13.11' && JSON.stringify(client) === JSON.stringify({ name: 'Maria Souza', cpf: '529.982.247-25', cep: '24220000', uf: 'RJ', rua: 'Rua Gavião Peixoto', num: '120', comp: 'Ap 302', city: 'Niterói', bairro: 'Icaraí' })
+      && fake.cep.length === 1 && fake.cep[0] === '/ws/24220000/json/', JSON.stringify({ cepDone, correios, client, cep: fake.cep }));
+    const fin = await q(`const f = sh.querySelector('.vd-form'); return { vals: [...f.querySelectorAll('.vd-fin-v')].map((x) => x.textContent), det: f.querySelector('.vd-fin-det').textContent };`);
+    check('💰 Resumo financeiro igual ao do ERP (total, taxa, recebido, lucro e os custos)',
+      JSON.stringify(fin.vals) === JSON.stringify(['R$ 619.70', '- R$ 23.21', 'R$ 596.49', 'R$ 356.99']) && /Custo produtosR\$ 224\.50/.test(fin.det) && /Custo CorreiosR\$ 15\.00/.test(fin.det), JSON.stringify(fin));
+    if (SHOTS_DIR) { // prints do formulário (topo, pagamento e resumo)
+      for (const [name, sec] of [['venda-produtos', 'produtos'], ['venda-pagamento', 'pagamento'], ['venda-resumo', 'resumo']]) {
+        await q(`sh.querySelector('.vd-form [data-vd-sec="${sec}"]').scrollIntoView({ block: 'start' }); return true;`);
+        await sleep(300);
+        const { data } = await s('Page.captureScreenshot', { format: 'png' });
+        fs.writeFileSync(path.join(SHOTS_DIR, `${name}.png`), Buffer.from(data, 'base64'));
+        console.log(`     print: ${path.join(SHOTS_DIR, `${name}.png`)}`);
+      }
+    }
+    // seções recolhíveis e lado a lado no painel largo
+    await q(`[...sh.querySelectorAll('.vd-form .vd-sec-head')].find((x) => x.textContent.includes('Cliente')).click(); await wait(150); return true;`);
+    const closed = await q(`const s = sh.querySelector('.vd-form [data-vd-sec="cliente"]'); return { body: !!s.querySelector('.vd-sec-body'), exp: s.querySelector('.vd-sec-head').getAttribute('aria-expanded'), sum: s.querySelector('.vd-sec-sum').textContent };`);
+    await q(`sh.querySelector('.vd-form [data-vd-sec="cliente"] .vd-sec-head').click(); await wait(150); return true;`);
+    const wide = await q(`const p = sh.querySelector('.panel'); const g = sh.querySelector('.vd-form .vd-grid2'); return { wide: p.classList.contains('w-wide'), cols: getComputedStyle(g).gridTemplateColumns.split(' ').length, kept: sh.querySelector('.vd-form input[aria-label="Rua"]').value };`);
+    check('💰 seções recolhem e abrem (o que foi digitado fica); campos lado a lado quando o painel está largo',
+      !closed.body && closed.exp === 'false' && /Maria Souza · Niterói/.test(closed.sum) && wide.kept === 'Rua Gavião Peixoto' && wide.cols === (wide.wide ? 2 : 1), JSON.stringify({ closed, wide }));
+    // mensagem do entregador sem horário
+    await q(`sh.querySelector('.vd-form .vd-courier').click(); await wait(300); return true;`);
+    const courier = await q(`return (sh.querySelector('.vtab textarea[aria-label="Mensagem do entregador"]') || {}).value || '';`);
+    await q(`const b = [...sh.querySelectorAll('.vtab button')].find((x) => x.textContent === 'Voltar'); if (b) b.click(); await wait(250); return true;`);
+    check('💰 "Gerar mensagem do entregador" sem a linha de horário', /\*ENTREGA\*/.test(courier) && !/Horário/.test(courier) && /Rua Gavião Peixoto, 120/.test(courier) && /2x Pulseira Milanese/.test(courier), courier);
+    // painel largo de verdade: a classe w-wide põe os campos lado a lado
+    const wide2 = await q(`const p = sh.querySelector('.panel'); const had = p.classList.contains('w-wide'); p.classList.add('w-wide'); await wait(50);
+      const cols = getComputedStyle(sh.querySelector('.vd-form .vd-grid2')).gridTemplateColumns.split(' ').length; if (!had) p.classList.remove('w-wide'); return cols;`);
+    check('💰 painel largo: Nome/Telefone, CEP/UF, Rua/Número e Cidade/Bairro lado a lado', wide2 === 2, String(wide2));
+    // extra do chat: "Tirar das automações e pôr na etiqueta CRM" (aqui não há a etiqueta Cliente: desmarca)
+    const moveOpt = await q(`const l = [...sh.querySelectorAll('.vd-form label.sc-radio')].find((x) => x.textContent.includes('Tirar das automações e pôr na etiqueta CRM')); if (!l) return false; const c = l.querySelector('input'); if (c.checked) c.click(); await wait(200); return true;`);
+    check('💰 mantém "Tirar das automações e pôr na etiqueta CRM"', moveOpt);
+    // registrar
+    await q(`sh.querySelector('.vd-form .vd-register').click(); return true;`);
+    const saved = await waitFor(`return /VENDA REGISTRADA/.test(sh.querySelector('.vtab').textContent);`, 15000);
+    const row = fake.sales[0] || {};
+    const items = (fake.db.sale_items || []).map((x) => [x.product_id === PA ? 'A' : 'B', x.quantity, x.unit_price, x.unit_cost, x.total_price]);
+    const openErp = await q(`const a = sh.querySelector('.vtab a.vd-open'); return a ? a.href : null;`);
+    check('💰 registrar grava como o ERP: total, 2 formas, taxa pela data, Correios, CPF, endereço do CEP, fornecedor, custo editado nos itens, status, conversa e origem automática',
+      saved && fake.sales.length === 1 && Math.abs(row.total_sale_price - 619.7) < 1e-9 && row.payment_methods.length === 2 && row.payment_method === 'pix' && row.card_brand === 'elo_amex' && row.installments === 6
+      && Math.abs(row.card_fee - 319.7 * 0.0726) < 1e-9 && row.delivery_type === 'correios' && row.delivery_cost === 15 && row.delivery_fee === 0 && row.customer_cpf === '52998224725'
+      && row.address_street === 'Rua Gavião Peixoto' && row.neighborhood === 'Icaraí' && row.state === 'RJ' && row.zip_code === '24220000' && row.supplier_id === SUPP && row.status === 'em_separacao'
+      && row.payment_status === 'a_cobrar' && row.delivery_notes === 'Deixar na portaria' && row.wa_chat_id === CH && row.origin === 'anuncio' && row.ad_title === 'Relógio Promo' && !('wa_warranty_months' in row)
+      && JSON.stringify(items) === JSON.stringify([['A', 1, 499.9, 199.5, 499.9], ['B', 2, 59.9, 12.5, 119.8]]) && /pagina=historico/.test(openErp || ''),
+      JSON.stringify({ saved, row, items, openErp, msg: await q(`return (sh.querySelector('.vd-msg') || {}).textContent || '';`) }));
+    const prods = fake.db.products.map((p) => [p.current_stock, p.cost]);
+    check('💰 estoque baixado e o custo editado gravado no produto (como o ERP)', JSON.stringify(prods) === JSON.stringify([[3, 199.5], [7, 12.5]]), JSON.stringify(prods));
+    await pg('window.__fakeBridge = null; return true;');
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console na venda pelo WhatsApp', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

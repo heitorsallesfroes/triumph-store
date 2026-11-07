@@ -110,6 +110,7 @@ const HANDLERS = {
   // Venda pela conversa (2.3.0): só createSaleFromChat grava nas tabelas do ERP, e só pelo botão "Registrar venda"
   erpCatalog:            ()  => WaApi.erpCatalog(),
   createSaleFromChat:    (m) => WaApi.createSaleFromChat({ sale: m.sale }),
+  lookupCep:             (m) => WaApi.lookupCep({ cep: m.cep }), // 2.12.3: endereço do CEP (ViaCEP, como o ERP)
   recentChatSale:        (m) => WaApi.recentChatSale({ chatId: m.chatId, phone: m.phone }),
   fetchChatSales:        ()  => WaApi.fetchChatSales(),
   saleContactLabels:     (m) => WaApi.saleContactLabels({ chatId: m.chatId, name: m.name, phone: m.phone, addLabelId: m.addLabelId, removeLabelIds: m.removeLabelIds }),
