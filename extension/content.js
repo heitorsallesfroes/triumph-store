@@ -7181,12 +7181,15 @@
     fl.statsBusy = true;
     const ids = motor.state.automations.map((a) => a.id).slice(0, 100);
     const seqIds = motor.state.automations.filter((a) => a.kind === 'sequencia').map((a) => a.id).slice(0, 100);
-    const [queue, sent, seq] = await Promise.all([
+    const ignoredItems = motor.state.automations.filter((a) => a.active && a.activated_at && !a.include_existing && E.waTriggerLabelOf(a))
+      .map((a) => ({ automationId: a.id, labelId: E.waTriggerLabelOf(a), activatedAt: a.activated_at })).slice(0, 100);
+    const [queue, sent, seq, ignored] = await Promise.all([
       motor.queueCounts().catch(() => null),
       ids.length ? call('automationSentCounts', { automationIds: ids }).catch(() => null) : {},
       seqIds.length ? call('seqStats', { automationIds: seqIds }).catch(() => null) : {},
+      ignoredItems.length ? call('nativeLabelIgnored', { items: ignoredItems }).catch(() => null) : {},
     ]);
-    fl.stats = { queue: queue || {}, sent: sent || {}, seq: seq || {} };
+    fl.stats = { queue: queue || {}, sent: sent || {}, seq: seq || {}, ignored: ignored || {} };
     fl.statsAt = Date.now();
     fl.statsBusy = false;
     if (fl.open && fl.view === 'list') renderFollows();
@@ -7322,6 +7325,8 @@
     if (a.test_chat_id) head.append(el('span', 'fw-badge test', 'EM TESTE')); // 2.8.8
     card.append(head);
     if (a.test_chat_id) card.append(el('div', 'crm-intro', `Em teste: roda só para ${testChatLabel(a.test_chat_id)}; ignora todos os outros.`));
+    const ign = fl.stats && fl.stats.ignored ? fl.stats.ignored[a.id] : null; // 2.12.5
+    if (Number.isFinite(ign)) card.append(el('div', 'crm-intro fw-ignored', `Ignorados por já estarem na etiqueta: ${ign}`));
     if (a.active && a.activated_at) card.append(el('div', 'crm-intro', `Vale daqui pra frente: desde ${new Date(a.activated_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}${a.include_existing ? ' (incluiu quem já estava na etiqueta)' : ''}.`));
     // 2.11.0: uma frase só
     card.append(el('div', 'fw-txt fw-sentence', automationSentence(a)));
@@ -7362,11 +7367,12 @@
     if (fl.activating && fl.activating.id === a.id) card.append(activationEl(a, fl.activating, async () => {
       const act = fl.activating;
       try {
-        await baselineWaLabel(a);
+        const base = await baselineWaLabel(a).catch(() => null); // 2.12.5 (a regra da ponte protege mesmo se falhar)
         await call('setAutomationActive', { id: a.id, active: true, includeExisting: !!act.include });
         fl.activating = null;
+        fl.statsAt = 0; // 2.12.5: "ignorados" de novo
         await motor.loadAutomations();
-        flash(act.include ? 'Automação ligada (incluindo quem já estava na etiqueta).' : 'Automação ligada: vale para quem entrar daqui pra frente.');
+        flash(act.include ? 'Automação ligada (incluindo quem já estava na etiqueta).' : `Automação ligada: vale para quem entrar daqui pra frente.${baselineText(base)}`);
       } catch (e) { act.err = e.message; }
       renderFollows();
       renderFootPause();
@@ -7380,14 +7386,16 @@
     const c = (fl.recentChats || []).find((x) => x.id === chatId);
     return c && c.name ? `${c.name} (${chatId.split('@')[0]})` : chatId.split('@')[0];
   }
-  // quem já está na etiqueta do gatilho (CRM pelo banco; WhatsApp pela lista do WhatsApp Web)
+  // quem já está na etiqueta do gatilho (CRM pelo banco; WhatsApp: 2.12.5 TODAS as conversas da etiqueta, não só as
+  // carregadas na lista). Também para a sequência que começa por etiqueta do WhatsApp.
   async function loadActivationInfo(a) {
     const act = fl.activating || (fl.edit && fl.edit.activation);
-    if (!act || !LABEL_TRIGGERS.includes(a.trigger_type)) return;
+    const waLabel = E.waTriggerLabelOf(a);
+    if (!act || (!waLabel && !LABEL_TRIGGERS.includes(a.trigger_type))) return;
     let list = null;
     try {
-      if (a.trigger_label_source === 'whatsapp' && a.trigger_wa_label_id) {
-        const r = await waRequest('labelChatIds', { labelId: String(a.trigger_wa_label_id) }, { timeout: 8000 });
+      if (waLabel) {
+        const r = await waRequest('labelAllChats', { labelId: waLabel }, { timeout: 15000 });
         list = (r && r.chats ? r.chats : []).map((c) => ({ name: c.name || null, phone: c.phone || (/@c\.us$/.test(c.id) ? c.id.split('@')[0] : null) }));
       } else if (a.trigger_label_id && !String(a.trigger_label_id).startsWith(NEW_LABEL)) {
         list = await call('automationExisting', { labelId: a.trigger_label_id });
@@ -7396,19 +7404,24 @@
     act.info = list;
     renderFollows();
   }
-  // etiqueta do WhatsApp: registra agora quem já está nela (assim, ao ligar, conta como "já estava")
+  // 2.12.5: etiqueta do WhatsApp: registra agora TODAS as conversas que estão nela como "já estavam" (ao ligar ou ao
+  // trocar o gatilho/etiqueta). Devolve { total, label } ou null (gatilho sem etiqueta do WhatsApp).
   async function baselineWaLabel(a) {
-    if (a.trigger_label_source !== 'whatsapp' || !a.trigger_wa_label_id || !LABEL_TRIGGERS.includes(a.trigger_type)) return;
-    const labelId = String(a.trigger_wa_label_id);
-    const r = await waRequest('labelChatIds', { labelId }, { timeout: 8000 });
+    const labelId = E.waTriggerLabelOf(a);
+    if (!labelId) return null;
+    const r = await waRequest('labelAllChats', { labelId }, { timeout: 15000 });
     const chats = (r && r.chats) || [];
-    await call('nativeLabelSweep', { labelId, chats: chats.slice(0, 5000), complete: chats.length >= (Number(r && r.count) || 0) });
+    await call('nativeLabelBaseline', { labelId, chats: chats.slice(0, 5000) });
+    return { total: chats.length, label: waLabelName(labelId) };
   }
+  // "23 contatos com a etiqueta Cliente ficaram de fora"
+  const baselineText = (b) => (b && b.total ? ` ${b.total} contato${b.total === 1 ? '' : 's'} com a etiqueta ${b.label} ficaram de fora.` : '');
+
   function activationEl(a, act, onConfirm, onCancel) {
     const box = el('div', 'fw-block act-box');
     box.setAttribute('role', 'group');
     box.setAttribute('aria-label', 'Ligar a automação');
-    if (a.kind === 'sequencia') box.append(el('div', 'crm-intro', 'Vale só para quem entrar daqui pra frente (quem já estava não entra).')); // 2.12.0
+    if (a.kind === 'sequencia' && !E.waTriggerLabelOf(a)) box.append(el('div', 'crm-intro', 'Vale só para quem entrar daqui pra frente (quem já estava não entra).')); // 2.12.0
     else if (a.trigger_type === 'dia_hora') box.append(el('div', 'crm-intro', 'Vale a partir do próximo dia e hora depois de ligar.'));
     else if (a.trigger_type === 'venda_registrada') box.append(el('div', 'crm-intro', 'Só vendas registradas depois de ligar disparam (as antigas não).'));
     else if (act.info == null) box.append(el('div', 'lt-none loading', act.infoErr ? `Não consegui ver quem já está na etiqueta: ${act.infoErr}` : 'Carregando…'));
@@ -7435,7 +7448,7 @@
     const row = el('div', 'ed-add');
     const go = el('button', 'bbtn primary act-go', act.include && act.info && act.info.length ? `Confirmar e ligar (incluir ${act.info.length})` : 'Ligar daqui pra frente');
     go.type = 'button';
-    go.disabled = LABEL_TRIGGERS.includes(a.trigger_type) && act.info == null && !act.infoErr;
+    go.disabled = (LABEL_TRIGGERS.includes(a.trigger_type) || !!E.waTriggerLabelOf(a)) && act.info == null && !act.infoErr;
     go.addEventListener('click', onConfirm);
     const no = el('button', 'bbtn', 'Cancelar');
     no.type = 'button';
@@ -7811,10 +7824,11 @@
       await resolveNewLabels(fake);
       if (def.start.label_id) def.start.label_id = fake[0].trigger_label_id;
       E.seqIndex(def).forEach(({ node: n }) => { if (n.hint) delete n.hint; });
+      const base = f.active ? await baselineWaLabel({ kind: 'sequencia', sequence: def }).catch(() => null) : null; // 2.12.5
       await call('saveAutomation', { id: f.id || undefined, automation: { kind: 'sequencia', name: f.name, active: f.active, sequence: def, test_chat_id: f.testOn ? f.test_chat_id : null }, includeExisting: false });
       await motor.loadAutomations();
       fl.statsAt = 0;
-      flash(f.active ? (f.testOn ? 'Sequência ligada em teste: só a conversa escolhida.' : 'Sequência ligada: vale para quem entrar daqui pra frente.') : 'Sequência salva (desligada).');
+      flash(f.active ? (f.testOn ? 'Sequência ligada em teste: só a conversa escolhida.' : `Sequência ligada: vale para quem entrar daqui pra frente.${baselineText(base)}`) : 'Sequência salva (desligada).');
       fl.seq = null;
       fl.saving = false;
       backToList();
@@ -8132,12 +8146,13 @@
         a.active = active;
         const bad = E.validateAutomationDraft(a, { testOn: test });
         if (bad.length) throw new Error(`${a.name}: ${bad[0].msg}`);
-        if (active) await baselineWaLabel(a).catch(() => {});
+        if (active) fl.lastBase = (await baselineWaLabel(a).catch(() => null)) || fl.lastBase; // 2.12.5
         await call('saveAutomation', { automation: a, includeExisting: false });
       }
       await motor.loadAutomations();
       fl.statsAt = 0;
-      flash(active ? (test ? `Ligada em teste: roda só para a conversa escolhida.` : `Ligada: ${E.wizardSentence(w.kind, wizInput(w), wizNames)}`) : 'Automação salva (desligada).');
+      flash(active ? (test ? `Ligada em teste: roda só para a conversa escolhida.` : `Ligada: ${E.wizardSentence(w.kind, wizInput(w), wizNames)}${baselineText(fl.lastBase)}`) : 'Automação salva (desligada).');
+      fl.lastBase = null;
       fl.wiz = null;
       fl.saving = false;
       backToList();
@@ -8568,11 +8583,11 @@
     renderFollows();
     try {
       // 2.8.8: ligar (ou trocar gatilho/etiqueta de uma ligada) = vale daqui pra frente
-      if (automation.active) await baselineWaLabel(automation).catch(() => {});
+      const base = automation.active ? await baselineWaLabel(automation).catch(() => null) : null; // 2.12.5
       await call('saveAutomation', { id: f.id || undefined, automation, includeExisting: !!(f.activation && f.activation.include) });
       await motor.loadAutomations();
       fl.statsAt = 0;
-      flash('Automação salva.');
+      flash(`Automação salva.${automation.active && !(f.activation && f.activation.include) ? baselineText(base) : ''}`);
       fl.saving = false;
       backToList();
       renderFootPause();

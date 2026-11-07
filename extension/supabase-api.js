@@ -2364,11 +2364,19 @@
     }
   }
 
-  async function upsertSeen(labelId, chats) {
-    const at = new Date().toISOString();
+  // 2.12.5: "entrou em" de cada conversa na etiqueta nativa (first_seen_at), à prova de falhas:
+  //   - entrada CONFIRMADA (a extensão viu a conversa sem a etiqueta e depois com ela, ou a própria extensão pôs a
+  //     etiqueta): a hora de agora;
+  //   - conversa que já tinha SAÍDO da etiqueta (removed_at) e aparece nela de novo: logo depois da saída vista
+  //     (só passa da ativação se a saída foi vista depois de ligar);
+  //   - conversa vista pela 1ª vez já com a etiqueta (contato antigo que só carregou agora, ligar a automação):
+  //     WA_BASELINE_AT = "já estava" (nunca passa da ativação; "incluir quem já estava" continua valendo).
+  const WA_BASELINE_AT = '2000-01-01T00:00:00.000Z';
+  async function upsertSeen(labelId, chats, atOf) {
+    const now = new Date().toISOString();
     for (let i = 0; i < chats.length; i += 500) {
       await rest('wa_native_label_seen?on_conflict=chat_id,wa_label_id', json('POST', 'resolution=merge-duplicates,return=minimal',
-        chats.slice(i, i + 500).map((c) => ({ chat_id: c.chatId, wa_label_id: labelId, first_seen_at: at, last_seen_at: at, removed_at: null }))));
+        chats.slice(i, i + 500).map((c) => ({ chat_id: c.chatId, wa_label_id: labelId, first_seen_at: atOf(c), last_seen_at: now, removed_at: null }))));
     }
   }
   async function markGone(labelId, chatIds) {
@@ -2378,8 +2386,32 @@
         json('PATCH', 'return=minimal', { removed_at: at, last_seen_at: at }));
     }
   }
+  // conversas da etiqueta que JÁ têm linha ativa (não mudam) e as que já saíram dela antes (removed_at)
+  async function seenState(labelId, chatIds) {
+    const active = new Set();
+    const removed = new Map();
+    for (let i = 0; i < chatIds.length; i += 100) {
+      const rows = await rest(`wa_native_label_seen?select=chat_id,removed_at&wa_label_id=eq.${encodeURIComponent(labelId)}&chat_id=in.${inList(chatIds.slice(i, i + 100))}`);
+      rows.forEach((r) => { if (r.removed_at) removed.set(r.chat_id, r.removed_at); else active.add(r.chat_id); });
+    }
+    return { active, removed };
+  }
+  // hora de entrada de uma conversa nova na lista (sem linha ativa)
+  const afterRemoval = (iso) => new Date(Date.parse(iso) + 1000).toISOString();
+  const entryAt = (confirmed, removedAt) => (confirmed ? new Date().toISOString() : removedAt ? afterRemoval(removedAt) : WA_BASELINE_AT);
+  async function registerFresh(labelId, list, confirmedOf) {
+    if (!list.length) return { fresh: [], baseline: 0 };
+    const { active, removed } = await seenState(labelId, list.map((c) => c.chatId));
+    const fresh = list.filter((c) => !active.has(c.chatId)); // já estava: não muda a data de entrada
+    if (!fresh.length) return { fresh: [], baseline: 0 };
+    await ensureChatContacts(fresh);
+    const at = new Map(fresh.map((c) => [c.chatId, entryAt(confirmedOf(c), removed.get(c.chatId))]));
+    await upsertSeen(labelId, fresh, (c) => at.get(c.chatId));
+    return { fresh, baseline: [...at.values()].filter((x) => x === WA_BASELINE_AT).length };
+  }
 
-  // Eventos chat.update_label (add/remove) que a aba com a trava juntou. Vale o último de cada conversa+etiqueta.
+  // Eventos chat.update_label (add/remove) que a aba com a trava juntou, em ordem. confirmed = a ponte viu a conversa
+  // sem a etiqueta antes (ou a extensão pôs). Uma saída no lote também confirma a volta.
   async function nativeLabelEvents({ events }) {
     await v25OrMissing();
     if (!Array.isArray(events) || events.length > 200) throw new Error('Lista inválida');
@@ -2388,35 +2420,32 @@
       const [c] = checkChats([e], 1);
       const labelId = checkWaLabel(e && e.labelId, 'Etiqueta inválida');
       if (!['add', 'remove'].includes(e.type)) throw new Error('Evento inválido');
-      last.set(`${labelId}|${c.chatId}`, { ...c, labelId, type: e.type });
+      const k = `${labelId}|${c.chatId}`;
+      const prev = last.get(k);
+      const confirmed = e.type === 'add' && (e.confirmed === true || !!(prev && (prev.type === 'remove' || prev.confirmed)));
+      last.set(k, { ...c, labelId, type: e.type, confirmed });
     });
     let added = 0;
     let removed = 0;
+    let baseline = 0;
     const labels = [...new Set([...last.values()].map((e) => e.labelId))];
     for (const labelId of labels) {
       const evs = [...last.values()].filter((e) => e.labelId === labelId);
       const adds = evs.filter((e) => e.type === 'add');
       const gone = evs.filter((e) => e.type === 'remove').map((e) => e.chatId);
       if (adds.length) {
-        const active = new Set();
-        for (let i = 0; i < adds.length; i += 100) {
-          const rows = await rest(`wa_native_label_seen?select=chat_id&wa_label_id=eq.${encodeURIComponent(labelId)}&removed_at=is.null&chat_id=in.${inList(adds.slice(i, i + 100).map((a) => a.chatId))}`);
-          rows.forEach((r) => active.add(r.chat_id));
-        }
-        const fresh = adds.filter((a) => !active.has(a.chatId)); // já estava: não muda a data de entrada
-        if (fresh.length) {
-          await ensureChatContacts(fresh);
-          await upsertSeen(labelId, fresh);
-          added += fresh.length;
-        }
+        const r = await registerFresh(labelId, adds, (c) => c.confirmed);
+        added += r.fresh.length - r.baseline;
+        baseline += r.baseline;
       }
       if (gone.length) { await markGone(labelId, gone); removed += gone.length; }
     }
-    return { added, removed };
+    return { added, removed, baseline };
   }
 
-  // Varredura de uma etiqueta nativa: quem está nela agora (lista do WhatsApp Web). Novos entram com a data
-  // de agora; quem já estava fica como está (sem duplicar); quem saiu ganha removed_at (só com a lista completa).
+  // Varredura de uma etiqueta nativa: quem está nela agora (lista do WhatsApp Web). Quem aparece sem linha ativa
+  // NUNCA conta como entrada de agora (não foi visto entrando): "já estava", ou logo depois da saída que foi vista.
+  // Quem saiu ganha removed_at (só com a lista completa).
   async function nativeLabelSweep({ labelId, chats, complete }) {
     await v25OrMissing();
     checkWaLabel(labelId, 'Etiqueta inválida');
@@ -2424,14 +2453,36 @@
     const current = new Map(list.map((c) => [c.chatId, c]));
     const rows = await restAll(`wa_native_label_seen?select=chat_id&wa_label_id=eq.${encodeURIComponent(labelId)}&removed_at=is.null&order=chat_id.asc`);
     const active = new Set(rows.map((r) => r.chat_id));
-    const fresh = [...current.values()].filter((c) => !active.has(c.chatId));
+    const candidates = [...current.values()].filter((c) => !active.has(c.chatId));
     const gone = complete === true ? [...active].filter((id) => !current.has(id)) : [];
-    if (fresh.length) {
-      await ensureChatContacts(fresh);
-      await upsertSeen(labelId, fresh);
-    }
+    const r = await registerFresh(labelId, candidates, () => false);
     if (gone.length) await markGone(labelId, gone);
-    return { added: fresh.length, removed: gone.length, total: current.size };
+    return { added: r.fresh.length - r.baseline, removed: gone.length, total: current.size, baseline: r.baseline };
+  }
+
+  // 2.12.5: ao ligar (ou trocar o gatilho/etiqueta): TODAS as conversas que estão na etiqueta agora ficam
+  // registradas como "já estavam". Devolve quantas estão na etiqueta e quantas foram registradas agora.
+  async function nativeLabelBaseline({ labelId, chats }) {
+    await v25OrMissing();
+    checkWaLabel(labelId, 'Etiqueta inválida');
+    const list = checkChats(chats, 5000);
+    const r = await registerFresh(labelId, list, () => false);
+    return { total: list.length, registered: r.fresh.length };
+  }
+
+  // 2.12.5: "ignorados por já estarem na etiqueta": quem está na etiqueta agora e entrou antes de ligar
+  async function nativeLabelIgnored({ items }) {
+    await v25OrMissing();
+    if (!Array.isArray(items) || items.length > 100) throw new Error('Lista inválida');
+    const out = {};
+    for (const it of items) {
+      const id = checkUuid(it && it.automationId, 'Automação inválida');
+      const labelId = checkWaLabel(it.labelId, 'Etiqueta inválida');
+      const t = Date.parse(it.activatedAt || '');
+      if (!Number.isFinite(t)) continue;
+      out[id] = await countRows(`wa_native_label_seen?wa_label_id=eq.${encodeURIComponent(labelId)}&removed_at=is.null&first_seen_at=lt.${encodeURIComponent(new Date(t).toISOString())}`);
+    }
+    return out;
   }
 
   const contactCols = async () => ((await chatIdColumn()) ? 'id,name,phone,chat_id' : 'id,name,phone');
@@ -3355,7 +3406,7 @@
 
   root.WaApi = {
     engineActivity, clearReadCache, automationExisting, chatConversions, purchasedChats, pendingContactLeads, conversionStats,
-    nativeLabelEvents, nativeLabelSweep, nativeLabelCandidates, activeEnrollments, enrollmentCandidates, enrollContact,
+    nativeLabelEvents, nativeLabelSweep, nativeLabelBaseline, nativeLabelIgnored, nativeLabelCandidates, activeEnrollments, enrollmentCandidates, enrollContact,
     leaveAutomation, chatAutomationState,
     metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,
     purchaseSaleLink, linkSaleToPurchase, unlinkSaleFromPurchase,

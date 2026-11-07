@@ -1006,6 +1006,42 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console na venda pelo WhatsApp', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 11. "só daqui pra frente" à prova de falhas para etiquetas do WhatsApp (2.12.5): ao ligar, TODAS as conversas da
+    // etiqueta (23, inclusive as que não estão carregadas na lista) ficam registradas como "já estavam", a tela diz
+    // quantas ficaram de fora e a lista mostra "Ignorados por já estarem na etiqueta"
+    fake.on = true;
+    fake.generic = true;
+    const CHATS23 = Array.from({ length: 23 }, (_, i) => `5511900${String(i).padStart(6, '0')}@c.us`);
+    const baseAuto = (fake.db.wa_automations || []).find((x) => x.kind !== 'sequencia' && x.trigger_type) || {};
+    const AW = uuid();
+    fake.db.wa_automations.push({ ...baseAuto, id: AW, name: 'Etiqueta do WhatsApp', active: false, activated_at: null, include_existing: false, test_chat_id: null,
+      trigger_type: 'entrou_etiqueta', trigger_label_source: 'whatsapp', trigger_wa_label_id: '1', trigger_label_id: null, position: 97 });
+    fake.db.wa_native_label_seen = [{ chat_id: CHATS23[0], wa_label_id: '1', first_seen_at: '2026-11-01T10:00:00.000Z', last_seen_at: '2026-11-01T10:00:00.000Z', removed_at: null }];
+    await pg(`window.__fakeBridge = { labels: [{ id: '1', name: 'Cliente', hexColor: '#22c55e', count: 5 }],
+      labelAllChats: { count: 5, source: 'associacoes', chats: ${JSON.stringify(CHATS23.map((id) => ({ id, name: null })))} }, labelEvents: { events: [] } }; return true;`);
+    await q(`sh.querySelector('[data-sec="vendas"]').click(); await wait(200); sh.querySelector('[data-sec="follows"]').click(); await wait(300); return true;`);
+    const waCard = `[...sh.querySelectorAll('.fw-card')].find((c) => (c.querySelector('.fw-name') || {}).textContent === 'Etiqueta do WhatsApp')`;
+    const cardOk = await waitFor(`return !!${waCard};`, 15000);
+    await q(`const c = ${waCard}; const b = [...c.querySelectorAll('button')].find((x) => x.textContent === 'Ligar'); b.click(); await wait(200); return true;`);
+    await waitFor(`const c = ${waCard}; return !!(c && c.querySelector('.act-count'));`, 15000);
+    const actTxt = await q(`const c = ${waCard}; return c.querySelector('.act-count').textContent;`);
+    await q(`const c = ${waCard}; c.querySelector('.act-go').click(); return true;`);
+    await waitFor(`return /ficaram de fora/.test((sh.querySelector('.ftab') || {}).textContent || '');`, 15000);
+    const flashTxt = await q(`return [...sh.querySelectorAll('.ftab .ed-msg')].map((x) => x.textContent).join(' | ');`);
+    const rows = fake.db.wa_native_label_seen.filter((r) => r.wa_label_id === '1' && !r.removed_at);
+    const baseRows = rows.filter((r) => r.first_seen_at === '2000-01-01T00:00:00.000Z').length;
+    const autoRow = fake.db.wa_automations.find((x) => x.id === AW);
+    check('ligar com etiqueta do WhatsApp: conta TODAS as 23 conversas da etiqueta (não só as carregadas), registra como "já estavam" e diz quantas ficaram de fora',
+      cardOk && /23 contatos já estão nessa etiqueta/.test(actTxt) && /23 contatos com a etiqueta cliente ficaram de fora/i.test(flashTxt)
+      && rows.length === 23 && baseRows === 22 && rows.find((r) => r.chat_id === CHATS23[0]).first_seen_at === '2026-11-01T10:00:00.000Z' && autoRow.active === true && !!autoRow.activated_at,
+      JSON.stringify({ cardOk, actTxt, flashTxt, rows: rows.length, baseRows, active: autoRow.active }));
+    const ignoredOk = await waitFor(`const c = ${waCard}; return /Ignorados por já estarem na etiqueta: 23/.test((c && c.textContent) || '');`, 15000);
+    check('lista da automação: "Ignorados por já estarem na etiqueta: 23"', ignoredOk, await q(`const c = ${waCard}; return c ? c.textContent.slice(0, 300) : '';`));
+    await pg('window.__fakeBridge = null; return true;');
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console ao ligar com etiqueta do WhatsApp', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

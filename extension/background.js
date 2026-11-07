@@ -132,6 +132,8 @@ const HANDLERS = {
   // 2.5.0: etiqueta do WhatsApp no gatilho ("primeira vez que viu") e "Adicionar à automação"
   nativeLabelEvents:     (m) => WaApi.nativeLabelEvents({ events: m.events }),
   nativeLabelSweep:      (m) => WaApi.nativeLabelSweep({ labelId: m.labelId, chats: m.chats, complete: m.complete }),
+  nativeLabelBaseline:   (m) => WaApi.nativeLabelBaseline({ labelId: m.labelId, chats: m.chats }), // 2.12.5
+  nativeLabelIgnored:    (m) => WaApi.nativeLabelIgnored({ items: m.items }), // 2.12.5
   nativeLabelCandidates: (m) => WaApi.nativeLabelCandidates({ waLabelIds: m.waLabelIds }),
   activeEnrollments:     (m) => WaApi.activeEnrollments({ automationIds: m.automationIds }),
   enrollmentCandidates:  (m) => WaApi.enrollmentCandidates({ enrollments: m.enrollments }),

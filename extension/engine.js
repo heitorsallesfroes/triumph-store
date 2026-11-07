@@ -561,6 +561,18 @@
     };
   }
 
+  // 2.12.5: etiqueta do WhatsApp do gatilho (automação com gatilho de etiqueta, ou sequência que começa por
+  // etiqueta do WhatsApp); null se não houver
+  const WA_LABEL_TRIGGERS = ['sem_resposta', 'entrou_etiqueta', 'respondeu'];
+  function waTriggerLabelOf(a) {
+    if (!a) return null;
+    if (a.kind === 'sequencia') {
+      const s = a.sequence && a.sequence.start;
+      return s && s.type === 'etiqueta' && s.source === 'whatsapp' && s.wa_label_id ? String(s.wa_label_id) : null;
+    }
+    return a.trigger_label_source === 'whatsapp' && WA_LABEL_TRIGGERS.includes(a.trigger_type) && a.trigger_wa_label_id ? String(a.trigger_wa_label_id) : null;
+  }
+
   // ── 2.12.4: depois de registrar a venda (💰) ─────────────────────────────
   // Escolhas: leaveAll (tirar de todas as automações e sequências), waAdd (etiqueta do WhatsApp; '' = nenhuma),
   // waRemove ('' = nenhuma, SALE_WA_ALL = todas menos a que vai colocar, ou uma etiqueta), crmAdd ('' = não mexe).
@@ -1322,8 +1334,11 @@
     // 2.5.0: registra a "primeira vez que viu" cada conversa nas etiquetas nativas usadas por automações
     // ativas. Eventos: fila local da ponte (sem banco se nada mudou). Varredura: a cada 10 min (ou quando
     // muda a lista de etiquetas), lendo só o que o WhatsApp Web já tem na memória (sem ler mensagens).
-    const nativeTriggerIds = () => [...new Set(st.activeAutomations
-      .filter((a) => isWaTrigger(a) && a.trigger_type !== 'venda_registrada' && a.trigger_wa_label_id).map((a) => String(a.trigger_wa_label_id)))].sort();
+    // 2.12.5: + etiquetas do WhatsApp que iniciam sequências
+    const nativeTriggerIds = () => [...new Set([
+      ...st.activeAutomations.filter((a) => isWaTrigger(a) && a.trigger_type !== 'venda_registrada' && a.trigger_wa_label_id).map((a) => String(a.trigger_wa_label_id)),
+      ...st.activeAutomations.filter((a) => a.kind === 'sequencia').map(waTriggerLabelOf).filter(Boolean),
+    ])].sort();
     async function trackNativeLabels() {
       if (!deps.wa || typeof deps.wa.labelEvents !== 'function') return;
       let got = null;
@@ -1332,7 +1347,9 @@
       if (!ids.length) return;
       const events = [];
       ((got && Array.isArray(got.events)) ? got.events : []).forEach((e) => {
-        (e.labelIds || []).forEach((l) => { if (ids.includes(String(l))) events.push({ chatId: e.chatId, name: e.name || null, labelId: String(l), type: e.type, at: e.t }); });
+        // 2.12.5: confirmed = a ponte viu a conversa SEM a etiqueta antes (ou a extensão pôs a etiqueta)
+        const seenWithout = (Array.isArray(e.seenWithout) ? e.seenWithout : []).map(String);
+        (e.labelIds || []).forEach((l) => { if (ids.includes(String(l))) events.push({ chatId: e.chatId, name: e.name || null, phone: e.phone || null, labelId: String(l), type: e.type, at: e.t, confirmed: e.type === 'add' && seenWithout.includes(String(l)) }); });
       });
       if (events.length) {
         try { await api('nativeLabelEvents', { events: events.slice(-200) }); } catch { /* a varredura corrige */ }
@@ -2114,6 +2131,7 @@
     smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
     setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT, convTracker,
     SALE_WA_ALL, saleAfterDefaults, saleWaPlan, // 2.12.4
+    waTriggerLabelOf, // 2.12.5
     withRetry, errorReason, createNameLearner, PANEL_HDR_BTNS, // 2.12.1
     defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, previewSendPlan, sendLabelsApply,
     normBrPhone, matchSalesForPurchase, salePhoneOf, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,

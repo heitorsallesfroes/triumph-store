@@ -298,16 +298,54 @@
   const LABEL_EVENTS_MAX = 500;
   const labelEventQueue = [];
 
+  // 2.12.5: o que esta aba já VIU de cada conversa (as etiquetas no momento em que viu). Um "add" só vale como
+  // entrada nova (seenWithout) quando a conversa já tinha sido vista SEM aquela etiqueta. Conversa que aparece pela
+  // 1ª vez já com a etiqueta (contato antigo que só carregou agora, sincronização) NÃO é entrada nova. Etiqueta
+  // colocada pela própria extensão (setChatLabels) vale sempre (own). Só memória desta aba; nada de texto.
+  const LABEL_SEEN_MAX = 20000;
+  const labelSeen = new Map(); // chatId → Set(labelIds)
+  let seenObservedAt = 0;
+  const LABEL_CHAT_RE = /^[0-9]+@(c\.us|lid)$/;
+  function rememberLabels(chatId, ids) {
+    if (!labelSeen.has(chatId) && labelSeen.size >= LABEL_SEEN_MAX) return;
+    labelSeen.set(chatId, new Set(ids.map(String)));
+  }
+  // conversas carregadas que ainda não tinham sido vistas: guarda as etiquetas de agora (no máx. 1 vez por minuto)
+  async function observeLoadedChats(force = false) {
+    if (!isReady() || (!force && Date.now() - seenObservedAt < 60000)) return;
+    seenObservedAt = Date.now();
+    let loaded = null;
+    try { loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS); } catch { loaded = null; }
+    if (!Array.isArray(loaded)) return;
+    for (const c of loaded) { const id = chatIdOf(c); if (LABEL_CHAT_RE.test(id) && !labelSeen.has(id)) rememberLabels(id, labelIdsOf(c)); }
+  }
+  // assim que o WhatsApp fica pronto (tenta por até 10 min; não segura o processo nos testes)
+  (function firstObservation(tries) {
+    if (isReady()) { observeLoadedChats(true).catch(() => {}); return; }
+    if (tries <= 0 || typeof setTimeout !== 'function') return;
+    const t = setTimeout(() => firstObservation(tries - 1), 3000);
+    if (t && typeof t.unref === 'function') t.unref();
+  })(200);
+  function queueLabelEvent(ev) {
+    labelEventQueue.push(ev);
+    if (labelEventQueue.length > LABEL_EVENTS_MAX) labelEventQueue.splice(0, labelEventQueue.length - LABEL_EVENTS_MAX);
+  }
+
   function onLabelUpdate(e) {
     try {
       const chat = e && e.chat;
       const id = chatIdOf(chat);
-      if (!/^[0-9]+@(c\.us|lid)$/.test(id)) return; // só conversas individuais
+      if (!LABEL_CHAT_RE.test(id)) return; // só conversas individuais
       const type = e.type === 'add' || e.type === 'remove' ? e.type : null;
       const ids = (Array.isArray(e.ids) ? e.ids : []).map(String).filter((x) => x && x.length <= 40);
       if (!type || !ids.length) return;
-      labelEventQueue.push({ chatId: id, name: chatCard(chat, false).name, type, labelIds: ids.slice(0, 20), t: Date.now() });
-      if (labelEventQueue.length > LABEL_EVENTS_MAX) labelEventQueue.splice(0, labelEventQueue.length - LABEL_EVENTS_MAX);
+      const prev = labelSeen.get(id);
+      // add: entrada confirmada só para as etiquetas que a conversa (já vista) NÃO tinha
+      const seenWithout = type === 'add' && prev ? ids.filter((l) => !prev.has(l)) : [];
+      const next = new Set(prev || labelIdsOf(chat));
+      ids.forEach((l) => (type === 'add' ? next.add(l) : next.delete(l)));
+      rememberLabels(id, [...next]);
+      queueLabelEvent({ chatId: id, name: chatCard(chat, false).name, type, labelIds: ids.slice(0, 20), seenWithout, t: Date.now() });
     } catch { /* evento estranho: ignora */ }
   }
   try { if (wpp && typeof wpp.on === 'function') wpp.on('chat.update_label', onLabelUpdate); } catch { /* sem eventos: a varredura cobre */ }
@@ -315,7 +353,51 @@
   async function labelEvents() {
     const events = labelEventQueue.splice(0, labelEventQueue.length);
     if (isReady()) for (const e of events) if (/@lid$/.test(e.chatId)) { const pn = await pnOfChat(e.chatId); if (pn) e.phone = pn; }
+    await observeLoadedChats().catch(() => {}); // conversas que carregaram depois: guarda como estão (sem disparar)
     return { events };
+  }
+
+  // 2.12.5: TODAS as conversas com a etiqueta (as associações da etiqueta no WhatsApp, inclusive conversas que não
+  // estão carregadas na lista e arquivadas) + as carregadas. Só id, nome (se carregada) e telefone do @lid.
+  async function labelAllChats(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const labelId = payload && payload.labelId;
+    if (typeof labelId !== 'string' || !labelId || labelId.length > 40) throw new BridgeError('invalid_label', 'Etiqueta inválida', 'before-send');
+    const known = (await labels()).find((l) => l.id === labelId);
+    if (!known) throw new BridgeError('invalid_label', 'Etiqueta inválida', 'before-send');
+    const found = new Map();
+    let source = 'carregadas';
+    const store = safe(() => wpp.whatsapp.LabelStore, null);
+    const model = store && typeof store.get === 'function' ? safe(() => store.get(labelId), null) : null;
+    const items = safe(() => model.labelItemCollection._models, null) || safe(() => model.labelItemCollection.getModelsArray(), null);
+    if (Array.isArray(items)) {
+      source = 'associacoes';
+      for (const it of items) {
+        if (safe(() => it.parentType, '') !== 'Chat') continue;
+        const pid = safe(() => it.parentId, null);
+        const id = typeof pid === 'string' ? pid : String(safe(() => pid._serialized, '') || '');
+        if (LABEL_CHAT_RE.test(id)) found.set(id, { id, name: null });
+        if (found.size >= 5000) break;
+      }
+    }
+    let chats = null;
+    try { chats = await withTimeout(wpp.chat.list({ withLabels: [labelId], ignoreGroupMetadata: true }), LIST_TIMEOUT_MS); } catch { chats = null; }
+    if (!Array.isArray(chats) && source !== 'associacoes') throw new BridgeError('chats_failed', 'Não consegui ler as conversas', 'before-send');
+    for (const c of chats || []) {
+      const ids = safe(() => c.labels, null);
+      if (Array.isArray(ids) && !ids.map(String).includes(labelId)) continue;
+      const card = chatCard(c, false);
+      if (card.kind !== 'individual' || !LABEL_CHAT_RE.test(card.id)) continue;
+      if (found.size >= 5000 && !found.has(card.id)) break;
+      found.set(card.id, { id: card.id, name: card.name || null });
+    }
+    const out = [...found.values()];
+    let pnLookups = 0;
+    for (const c of out) {
+      if (!c.name) { const ch = safe(() => wpp.chat.get(c.id), null); if (ch) c.name = chatCard(ch, false).name || null; }
+      if (/@lid$/.test(c.id) && pnLookups < 500) { pnLookups++; const pn = await pnOfChat(c.id); if (pn) c.phone = pn; }
+    }
+    return { count: known.count, chats: out, source };
   }
 
   async function labelChatIds(payload) {
@@ -426,6 +508,13 @@
     while (!done(now) && Date.now() < until) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       now = read();
+    }
+    // 2.12.5: troca feita pela extensão (painel, automação, venda): entrada/saída confirmada
+    if (done(now)) {
+      const name = chatCard(chat, false).name;
+      if (add.length) queueLabelEvent({ chatId: p.chatId, name, type: 'add', labelIds: add.map(String), seenWithout: add.map(String), own: true, t: Date.now() });
+      if (remove.length) queueLabelEvent({ chatId: p.chatId, name, type: 'remove', labelIds: remove.map(String), seenWithout: [], own: true, t: Date.now() });
+      if (LABEL_CHAT_RE.test(p.chatId)) rememberLabels(p.chatId, now);
     }
     return { labelIds: now, confirmed: done(now) };
   }
@@ -1063,6 +1152,8 @@
     if (!/^[0-9]+@(c\.us|lid)$/.test(chatId) || !realMsg(m)) return;
     const fromMe = safe(() => m.id.fromMe, null);
     if (typeof fromMe !== 'boolean') return;
+    // 2.12.5: conversa nova (ou que só agora apareceu): guarda as etiquetas que ela tem agora
+    if (!labelSeen.has(chatId)) { const ch = safe(() => wpp.chat.get(chatId), null); if (ch) rememberLabels(chatId, labelIdsOf(ch)); }
     const t = msgT(m) || Math.floor(Date.now() / 1000);
     const ev = { chatId, fromMe, t };
     if (buySignalOf(m)) ev.buy = true; // 2.12.2
@@ -1303,6 +1394,7 @@
     myMessages: () => mineQueue.splice(0, mineQueue.length),
     adAttributions: (payload) => adAttributions(payload),
     labelChatIds: (payload) => labelChatIds(payload),
+    labelAllChats: (payload) => labelAllChats(payload), // 2.12.5
     sendRich: (payload, requestId) => sendRich(requestId, payload),
     richInfo: () => richInfo(),
     catalogProducts: () => catalogProducts(),

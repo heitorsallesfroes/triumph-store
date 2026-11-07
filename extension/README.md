@@ -799,6 +799,28 @@ guardada.
 
 ## O que mudou
 
+### 2.12.5 — "só daqui pra frente" à prova de falhas para etiquetas do WhatsApp
+- Antes: ao ligar uma automação/sequência com gatilho de etiqueta do WhatsApp, só as conversas **carregadas** no
+  WhatsApp Web eram registradas como "já estavam"; um contato antigo que carregava depois era visto pela 1ª vez e
+  contava como entrada nova.
+- **Ao ligar (e ao salvar com o gatilho/etiqueta trocado)**: a extensão lê TODAS as conversas que têm a etiqueta pelas
+  associações da etiqueta na WA-JS (inclusive as que não estão carregadas na lista e as arquivadas) e registra todas
+  como "já estavam". A tela de ligar mostra o total, e a mensagem diz "23 contatos com a etiqueta Cliente ficaram de
+  fora". Vale também para a sequência que começa por etiqueta do WhatsApp (o motor agora acompanha essas etiquetas).
+- **Regra extra de segurança**: para etiqueta do WhatsApp, só conta como "entrou depois" quando a extensão VIU a
+  conversa SEM a etiqueta e depois COM ela (a ponte lembra as etiquetas de cada conversa que já viu), quando a
+  conversa tinha saído da etiqueta e voltou (conta logo depois da saída vista), ou quando a etiqueta foi posta pela
+  própria extensão (painel, automação, venda). Conversa que aparece pela 1ª vez já com a etiqueta fica registrada como
+  "já estava" (data de entrada 01/01/2000, que nunca passa da ativação) e não dispara — mesmo que o registro ao
+  ligar tenha falhado. "Incluir quem já estava" continua funcionando.
+- Na lista das automações: **"Ignorados por já estarem na etiqueta: N"** (quem está na etiqueta e entrou antes de
+  ligar).
+- Etiquetas CRM: sem mudança (já têm a data certa de entrada). Sem migration.
+- Testes: `tests/labelsafety.test.cjs` (lista completa da etiqueta, entrada vista × 1ª aparição, etiqueta posta pela
+  extensão, varredura/eventos/registro no banco, "ignorados", e de ponta a ponta: contato antigo não carregado NÃO
+  dispara; contato que recebe a etiqueta depois de ligar dispara) e o Chrome real (ligar com 23 conversas na
+  etiqueta, registro, mensagem e "Ignorados").
+
 ### 2.12.4 — 💰 etiquetas e automações ao registrar a venda
 - Conferido: a etiqueta CRM **era gravada** (as vendas do 💰 de 07/11 — Joyce Lima e Carlos Quinteiro — ganharam a
   etiqueta CRM "Cliente" 2 s depois da venda). Ela só não aparecia na lista de conversas porque é do CRM, não do
