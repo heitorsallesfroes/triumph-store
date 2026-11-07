@@ -799,6 +799,26 @@ guardada.
 
 ## O que mudou
 
+### 2.12.4 — 💰 etiquetas e automações ao registrar a venda
+- Conferido: a etiqueta CRM **era gravada** (as vendas do 💰 de 07/11 — Joyce Lima e Carlos Quinteiro — ganharam a
+  etiqueta CRM "Cliente" 2 s depois da venda). Ela só não aparecia na lista de conversas porque é do CRM, não do
+  WhatsApp Business.
+- No fim do formulário, "Ao registrar a venda" agora tem:
+  - **Tirar de todas as automações e sequências** (marcado por padrão): sai de todas as automações (pela etiqueta CRM,
+    pela etiqueta do WhatsApp ou adicionada pelo 🔁) e das sequências ativas desta conversa — menos as de "Venda
+    registrada" e as sequências que começam pela venda (o pós-venda continua). As etiquetas não são mexidas por isso.
+  - **Etiqueta do WhatsApp ao registrar** (padrão: a etiqueta do WhatsApp chamada "Cliente", se existir) e **Tirar das
+    etiquetas do WhatsApp**: Nenhuma (padrão), uma etiqueta ou "Todas (menos a que vai colocar)".
+  - **Etiqueta CRM ao registrar**: "Não mexe" (padrão) ou uma etiqueta CRM.
+  - A última escolha fica lembrada neste computador (`chrome.storage.local`, `saleAfterPrefs`).
+  - A etiqueta **"Não enviar" nunca é retirada** (nem aparece para tirar).
+- Tudo isso só é feito **depois que a venda foi gravada**. Se a venda falhar, nada é mexido e o aviso diz isso. Na tela
+  "Venda registrada" aparece cada parte com ✓ (o que fez) ou ✗ (o motivo), para fazer à mão só o que falhou.
+- Testes: `tests/saleafter.test.cjs` (padrões, escolha lembrada, "Não enviar", "Todas menos a que vai colocar",
+  etiqueta apagada, a ordem venda → etiquetas) e o Chrome real (padrões na tela, venda que falha sem mexer em nada,
+  depois da venda: CRM, sequência de lead encerrada e a de pós-venda mantida, EMBALAR tirada, CLIENTE colocada,
+  "Não enviar" intacta, e a escolha lembrada no formulário seguinte).
+
 ### ERP (07/11) — aba WhatsApp: só Painel e Rastreamento + vendas no Rastreamento
 - Sub-abas: **Painel · Rastreamento**. Saíram as telas "Clientes → CRM", "Pós-venda automático", "Resultados",
   "Mensagens (antigo)" e "Conversões (Facebook)" — tudo isso é feito pela extensão. Nenhuma tabela ou dado foi

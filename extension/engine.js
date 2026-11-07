@@ -561,6 +561,39 @@
     };
   }
 
+  // ── 2.12.4: depois de registrar a venda (💰) ─────────────────────────────
+  // Escolhas: leaveAll (tirar de todas as automações e sequências), waAdd (etiqueta do WhatsApp; '' = nenhuma),
+  // waRemove ('' = nenhuma, SALE_WA_ALL = todas menos a que vai colocar, ou uma etiqueta), crmAdd ('' = não mexe).
+  const SALE_WA_ALL = '__todas__';
+  const foldName = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  const isNoSendLabel = (l) => !!l && foldName(l.name) === 'nao enviar';
+  // padrão: tirar de tudo; etiqueta do WhatsApp "Cliente" (se existir); tirar nenhuma; CRM não mexe. A escolha
+  // salva vale enquanto a etiqueta ainda existir; "Não enviar" nunca fica como "tirar".
+  function saleAfterDefaults(saved, waLabels, crmLabels) {
+    const wa = Array.isArray(waLabels) ? waLabels : [];
+    const crm = Array.isArray(crmLabels) ? crmLabels : [];
+    const s = saved && typeof saved === 'object' ? saved : null;
+    const cliente = (wa.find((l) => foldName(l.name) === 'cliente') || {}).id || '';
+    const waExists = (id) => !wa.length || wa.some((l) => l.id === id); // lista ainda não lida: mantém
+    const waAdd = s && typeof s.waAdd === 'string' ? (s.waAdd === '' || waExists(s.waAdd) ? s.waAdd : cliente) : cliente;
+    const rem = s && typeof s.waRemove === 'string' ? s.waRemove : '';
+    const waRemove = rem === SALE_WA_ALL || (rem && waExists(rem) && !isNoSendLabel(wa.find((l) => l.id === rem))) ? rem : '';
+    const crmAdd = s && typeof s.crmAdd === 'string' && crm.some((l) => l.id === s.crmAdd) ? s.crmAdd : '';
+    return { leaveAll: s ? s.leaveAll !== false : true, waAdd, waRemove, crmAdd };
+  }
+  // O que fazer nas etiquetas do WhatsApp da conversa: { add, remove: [ids] }. Nunca tira "Não enviar" nem a que vai
+  // colocar; etiqueta que não existe mais é ignorada (add vira null com missing: true).
+  function saleWaPlan({ waAdd, waRemove }, waLabels, currentIds) {
+    const wa = Array.isArray(waLabels) ? waLabels : [];
+    const byId = (id) => wa.find((l) => String(l.id) === String(id)) || null;
+    const add = waAdd && byId(waAdd) ? String(waAdd) : null;
+    let remove = [];
+    if (waRemove === SALE_WA_ALL) remove = (currentIds || []).map(String);
+    else if (waRemove) remove = [String(waRemove)];
+    remove = [...new Set(remove)].filter((id) => id !== add && byId(id) && !isNoSendLabel(byId(id)));
+    return { add, remove, missing: !!waAdd && !add };
+  }
+
   // ── Automações (2.1.0): QUANDO → SE → ENTÃO ─────────────────────────────
 
   // 2.3.0: 'venda_registrada' = venda registrada pela conversa (migration 20261103170000)
@@ -2080,6 +2113,7 @@
     firstNameOf, chatIdOfContact, pickVariant, evaluateFollow,
     smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
     setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT, convTracker,
+    SALE_WA_ALL, saleAfterDefaults, saleWaPlan, // 2.12.4
     withRetry, errorReason, createNameLearner, PANEL_HDR_BTNS, // 2.12.1
     defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, previewSendPlan, sendLabelsApply,
     normBrPhone, matchSalesForPurchase, salePhoneOf, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,

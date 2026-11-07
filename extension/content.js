@@ -896,6 +896,10 @@
       .vd-paste { width: 100%; box-sizing: border-box; border-color: var(--accent); }
       .vd-supplier-row { align-items: center; }
       .vd-supplier-row select { flex: 1; min-width: 120px; }
+      .vd-after { display: flex; flex-direction: column; gap: 4px; }
+      .vd-after-line { font-size: var(--fs-2); }
+      .vd-after-line.ok { color: var(--ok); }
+      .vd-after-line.err { color: var(--err); font-weight: 600; }
       .vd-actions { position: sticky; bottom: 0; background: var(--bg, var(--card)); padding: 6px 0; z-index: 1; }
       .vd-sale { width: 100%; text-align: left; border: none; }
       .vd-row { display: flex; align-items: center; gap: 8px ; }
@@ -9046,9 +9050,11 @@
     const chatId = chat && chat.kind === 'individual' ? chat.chatId : null;
     // 2.6.3: nada da tela (cabeçalho/CRM do contato da tela): só desta conversa (chatId da WA-JS)
     const phone = chatId && /^\d+@c\.us$/.test(chatId) ? chatId.split('@')[0] : '';
-    // Etiquetas de gatilho das automações ativas (carrega se o motor ainda não leu)
+    // automações (para "tirar de todas" depois da venda; carrega se o motor ainda não leu)
     if (!motor.state.automations.length) await motor.loadAutomations();
-    const autoLabels = activeAutomations().map((a) => a.trigger_label_id).filter(Boolean);
+    // 2.12.4: etiquetas do WhatsApp (lista da barra) e a última escolha do "depois de registrar"
+    if (!Array.isArray(state.waLabels)) await refreshBar().catch(() => {});
+    const after = saleAfterDefaults(await saleAfterPrefs());
     const prevOpen = vs.form && vs.form.open; // seções abertas/fechadas ficam como estavam
     vs.form = {
       chatId, sale_date: TS.todayInBrazil(),
@@ -9059,7 +9065,7 @@
       payments: [TS.initialPayment()], payment_status: 'a_cobrar',
       delivery_type: 'motoboy', motoboy_id: '', delivery_fee: TS.DEFAULT_DELIVERY_FEE, delivery_cost: 0, delivery_notes: '',
       ad: null, map: null, addressHint: null, pasteOpen: false,
-      moveLabels: true, clientLabel: labelRef('Cliente'), removeLabels: state.convLabelIds.filter((l) => autoLabels.includes(l)),
+      after, // 2.12.4: { leaveAll, waAdd, waRemove, crmAdd }
       dupAsk: false,
       open: prevOpen || Object.fromEntries(SALE_SECTIONS.map((k) => [k, true])),
       // 2.10.5: aberta pelo 📈 (nenhuma venda parecida): valor da compra e a compra para ligar depois
@@ -9507,31 +9513,27 @@
       }
       if (cat.originAvailable === false) o.append(el('div', 'ed-note', 'Origem e conversa da venda: atualize o banco para guardar (a venda é registrada mesmo assim).'));
       body.append(o);
-      const ml = el('label', 'sc-radio');
+      // 2.12.4: o que fazer DEPOIS que a venda for gravada (a última escolha fica lembrada neste computador)
+      const a = f.after;
+      const keep = () => { saveSaleAfterPrefs(a); };
+      body.append(el('div', 'crm-sub', 'Ao registrar a venda'));
+      const ml = el('label', 'sc-radio vd-after-leave');
       const mc = el('input');
       mc.type = 'checkbox';
-      mc.checked = f.moveLabels;
-      mc.addEventListener('change', () => { f.moveLabels = mc.checked; renderVendas(); });
-      ml.append(mc, 'Tirar das automações e pôr na etiqueta CRM:');
+      mc.checked = a.leaveAll;
+      mc.setAttribute('aria-label', 'Tirar de todas as automações e sequências');
+      mc.addEventListener('change', () => { a.leaveAll = mc.checked; keep(); });
+      ml.append(mc, 'Tirar de todas as automações e sequências');
       body.append(ml);
-      if (f.moveLabels) {
-        body.append(labelPicker(f.clientLabel, (v) => { f.clientLabel = v; }, { aria: 'Etiqueta do cliente', rerender: renderVendas, onError: (m) => { vs.msg = m; vs.err = true; } }));
-        const cur = state.convLabelIds.filter((l) => l !== f.clientLabel);
-        if (cur.length) {
-          body.append(el('div', 'crm-intro', 'Tirar destas etiquetas CRM:'));
-          const box = el('div', 'ed-add');
-          cur.forEach((l) => {
-            const lab = el('label', 'sc-radio');
-            const c = el('input');
-            c.type = 'checkbox';
-            c.checked = f.removeLabels.includes(l);
-            c.addEventListener('change', () => { f.removeLabels = c.checked ? [...new Set([...f.removeLabels, l])] : f.removeLabels.filter((x) => x !== l); });
-            lab.append(c, labelName(l));
-            box.append(lab);
-          });
-          body.append(box);
-        }
-      }
+      const wa = Array.isArray(state.waLabels) ? state.waLabels : null;
+      if (wa) {
+        const g = el('div', 'vd-grid2');
+        g.append(schedField('Etiqueta do WhatsApp ao registrar', selectOf([['', 'Nenhuma'], ...wa.map((l) => [l.id, l.name])], a.waAdd, 'Etiqueta do WhatsApp ao registrar', (v) => { a.waAdd = v; keep(); })),
+          schedField('Tirar das etiquetas do WhatsApp', selectOf([['', 'Nenhuma'], [SALE_WA_ALL, 'Todas (menos a que vai colocar)'], ...wa.filter((l) => !isNoSendWa(l)).map((l) => [l.id, l.name])], a.waRemove, 'Tirar das etiquetas do WhatsApp', (v) => { a.waRemove = v; keep(); })));
+        body.append(g);
+      } else body.append(el('div', 'ed-note', 'Etiquetas do WhatsApp indisponíveis agora (o WhatsApp ainda não respondeu): nada será mexido nelas.'));
+      body.append(schedField('Etiqueta CRM ao registrar', selectOf([['', 'Não mexe'], ...state.labels.map((l) => [l.id, l.name])], a.crmAdd, 'Etiqueta CRM ao registrar', (v) => { a.crmAdd = v; keep(); })));
+      body.append(el('div', 'ed-varhint', 'A etiqueta "Não enviar" nunca é retirada. Nada disso é feito se a venda não for gravada.'));
     }));
 
     if (f.dupAsk) {
@@ -9620,7 +9622,6 @@
     const x = saleCalcInput(f);
     const problem = TS.validateSale({ form: f, items: x.items, manualItems: x.manualItems, payments: x.payments });
     if (problem) { vs.msg = problem; vs.err = true; renderVendas(); return; }
-    if (f.moveLabels && String(f.clientLabel || '').startsWith('new:')) { vs.msg = 'Crie a etiqueta do cliente (botão "Criar agora") ou desmarque a opção.'; vs.err = true; renderVendas(); return; }
     vs.busy = true;
     vs.msg = '';
     renderVendas();
@@ -9633,22 +9634,125 @@
         if (dup && dup.exists) { f.dupAsk = true; vs.busy = false; renderVendas(); return; }
       }
       f.dupAsk = false;
-      const res = await call('createSaleFromChat', { sale: salePayload(f) });
-      // contato da conversa (para o gatilho "venda registrada") + opção de etiquetas
-      try {
-        await call('saleContactLabels', { chatId: f.chatId, name: f.customer_name, phone: f.customer_phone, addLabelId: f.moveLabels && f.clientLabel ? f.clientLabel : null, removeLabelIds: f.moveLabels ? f.removeLabels : [] });
-        afterLabelChange();
-      } catch { /* a venda já está registrada */ }
-      motor.state.lastEvalAt = 0; // automações "venda registrada" no próximo ciclo
+      let res;
+      try { res = await call('createSaleFromChat', { sale: salePayload(f) }); } catch (e) {
+        // 2.12.4: a venda não foi gravada: nada de etiqueta nem de automação
+        vs.msg = `Não consegui registrar a venda: ${e.message}. Nenhuma etiqueta ou automação foi mexida.`;
+        vs.err = true;
+        vs.busy = false;
+        renderVendas();
+        return;
+      }
       if (f.linkEventId) call('linkSaleToPurchase', { eventId: f.linkEventId, saleId: res.id, fillPhone: false }).then(() => cv.links.delete(f.linkEventId)).catch(() => {}); // 2.10.5
-      vs.done = { id: res.id, total: res.total, tinyFailed: res.tinyFailed };
+      vs.done = { id: res.id, total: res.total, tinyFailed: res.tinyFailed, after: null };
       vs.view = 'done';
+      vs.busy = false;
+      renderVendas();
+      // 2.12.4: só agora (venda gravada) as escolhas de "Ao registrar a venda", cada parte com o seu resultado
+      const done = vs.done;
+      done.after = await applySaleAfter(f);
+      motor.state.lastEvalAt = 0; // automações "venda registrada" no próximo ciclo
+      if (vs.done === done) renderVendas();
+      return;
     } catch (e) {
       vs.msg = `Não consegui registrar: ${e.message}`;
       vs.err = true;
     }
     vs.busy = false;
     renderVendas();
+  }
+
+  // ── 2.12.4: depois de registrar a venda (💰) ──
+  // leaveAll: tira de todas as automações (menos as de "venda registrada") e sequências (menos as que começam pela
+  // venda); waAdd/waRemove: etiquetas do WhatsApp Business (waRemove '' = nenhuma, SALE_WA_ALL = todas menos a que vai
+  // colocar); crmAdd: etiqueta CRM ('' = não mexe). "Não enviar" nunca sai. A última escolha fica em chrome.storage.local.
+  const SALE_WA_ALL = globalThis.TspEngine.SALE_WA_ALL;
+  const SALE_AFTER_KEY = 'saleAfterPrefs';
+  const isNoSendWa = (l) => !!l && String(l.name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() === 'nao enviar';
+  const saleAfterDefaults = (saved) => globalThis.TspEngine.saleAfterDefaults(saved, state.waLabels, state.labels);
+  function saleAfterPrefs() {
+    return new Promise((resolve) => {
+      try { chrome.storage.local.get([SALE_AFTER_KEY], (r) => resolve((r && r[SALE_AFTER_KEY]) || null)); } catch { resolve(null); }
+    });
+  }
+  function saveSaleAfterPrefs(a) { storageSet({ [SALE_AFTER_KEY]: { leaveAll: !!a.leaveAll, waAdd: a.waAdd || '', waRemove: a.waRemove || '', crmAdd: a.crmAdd || '' } }); }
+
+
+  async function applySaleAfter(f) {
+    const a = f.after || {};
+    const out = [];
+    // cada parte: ok (com o que fez) ou falhou (com o motivo); quiet = não mostra quando dá certo
+    const part = async (label, fn, quiet = false) => {
+      try { const r = await fn(); if (!quiet) out.push({ label, ok: true, detail: typeof r === 'string' ? r : '' }); } catch (e) { out.push({ label, ok: false, detail: String((e && e.message) || e) }); }
+    };
+    // 1. contato da conversa (gatilho "venda registrada") e a etiqueta CRM escolhida
+    await part(a.crmAdd ? `Etiqueta CRM "${labelName(a.crmAdd)}"` : 'Contato da conversa no CRM', async () => {
+      await call('saleContactLabels', { chatId: f.chatId, name: f.customer_name, phone: f.customer_phone, addLabelId: a.crmAdd || null, removeLabelIds: [] });
+      afterLabelChange();
+      return 'colocada';
+    }, !a.crmAdd);
+    // 2. automações e sequências
+    if (a.leaveAll) await part('Tirar de todas as automações e sequências', () => leaveAllAutomations(f.chatId));
+    // 3. etiquetas do WhatsApp
+    if (a.waAdd || a.waRemove) await part('Etiquetas do WhatsApp', () => applySaleWaLabels(f.chatId, a.waAdd, a.waRemove));
+    return out;
+  }
+
+  async function leaveAllAutomations(chatId) {
+    let n = 0;
+    // sequências ativas desta conversa (as que começam pela venda continuam)
+    const runs = await call('seqChatRuns', { chatId }).catch((e) => { if (/Atualize o banco/.test(e.message)) return []; throw e; });
+    for (const r of runs || []) {
+      const start = r.automation && r.automation.sequence && r.automation.sequence.start;
+      if (start && start.type === 'venda') continue;
+      await call('seqRunAction', { id: r.id, action: 'sair' });
+      n++;
+    }
+    // automações (etiqueta CRM, etiqueta do WhatsApp ou adicionada pelo 🔁), menos as de "venda registrada"
+    if (!motor.state.automations.length) await motor.loadAutomations();
+    const st = await call('chatAutomationState', { identity: null, chatId });
+    const contact = st && st.contact;
+    if (contact && st.v25) {
+      const ran = new Set(st.ranKeys || []);
+      for (const auto of motor.state.automations) {
+        if (auto.kind === 'sequencia' || auto.trigger_type === 'venda_registrada') continue;
+        const entry = E.automationEntry(auto, contact);
+        if (!entry) continue;
+        const labelEntry = E.automationEntry(auto, contact, { ignoreEnrollment: true });
+        const enrollmentId = entry.via === 'inscricao' ? contact.enrollmentIds[auto.id] : undefined;
+        const entryKey = labelEntry && !ran.has(`${auto.id}:${contact.id}:fora@${labelEntry.key}`) ? labelEntry.key : undefined;
+        if (!enrollmentId && entryKey === undefined) continue; // já tirada
+        await call('leaveAutomation', { automationId: auto.id, contactId: contact.id, enrollmentId, entryKey });
+        n++;
+      }
+    }
+    return n ? `tirada de ${n}` : 'não estava em nenhuma';
+  }
+
+  async function applySaleWaLabels(chatId, add, remove) {
+    if (!Array.isArray(state.waLabels)) await refreshBar().catch(() => {});
+    if (!Array.isArray(state.waLabels)) throw new Error('o WhatsApp não respondeu (etiquetas indisponíveis)');
+    let now = [];
+    if (remove === SALE_WA_ALL) {
+      const r = await waRequest('chatLabels', { chatId }, { timeout: 5000 });
+      now = (r && r.labelIds) || [];
+    }
+    // tira só o que pode (nunca "Não enviar" nem a que vai colocar) e põe a escolhida
+    const plan = globalThis.TspEngine.saleWaPlan({ waAdd: add, waRemove: remove }, state.waLabels, now);
+    if (plan.missing) throw new Error('a etiqueta escolhida não existe mais no WhatsApp');
+    const addId = plan.add;
+    const toRemove = plan.remove;
+    const done = [];
+    for (const id of toRemove) {
+      if (!(await motor.setWaLabel(chatId, { remove: id }))) throw new Error(`não consegui tirar "${(waLabelById(id) || {}).name || id}"${done.length ? ` (já fiz: ${done.join(', ')})` : ''}`);
+      done.push(`tirou "${(waLabelById(id) || {}).name || id}"`);
+    }
+    if (addId) {
+      if (!(await motor.setWaLabel(chatId, { add: addId }))) throw new Error(`não consegui colocar "${waLabelById(addId).name}"${done.length ? ` (já fiz: ${done.join(', ')})` : ''}`);
+      done.push(`colocou "${waLabelById(addId).name}"`);
+    }
+    refreshBar().catch(() => {});
+    return done.join(', ') || 'nada a mudar';
   }
 
   function renderSaleDone() {
@@ -9659,6 +9763,19 @@
     if (url) sec.append(erpAnchor('Abrir esta venda no ERP', url, 'bbtn primary vd-open'));
     else sec.append(el('div', 'crm-intro', 'No ERP: Histórico de Vendas.'));
     if (vs.done.tinyFailed) sec.append(el('div', 'ed-note', 'O estoque do Tiny não confirmou a atualização: confira no ERP.'));
+    // 2.12.4: o que foi feito depois da venda, parte por parte
+    const box = el('div', 'vd-after');
+    if (!vs.done.after) box.append(el('div', 'lt-none loading', 'Aplicando as etiquetas e as automações…'));
+    else if (!vs.done.after.length) box.append(el('div', 'crm-intro', 'Nada a mexer em etiquetas ou automações.'));
+    else {
+      vs.done.after.forEach((x) => {
+        const line = el('div', `vd-after-line ${x.ok ? 'ok' : 'err'}`, `${x.ok ? '✓' : '✗'} ${x.label}${x.detail ? `: ${x.detail}` : ''}`);
+        line.dataset.ok = x.ok ? '1' : '0';
+        box.append(line);
+      });
+      if (vs.done.after.some((x) => !x.ok)) box.append(el('div', 'ed-note', 'A venda está gravada; só a parte marcada com ✗ não foi feita. Faça essa parte à mão na conversa.'));
+    }
+    sec.append(box);
     sec.append(fbtn('bbtn', 'Gerar mensagem do entregador', () => openCourier()), fbtn('bbtn', 'Voltar', () => { vs.view = 'list'; loadChatSales(); }));
     vtabEl.append(sec);
   }

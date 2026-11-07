@@ -196,6 +196,7 @@ async function main() {
         return [200, []];
       }
       if (table === 'sales') {
+        if (method === 'POST' && fake.failSalePost) { fake.failSalePost = false; return [500, { message: 'erro de teste ao gravar a venda' }]; } // 2.12.4
         if (method === 'POST') { const list = (Array.isArray(body) ? body : [body]).map((r) => ({ id: require('crypto').randomUUID(), created_at: new Date().toISOString(), ...r })); fake.sales.push(...list); return [201, list]; } // 2.12.3
         if (method === 'DELETE') { fake.sales = fake.sales.filter((x) => x.id !== eq('id')); return [204, null]; }
         if (method === 'PATCH') {
@@ -854,8 +855,21 @@ async function main() {
       wa_ad_attribution: [{ id: uuid(), chat_id: CH, phone: '5521987654321', contact_name: 'Maria WhatsApp', ad_id: 'AD1', ad_title: 'Relógio Promo', source_app: 'Instagram', source_url: 'https://fb.me/ad1', first_message_at: new Date().toISOString() }],
       wa_chat_names: [{ chat_id: CH, name: 'Maria', source: 'aprendido', updated_at: new Date().toISOString() }],
     });
-    await pg(`window.__fakeBridge = { activeChat: { kind: 'individual', chatId: ${JSON.stringify(CH)} }, chatPhone: { phone: '5521987654321', name: 'Maria WhatsApp', via: 'numero' },
-      verifyChatPhone: { active: true, match: true }, chatSaleInfo: { location: null, addressText: null, ad: null }, recentChats: [] }; return true;`);
+    // 2.12.4: etiquetas do WhatsApp Business simuladas (a conversa está em CLIENTE, EMBALAR e "Não enviar") e duas
+    // sequências com esta conversa: uma de lead (sai ao registrar) e uma que começa pela venda (continua)
+    const SEQ_LEAD = uuid(); const SEQ_VENDA = uuid();
+    fake.db.wa_automations = [...(fake.db.wa_automations || []),
+      { id: SEQ_LEAD, name: 'Seq lead', kind: 'sequencia', active: false, position: 98, sequence: { start: { type: 'lead', origin: 'todos' }, business: true, steps: [] }, test_chat_id: null },
+      { id: SEQ_VENDA, name: 'Seq pós-venda', kind: 'sequencia', active: false, position: 99, sequence: { start: { type: 'venda' }, business: true, steps: [] }, test_chat_id: null }];
+    fake.db.wa_sequence_runs = [
+      { id: uuid(), automation_id: SEQ_LEAD, chat_id: CH, entry_key: 'lead@1', node: null, status: 'ativo', version: 0, branches: [], skip_wait: false, created_at: new Date().toISOString() },
+      { id: uuid(), automation_id: SEQ_VENDA, chat_id: CH, entry_key: 'venda@1', node: null, status: 'ativo', version: 0, branches: [], skip_wait: false, created_at: new Date().toISOString() },
+    ];
+    await pg(`window.__waSets = []; window.__fakeBridge = { activeChat: { kind: 'individual', chatId: ${JSON.stringify(CH)} }, chatPhone: { phone: '5521987654321', name: 'Maria WhatsApp', via: 'numero' },
+      verifyChatPhone: { active: true, match: true }, chatSaleInfo: { location: null, addressText: null, ad: null }, recentChats: [],
+      labels: [{ id: '1', name: 'CLIENTE', hexColor: '#22c55e', count: 3 }, { id: '2', name: 'EMBALAR', hexColor: '#3b82f6', count: 1 }, { id: '3', name: 'Não enviar', hexColor: '#ef4444', count: 1 }],
+      chatLabels: { labelIds: ['1', '2', '3'] },
+      setChatLabels: (p) => { window.__waSets.push(p); return { labelIds: [], confirmed: true }; } }; return true;`);
     await openChat('Cliente 6');
     await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(200); sh.querySelector('.pnav [data-sec="vendas"]').click(); await wait(300);
       const b = [...sh.querySelectorAll('.vtab button')].find((x) => x.textContent.includes('Nova venda desta conversa')); if (b) b.click(); return !!b;`);
@@ -932,9 +946,26 @@ async function main() {
     const wide2 = await q(`const p = sh.querySelector('.panel'); const had = p.classList.contains('w-wide'); p.classList.add('w-wide'); await wait(50);
       const cols = getComputedStyle(sh.querySelector('.vd-form .vd-grid2')).gridTemplateColumns.split(' ').length; if (!had) p.classList.remove('w-wide'); return cols;`);
     check('💰 painel largo: Nome/Telefone, CEP/UF, Rua/Número e Cidade/Bairro lado a lado', wide2 === 2, String(wide2));
-    // extra do chat: "Tirar das automações e pôr na etiqueta CRM" (aqui não há a etiqueta Cliente: desmarca)
-    const moveOpt = await q(`const l = [...sh.querySelectorAll('.vd-form label.sc-radio')].find((x) => x.textContent.includes('Tirar das automações e pôr na etiqueta CRM')); if (!l) return false; const c = l.querySelector('input'); if (c.checked) c.click(); await wait(200); return true;`);
-    check('💰 mantém "Tirar das automações e pôr na etiqueta CRM"', moveOpt);
+    // 2.12.4: "Ao registrar a venda": padrões, e as escolhas deste teste (tirar todas as etiquetas do WhatsApp menos a
+    // que vai colocar; etiqueta CRM VIP)
+    const afterUi = await q(`const f = sh.querySelector('.vd-form'); const v = (a) => { const e = f.querySelector('[aria-label="' + a + '"]'); return e ? (e.type === 'checkbox' ? e.checked : e.value) : null; };
+      const remOpts = [...f.querySelector('select[aria-label="Tirar das etiquetas do WhatsApp"]').options].map((o) => o.textContent);
+      return { leave: v('Tirar de todas as automações e sequências'), waAdd: v('Etiqueta do WhatsApp ao registrar'), waRemove: v('Tirar das etiquetas do WhatsApp'), crm: v('Etiqueta CRM ao registrar'), remOpts, old: f.textContent.includes('Tirar das automações e pôr na etiqueta CRM') };`);
+    check('💰 "Ao registrar a venda": tirar de todas as automações e sequências (marcado), etiqueta do WhatsApp CLIENTE, tirar nenhuma, CRM "não mexe"; "Não enviar" não aparece para tirar',
+      afterUi.leave === true && afterUi.waAdd === '1' && afterUi.waRemove === '' && afterUi.crm === '' && !afterUi.old
+      && JSON.stringify(afterUi.remOpts) === JSON.stringify(['Nenhuma', 'Todas (menos a que vai colocar)', 'CLIENTE', 'EMBALAR']), JSON.stringify(afterUi));
+    await setVal('select[aria-label="Tirar das etiquetas do WhatsApp"]', '__todas__', 'change');
+    await setVal('select[aria-label="Etiqueta CRM ao registrar"]', VIP, 'change');
+    // a venda falha ao gravar: nada de etiqueta nem de automação
+    fake.failSalePost = true;
+    await q(`sh.querySelector('.vd-form .vd-register').click(); return true;`);
+    await waitFor(`return /Nenhuma etiqueta ou automação foi mexida/.test((sh.querySelector('.vd-msg') || {}).textContent || '');`, 12000);
+    const failMsg = await q(`return (sh.querySelector('.vd-msg') || {}).textContent || '';`);
+    const setsAfterFail = await pg('return window.__waSets.length;');
+    check('💰 venda que falha ao gravar: avisa e não mexe em etiqueta nem em automação',
+      /Não consegui registrar a venda: .*erro de teste ao gravar a venda.*Nenhuma etiqueta ou automação foi mexida/.test(failMsg) && setsAfterFail === 0 && fake.sales.length === 0
+      && fake.db.wa_sequence_runs.every((x) => x.status === 'ativo') && !(fake.db.wa_contact_labels || []).some((l) => l.label_id === VIP && !Object.values(contacts).includes(l.contact_id)),
+      JSON.stringify({ failMsg, setsAfterFail, runs: fake.db.wa_sequence_runs.map((x) => x.status) }));
     // registrar
     await q(`sh.querySelector('.vd-form .vd-register').click(); return true;`);
     const saved = await waitFor(`return /VENDA REGISTRADA/.test(sh.querySelector('.vtab').textContent);`, 15000);
@@ -950,6 +981,27 @@ async function main() {
       JSON.stringify({ saved, row, items, openErp, msg: await q(`return (sh.querySelector('.vd-msg') || {}).textContent || '';`) }));
     const prods = fake.db.products.map((p) => [p.current_stock, p.cost]);
     check('💰 estoque baixado e o custo editado gravado no produto (como o ERP)', JSON.stringify(prods) === JSON.stringify([[3, 199.5], [7, 12.5]]), JSON.stringify(prods));
+    // 2.12.4: depois da venda gravada, parte por parte
+    await waitFor(`return sh.querySelectorAll('.vtab .vd-after-line').length >= 3;`, 15000);
+    const afterLines = await q(`return [...sh.querySelectorAll('.vtab .vd-after-line')].map((x) => x.textContent);`);
+    const waSets = await pg('return window.__waSets;');
+    const runs = fake.db.wa_sequence_runs.map((x) => [x.automation_id === SEQ_LEAD ? 'lead' : 'venda', x.status]);
+    const crmContact = (fake.db.wa_contacts || []).find((x) => x.chat_id === CH);
+    const crmVip = !!crmContact && (fake.db.wa_contact_labels || []).some((l) => l.contact_id === crmContact.id && l.label_id === VIP);
+    check('💰 depois de gravar: etiqueta CRM escolhida, sai da sequência de lead (a de pós-venda continua), tira EMBALAR e põe CLIENTE no WhatsApp; "Não enviar" fica',
+      afterLines.length === 3 && afterLines.every((x) => x.startsWith('✓')) && /Etiqueta CRM "VIP"/.test(afterLines[0]) && /Tirar de todas as automações e sequências: tirada de/.test(afterLines[1])
+      && afterLines[2] === '✓ Etiquetas do WhatsApp: tirou "EMBALAR", colocou "CLIENTE"' && crmVip
+      && JSON.stringify(runs) === JSON.stringify([['lead', 'saiu'], ['venda', 'ativo']])
+      && JSON.stringify(waSets.map((x) => [x.add, x.remove])) === JSON.stringify([[[], ['2']], [['1'], []]]) && !waSets.some((x) => (x.remove || []).includes('3')),
+      JSON.stringify({ afterLines, runs, waSets, crmVip }));
+    // a escolha fica lembrada no próximo formulário
+    await q(`const b = [...sh.querySelectorAll('.vtab button')].find((x) => x.textContent === 'Voltar'); if (b) b.click(); await wait(300);
+      const n = [...sh.querySelectorAll('.vtab button')].find((x) => x.textContent.includes('Nova venda desta conversa')); if (n) n.click(); return !!n;`);
+    await waitFor(`return !!sh.querySelector('.vd-form select[aria-label="Etiqueta CRM ao registrar"]');`, 10000);
+    const remembered = await q(`const f = sh.querySelector('.vd-form'); const v = (a) => { const e = f.querySelector('[aria-label="' + a + '"]'); return e ? (e.type === 'checkbox' ? e.checked : e.value) : null; };
+      return [v('Tirar de todas as automações e sequências'), v('Etiqueta do WhatsApp ao registrar'), v('Tirar das etiquetas do WhatsApp'), v('Etiqueta CRM ao registrar')];`);
+    check('💰 lembra a última escolha de "Ao registrar a venda"', JSON.stringify(remembered) === JSON.stringify([true, '1', '__todas__', VIP]), JSON.stringify(remembered));
+    await q(`const b = [...sh.querySelectorAll('.vtab button')].find((x) => x.textContent === 'Cancelar'); if (b) b.click(); await wait(200); return true;`);
     await pg('window.__fakeBridge = null; return true;');
     fake.on = false;
     fake.generic = false;

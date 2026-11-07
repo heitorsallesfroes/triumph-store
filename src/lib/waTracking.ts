@@ -351,7 +351,7 @@ export function saleLinksText(c: Pick<Conversation, 'saleLinks'>, money: (n: num
 }
 
 // ── Tabela: busca, ordem, CSV ─────────────────────────────────────────────
-const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 export function searchConversations(list: Conversation[], q: string): Conversation[] {
   const text = fold(q.trim());
   if (!text) return list;
