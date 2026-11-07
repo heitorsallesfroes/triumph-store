@@ -41,10 +41,13 @@ async function contactSources(chatIds: string[], sales: Record<string, SaleInfo>
   return src;
 }
 
-export default function WaConversions() {
+// Seção "Eventos enviados ao Facebook" do Rastreamento: começa no período da aba (startDay/endDay) e segue o
+// período quando ele muda; os filtros De/Até continuam editáveis aqui
+export default function WaConversions({ title = 'Conversões enviadas ao Facebook', startDay, endDay }: { title?: string; startDay?: string; endDay?: string } = {}) {
   const today = new Date();
-  const [start, setStart] = useState(ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30)));
-  const [end, setEnd] = useState(ymd(today));
+  const [start, setStart] = useState(startDay || ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30)));
+  const [end, setEnd] = useState(endDay || ymd(today));
+  useEffect(() => { if (startDay) setStart(startDay); if (endDay) setEnd(endDay); }, [startDay, endDay]);
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<ConversionRow[] | null>(null);
   const [sales, setSales] = useState<Record<string, LinkedSale>>({});
@@ -97,7 +100,7 @@ export default function WaConversions() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <SectionHeader title="Conversões enviadas ao Facebook" subtitle="Compras e contatos que a extensão enviou à API de Conversões" right={(
+      <SectionHeader title={title} subtitle="Compras e contatos que a extensão enviou à API de Conversões" right={(
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <label style={muted}>De <input type="date" value={start} onChange={(e) => setStart(e.target.value)} style={input} aria-label="Data inicial" /></label>
           <label style={muted}>Até <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} style={input} aria-label="Data final" /></label>

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { periodRanges, type SendRow } from '../../src/lib/waPanel.ts';
 import {
   buildConversations, businessMinutesBetween, conversationsCsv, conversationsIn, formatPhone, journey, originByDay, possibleUnmarkedSales,
-  salesByDay, searchConversations, sortConversations, trackingWindow, trackSummary, waLinkOf, type TrackInput,
+  salesByDay, searchConversations, sortConversations, trackingWindow, trackSummary, waLinkOf, businessHoursOf, businessHoursLabel, saleLinksText, saleDateFilter, type TrackInput,
 } from '../../src/lib/waTracking.ts';
 import { conversionContact, maskPhoneDigits } from '../../src/lib/waConversions.ts';
 
@@ -70,13 +70,31 @@ test('telefone formatado, link wa.me e máscara', () => {
   assert.equal(maskPhoneDigits('551133334444'), '(11) ****-4444');
   assert.equal(maskPhoneDigits('123'), '—');
 });
+const BH_8_18 = { days: [1, 2, 3, 4, 5, 6], startMin: 8 * 60, endMin: 18 * 60 };
 test('horário comercial: seg–sáb 8h–18h (São Paulo), atravessando a noite e o domingo', () => {
-  assert.equal(businessMinutesBetween(ms('2026-11-02T10:00:00'), ms('2026-11-02T10:45:00')), 45); // segunda
-  assert.equal(businessMinutesBetween(ms('2026-11-02T17:30:00'), ms('2026-11-03T08:30:00')), 60); // 30 min + 30 min
-  assert.equal(businessMinutesBetween(ms('2026-11-07T17:00:00'), ms('2026-11-09T09:00:00')), 120); // sábado 17h → segunda 9h (domingo não conta)
-  assert.equal(businessMinutesBetween(ms('2026-11-08T10:00:00'), ms('2026-11-08T12:00:00')), 0); // domingo
-  assert.equal(businessMinutesBetween(ms('2026-11-02T20:00:00'), ms('2026-11-02T22:00:00')), 0);
-  assert.equal(businessMinutesBetween(ms('2026-11-02T10:00:00'), ms('2026-11-02T09:00:00')), 0);
+  assert.equal(businessMinutesBetween(ms('2026-11-02T10:00:00'), ms('2026-11-02T10:45:00'), BH_8_18), 45); // segunda
+  assert.equal(businessMinutesBetween(ms('2026-11-02T17:30:00'), ms('2026-11-03T08:30:00'), BH_8_18), 60); // 30 min + 30 min
+  assert.equal(businessMinutesBetween(ms('2026-11-07T17:00:00'), ms('2026-11-09T09:00:00'), BH_8_18), 120); // sábado 17h → segunda 9h (domingo não conta)
+  assert.equal(businessMinutesBetween(ms('2026-11-08T10:00:00'), ms('2026-11-08T12:00:00'), BH_8_18), 0); // domingo
+  assert.equal(businessMinutesBetween(ms('2026-11-02T20:00:00'), ms('2026-11-02T22:00:00'), BH_8_18), 0);
+  assert.equal(businessMinutesBetween(ms('2026-11-02T10:00:00'), ms('2026-11-02T09:00:00'), BH_8_18), 0);
+});
+test('horário comercial = o do motor de envios (wa_settings); sem wa_settings, o padrão do motor (seg–sáb 9h–19h)', () => {
+  assert.deepEqual(businessHoursOf(null), { days: [1, 2, 3, 4, 5, 6], startMin: 540, endMin: 1140 });
+  const bh = businessHoursOf({ business_days: [1, 2, 3, 4, 5], business_start: '08:30:00', business_end: '18:00:00' });
+  assert.deepEqual(bh, { days: [1, 2, 3, 4, 5], startMin: 510, endMin: 1080 });
+  assert.equal(businessHoursLabel(bh), 'seg, ter, qua, qui, sex, 8h30 às 18h');
+  assert.equal(businessMinutesBetween(ms('2026-11-07T10:00:00'), ms('2026-11-09T09:00:00'), bh), 30); // sábado fora; segunda 8h30–9h
+  assert.equal(businessMinutesBetween(ms('2026-11-02T08:00:00'), ms('2026-11-02T09:30:00')), 30); // padrão: 9h
+  assert.deepEqual(businessHoursOf({ business_days: 'x', business_start: 'nada' }), { days: [1, 2, 3, 4, 5, 6], startMin: 540, endMin: 1140 });
+});
+test('filtro de sales.sale_date: inclui as vendas do último dia (hoje às 14h27 entrava fora)', () => {
+  const w = trackingWindow(R, NOW);
+  const f = saleDateFilter(w);
+  assert.deepEqual(f, { gte: '2026-10-31', lt: '2026-11-07' });
+  const saleDate = '2026-11-06T14:27:03.239+00:00'; // venda de "hoje" (NOW = 06/11 15h)
+  assert.ok(saleDate >= f.gte && saleDate < f.lt, 'a venda de hoje entra');
+  assert.ok(!(saleDate <= '2026-11-06'), 'o filtro antigo ("<= hoje") cortava a venda de hoje');
 });
 test('janela de carga: 90 dias antes para telefones, até agora para respostas/vendas', () => {
   const w = trackingWindow(R, NOW + 1000);
@@ -146,9 +164,87 @@ test('tempo da 1ª resposta só em horário comercial (lead às 17h50, resposta 
   const input = base();
   input.leads.push(lead(A, '2026-11-03T17:50:00'));
   input.sends.push(send(A, '2026-11-04T08:10:00'));
-  const list = conversationsIn(buildConversations(input), R, 'todas');
+  const list = conversationsIn(buildConversations(input, BH_8_18), R, 'todas');
   assert.equal(Math.round(trackSummary(list).avgReplyMinutes as number), 860);
   assert.equal(trackSummary(list, true).avgReplyMinutes, 20);
+  // com o horário do motor (9h–19h): 17h50 → 19h (70 min) + 0 antes das 9h
+  assert.equal(trackSummary(conversationsIn(buildConversations(input), R, 'todas'), true).avgReplyMinutes, 70);
+});
+
+// ── 2.12.4: vendas que não entravam (conversas sem wa_leads, @lid, venda ligada pelo 📈) ──
+// Réplica do dia 07/11: Joyce Lima (💰 na conversa @lid + 📈), Bruno Gomes e Lucas Azevedo (venda do ERP ligada pelo
+// 📈, que preencheu o wa_chat_id), Tiago (💰), nenhuma dessas conversas em wa_leads nem em wa_ad_attribution
+const JOY = '20384099373197@lid'; const BRU = '75944383520903@lid'; const LUC = '162487689326671@lid'; const TIA = '141785493987502@lid';
+function dia07(): TrackInput {
+  const input = base();
+  const sale = (id: string, name: string, phone: string, total: number, at: string, chat: string, origin: string | null = null) =>
+    ({ id, customer_name: name, customer_phone: phone, total_sale_price: total, sale_date: sp(at), created_at: sp(at), wa_chat_id: chat, origin });
+  input.sales.push(
+    sale('f7af97e8-454c', 'Joyce Lima', '5521977467586', 307, '2026-11-06T11:26:27', JOY, 'organico'),
+    sale('e90d2f30-ce29', 'Bruno Gomes', '(21) 98820-1983', 478, '2026-11-06T10:21:18', BRU),
+    sale('bbc520c9-072e', 'Lucas Azevedo', '(21) 97187-5271', 614, '2026-11-06T10:45:12', LUC),
+    sale('f114b6e0-0583', 'Tiago Santos', '(83) 9419-3994', 379, '2026-11-06T11:55:06', TIA, 'anuncio'),
+  );
+  const conv = (chat: string, sale: string, setChat: boolean, at: string, name: string) => ({ chat_id: chat, event_name: 'Purchase', error: null, value: 1, test: false, status: 'enviado', created_at: sp(at), contact_name: name, sale_id: sale, sale_link_set_chat: setChat });
+  input.conversions.push(
+    conv(LUC, 'bbc520c9-072e', true, '2026-11-06T10:54:38', 'Lucas Azevedo'), conv(BRU, 'e90d2f30-ce29', true, '2026-11-06T10:57:32', 'Bruno Gomes'),
+    conv(JOY, 'f7af97e8-454c', false, '2026-11-06T11:31:49', 'Joyce Lima'),
+  );
+  input.sends.push(send(LUC, '2026-11-06T09:04:21'), send(BRU, '2026-11-06T09:50:39'), send(JOY, '2026-11-06T11:05:14'));
+  input.replies.push({ chat_id: LUC, replied_at: sp('2026-11-06T09:06:39'), send_log_id: 'r1', minutes: 2 }, { chat_id: JOY, replied_at: sp('2026-11-06T11:06:39'), send_log_id: 'r2', minutes: 1 });
+  input.names.push({ chat_id: LUC, name: 'Lucas', source: 'aprendido' }, { chat_id: JOY, name: 'Joyce', source: 'aprendido' });
+  return input;
+}
+test('bug 07/11: vendas do 💰 e do 📈 em conversas sem wa_leads (@lid) entram em "Vendas das conversas" e "Comprou"', () => {
+  const list = conversationsIn(buildConversations(dia07()), R, 'todas');
+  const s = trackSummary(list);
+  assert.deepEqual([s.total, s.fresh, s.older, s.bought, s.sales, s.revenue], [4, 0, 4, 4, 4, 1778]);
+  assert.equal(s.conversion, 1);
+  assert.equal(s.avgReplyMinutes, null); // início não registrado: fora da média
+  const by = (chat: string) => list.find((c) => c.chatId === chat)!;
+  assert.deepEqual(by(JOY).saleLinks.map((x) => x.how), [['zap', 'compra']]);
+  assert.deepEqual(by(BRU).saleLinks.map((x) => x.how), [['compra']]); // o wa_chat_id foi preenchido pelo 📈
+  assert.deepEqual(by(LUC).saleLinks.map((x) => x.how), [['compra']]);
+  assert.deepEqual(by(TIA).saleLinks.map((x) => x.how), [['zap']]);
+  assert.deepEqual([by(JOY).name, by(JOY).tracked, by(JOY).stage, by(JOY).phoneLabel], ['Joyce', false, 'comprou', '(21) 97746-7586']);
+  assert.equal(by(LUC).firstAt, ms('2026-11-06T09:04:21')); // 1ª atividade conhecida
+  assert.equal(by(TIA).ad, true); // venda do 💰 com origem anúncio
+  assert.equal(by(BRU).name, 'Bruno Gomes'); // sem nome aprendido: o nome do evento
+  assert.equal(saleLinksText(by(JOY), (n) => `R$ ${n}`), '#f7af97e8 R$ 307: registrada pelo 💰 nesta conversa + ligada pelo 📈 (Compra enviada ao Facebook)');
+  assert.deepEqual(journey(list).map((x) => x.count), [4, 4, 4]);
+  const byContact = salesByDay(buildConversations(dia07()), R, 'todas', 'venda').filter((x) => x.vendas);
+  assert.deepEqual(byContact, [{ day: '2026-11-06', vendas: 4, receita: 1778 }]);
+});
+test('conversa que já existia: só as vendas do período; venda fora do período não traz a conversa', () => {
+  const input = dia07();
+  input.sales.push({ id: 'velha', customer_name: 'Joyce Lima', customer_phone: '5521977467586', total_sale_price: 100, sale_date: sp('2026-10-20T10:00:00'), created_at: sp('2026-10-20T10:00:00'), wa_chat_id: JOY, origin: null });
+  const m = buildConversations(input);
+  const joy = conversationsIn(m, R, 'todas').find((c) => c.chatId === JOY)!;
+  assert.deepEqual([joy.sales, joy.revenue], [1, 307]);
+  const antes = periodRanges('custom', NOW, { start: '2026-10-15', end: '2026-10-25' }).cur;
+  const old = conversationsIn(m, antes, 'todas');
+  assert.deepEqual(old.map((c) => [c.chatId, c.revenue]), [[JOY, 100]]);
+});
+test('a venda do 💰 (@lid + telefone) cai na conversa nova registrada com o número (@c.us) — uma conversa só', () => {
+  const input = base();
+  input.leads.push(lead('5521977467586@c.us', '2026-11-06T10:00:00'));
+  input.sales.push({ id: 'v-joy', customer_name: 'Joyce', customer_phone: '(21) 97746-7586', total_sale_price: 307, sale_date: sp('2026-11-06T11:00:00'), created_at: sp('2026-11-06T11:00:00'), wa_chat_id: JOY, origin: 'organico' });
+  input.sends.push(send(JOY, '2026-11-06T10:10:00'));
+  const list = conversationsIn(buildConversations(input), R, 'todas');
+  assert.equal(list.length, 1);
+  assert.deepEqual([list[0].tracked, list[0].sales, list[0].replyMinutes, list[0].saleLinks[0].how], [true, 1, 10, ['zap']]);
+});
+test('venda do ERP sem conversa, com o telefone de uma conversa conhecida: "telefone"; telefone desconhecido: fica de fora', () => {
+  const input = base();
+  input.leads.push(lead(A, '2026-11-02T10:00:00', { phone: '5511911112222' }));
+  input.sales.push(
+    { id: 'erp-1', customer_name: 'Maria', customer_phone: '(11) 91111-2222', total_sale_price: 200, sale_date: sp('2026-11-03T12:00:00'), created_at: sp('2026-11-03T12:00:00'), wa_chat_id: null },
+    { id: 'erp-2', customer_name: 'Outro', customer_phone: '(11) 90000-0000', total_sale_price: 999, sale_date: sp('2026-11-03T12:00:00'), created_at: sp('2026-11-03T12:00:00'), wa_chat_id: null },
+  );
+  const m = buildConversations(input);
+  const list = conversationsIn(m, R, 'todas');
+  assert.deepEqual(list.map((c) => [c.chatId, c.revenue, c.saleLinks.map((x) => x.how)]), [[A, 200, [['telefone']]]]);
+  assert.equal(m.sales.length, 1);
 });
 test('filtro de origem: anúncio / não rastreada', () => {
   const m = buildConversations(scenario());

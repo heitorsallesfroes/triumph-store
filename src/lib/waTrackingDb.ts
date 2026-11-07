@@ -5,13 +5,14 @@ import { fetchAllRows } from './resumoAnualCalc';
 import { INVALID_STATUSES } from './crmBridge';
 import type { Range, ReplyRow, SendRow } from './waPanel';
 import {
-  trackingWindow, type ChatNameRow, type TrackAttributionRow, type TrackConversionRow, type TrackInput, type TrackLeadRow, type TrackSaleRow,
+  saleDateFilter, trackingWindow, type ChatNameRow, type TrackAttributionRow, type TrackConversionRow, type TrackInput, type TrackLeadRow, type TrackSaleRow,
 } from './waTracking';
 
-export interface TrackLoad { input: TrackInput; missing: string[] }
+// settings: horário comercial do motor de envios (wa_settings), ou null
+export interface TrackLoad { input: TrackInput; missing: string[]; settings: BusinessSettings | null }
+export interface BusinessSettings { business_days?: number[] | null; business_start?: string | null; business_end?: string | null }
 
 const iso = (ms: number) => new Date(ms).toISOString();
-const day = (ms: number) => iso(ms - 3 * 3600000).slice(0, 10);
 
 async function hasColumn(table: string, column: string): Promise<boolean> {
   const { error } = await supabase.from(table).select(column).limit(1);
@@ -32,7 +33,7 @@ export async function loadTracking(r: Range): Promise<TrackLoad> {
   const leadCols = `chat_id, phone, first_message_at, origin, ad_id, ad_title${trackCols ? ', last_message_at, buy_signal_at' : ''}`;
   const sendCols = `id, chat_id, created_at, source, source_id, item_id, status${originCol ? ', origin' : ''}`;
   const salesCols = `id, sale_date, created_at, total_sale_price, customer_phone, customer_name${saleCols ? ', wa_chat_id, origin' : ''}`;
-  const convCols = `chat_id, error, value, test, status, created_at, contact_name${eventCol ? ', event_name' : ''}${saleIdCol ? ', sale_id' : ''}`;
+  const convCols = `chat_id, error, value, test, status, created_at, contact_name, ad_title${eventCol ? ', event_name' : ''}${saleIdCol ? ', sale_id, sale_link_set_chat' : ''}`;
 
   const [leads, attributions, sends, replies, sales, names, conversions] = await Promise.all([
     orEmpty<TrackLeadRow>('conversas novas (wa_leads)', missing, () => fetchAllRows<TrackLeadRow>((f, t) => supabase.from('wa_leads')
@@ -46,11 +47,17 @@ export async function loadTracking(r: Range): Promise<TrackLoad> {
       .select('chat_id, replied_at, send_log_id, minutes').gte('replied_at', iso(w.from)).lte('replied_at', iso(w.until)).order('id').range(f, t) as any)),
     fetchAllRows<TrackSaleRow>((f, t) => supabase.from('sales').select(salesCols)
       .neq('status', INVALID_STATUSES[0]).neq('status', INVALID_STATUSES[1])
-      .gte('sale_date', day(w.from)).lte('sale_date', day(w.until)).order('id').range(f, t) as any),
+      // sale_date tem hora: até o FIM do último dia (antes, "<= dia" cortava as vendas de hoje)
+      .gte('sale_date', saleDateFilter(w).gte).lt('sale_date', saleDateFilter(w).lt).order('id').range(f, t) as any),
     orEmpty<ChatNameRow>('nomes (wa_chat_names)', missing, () => fetchAllRows<ChatNameRow>((f, t) => supabase.from('wa_chat_names')
       .select('chat_id, name, source').order('chat_id').range(f, t) as any)),
     orEmpty<TrackConversionRow>('conversões (wa_conversion_events)', missing, () => fetchAllRows<TrackConversionRow>((f, t) => supabase.from('wa_conversion_events')
       .select(convCols).gte('created_at', iso(w.from)).lte('created_at', iso(w.until)).order('event_id').range(f, t) as any)),
   ]);
-  return { input: { leads, attributions, sends, replies, sales, names, conversions }, missing: [...new Set(missing)] };
+  let settings: BusinessSettings | null = null;
+  try {
+    const { data } = await supabase.from('wa_settings').select('business_days, business_start, business_end').eq('id', 1).maybeSingle();
+    settings = (data as BusinessSettings | null) || null;
+  } catch { settings = null; }
+  return { input: { leads, attributions, sends, replies, sales, names, conversions }, missing: [...new Set(missing)], settings };
 }

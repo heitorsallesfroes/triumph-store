@@ -799,6 +799,28 @@ guardada.
 
 ## O que mudou
 
+### ERP (07/11) — aba WhatsApp: só Painel e Rastreamento + vendas no Rastreamento
+- Sub-abas: **Painel · Rastreamento**. Saíram as telas "Clientes → CRM", "Pós-venda automático", "Resultados",
+  "Mensagens (antigo)" e "Conversões (Facebook)" — tudo isso é feito pela extensão. Nenhuma tabela ou dado foi
+  apagado. "Pós-venda automático" estava **desligado** (`wa_settings.auto_client_enabled = false`, sem etiqueta):
+  o gatilho `sales_wa_auto_client_label` continua no banco e não faz nada; para pôr o cliente numa etiqueta depois
+  da venda, use as Automações da extensão (gatilho "Venda registrada").
+- "Conversões (Facebook)" virou a seção **Eventos enviados ao Facebook** no fim do Rastreamento (mesmos cartões,
+  filtros De/Até — que acompanham o período da aba — e a tabela com a coluna Venda do ERP).
+- **Vendas no Rastreamento** ("Vendas das conversas" R$ 0,00 e "Comprou" 0% com vendas no dia). Duas causas:
+  1. as vendas do último dia (hoje) não eram carregadas: o filtro era `sale_date <= dia`, e `sale_date` tem hora;
+  2. só entravam conversas registradas em `wa_leads`/`wa_ad_attribution`; conversas que já existiam antes do
+     rastreamento (as @lid de Joyce Lima, Bruno Gomes e Lucas Azevedo) e a venda ligada pelo 📈
+     (`wa_conversion_events.sale_id`) eram ignoradas.
+  Agora a venda conta para a conversa quando foi registrada pelo 💰, ligada pelo 📈 ou é do ERP com o telefone da
+  conversa (o @lid é ligado ao telefone pela própria venda do 💰). Conversa sem registro do início entra pelo chat da
+  venda, marcada "início não registrado", com as vendas do período (fora da média da 1ª resposta). O (i) na etapa
+  da tabela mostra como cada venda foi ligada. O cartão "Conversas" mostra quantas são novas e quantas já existiam.
+- **Tempo médio da 1ª resposta**: por padrão só no horário comercial do motor de envios (`wa_settings`:
+  dias, início e fim, no horário de São Paulo), com a opção de desligar.
+- Testes: `scripts/tests/waTracking.test.ts` (réplica das vendas de 07/11, @lid × telefone, venda pelo telefone,
+  conversa antiga só com as vendas do período, filtro do último dia, horário do motor).
+
 ### 2.12.3 — 💰 Venda pelo WhatsApp igual à "Nova Venda" do ERP
 - O formulário do 💰 agora espelha a tela **Nova Venda** do ERP (`src/pages/Sales.tsx`), compacto, com as
   seções recolhíveis (clique no título; o que foi digitado fica) e campos lado a lado quando o painel está largo:

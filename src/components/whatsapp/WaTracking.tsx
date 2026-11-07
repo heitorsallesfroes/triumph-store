@@ -7,11 +7,12 @@ import { Download, ExternalLink, Search } from 'lucide-react';
 import { periodRanges, type PeriodPreset } from '../../lib/waPanel';
 import {
   buildConversations, conversationsCsv, conversationsIn, journey, originByDay, possibleUnmarkedSales, salesByDay, searchConversations,
-  sortConversations, trackSummary, DEFAULT_BUSINESS_HOURS, STAGE_LABEL,
+  sortConversations, trackSummary, businessHoursLabel, businessHoursOf, saleLinksText, STAGE_LABEL,
   type Conversation, type OriginFilter, type SalesDateMode, type SortKey, type Stage,
 } from '../../lib/waTracking';
 import { loadTracking, type TrackLoad } from '../../lib/waTrackingDb';
 import { btn, input, ORANGE } from './shared';
+import WaConversions from './WaConversions';
 import { EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoTip, panel, SectionHeader, Skeleton, SkeletonStyle, SLATE, StatCard } from './ui';
 
 const PRESETS: [PeriodPreset, string][] = [['hoje', 'Hoje'], ['7d', '7 dias'], ['30d', '30 dias'], ['mes', 'Este mês'], ['custom', 'Personalizado']];
@@ -20,19 +21,18 @@ const PAGE = 25;
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const br = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
 const when = (ms: number | null) => (ms == null ? '—' : new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
-const bh = DEFAULT_BUSINESS_HOURS;
 
 const INFO = {
-  total: 'Conversas que chegaram no período sem nenhuma mensagem antes (a 1ª mensagem é do cliente), uma por pessoa. Gravadas pela extensão (aba com a trava).',
+  total: 'Conversas novas = chegaram no período sem nenhuma mensagem antes (a 1ª mensagem é do cliente), uma por pessoa, gravadas pela extensão (aba com a trava) ou pelo anúncio. Também entram as conversas que já existiam antes do rastreamento e tiveram venda no período (💰, 📈 ou o telefone da venda): o início delas não foi registrado.',
   ad: 'Conversas que vieram de um anúncio do Meta (Facebook/Instagram, clique para o WhatsApp).',
   untracked: 'Conversas sem anúncio: o cliente chamou direto, pelo link, indicação etc.',
-  reply: `Média do tempo entre a 1ª mensagem do cliente e o 1º envio nosso registrado na conversa (o que você digitou, mensagem rápida, automação…). "Só horário comercial" conta só de segunda a sábado, das ${bh.startHour}h às ${bh.endHour}h. Conversas ainda sem resposta não entram na média.`,
-  sales: 'Vendas pelo WhatsApp (💰 da conversa, ou venda do ERP com o telefone da conversa) feitas depois da 1ª mensagem, pelas conversas novas do período. Canceladas/reembolsadas não contam.',
-  conversion: 'Conversas novas do período que compraram, divididas pelas conversas novas do período.',
+  reply: 'Média do tempo entre a 1ª mensagem do cliente e o 1º envio nosso registrado na conversa (o que você digitou, mensagem rápida, automação…). "Só horário comercial" (ligado por padrão) conta só os minutos dentro do horário do motor de envios da extensão (Automações → horário). Conversas sem resposta e as com início não registrado não entram na média.',
+  sales: 'Vendas das conversas do período: registradas pelo 💰 na conversa, ligadas pelo 📈 (a Compra enviada ao Facebook ligada à venda do ERP) ou vendas do ERP com o telefone da conversa. Conversa nova: as vendas depois da 1ª mensagem; conversa que já existia: as vendas do período. Canceladas/reembolsadas não contam. Como cada venda foi ligada: (i) na etapa da tabela.',
+  conversion: 'Conversas do período que compraram, divididas pelas conversas do período.',
   origin: 'Conversas novas por dia, separadas pela origem (anúncio ou não rastreada). O número em cada pedaço é a quantidade.',
-  journey: 'Fez contato = conversas novas do período. Respondeu = o cliente respondeu a uma mensagem nossa depois do 1º contato. Comprou = teve venda pelo WhatsApp depois do 1º contato (quem comprou conta também em Respondeu).',
+  journey: 'Fez contato = conversas do período. Respondeu = o cliente respondeu a uma mensagem nossa depois do 1º contato. Comprou = teve venda pelo WhatsApp depois do 1º contato (quem comprou conta também em Respondeu).',
   salesDay: '"Data do primeiro contato": as vendas das conversas novas do período, no dia em que a conversa começou. "Data da venda": as vendas pelo WhatsApp feitas no período, no dia da venda (de conversas de qualquer data).',
-  table: 'Uma linha por conversa nova do período. Contato: nome aprendido/salvo → nome do WhatsApp → telefone. Última mensagem: gravada pela extensão 2.12.2 (antes disso, o último envio ou resposta registrados).',
+  table: 'Uma linha por conversa do período ("início não registrado" = já existia antes do rastreamento e entrou pela venda). Contato: nome aprendido/salvo → nome do WhatsApp → telefone. Última mensagem: gravada pela extensão 2.12.2 (antes disso, o último envio ou resposta registrados).',
   unmarked: 'Conversas novas do período em que uma mensagem (sua ou do cliente) falou em "pix", "comprovante", "paguei", "endereço de entrega" ou "pagamento", mas sem venda ligada. A extensão confere isso no navegador e grava só a hora (nunca o texto). Abra, confira e lance com 💰 / 📈.',
 };
 
@@ -44,7 +44,7 @@ export default function WaTracking() {
   const [start, setStart] = useState(ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 13)));
   const [end, setEnd] = useState(ymd(today));
   const [origin, setOrigin] = useState<OriginFilter>('todas');
-  const [businessOnly, setBusinessOnly] = useState(false);
+  const [businessOnly, setBusinessOnly] = useState(true); // como o motor de envios (pode desligar)
   const [salesMode, setSalesMode] = useState<SalesDateMode>('contato');
   const ranges = useMemo(() => periodRanges(preset, Date.now(), { start, end }), [preset, start, end]);
   const r = ranges.cur;
@@ -62,7 +62,8 @@ export default function WaTracking() {
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loading = !data || data.key !== key;
-  const model = useMemo(() => (data && !loading ? buildConversations(data.load.input) : null), [data, loading]);
+  const bh = useMemo(() => businessHoursOf(data ? data.load.settings : null), [data]);
+  const model = useMemo(() => (data && !loading ? buildConversations(data.load.input, bh) : null), [data, loading, bh]);
   const list = useMemo(() => (model ? conversationsIn(model, r, origin) : null), [model, r, origin]);
   const s = useMemo(() => (list ? trackSummary(list, businessOnly) : null), [list, businessOnly]);
   const daily = useMemo(() => (list ? originByDay(list, r) : null), [list, r]);
@@ -101,14 +102,14 @@ export default function WaTracking() {
         {!s ? Array.from({ length: 6 }, (_, i) => (
           <div key={i} style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 10 }}><Skeleton h={10} w="55%" /><Skeleton h={28} w="45%" /><Skeleton h={10} w="70%" /></div>
         )) : (<>
-          <StatCard accent label="Conversas novas" value={fmtInt(s.total)} info={INFO.total} sub={`${br(r.fromDay)} a ${br(r.toDay)}`} />
+          <StatCard accent label="Conversas" value={fmtInt(s.total)} info={INFO.total} sub={s.older ? `${fmtInt(s.fresh)} novas · ${fmtInt(s.older)} já existiam (com venda)` : `${fmtInt(s.fresh)} novas · ${br(r.fromDay)} a ${br(r.toDay)}`} />
           <StatCard label="Rastreadas (anúncio)" value={fmtInt(s.ad)} info={INFO.ad} sub={<><b style={{ color: ORANGE }}>{fmtPct(s.adPct, 1)}</b> das conversas</>} />
           <StatCard label="Não rastreadas" value={fmtInt(s.untracked)} info={INFO.untracked} sub={<><b style={{ color: 'var(--text-secondary)' }}>{fmtPct(s.untrackedPct, 1)}</b> das conversas</>} />
           <StatCard label="Tempo médio da 1ª resposta" value={fmtMinutes(s.avgReplyMinutes)} info={INFO.reply} sub={(
             <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span>{fmtInt(s.answered)} de {fmtInt(s.total)} conversas respondidas</span>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                <input type="checkbox" checked={businessOnly} onChange={(e) => setBusinessOnly(e.target.checked)} /> só horário comercial
+                <input type="checkbox" checked={businessOnly} onChange={(e) => setBusinessOnly(e.target.checked)} /> só horário comercial ({businessHoursLabel(bh)})
               </label>
             </span>
           )} />
@@ -186,6 +187,11 @@ export default function WaTracking() {
       <Card title="Possíveis vendas não marcadas" info={INFO.unmarked} right={unmarked && unmarked.length > 0 ? <span style={{ fontSize: 12, fontWeight: 700, color: ORANGE }}>{fmtInt(unmarked.length)} para conferir</span> : undefined}>
         {!unmarked ? <Skeleton h={80} /> : unmarked.length === 0 ? <EmptyState text="Nada para conferir neste período." /> : <Unmarked list={unmarked} />}
       </Card>
+
+      {/* Eventos enviados ao Facebook (a antiga sub-aba "Conversões (Facebook)") */}
+      <section style={panel}>
+        <WaConversions title="Eventos enviados ao Facebook" startDay={r.fromDay} endDay={r.toDay} />
+      </section>
     </div>
   );
 }
@@ -265,6 +271,7 @@ function StageBadge({ c }: { c: Conversation }) {
       <span style={{ width: 8, height: 8, borderRadius: 999, background: color }} />
       <span style={{ fontWeight: 600 }}>{STAGE_LABEL[c.stage]}</span>
       {c.stage === 'comprou' && <b style={{ color: GREEN }}>{fmtMoney(c.revenue)}</b>}
+      {c.saleLinks.length > 0 && <InfoTip text={`Como a venda foi ligada: ${saleLinksText(c, fmtMoney)}`} label={`Como as vendas de ${c.name} foram ligadas`} />}
     </span>
   );
 }
@@ -343,9 +350,9 @@ function ConversationsTable({ list, fileTag }: { list: Conversation[]; fileTag: 
                   </td>
                   <td style={td}><OriginBadge c={c} /></td>
                   <td style={td}><StageBadge c={c} /></td>
-                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{when(c.firstAt)}</td>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{when(c.firstAt)}{!c.tracked && <div style={{ fontSize: 11, color: 'var(--text-muted)' }} title="A conversa já existia antes do rastreamento: entrou pela venda; a data é a 1ª atividade conhecida">início não registrado</div>}</td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{when(c.lastAt)}</td>
-                  <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>{c.replyMinutes == null ? <span style={{ color: 'var(--text-muted)' }}>sem resposta</span> : fmtMinutes(c.replyMinutes)}</td>
+                  <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>{c.replyMinutes == null ? <span style={{ color: 'var(--text-muted)' }}>{c.tracked ? 'sem resposta' : '—'}</span> : fmtMinutes(c.replyMinutes)}</td>
                   <td style={td}><span style={{ display: 'flex', gap: 10 }}>{check(c.fbContact, 'Contato')}{check(c.fbPurchase, 'Compra')}</span></td>
                 </tr>
               ))}

@@ -1,16 +1,17 @@
-// Aba WhatsApp → Rastreamento: de onde vêm as conversas novas (anúncio ou não rastreada), quanto tempo
-// a loja leva para responder, a jornada Fez contato → Respondeu → Comprou, as vendas por dia e a lista de
-// conversas. Regras puras (sem React nem Supabase): node scripts/tests/waTracking.test.ts
+// Aba WhatsApp → Rastreamento: de onde vêm as conversas (anúncio ou não rastreada), quanto tempo a loja leva
+// para responder, a jornada Fez contato → Respondeu → Comprou, as vendas por dia e a lista de conversas.
+// Regras puras (sem React nem Supabase): node scripts/tests/waTracking.test.ts
 //
 // Fontes: wa_leads (1ª mensagem; 2.12.2: last_message_at e buy_signal_at), wa_ad_attribution (anúncio e
 // nome do WhatsApp), wa_send_log (nossos envios, inclusive o que você digitou), wa_replies (o cliente
-// respondeu a um envio nosso), sales (venda pelo WhatsApp, mesmo critério do Painel), wa_chat_names
-// (nome aprendido/manual) e wa_conversion_events (Contato/Compra enviados ao Facebook).
+// respondeu a um envio nosso), sales, wa_chat_names (nome aprendido/manual), wa_conversion_events
+// (Contato/Compra enviados ao Facebook; sale_id = venda do ERP ligada pelo 📈) e wa_settings (horário comercial).
 // Datas no horário de São Paulo (UTC−3).
-import {
-  addDays, buildIndex, dedupeLeads, normalizePhone, spDay, spStartOfDay, DAY_MS,
-  type AttributionRow, type LeadRow, type PanelInput, type Range, type ReplyRow, type SaleRowP, type SendRow, type WaSale,
-} from './waPanel.ts';
+//
+// Venda de uma conversa (ERP, 07/11): registrada pelo 💰 (sales.wa_chat_id), ligada pelo 📈 (wa_conversion_events.sale_id)
+// ou venda do ERP com o telefone de uma conversa conhecida. A conversa pode ter começado antes do rastreamento (sem
+// wa_leads): ela entra pelo próprio chat da venda, marcada como "início não registrado", com as vendas do período.
+import { addDays, normalizePhone, spDay, spStartOfDay, DAY_MS, type AttributionRow, type LeadRow, type Range, type ReplyRow, type SaleRowP, type SendRow, saleTime } from './waPanel.ts';
 import { eventKind } from './waConversions.ts';
 
 // ── Linhas ────────────────────────────────────────────────────────────────
@@ -20,6 +21,7 @@ export interface TrackSaleRow extends SaleRowP { customer_name?: string | null }
 export interface TrackConversionRow {
   chat_id: string | null; event_name?: string | null; error: string | null; value: number | string | null;
   test: boolean; status: string; created_at: string; contact_name?: string | null; sale_id?: string | null;
+  sale_link_set_chat?: boolean | null; ad_title?: string | null;
 }
 export interface ChatNameRow { chat_id: string; name: string; source?: string | null }
 export interface TrackInput {
@@ -56,11 +58,27 @@ export const waLinkOf = (phone: string | null | undefined) => {
 };
 
 // ── Horário comercial (para o tempo da 1ª resposta) ────────────────────────
-// Padrão: segunda a sábado, 8h às 18h (São Paulo). Conta só os minutos dentro desse horário.
-export interface BusinessHours { days: number[]; startHour: number; endHour: number }
-export const DEFAULT_BUSINESS_HOURS: BusinessHours = { days: [1, 2, 3, 4, 5, 6], startHour: 8, endHour: 18 };
+// O mesmo do motor de envios da extensão (wa_settings: business_days 0 = domingo, business_start/end "HH:MM"),
+// no horário de São Paulo. Sem wa_settings: o padrão do motor (seg–sáb, 9h às 19h).
+export interface BusinessHours { days: number[]; startMin: number; endMin: number }
+export const DEFAULT_BUSINESS_HOURS: BusinessHours = { days: [1, 2, 3, 4, 5, 6], startMin: 9 * 60, endMin: 19 * 60 };
+const parseHM = (v: unknown): number | null => {
+  const m = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(String(v ?? '').trim());
+  if (!m) return null;
+  const h = Number(m[1]); const mi = Number(m[2]);
+  if (h > 24 || mi > 59 || (h === 24 && mi > 0)) return null;
+  return h * 60 + mi;
+};
+export function businessHoursOf(settings: { business_days?: unknown; business_start?: unknown; business_end?: unknown } | null | undefined): BusinessHours {
+  if (!settings) return DEFAULT_BUSINESS_HOURS;
+  const days = Array.isArray(settings.business_days) ? settings.business_days.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6) : DEFAULT_BUSINESS_HOURS.days;
+  return { days, startMin: parseHM(settings.business_start) ?? DEFAULT_BUSINESS_HOURS.startMin, endMin: parseHM(settings.business_end) ?? DEFAULT_BUSINESS_HOURS.endMin };
+}
+const DAY_NAMES = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+const hm = (m: number) => `${Math.floor(m / 60)}h${m % 60 ? String(m % 60).padStart(2, '0') : ''}`;
+export const businessHoursLabel = (bh: BusinessHours) => `${bh.days.length ? [...bh.days].sort((a, b) => a - b).map((d) => DAY_NAMES[d]).join(', ') : 'nenhum dia'}, ${hm(bh.startMin)} às ${hm(bh.endMin)}`;
 export function businessMinutesBetween(a: number, b: number, bh: BusinessHours = DEFAULT_BUSINESS_HOURS): number {
-  if (!(b > a)) return 0;
+  if (!(b > a) || bh.endMin <= bh.startMin) return 0;
   let total = 0;
   let day = spDay(a);
   for (let i = 0; i < 400; i++) {
@@ -68,10 +86,8 @@ export function businessMinutesBetween(a: number, b: number, bh: BusinessHours =
     if (start > b) break;
     const weekday = new Date(start + 12 * 3600000).getUTCDay(); // meio-dia em SP ainda é o mesmo dia em UTC
     if (bh.days.includes(weekday)) {
-      const open = start + bh.startHour * 3600000;
-      const close = start + bh.endHour * 3600000;
-      const from = Math.max(a, open);
-      const to = Math.min(b, close);
+      const from = Math.max(a, start + bh.startMin * 60000);
+      const to = Math.min(b, start + bh.endMin * 60000);
       if (to > from) total += to - from;
     }
     day = addDays(day, 1);
@@ -79,109 +95,205 @@ export function businessMinutesBetween(a: number, b: number, bh: BusinessHours =
   return total / 60000;
 }
 
+// ── Vendas ligadas às conversas ───────────────────────────────────────────
+export type SaleHow = 'zap' | 'compra' | 'telefone';
+export const SALE_HOW_LABEL: Record<SaleHow, string> = {
+  zap: 'registrada pelo 💰 nesta conversa',
+  compra: 'ligada pelo 📈 (Compra enviada ao Facebook)',
+  telefone: 'venda do ERP com o telefone desta conversa',
+};
+export interface SaleLink { id: string; t: number; total: number; customer: string | null; how: SaleHow[]; convKey: string }
+
 // ── Conversas ─────────────────────────────────────────────────────────────
 export interface Conversation {
   key: string; chatId: string; chatIds: string[];
+  // tracked = 1º contato registrado (wa_leads / wa_ad_attribution); false = começou antes do rastreamento e
+  // entrou pela venda (o início é a 1ª atividade conhecida)
+  tracked: boolean;
   name: string; nameSource: 'aprendido' | 'whatsapp' | 'telefone' | 'nenhum';
   phone: string | null; phoneLabel: string; waLink: string | null;
   ad: boolean; adId: string | null; adTitle: string | null;
   firstAt: number; lastAt: number;
   firstReplyAt: number | null; replyMinutes: number | null; replyBusinessMinutes: number | null;
   replied: boolean; stage: Stage;
-  sales: number; revenue: number; saleIds: string[]; firstSaleAt: number | null;
+  sales: number; revenue: number; saleIds: string[]; saleLinks: SaleLink[]; firstSaleAt: number | null;
   fbContact: boolean; fbPurchase: boolean;
   buySignalAt: number | null;
 }
+export interface TrackModel { conversations: Conversation[]; sales: SaleLink[] }
 
-export interface TrackModel { idx: ReturnType<typeof buildIndex>; conversations: Conversation[] }
+const lidPhoneOf = (chat: string | null | undefined, phone: string | null | undefined, into: Map<string, string>) => {
+  const p = normalizePhone(phone);
+  if (chat && p && /@lid$/.test(chat) && !into.has(chat)) into.set(chat, p);
+};
+const phoneOfCus = (chat: string | null | undefined) => {
+  const m = /^(\d{8,15})@c\.us$/.exec(String(chat || ''));
+  return m ? normalizePhone(m[1]) : null;
+};
 
-function panelInputOf(input: TrackInput): PanelInput {
-  return { leads: input.leads, replies: input.replies, sends: input.sends, sales: input.sales, attributions: input.attributions, items: [], names: {} };
-}
+// Todas as conversas carregadas (sem filtro de período), uma por pessoa
+export function buildConversations(input: TrackInput, bh: BusinessHours = DEFAULT_BUSINESS_HOURS): TrackModel {
+  // @lid → telefone: lead, anúncio e a venda registrada na conversa (o 💰 confere o telefone da conversa)
+  const lidPhone = new Map<string, string>();
+  input.leads.forEach((l) => lidPhoneOf(l.chat_id, l.phone, lidPhone));
+  input.attributions.forEach((a) => lidPhoneOf(a.chat_id, a.phone, lidPhone));
+  input.sales.forEach((s) => lidPhoneOf(s.wa_chat_id, s.customer_phone, lidPhone));
+  const keyOf = (chat: string | null | undefined): string | null => {
+    if (!chat) return null;
+    const p = phoneOfCus(chat) || lidPhone.get(chat);
+    return p ? `tel:${p}` : `chat:${chat}`;
+  };
+  const realConv = input.conversions.filter((c) => !c.test && c.status === 'enviado');
 
-// Todas as conversas novas carregadas (sem filtro de período), uma por pessoa
-export function buildConversations(input: TrackInput): TrackModel {
-  const pin = panelInputOf(input);
-  const idx = buildIndex(pin);
-  const keyOf = idx.keyOfChat;
+  // 1. conversas com o 1º contato registrado (a mais antiga de cada pessoa)
+  interface Seed { key: string; chatId: string; t: number; ad: boolean; adId: string | null; adTitle: string | null; tracked: boolean }
+  const seeds = new Map<string, Seed>();
+  const put = (s: Seed) => {
+    const cur = seeds.get(s.key);
+    if (!cur) { seeds.set(s.key, s); return; }
+    const first = s.t < cur.t ? s : cur;
+    seeds.set(s.key, { ...first, ad: s.ad || cur.ad, adId: first.adId || cur.adId || s.adId, adTitle: first.adTitle || cur.adTitle || s.adTitle });
+  };
+  input.leads.forEach((l) => { const k = keyOf(l.chat_id); const t = ts(l.first_message_at); if (k && Number.isFinite(t)) put({ key: k, chatId: l.chat_id, t, ad: l.origin === 'anuncio', adId: l.ad_id, adTitle: l.ad_title, tracked: true }); });
+  input.attributions.forEach((a) => { const k = keyOf(a.chat_id); const t = ts(a.first_message_at); if (k && Number.isFinite(t)) put({ key: k, chatId: a.chat_id, t, ad: true, adId: a.ad_id, adTitle: a.ad_title, tracked: true }); });
+
+  // conversas que existem no WhatsApp (para a venda do ERP pelo telefone): registros + envios + respostas + eventos
+  const known = new Set<string>(seeds.keys());
+  [...input.sends.map((s) => s.chat_id), ...input.replies.map((r) => r.chat_id), ...realConv.map((c) => c.chat_id), ...input.sales.map((s) => s.wa_chat_id)]
+    .forEach((c) => { const k = keyOf(c); if (k) known.add(k); });
+
+  // 2. vendas: por qual conversa e como foram ligadas
+  const alias = new Map<string, string>(); // chave → chave da conversa
+  const convOfKey = (k: string) => alias.get(k) || (seeds.has(k) ? k : null);
+  const sales: SaleLink[] = [];
+  input.sales.forEach((s) => {
+    const t = saleTime(s);
+    if (!Number.isFinite(t)) return;
+    const links = realConv.filter((c) => c.sale_id && c.sale_id === s.id);
+    const setByLink = links.some((c) => c.sale_link_set_chat === true);
+    const how = new Set<SaleHow>();
+    const chatKeys: string[] = [];
+    if (s.wa_chat_id) { const k = keyOf(s.wa_chat_id); if (k) chatKeys.push(k); if (!setByLink) how.add('zap'); }
+    links.forEach((c) => { const k = keyOf(c.chat_id); if (k) chatKeys.push(k); how.add('compra'); });
+    const phone = normalizePhone(s.customer_phone);
+    const phoneKey = phone && known.has(`tel:${phone}`) ? `tel:${phone}` : null;
+    if (phoneKey && !chatKeys.includes(phoneKey)) how.add('telefone');
+    const keys = [...new Set([...chatKeys, ...(phoneKey ? [phoneKey] : [])])];
+    if (!keys.length) return;
+    // a conversa: a que já existe por uma das chaves (chat da venda antes do telefone); senão, nova pelo 1º chat
+    const conv = keys.map(convOfKey).find(Boolean) || keys[0];
+    keys.forEach((k) => { if (!alias.has(k) && !seeds.has(k)) alias.set(k, conv); });
+    if (!seeds.has(conv) && !alias.has(conv)) alias.set(conv, conv);
+    sales.push({ id: s.id, t, total: Number(s.total_sale_price) || 0, customer: s.customer_name || null, how: [...how], convKey: conv });
+  });
+
+  // 3. agrupar tudo pela conversa
+  const convKeyOf = (chat: string | null | undefined) => { const k = keyOf(chat); return k ? convOfKey(k) : null; };
   const group = <T>(rows: T[], chat: (r: T) => string | null | undefined) => {
     const m = new Map<string, T[]>();
-    rows.forEach((r) => { const k = keyOf(chat(r)); if (k) m.set(k, [...(m.get(k) || []), r]); });
+    rows.forEach((r) => { const k = convKeyOf(chat(r)); if (k) m.set(k, [...(m.get(k) || []), r]); });
     return m;
   };
   const leadsByKey = group(input.leads, (l) => l.chat_id);
   const attrByKey = group(input.attributions, (a) => a.chat_id);
   const namesByKey = group(input.names, (n) => n.chat_id);
-  const convByKey = group(input.conversions.filter((c) => !c.test && c.status === 'enviado'), (c) => c.chat_id);
-  const sendTimes = new Map<string, number[]>();
-  input.sends.forEach((s) => {
-    const k = keyOf(s.chat_id);
-    const t = ts(s.created_at);
-    if (s.status === 'enviado' && k && Number.isFinite(t)) sendTimes.set(k, [...(sendTimes.get(k) || []), t]);
-  });
-  const replyTimes = new Map<string, number[]>();
-  input.replies.forEach((x) => { const k = keyOf(x.chat_id); const t = ts(x.replied_at); if (k && Number.isFinite(t)) replyTimes.set(k, [...(replyTimes.get(k) || []), t]); });
-  const saleNames = new Map(input.sales.map((s) => [s.id, s]));
+  const convByKey = group(realConv, (c) => c.chat_id);
+  const timesOf = (rows: { chat: string | null; t: number }[]) => {
+    const m = new Map<string, number[]>();
+    rows.forEach((r) => { const k = convKeyOf(r.chat); if (k && Number.isFinite(r.t)) m.set(k, [...(m.get(k) || []), r.t]); });
+    return m;
+  };
+  const sendTimes = timesOf(input.sends.filter((s) => s.status === 'enviado').map((s) => ({ chat: s.chat_id, t: ts(s.created_at) })));
+  const replyTimes = timesOf(input.replies.map((r) => ({ chat: r.chat_id, t: ts(r.replied_at) })));
+  const saleRows = new Map(input.sales.map((s) => [s.id, s]));
+  const salesByConv = new Map<string, SaleLink[]>();
+  sales.forEach((s) => salesByConv.set(s.convKey, [...(salesByConv.get(s.convKey) || []), s]));
+  const convKeys = new Set<string>([...seeds.keys(), ...salesByConv.keys()]);
 
-  const conversations = dedupeLeads(pin, idx).map((l): Conversation => {
-    const leads = leadsByKey.get(l.key) || [];
-    const attrs = attrByKey.get(l.key) || [];
-    const sales = (idx.salesByKey.get(l.key) || []).filter((s) => s.t >= l.t).sort((a, b) => a.t - b.t);
-    const uniq = [...new Map(sales.map((s) => [s.id, s])).values()];
-    // telefone: lead, anúncio, número da conversa, venda
+  const conversations = [...convKeys].map((key): Conversation => {
+    const seed = seeds.get(key) || null;
+    const leads = leadsByKey.get(key) || [];
+    const attrs = attrByKey.get(key) || [];
+    const conv = convByKey.get(key) || [];
+    const sends = sendTimes.get(key) || [];
+    const replies = replyTimes.get(key) || [];
+    const allSales = (salesByConv.get(key) || []).sort((a, b) => a.t - b.t);
+    // conversa sem registro do início: começa na 1ª atividade conhecida (envio, resposta, evento ou venda)
+    const firstAt = seed ? seed.t : Math.min(...[...sends, ...replies, ...conv.map((c) => ts(c.created_at)), ...allSales.map((s) => s.t)].filter(Number.isFinite));
+    const own = seed ? allSales.filter((s) => s.t >= firstAt) : allSales;
+    const saleChat = allSales.map((s) => saleRows.get(s.id)?.wa_chat_id).find(Boolean) || conv.map((c) => c.chat_id).find(Boolean) || null;
+    const chatId = seed ? seed.chatId : saleChat || key.replace(/^(tel|chat):/, '');
     const phone = [...leads.map((x) => x.phone), ...attrs.map((x) => x.phone)].map((p) => normalizePhone(p)).find(Boolean)
-      || (l.key.startsWith('tel:') ? l.key.slice(4) : null)
-      || uniq.map((s) => normalizePhone(saleNames.get(s.id)?.customer_phone)).find(Boolean) || null;
-    // nome: aprendido/manual (wa_chat_names) → nome do WhatsApp (anúncio / Contato enviado) → cliente da venda → telefone
-    const learned = (namesByKey.get(l.key) || []).map((n) => (n.name || '').trim()).find(Boolean);
-    const waName = [...attrs.map((a) => a.contact_name), ...(convByKey.get(l.key) || []).map((c) => c.contact_name)]
-      .map((n) => (n || '').trim()).find(Boolean);
-    const saleName = uniq.map((s) => (saleNames.get(s.id)?.customer_name || '').trim()).find(Boolean);
+      || (key.startsWith('tel:') ? key.slice(4) : null)
+      || own.map((s) => normalizePhone(saleRows.get(s.id)?.customer_phone)).find(Boolean) || null;
+    // nome: aprendido/manual (wa_chat_names) → nome do WhatsApp (anúncio / evento enviado) → cliente da venda → telefone
+    const learned = (namesByKey.get(key) || []).map((n) => (n.name || '').trim()).find(Boolean);
+    const waName = [...attrs.map((a) => a.contact_name), ...conv.map((c) => c.contact_name)].map((n) => (n || '').trim()).find(Boolean);
+    const saleName = own.map((s) => (s.customer || '').trim()).find(Boolean);
     const phoneLabel = formatPhone(phone);
     const name = learned || waName || saleName || phoneLabel || '(sem nome)';
     const nameSource = learned ? 'aprendido' : waName || saleName ? 'whatsapp' : phoneLabel ? 'telefone' : 'nenhum';
-    // 1ª resposta nossa: o 1º envio registrado (você digitou, mensagem rápida, automação…) depois da 1ª mensagem
-    const firstReplyAt = (sendTimes.get(l.key) || []).filter((t) => t >= l.t).reduce<number | null>((a, t) => (a == null || t < a ? t : a), null);
-    const replied = (replyTimes.get(l.key) || []).some((t) => t >= l.t);
-    const lastCandidates = [l.t, ...leads.map((x) => ts(x.last_message_at)), ...(sendTimes.get(l.key) || []), ...(replyTimes.get(l.key) || [])].filter((t) => Number.isFinite(t) && t >= l.t);
+    // 1ª resposta nossa: o 1º envio registrado depois da 1ª mensagem (só quando o início foi registrado)
+    const firstReplyAt = seed ? sends.filter((t) => t >= firstAt).reduce<number | null>((a, t) => (a == null || t < a ? t : a), null) : null;
+    const replied = replies.some((t) => t >= firstAt);
+    const lastAt = Math.max(firstAt, ...[...leads.map((x) => ts(x.last_message_at)), ...sends, ...replies].filter((t) => Number.isFinite(t) && t >= firstAt));
     const buy = leads.map((x) => ts(x.buy_signal_at)).filter((t) => Number.isFinite(t));
-    const conv = convByKey.get(l.key) || [];
-    const revenue = money2(uniq.reduce((x, s) => x + s.total, 0));
+    const saleAd = own.some((s) => saleRows.get(s.id)?.origin === 'anuncio');
+    const convAd = conv.map((c) => c.ad_title).find(Boolean) || null;
+    const ad = seed ? seed.ad : saleAd || !!convAd;
     return {
-      key: l.key, chatId: l.chatId, chatIds: [...new Set([l.chatId, ...leads.map((x) => x.chat_id), ...attrs.map((x) => x.chat_id)])],
+      key, chatId, chatIds: [...new Set([chatId, ...leads.map((x) => x.chat_id), ...attrs.map((x) => x.chat_id)].filter(Boolean))], tracked: !!seed,
       name, nameSource, phone, phoneLabel, waLink: waLinkOf(phone),
-      ad: l.ad, adId: l.adId, adTitle: l.adTitle,
-      firstAt: l.t, lastAt: Math.max(...lastCandidates),
-      firstReplyAt, replyMinutes: firstReplyAt == null ? null : (firstReplyAt - l.t) / 60000,
-      replyBusinessMinutes: firstReplyAt == null ? null : businessMinutesBetween(l.t, firstReplyAt),
-      replied, stage: uniq.length ? 'comprou' : replied ? 'respondeu' : 'contato',
-      sales: uniq.length, revenue, saleIds: uniq.map((s) => s.id), firstSaleAt: uniq.length ? uniq[0].t : null,
+      ad, adId: seed ? seed.adId : null, adTitle: seed ? seed.adTitle : convAd,
+      firstAt, lastAt,
+      firstReplyAt, replyMinutes: firstReplyAt == null ? null : (firstReplyAt - firstAt) / 60000,
+      replyBusinessMinutes: firstReplyAt == null ? null : businessMinutesBetween(firstAt, firstReplyAt, bh),
+      replied, stage: 'contato', sales: 0, revenue: 0, saleIds: [], saleLinks: own, firstSaleAt: null,
       fbContact: conv.some((c) => eventKind(c) === 'Contato'), fbPurchase: conv.some((c) => eventKind(c) === 'Compra'),
       buySignalAt: buy.length ? Math.max(...buy) : null,
     };
-  });
-  return { idx, conversations };
+  }).map((c) => withSales(c));
+  return { conversations, sales };
+}
+
+// vendas da conversa (as de saleLinks) → contagem, valor, etapa
+function withSales(c: Conversation, links = c.saleLinks): Conversation {
+  const own = [...links].sort((a, b) => a.t - b.t);
+  return {
+    ...c, saleLinks: own, sales: own.length, revenue: money2(own.reduce((x, s) => x + s.total, 0)), saleIds: own.map((s) => s.id),
+    firstSaleAt: own.length ? own[0].t : null, stage: own.length ? 'comprou' : c.replied ? 'respondeu' : 'contato',
+  };
 }
 
 export const originMatches = (ad: boolean, f: OriginFilter) => f === 'todas' || (f === 'anuncio' ? ad : !ad);
+// Conversas do período: as com o 1º contato no período e as que começaram antes do rastreamento mas tiveram venda
+// no período (estas com só as vendas do período)
 export function conversationsIn(model: TrackModel, r: Pick<Range, 'from' | 'to'>, f: OriginFilter): Conversation[] {
-  return model.conversations.filter((c) => inRange(c.firstAt, r) && originMatches(c.ad, f));
+  const out: Conversation[] = [];
+  model.conversations.forEach((c) => {
+    if (!originMatches(c.ad, f)) return;
+    if (c.tracked) { if (inRange(c.firstAt, r)) out.push(c); return; }
+    const inPeriod = c.saleLinks.filter((s) => inRange(s.t, r));
+    if (inPeriod.length) out.push(withSales(c, inPeriod));
+  });
+  return out;
 }
 
 // ── Cartões ───────────────────────────────────────────────────────────────
 export interface TrackSummary {
-  total: number; ad: number; adPct: number | null; untracked: number; untrackedPct: number | null;
+  total: number; fresh: number; older: number; ad: number; adPct: number | null; untracked: number; untrackedPct: number | null;
   answered: number; avgReplyMinutes: number | null;
   bought: number; sales: number; revenue: number; conversion: number | null;
 }
 export function trackSummary(list: Conversation[], businessOnly = false): TrackSummary {
   const total = list.length;
+  const fresh = list.filter((c) => c.tracked).length;
   const ad = list.filter((c) => c.ad).length;
   const mins = list.map((c) => (businessOnly ? c.replyBusinessMinutes : c.replyMinutes)).filter((m): m is number => m != null);
   const bought = list.filter((c) => c.sales > 0).length;
   const sales = list.reduce((x, c) => x + c.sales, 0);
   return {
-    total, ad, adPct: total ? ad / total : null, untracked: total - ad, untrackedPct: total ? (total - ad) / total : null,
+    total, fresh, older: total - fresh, ad, adPct: total ? ad / total : null, untracked: total - ad, untrackedPct: total ? (total - ad) / total : null,
     answered: mins.length, avgReplyMinutes: mins.length ? mins.reduce((a, b) => a + b, 0) / mins.length : null,
     bought, sales, revenue: money2(list.reduce((x, c) => x + c.revenue, 0)), conversion: total ? bought / total : null,
   };
@@ -210,20 +322,18 @@ export function journey(list: Conversation[]): JourneyStep[] {
   ];
 }
 
-// Vendas por dia. 'contato': vendas das conversas novas do período, no dia do 1º contato.
-// 'venda': vendas pelo WhatsApp com a data da venda no período (de qualquer conversa), pela origem da conversa.
+// Vendas por dia. 'contato': vendas das conversas do período, no dia do 1º contato.
+// 'venda': vendas das conversas com a data da venda no período (de conversas de qualquer data), pela origem da conversa.
 export type SalesDateMode = 'contato' | 'venda';
 export interface SalesDay { day: string; vendas: number; receita: number }
 export function salesByDay(model: TrackModel, r: Range, f: OriginFilter, mode: SalesDateMode): SalesDay[] {
   const m = new Map(daysOf(r).map((day) => [day, { day, vendas: 0, receita: 0 }]));
   const add = (t: number, total: number) => { const p = m.get(spDay(t)); if (p) { p.vendas++; p.receita = money2(p.receita + total); } };
   if (mode === 'contato') {
-    const byId = new Map<string, WaSale>(model.idx.waSales.map((s) => [s.id, s]));
-    conversationsIn(model, r, f).forEach((c) => {
-      c.saleIds.forEach((id) => { const s = byId.get(id); if (s) add(c.firstAt, s.total); });
-    });
+    conversationsIn(model, r, f).forEach((c) => c.saleLinks.forEach((s) => add(c.firstAt, s.total)));
   } else {
-    model.idx.waSales.filter((s) => inRange(s.t, r) && originMatches(s.ad, f)).forEach((s) => add(s.t, s.total));
+    const adOf = new Map(model.conversations.map((c) => [c.key, c.ad]));
+    model.sales.filter((s) => inRange(s.t, r) && originMatches(!!adOf.get(s.convKey), f)).forEach((s) => add(s.t, s.total));
   }
   return [...m.values()];
 }
@@ -235,8 +345,13 @@ export function possibleUnmarkedSales(list: Conversation[]): Conversation[] {
     .sort((a, b) => (b.buySignalAt as number) - (a.buySignalAt as number));
 }
 
+// Como cada venda da conversa foi ligada (para o (i) da tabela)
+export function saleLinksText(c: Pick<Conversation, 'saleLinks'>, money: (n: number) => string): string {
+  return c.saleLinks.map((s) => `#${s.id.slice(0, 8)} ${money(s.total)}: ${s.how.map((h) => SALE_HOW_LABEL[h]).join(' + ')}`).join('; ');
+}
+
 // ── Tabela: busca, ordem, CSV ─────────────────────────────────────────────
-const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 export function searchConversations(list: Conversation[], q: string): Conversation[] {
   const text = fold(q.trim());
   if (!text) return list;
@@ -283,9 +398,16 @@ export function conversationsCsv(list: Conversation[]): string {
   const head = ['Contato', 'Telefone', 'Origem', 'Anúncio', 'Etapa', 'Vendas', 'Valor', 'Primeira mensagem', 'Última mensagem', '1ª resposta (min)', 'Contato enviado ao Facebook', 'Compra enviada ao Facebook'];
   const rows = list.map((c) => [
     c.name, c.phoneLabel, c.ad ? 'Meta Ads' : 'Não rastreada', c.adTitle || '', STAGE_LABEL[c.stage], c.sales, c.revenue.toFixed(2).replace('.', ','),
-    dt(c.firstAt), dt(c.lastAt), c.replyMinutes == null ? '' : Math.round(c.replyMinutes), c.fbContact ? 'sim' : 'não', c.fbPurchase ? 'sim' : 'não',
+    `${dt(c.firstAt)}${c.tracked ? '' : ' (início não registrado)'}`, dt(c.lastAt), c.replyMinutes == null ? '' : Math.round(c.replyMinutes), c.fbContact ? 'sim' : 'não', c.fbPurchase ? 'sim' : 'não',
   ]);
   return [head, ...rows].map((r) => r.map(csvCell).join(';')).join('\r\n');
+}
+
+// Filtro de sales.sale_date (que tem hora) para a janela: do 1º dia (inclusive) até o dia SEGUINTE ao último
+// (exclusive). "sale_date <= último dia" cortava as vendas feitas no último dia (hoje).
+export function saleDateFilter(w: { from: number; until: number }) {
+  const day = (ms: number) => spDay(ms);
+  return { gte: day(w.from), lt: day(w.until + DAY_MS) };
 }
 
 // Janela de dados que a aba precisa carregar
