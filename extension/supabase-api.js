@@ -1382,6 +1382,29 @@
     return { saved };
   }
 
+  // 2.12.2: última mensagem e último sinal de compra da conversa (wa_leads, só conversas que já são lead).
+  // Só avança (grava quando é mais nova). Sem a migration 20261107120000: não grava nada (o resto segue).
+  const trackingCols = () => probe('wa_leads.last_message_at', () => hasColumn('wa_leads', 'last_message_at'));
+  async function touchLeads({ items }) {
+    if (!Array.isArray(items) || items.length > 200) throw new Error('Lista inválida');
+    if (!(await trackingCols())) return { saved: 0, missing: true };
+    let saved = 0;
+    const seen = new Set();
+    for (const it of items) {
+      if (!it || !PANEL_CHAT_RE.test(it.chatId || '') || seen.has(it.chatId)) continue;
+      seen.add(it.chatId);
+      const chat = encodeURIComponent(it.chatId);
+      const last = isoOfSec(it.t);
+      await rest(`wa_leads?chat_id=eq.${chat}&or=(last_message_at.is.null,last_message_at.lt.${encodeURIComponent(last)})`, json('PATCH', 'return=minimal', { last_message_at: last }));
+      if (it.buy != null) {
+        const buy = isoOfSec(it.buy);
+        await rest(`wa_leads?chat_id=eq.${chat}&or=(buy_signal_at.is.null,buy_signal_at.lt.${encodeURIComponent(buy)})`, json('PATCH', 'return=minimal', { buy_signal_at: buy }));
+      }
+      saved++;
+    }
+    return { saved };
+  }
+
   async function finishSendLog({ id, status, reason }) {
     checkUuid(id, 'Registro inválido');
     if (!SEND_STATUS.includes(status) || status === 'enviando') throw new Error('Status inválido');
@@ -3243,7 +3266,7 @@
     fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,
-    saveLeads, logQuickSend, logManualSends, recordReplies,
+    saveLeads, logQuickSend, logManualSends, recordReplies, touchLeads,
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,

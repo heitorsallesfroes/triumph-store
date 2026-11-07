@@ -10,6 +10,7 @@ import AutoPostSale from '../components/whatsapp/AutoPostSale';
 import WaResults from '../components/whatsapp/WaResults';
 import WaConversions from '../components/whatsapp/WaConversions';
 import WaPanel from '../components/whatsapp/WaPanel';
+import WaTracking from '../components/whatsapp/WaTracking';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1092,8 +1093,8 @@ function LabelsTab() {
 }
 
 // ── Página WhatsApp do ERP: ponte vendas → CRM do WhatsApp ──────────────────
-type PageTab = 'painel' | 'clientes' | 'posvenda' | 'resultados' | 'conversoes' | 'antigo';
-const PAGE_TABS: [PageTab, string][] = [['painel', 'Painel'], ['clientes', 'Clientes → CRM'], ['posvenda', 'Pós-venda automático'], ['resultados', 'Resultados'], ['conversoes', 'Conversões (Facebook)'], ['antigo', 'Mensagens (antigo)']];
+type PageTab = 'painel' | 'rastreamento' | 'clientes' | 'posvenda' | 'resultados' | 'conversoes' | 'antigo';
+const PAGE_TABS: [PageTab, string][] = [['painel', 'Painel'], ['rastreamento', 'Rastreamento'], ['clientes', 'Clientes → CRM'], ['posvenda', 'Pós-venda automático'], ['resultados', 'Resultados'], ['conversoes', 'Conversões (Facebook)'], ['antigo', 'Mensagens (antigo)']];
 
 export default function WhatsApp() {
   const [pageTab, setPageTab] = useState<PageTab>('painel');
@@ -1128,6 +1129,7 @@ export default function WhatsApp() {
       ) : (
         <div style={{ padding: '20px 32px 28px', maxWidth: 1200, margin: '0 auto' }}>
           {pageTab === 'painel' && <WaPanel />}
+          {pageTab === 'rastreamento' && <WaTracking />}
           {pageTab === 'clientes' && <ClientsToCrm />}
           {pageTab === 'posvenda' && <AutoPostSale />}
           {pageTab === 'resultados' && <WaResults />}

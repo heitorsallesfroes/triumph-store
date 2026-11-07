@@ -799,6 +799,25 @@ guardada.
 
 ## O que mudou
 
+### 2.12.2 — Rastreamento no ERP (última mensagem e sinais de compra)
+- **Precisa da migration `20261107120000_wa_leads_tracking.sql`** (colunas `last_message_at` e `buy_signal_at` em
+  `wa_leads`). Sem ela a extensão segue como antes e não grava esses dois dados.
+- A aba com a trava agora grava, para cada conversa que já é lead (`wa_leads`), a hora da **última mensagem** que viu
+  (sua ou do cliente) e a hora da última mensagem com **sinal de compra** — "pix", "comprovante", "paguei",
+  "endereço de entrega" ou "pagamento" (sem acento/maiúscula; "pixel" não conta). O texto é conferido na ponte, no
+  navegador, e **nunca sai dela**: vai só "sim" e a hora. As duas colunas só avançam (gravação condicional).
+- ERP → WhatsApp → **Rastreamento** (nova sub-aba, logo depois do Painel): conversas novas, rastreadas (anúncio) x
+  não rastreadas, tempo médio da 1ª resposta (com "só horário comercial": seg–sáb, 8h–18h), vendas e faturamento das
+  conversas, Fez contato → Comprou, origem por dia, jornada Fez contato → Respondeu → Comprou, vendas por dia
+  ("Data do primeiro contato" / "Data da venda"), tabela de conversas (busca, ordenar, paginada, CSV) e **Possíveis
+  vendas não marcadas** (sinal de compra sem venda ligada, com "Abrir conversa" no wa.me).
+- ERP → Conversões (Facebook): **Cliente** e **Telefone** preenchidos também nos Contatos (e Telefone nas Compras), a
+  partir do nome aprendido/salvo, do lead, do anúncio e da venda ligada; telefone sempre mascarado no meio.
+- Nada mudou no envio de Contato/Compra ao Facebook.
+- Testes: `tests/panel.test.cjs` (sinal de compra com/sem acento e em legenda, nada de texto saindo da ponte,
+  última mensagem/sinal por conversa, PATCH condicional, sem a coluna não grava) e
+  `scripts/tests/waTracking.test.ts` (as contas da aba Rastreamento e o Cliente/Telefone das Conversões).
+
 ### 2.12.1 — atalhos no cabeçalho da conversa + etiquetas/nome que falhavam calados
 - **Atalhos no cabeçalho do WhatsApp**: no topo da conversa aberta, logo à esquerda dos ícones de vídeo/ligação e no
   mesmo tamanho deles, entram 💰 Venda (formulário de venda pelo chat), 📈 Compra p/ Facebook, ⏰ Agendar mensagem

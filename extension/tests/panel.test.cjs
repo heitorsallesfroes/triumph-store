@@ -2,6 +2,7 @@
 // - convTracker (engine.js): leads, "você digitou" uma vez por vez de falar, 1ª resposta depois de cada envio
 // - supabase-api.js com fetch falso: saveLeads, logManualSends, recordReplies, logSend com origem/etapa, filtros dos automáticos
 // - wa-bridge.js com uma WA-JS falsa: convEvents (lead novo, conversa antiga, varredura das últimas 24 h)
+// - 2.12.2 (aba Rastreamento do ERP): última mensagem e sinal de compra por conversa (touchLeads), sem o texto
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -68,8 +69,21 @@ test('tracker: fora de ordem é ordenado; varredura da abertura só gera lead', 
   assert.strictEqual(out.manual.length, 1);
 });
 
+test('tracker 2.12.2: activity = última mensagem e último sinal de compra por conversa (varredura não entra)', () => {
+  const t = E.convTracker();
+  const out = t.ingest([
+    { chatId: A, fromMe: false, t: 100, first: true },
+    { chatId: A, fromMe: true, t: 300, buy: true },
+    { chatId: A, fromMe: false, t: 200, buy: true },
+    { chatId: A, fromMe: false, t: 400 },
+    { chatId: B, fromMe: true, t: 50 },
+    { chatId: '5511900000003@c.us', fromMe: false, t: 70, first: true, scan: true },
+  ]);
+  assert.deepStrictEqual(plain(out.activity), [{ chatId: B, t: 50, buy: null }, { chatId: A, t: 400, buy: 300 }]);
+});
+
 // ── supabase-api.js ──
-function api({ migration = true, sends = [] } = {}) {
+function api({ migration = true, sends = [], tracking = true } = {}) {
   const calls = [];
   const res = (status, body) => ({ ok: status < 300, status, text: async () => (body == null ? '' : JSON.stringify(body)) });
   const fetch = async (url, init = {}) => {
@@ -77,6 +91,7 @@ function api({ migration = true, sends = [] } = {}) {
     const method = init.method || 'GET';
     calls.push({ method, path: p, prefer: init.headers && init.headers.Prefer, body: init.body ? JSON.parse(init.body) : undefined });
     if (!migration && (/wa_send_log\?select=origin/.test(p) || /wa_replies|wa_leads/.test(p))) return res(400, { code: '42703', message: 'column wa_send_log.origin does not exist' });
+    if (!tracking && p.startsWith('wa_leads?select=last_message_at')) return res(400, { code: '42703', message: 'column wa_leads.last_message_at does not exist' });
     if (p.startsWith('wa_items?select=id,follow_step')) return res(200, [{ id: '11111111-1111-1111-1111-111111111111', follow_step: 2 }]);
     if (method === 'GET' && p.startsWith('wa_send_log?select=id,created_at')) return res(200, sends.filter((s) => p.includes(s.chat_id)).slice(0, 1));
     if (method === 'GET' && p.startsWith('wa_send_log?select=id&chat_id=')) return res(200, p.includes('5511900000009') ? [{ id: 'x' }] : []);
@@ -154,6 +169,27 @@ test('api: etapa do follow-up na mensagem rápida (1 a 20) e sem a coluna → "A
   await assert.rejects(a.saveItem({ category_id: '33333333-3333-3333-3333-333333333333', title: 'X', parts: [{ type: 'texto', body: 'oi' }], follow_step: 25 }), /Etapa do follow-up/);
 });
 
+test('api 2.12.2: touchLeads só avança a última mensagem e o sinal de compra (PATCH condicional)', async () => {
+  const { api: a, calls } = api();
+  const r = await a.touchLeads({ items: [{ chatId: A, t: 1762430400, buy: 1762430300 }, { chatId: B, t: 1762430500, buy: null }, { chatId: A, t: 1 }, { chatId: 'x@g.us', t: 5 }] });
+  assert.strictEqual(r.saved, 2);
+  const patches = calls.filter((c) => c.method === 'PATCH');
+  const iso = (sec) => new Date(sec * 1000).toISOString();
+  assert.deepStrictEqual(patches.map((c) => c.path), [
+    `wa_leads?chat_id=eq.${A}&or=(last_message_at.is.null,last_message_at.lt.${iso(1762430400)})`,
+    `wa_leads?chat_id=eq.${A}&or=(buy_signal_at.is.null,buy_signal_at.lt.${iso(1762430300)})`,
+    `wa_leads?chat_id=eq.${B}&or=(last_message_at.is.null,last_message_at.lt.${iso(1762430500)})`,
+  ]);
+  assert.deepStrictEqual(patches.map((c) => c.body), [{ last_message_at: iso(1762430400) }, { buy_signal_at: iso(1762430300) }, { last_message_at: iso(1762430500) }]);
+});
+test('api 2.12.2: sem a coluna (migration 20261107120000 não aplicada) → não grava nada e não para o painel', async () => {
+  const { api: a, calls } = api({ tracking: false });
+  const r = await a.touchLeads({ items: [{ chatId: A, t: 1762430400, buy: 1762430400 }] });
+  assert.deepStrictEqual(plain(r), { saved: 0, missing: true });
+  assert.ok(!calls.some((c) => c.method !== 'GET'));
+  await assert.rejects(a.touchLeads({ items: 'x' }), /Lista inválida/);
+});
+
 // ── wa-bridge.js ──
 function bridge({ msgs = {}, noEarlier = {} } = {}) {
   let onMsg = null;
@@ -201,6 +237,23 @@ test('ponte: 1ª mensagem do cliente numa conversa sem nada antes = lead (com an
   assert.strictEqual(ev[1].first, undefined);
   assert.strictEqual(ev[2].fromMe, true);
   assert.strictEqual((await b.request('convEvents', {})).data.events.length, 0); // a fila esvazia
+});
+test('ponte 2.12.2: "buy" só quando a mensagem (nossa ou do cliente, texto ou legenda) tem sinal de compra; sem o texto', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const list = [
+    msg(A, 'p1', false, now, { body: 'Oi, quero o relógio' }),
+    msg(A, 'p2', true, now + 1, { body: 'Segue a chave PIX: 123' }),
+    msg(A, 'p3', false, now + 2, { type: 'image', caption: 'Comprovante 😊' }),
+    msg(A, 'p4', false, now + 3, { body: 'Qual o endereço de entrega?' }),
+    msg(A, 'p5', true, now + 4, { body: 'Pagamento confirmado' }),
+    msg(A, 'p6', false, now + 5, { body: 'paguei agora' }),
+    msg(A, 'p7', false, now + 6, { body: 'vi no pixel do site' }),
+  ];
+  const b = bridge({ msgs: { [A]: list } });
+  list.forEach((m) => b.emit(m));
+  const r = await b.request('convEvents', {});
+  assert.deepStrictEqual(plain(r.data.events.map((e) => e.buy === true)), [false, true, true, true, true, true, false]);
+  assert.ok(!/rel[oó]gio|chave|omprovante|endere|confirmado/i.test(JSON.stringify(r.data)), 'o texto não sai da ponte');
 });
 test('ponte: o WhatsApp avisa que há mensagens mais antigas não carregadas → não é lead', async () => {
   const now = Math.floor(Date.now() / 1000);

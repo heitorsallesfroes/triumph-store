@@ -10718,6 +10718,7 @@
       if (out.leads.length) await panelBatch('saveLeads', out.leads, 500);
       if (out.manual.length) await panelBatch('logManualSends', out.manual, 200);
       if (out.replies.length) await panelBatch('recordReplies', out.replies, 200);
+      if (out.activity.length) await panelBatch('touchLeads', out.activity, 200); // 2.12.2 (depois dos leads)
     } catch (e) {
       if (e.message === 'Atualize o banco para usar este recurso') pnl.off = true;
     }

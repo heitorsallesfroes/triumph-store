@@ -1034,7 +1034,8 @@
   }
   // ── 2.10.0: painel de resultados — eventos das conversas individuais (só memória desta aba) ──
   // Para cada mensagem nova: conversa, se é sua ou do cliente e a hora. Mensagem do cliente sem nenhuma
-  // mensagem antes na conversa = lead novo (first), com o anúncio se vier de anúncio. Nunca o texto.
+  // mensagem antes na conversa = lead novo (first), com o anúncio se vier de anúncio. Nunca o texto
+  // (2.12.2: só "buy: true" quando a mensagem tem um sinal de compra, conferido aqui).
   // O painel (aba com a trava) grava leads, respostas e o que você digitou.
   const CONV_MAX = 2000;
   const convQueue = [];
@@ -1042,6 +1043,15 @@
   const realMsg = (x) => !SKIP_TYPES.has(String(safe(() => x.type, '') || '')) && !safe(() => x.isNotification, false);
   const convChatId = (m) => safe(() => m.id.remote._serialized, '') || String(safe(() => m.id.remote, '') || '');
   const noEarlierOf = (chat) => safe(() => chat.msgs.msgLoadState.noEarlierMsgs, undefined);
+  // 2.12.2: sinal de compra na mensagem (nossa ou do cliente), conferido aqui; só sai "sim" (nunca o texto)
+  const BUY_SIGNAL_RE = /\bpix\b|comprovante|\bpaguei\b|endereco de entrega|\bpagamento/;
+  const stripAccents = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  function buySignalOf(m) {
+    const type = String(safe(() => m.type, '') || '');
+    const body = type === 'chat' ? safe(() => m.body, '') : safe(() => m.caption, '');
+    if (typeof body !== 'string' || !body) return false;
+    return BUY_SIGNAL_RE.test(stripAccents(body.slice(0, 2000).toLowerCase()));
+  }
   function leadAd(m) {
     const ctx = ctxOf(m);
     if (!ctx) return null;
@@ -1055,6 +1065,7 @@
     if (typeof fromMe !== 'boolean') return;
     const t = msgT(m) || Math.floor(Date.now() / 1000);
     const ev = { chatId, fromMe, t };
+    if (buySignalOf(m)) ev.buy = true; // 2.12.2
     if (!fromMe) {
       const chat = safe(() => wpp.chat.get(chatId), null);
       const msgs = (chat && safe(() => chat.msgs.getModelsArray(), null)) || [];

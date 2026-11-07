@@ -519,6 +519,8 @@
   //             último envio, ou 30 min sem a loja falar, ou a 1ª vez que vemos a conversa)
   //   replies : 1ª mensagem do cliente depois de uma mensagem nossa (as seguintes, até a loja falar de
   //             novo, não contam; o banco ainda confere com o último envio registrado)
+  //   activity: 2.12.2 — por conversa, a hora da última mensagem (t) e a da última com sinal de compra
+  //             (buy, ou null); a varredura da abertura não entra
   const TURN_GAP_S = 30 * 60;
   function convTracker() {
     const lastOur = new Map();
@@ -526,12 +528,17 @@
     const replied = new Map();
     return {
       ingest(events, isExt = () => false) {
-        const out = { leads: [], manual: [], replies: [] };
+        const out = { leads: [], manual: [], replies: [], activity: [] };
+        const act = new Map();
         [...(events || [])].filter((e) => e && typeof e.chatId === 'string' && Number.isFinite(Number(e.t)))
           .sort((a, b) => a.t - b.t).forEach((e) => {
             const chat = e.chatId;
             if (!e.fromMe && e.first) out.leads.push({ chatId: chat, phone: e.phone || null, t: e.t, ad: e.ad || null });
             if (e.scan) return; // varredura da abertura: só o lead
+            const a = act.get(chat) || { chatId: chat, t: e.t, buy: null };
+            a.t = Math.max(a.t, e.t);
+            if (e.buy === true) a.buy = Math.max(a.buy ?? 0, e.t);
+            act.set(chat, a);
             if (e.fromMe) {
               const prev = lastOur.get(chat);
               const cust = lastCust.get(chat);
@@ -548,6 +555,7 @@
               replied.set(chat, e.t);
             }
           });
+        out.activity = [...act.values()];
         return out;
       },
     };

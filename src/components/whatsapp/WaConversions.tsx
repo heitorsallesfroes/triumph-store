@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { fetchAllRows } from '../../lib/resumoAnualCalc';
-import { conversionTotals, eventKind, hasAd, linkedSaleLabel, maskPhone, periodBounds, type ConversionRow, type ConversionTotals, type LinkedSale } from '../../lib/waConversions';
+import {
+  conversionContact, conversionTotals, eventKind, hasAd, linkedSaleLabel, periodBounds, type ContactSources, type ConversionRow, type ConversionTotals, type LinkedSale,
+} from '../../lib/waConversions';
 import { btn, card, input, money, muted, ORANGE } from './shared';
 import { SectionHeader, StatCard, fmtInt } from './ui';
 
@@ -20,6 +22,25 @@ async function selectCols(): Promise<string> {
   return `${BASE_COLS}${error ? '' : ',event_name'}${saleErr ? '' : ',sale_id'}`;
 }
 
+// 2.12.2: de onde vêm Cliente e Telefone das linhas da página (cada tabela que não existir fica vazia)
+type SaleInfo = LinkedSale & { customer_phone?: string | null };
+async function contactSources(chatIds: string[], sales: Record<string, SaleInfo>): Promise<ContactSources> {
+  const src: ContactSources = { leadPhone: {}, attribution: {}, chatName: {}, sales };
+  if (!chatIds.length) return src;
+  const read = async <T,>(table: string, cols: string, put: (r: T) => void) => {
+    try {
+      const { data, error } = await supabase.from(table).select(cols).in('chat_id', chatIds);
+      if (!error) ((data || []) as unknown as T[]).forEach(put);
+    } catch { /* sem a tabela */ }
+  };
+  await Promise.all([
+    read<{ chat_id: string; phone: string | null }>('wa_leads', 'chat_id, phone', (r) => { src.leadPhone[r.chat_id] = r.phone; }),
+    read<{ chat_id: string; phone: string | null; contact_name: string | null }>('wa_ad_attribution', 'chat_id, phone, contact_name', (r) => { src.attribution[r.chat_id] = r; }),
+    read<{ chat_id: string; name: string }>('wa_chat_names', 'chat_id, name', (r) => { src.chatName[r.chat_id] = r.name; }),
+  ]);
+  return src;
+}
+
 export default function WaConversions() {
   const today = new Date();
   const [start, setStart] = useState(ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30)));
@@ -27,6 +48,7 @@ export default function WaConversions() {
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<ConversionRow[] | null>(null);
   const [sales, setSales] = useState<Record<string, LinkedSale>>({});
+  const [contacts, setContacts] = useState<ContactSources>({ leadPhone: {}, attribution: {}, chatName: {}, sales: {} });
   const [total, setTotal] = useState(0);
   const [totals, setTotals] = useState<ConversionTotals | null>(null);
   const [error, setError] = useState('');
@@ -48,13 +70,16 @@ export default function WaConversions() {
       const pageRows = (data || []) as unknown as ConversionRow[];
       // 2.10.5: vendas do ERP ligadas às compras desta página
       const saleIds = [...new Set(pageRows.map((r) => r.sale_id).filter(Boolean))] as string[];
-      const found: Record<string, LinkedSale> = {};
+      const found: Record<string, SaleInfo> = {};
       if (saleIds.length) {
-        const { data: rowsSales } = await supabase.from('sales').select('id, customer_name, total_sale_price').in('id', saleIds);
-        ((rowsSales || []) as LinkedSale[]).forEach((x) => { found[x.id] = x; });
+        const { data: rowsSales } = await supabase.from('sales').select('id, customer_name, customer_phone, total_sale_price').in('id', saleIds);
+        ((rowsSales || []) as SaleInfo[]).forEach((x) => { found[x.id] = x; });
       }
+      const chatIds = [...new Set(pageRows.map((r) => r.chat_id).filter(Boolean))] as string[];
+      const src = await contactSources(chatIds, found);
       if (!alive) return;
       setSales(found);
+      setContacts(src);
       setRows(pageRows);
       setTotal(count || 0);
       // Totais do período inteiro, em páginas de 1000
@@ -95,11 +120,12 @@ export default function WaConversions() {
             {rows && rows.length === 0 && <tr><td style={td} colSpan={9}><span style={muted}>Nenhuma conversão no período.</span></td></tr>}
             {(rows || []).map((r) => {
               const kind = eventKind(r);
+              const who = conversionContact(r, contacts);
               return (
                 <tr key={r.event_id} data-testid="conv-row">
                   <td style={td}>{fmt(r.created_at)}</td>
-                  <td style={td}>{r.contact_name || '—'}</td>
-                  <td style={td}>{maskPhone(r.chat_id)}</td>
+                  <td style={td}>{who.name}</td>
+                  <td style={td}>{who.phone}</td>
                   <td style={td}>{kind}</td>
                   <td style={td}>{kind === 'Compra' ? money(Number(r.value)) : '—'}</td>
                   <td style={td}>{hasAd(r) ? 'Sim' : 'Não'}</td>

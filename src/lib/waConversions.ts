@@ -47,7 +47,38 @@ export function maskPhone(chatId: string | null | undefined): string {
   return `***${last4}`;
 }
 
-export const hasAd = (r: Pick<ConversionRow, 'ad_id' | 'ad_title'>) => !!(r.ad_id || r.ad_title);
+// 2.12.2: telefone mascarado a partir dos dígitos ("5511987654321" → "(11) 9****-4321")
+export function maskPhoneDigits(raw: string | null | undefined): string {
+  let d = String(raw ?? '').replace(/\D/g, '');
+  if (d.length === 10 || d.length === 11) d = `55${d}`;
+  return d.length >= 8 && d.length <= 15 ? maskPhone(`${d}@c.us`) : '—';
+}
+
+// 2.12.2: Cliente e Telefone da linha (a tabela de conversões quase nunca tem o telefone e o Contato vem
+// sem nome). Ordem: o que veio no evento → nome aprendido/manual da conversa (wa_chat_names) → nome do
+// WhatsApp (wa_ad_attribution) → cliente da venda ligada. Telefone: número da conversa (@c.us) → lead
+// (wa_leads) → anúncio (wa_ad_attribution) → venda ligada. Sempre mascarado no meio.
+export interface ContactSources {
+  leadPhone: Record<string, string | null | undefined>;
+  attribution: Record<string, { phone?: string | null; contact_name?: string | null } | undefined>;
+  chatName: Record<string, string | undefined>;
+  sales: Record<string, { customer_name?: string | null; customer_phone?: string | null } | undefined>;
+}
+export function conversionContact(r: Pick<ConversionRow, 'chat_id' | 'contact_name' | 'sale_id'>, src: ContactSources): { name: string; phone: string } {
+  const chat = r.chat_id || '';
+  const sale = r.sale_id ? src.sales[r.sale_id] : undefined;
+  const attr = chat ? src.attribution[chat] : undefined;
+  const clean = (v: string | null | undefined) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const name = clean(r.contact_name) || clean(chat ? src.chatName[chat] : null) || clean(attr && attr.contact_name) || clean(sale && sale.customer_name) || '—';
+  let phone = maskPhone(chat);
+  if (phone === '—') {
+    const digits = [chat ? src.leadPhone[chat] : null, attr && attr.phone, sale && sale.customer_phone].find((p) => maskPhoneDigits(p) !== '—');
+    phone = maskPhoneDigits(digits);
+  }
+  return { name, phone };
+}
+
+export const hasAd =(r: Pick<ConversionRow, 'ad_id' | 'ad_title'>) => !!(r.ad_id || r.ad_title);
 
 export interface ConversionTotals { purchases: number; purchaseSum: number; contacts: number }
 
