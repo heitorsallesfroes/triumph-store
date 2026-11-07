@@ -306,6 +306,81 @@
   }
   const hasNameVar = (text) => /\{[^{}]*?\bnome\b[^{}]*?\}/i.test(String(text || ''));
 
+  // ── 2.12.1: leituras/gravações do painel com 3 tentativas e o motivo real do erro ──
+  // Não repete o que nunca vai dar certo: extensão atualizada (aba velha), dado inválido, banco sem a migration.
+  const RETRY_NEVER = /Recarregue o WhatsApp|context invalidated|inv[áa]lid|Atualize o banco/i;
+  async function withRetry(fn, { tries = 3, waitMs = 700, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+    let last = null;
+    for (let i = 0; i < tries; i++) {
+      try { return await fn(i); } catch (e) {
+        last = e;
+        if (RETRY_NEVER.test(String(e && e.message))) break;
+        if (i < tries - 1) await sleep(waitMs * (i + 1));
+      }
+    }
+    throw last;
+  }
+  // Mensagem técnica (do background / Supabase) → explicação curta em português
+  function errorReason(msg) {
+    const m = String(msg == null ? '' : msg).trim();
+    const code = Number((m.match(/^Supabase (\d{3})/) || [])[1]) || 0;
+    if (/Recarregue o WhatsApp|context invalidated/i.test(m)) return 'A extensão foi atualizada e esta aba ficou com a versão antiga: recarregue o WhatsApp (F5).';
+    if (/Sem resposta da extensão|message port closed|Receiving end does not exist|Could not establish connection/i.test(m)) return 'A extensão não respondeu (o serviço dela estava reiniciando).';
+    if (!code && /Failed to fetch|NetworkError|network|ERR_/i.test(m)) return 'Sem conexão com o Supabase (internet caiu ou o Supabase está fora do ar).';
+    if (code === 401 || /\bJWT\b|jwt expired/i.test(m)) return 'Sessão expirada ou sem permissão no Supabase (401). Se continuar, entre de novo na conta da extensão.';
+    if (code === 403) return 'Sem permissão para ler estes dados no Supabase (403).';
+    if (code >= 500 || /57014|timeout|tempo esgotado/i.test(m)) return `O Supabase deu erro ou demorou demais${code ? ` (${code})` : ''}.`;
+    if (/Identificação inválida|Telefone inválido|Conversa inválida/.test(m)) return `Não consegui identificar esta conversa (${m}).`;
+    if (code) return `Consulta recusada pelo Supabase (${code}).`;
+    return m || 'erro desconhecido';
+  }
+  // Aprender o nome da SUA mensagem sem perder: o que não gravou (rede, extensão reiniciando) fica guardado e
+  // tenta de novo (8 s, 16 s, 32 s… até 5 min). Antes da 2.12.1 a fila da ponte era esvaziada e uma falha
+  // de gravação perdia o nome para sempre.
+  const LEARN_CHAT_RE = /^[0-9]+@(c\.us|lid)$/;
+  function createNameLearner({ save, learn = learnNameFrom, blocked = () => false, now = () => Date.now(), maxPending = 100 } = {}) {
+    const pending = new Map(); // chatId → { name, tries, next }
+    const errors = new Map(); // chatId → { name, reason, detail, tries }
+    return {
+      push(msgs) {
+        let added = 0;
+        (msgs || []).forEach((x) => {
+          const n = x && learn(x.head);
+          if (!n || !LEARN_CHAT_RE.test(String(x.chatId || '')) || blocked(x.chatId)) return;
+          pending.delete(x.chatId); // a mais nova vale
+          pending.set(x.chatId, { name: n, tries: 0, next: 0 });
+          errors.delete(x.chatId);
+          added++;
+        });
+        while (pending.size > maxPending) pending.delete(pending.keys().next().value);
+        return added;
+      },
+      async flush({ force = false, only = null } = {}) {
+        const done = [];
+        for (const [chatId, p] of [...pending]) {
+          if (only && chatId !== only) continue;
+          if (!force && p.next > now()) continue;
+          try {
+            const result = await save(chatId, p.name);
+            if (pending.get(chatId) === p) pending.delete(chatId);
+            errors.delete(chatId);
+            done.push({ chatId, name: p.name, result });
+          } catch (e) {
+            const detail = String((e && e.message) || e);
+            p.tries++;
+            p.next = now() + Math.min(5 * 60 * 1000, 4000 * 2 ** p.tries);
+            errors.set(chatId, { name: p.name, reason: errorReason(detail), detail, tries: p.tries });
+            if (RETRY_NEVER.test(detail) && !/Recarregue o WhatsApp|context invalidated/i.test(detail)) pending.delete(chatId);
+          }
+        }
+        return done;
+      },
+      error: (chatId) => errors.get(chatId) || null,
+      pending: (chatId) => pending.get(chatId) || null,
+      size: () => pending.size,
+    };
+  }
+
   // ── 2.10.2: painel personalizável (só visual; guardado no storage local, por computador) ──
   // tabs: abas na barra (as outras vão para "Mais"; Mensagens nunca some). filters: chips além de "Tudo".
   // convBtns: botões da conversa. density: confortavel | compacta. collapsed: blocos do topo recolhidos.
@@ -314,11 +389,14 @@
   const PANEL_FILTERS = ['mais_usadas', 'texto', 'audio', 'imagem', 'video', 'documento', 'localizacao', 'produto', 'catalogo', 'contato', 'pix'];
   const PANEL_BLOCKS = ['conv', 'etiquetas', 'nome', 'busca'];
   const PANEL_CONV_BTNS = ['venda', 'compra', 'automacao', 'proxima']; // 2.10.3: + Próxima conversa
+  const PANEL_HDR_BTNS = ['venda', 'compra', 'agendar', 'etiqueta']; // 2.12.1: atalhos no cabeçalho da conversa
   function defaultPanelPrefs() {
     return {
       tabs: { midias: true, etiquetas: true, vendas: true, conversoes: true, quadro: false, agendados: false, disparos: false, follows: false },
       filters: ['mais_usadas', 'texto', 'audio', 'imagem', 'video'],
       convBtns: { venda: true, compra: true, automacao: true, proxima: true },
+      hdr: { on: true, venda: true, compra: true, agendar: true, etiqueta: true }, // 2.12.1
+      hdrHidePanel: false, // 2.12.1: com os atalhos ligados, esconder do painel Venda / Compra / Automação
       density: 'confortavel',
       keepListPos: true, // 2.10.3: manter a posição da lista de conversas ao enviar
       collapsed: { conv: false, etiquetas: false, nome: false, busca: false },
@@ -335,6 +413,8 @@
       tabs: bools(r.tabs, PANEL_TABS, d.tabs),
       filters: PANEL_FILTERS.filter((f) => filters.includes(f)), // sempre na ordem dos chips
       convBtns: bools(r.convBtns, PANEL_CONV_BTNS, d.convBtns),
+      hdr: bools(r.hdr, ['on', ...PANEL_HDR_BTNS], d.hdr),
+      hdrHidePanel: typeof r.hdrHidePanel === 'boolean' ? r.hdrHidePanel : d.hdrHidePanel,
       density: r.density === 'compacta' ? 'compacta' : 'confortavel',
       keepListPos: typeof r.keepListPos === 'boolean' ? r.keepListPos : d.keepListPos,
       collapsed: bools(r.collapsed, PANEL_BLOCKS, d.collapsed),
@@ -1992,6 +2072,7 @@
     firstNameOf, chatIdOfContact, pickVariant, evaluateFollow,
     smartFirstName, fillName, hasNameVar, firstWordOf, isCommonName, stripAccents,
     setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT, convTracker,
+    withRetry, errorReason, createNameLearner, PANEL_HDR_BTNS, // 2.12.1
     defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, previewSendPlan, sendLabelsApply,
     normBrPhone, matchSalesForPurchase, salePhoneOf, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,
     TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,

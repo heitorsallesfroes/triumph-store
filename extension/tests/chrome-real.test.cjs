@@ -36,6 +36,7 @@ function findChrome() {
 }
 
 // WhatsApp Web simulado: o esqueleto que o painel usa (#app, #main, caixa de mensagem) e, desde a 2.10.3, a lista de
+// 2.12.1: o cabeçalho da conversa tem a foto, o nome e os ícones do WhatsApp (vídeo, ligar, pesquisar, mais opções).
 // conversas (#pane-side, 40 linhas de 72 px) que se comporta como a do WhatsApp: clicar abre a conversa; enviar
 // (Enter ou botão Enviar) leva a conversa para o topo e, 120 ms depois, a lista PULA para o topo;
 // __fakeIncoming() faz o mesmo para mensagem de cliente. A WA-JS não acha o WhatsApp e fica esperando.
@@ -45,9 +46,10 @@ const FAKE_WA = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><
 #app{height:100%;display:flex}.side{width:30%;min-width:260px;background:#fff;border-right:1px solid #d1d7db;display:flex;flex-direction:column}
 #pane-side{flex:1;overflow-y:auto}[aria-selected="true"]{background:#f0f2f5;font-weight:600}
 .chat{flex:1;display:flex;flex-direction:column}.hdr{height:59px;flex:none;background:#f0f2f5;display:flex;align-items:center;padding:0 16px;font-weight:600}
-.msgs{flex:1}.foot{height:62px;background:#f0f2f5;display:flex;align-items:center}</style></head>
+.msgs{flex:1}.foot{height:62px;background:#f0f2f5;display:flex;align-items:center}
+.ttl{flex:1;min-width:0}.icons{display:flex;gap:4px}.wb{width:40px;height:40px;border:0;border-radius:50%;background:none;font-size:18px;cursor:pointer}</style></head>
 <body><div id="app"><div class="side" id="side"><div class="hdr">Conversas</div><div id="pane-side"><div role="grid">${ROWS}</div></div></div>
-<div class="chat" id="main"><header class="hdr"><span dir="auto" title="Cliente 1">Cliente 1</span></header><div class="msgs"></div>
+<div class="chat" id="main"><header class="hdr"><div style="width:40px;height:40px;border-radius:50%;background:#ccc;margin-right:12px"></div><div class="ttl"><span dir="auto" title="Cliente 1">Cliente 1</span></div><div class="icons"><div><button class="wb" aria-label="Ligar com vídeo"><span data-icon="video-call">🎥</span></button></div><div><button class="wb" aria-label="Ligar"><span data-icon="voice-call">📞</span></button></div><div><button class="wb" aria-label="Pesquisar"><span data-icon="search-alt">🔍</span></button></div><div><button class="wb" aria-label="Mais opções"><span data-icon="menu">⋮</span></button></div></div></header><div class="msgs"></div>
 <footer class="foot"><div contenteditable="true" role="textbox" data-tab="10" style="flex:1;margin:12px;height:38px;background:#fff;border-radius:8px"></div><button aria-label="Enviar" style="margin-right:12px;height:38px"><span data-icon="send">➤</span></button></footer></div></div>
 <script>
 const pane = document.getElementById('pane-side');
@@ -64,6 +66,12 @@ function send() { if (!box.textContent.trim()) return; box.textContent = ''; jum
 box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 document.querySelector('footer button').addEventListener('click', send);
 window.__fakeIncoming = (name) => jumpTop(grid.querySelector('[data-name="' + name + '"]'));
+// 2.12.1: clique no cabeçalho (o WhatsApp abriria os dados do contato), recriar o cabeçalho e conversa de grupo
+window.__hdrClicks = 0;
+document.getElementById('main').addEventListener('click', (e) => { if (e.target.closest('header')) window.__hdrClicks++; });
+const ICONS = document.querySelector('#main header .icons').outerHTML;
+window.__rebuildHeader = (icons = true) => { const h = document.querySelector('#main header'); const n = document.createElement('header'); n.className = 'hdr'; n.innerHTML = h.innerHTML; n.querySelectorAll('.tsp-hdr, .icons').forEach((x) => x.remove()); if (icons) n.insertAdjacentHTML('beforeend', ICONS); h.replaceWith(n); };
+window.__group = (on) => { document.querySelector('#main .msgs').innerHTML = on ? '<div data-id="false_120363000000000000@g.us_ABC">oi</div>' : ''; };
 </script></body></html>`;
 
 // ── CDP por pipe (fd 3 = escrita, fd 4 = leitura; mensagens separadas por \0) ──
@@ -163,6 +171,7 @@ async function main() {
     function fakeSupabase(method, url, body) {
       if (!url.pathname.startsWith('/rest/v1/')) return null;
       const table = url.pathname.slice('/rest/v1/'.length);
+      if (fake.fail && fake.fail[table] > 0) { fake.fail[table]--; fake.failed = (fake.failed || 0) + 1; return [503, { message: 'Service Unavailable' }]; } // 2.12.1
       const q = url.searchParams;
       const sel = q.get('select') || '';
       const eq = (k) => { const v = q.get(k); return v && v.startsWith('eq.') ? v.slice(3) : null; };
@@ -699,6 +708,117 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console nas sequências', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 9. atalhos no cabeçalho da conversa (2.12.1): 💰 📈 ⏰ 🏷️ à esquerda do vídeo/ligação, no tamanho dos ícones do
+    // WhatsApp; abrem o painel na tela certa; 🏷️ com a lista suspensa; reinserir; grupo; Personalizar; e as etiquetas
+    // CRM com 3 tentativas, o motivo real e "Tentar de novo"
+    fake.on = true;
+    fake.generic = true;
+    const uuid = () => require('crypto').randomUUID();
+    const VIP = uuid();
+    fake.db.wa_labels = [...(fake.db.wa_labels || []), { id: VIP, name: 'VIP', color: '#e11d48', position: 90, hidden: false, created_at: new Date().toISOString() }];
+    const contacts = {};
+    ['Cliente 3', 'Cliente 4', 'Cliente 5'].forEach((n) => { contacts[n] = uuid(); fake.db.wa_contacts = [...(fake.db.wa_contacts || []), { id: contacts[n], key: `nome:${n.toLowerCase()}`, phone: null, name: n }]; });
+    fake.db.wa_contact_labels = [...(fake.db.wa_contact_labels || []), ...Object.values(contacts).map((id) => ({ contact_id: id, label_id: VIP }))];
+    const openChat = (name) => evalPage(`(async () => { const r = document.querySelector('[data-name="${name}"]'); r.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); await new Promise((x) => setTimeout(x, 300)); return true; })()`);
+    const pg = (js) => evalPage(`(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); ${js} })()`);
+    const pgWait = async (js, ms = 8000) => { for (const stop = Date.now() + ms; Date.now() < stop;) { if (await pg(js).catch(() => false)) return true; await sleep(200); } return false; };
+    await openChat('Cliente 3');
+    // painel fechado
+    await q(`if (sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(300); return true;`);
+    const inserted = await pgWait(`const h = document.querySelector('#main header'); const b = h.querySelector('.tsp-hdr'); return !!b && b.nextElementSibling && !!b.nextElementSibling.querySelector('[data-icon="video-call"]');`);
+    const hd = await pg(`const b = [...document.querySelectorAll('#main header .tsp-hdr-b')]; const wa = document.querySelector('#main header .wb').getBoundingClientRect();
+      return { keys: b.map((x) => x.dataset.hdr), tips: b.map((x) => x.title), icons: b.map((x) => x.textContent), w: b.map((x) => Math.round(x.getBoundingClientRect().width)), h: b.map((x) => Math.round(x.getBoundingClientRect().height)), waW: Math.round(wa.width), waH: Math.round(wa.height),
+        top: Math.round(b[0].getBoundingClientRect().top - wa.top) };`);
+    check('cabeçalho: 💰 📈 ⏰ 🏷️ entram logo à esquerda do vídeo/ligação, do tamanho dos ícones do WhatsApp, com dica',
+      inserted && JSON.stringify(hd.keys) === '["venda","compra","agendar","etiqueta"]' && hd.icons.join('') === '💰📈⏰🏷️' && hd.tips.every(Boolean)
+      && hd.w.every((x) => x === hd.waW) && hd.h.every((x) => x === hd.waH) && hd.top === 0, JSON.stringify(hd));
+    await pg(`window.__hdrClicks = 0; document.querySelector('#main header [data-hdr="venda"]').click(); await wait(500); return true;`);
+    const afterVenda = await q(`return { open: !!sh.querySelector('.root.open'), vendas: sh.querySelector('.panel').classList.contains('sec-vendas') };`);
+    const hdrClicks = await pg('return window.__hdrClicks;');
+    check('💰 com o painel fechado: abre o painel na tela de Vendas (e o clique não abre os dados do contato)', afterVenda.open && afterVenda.vendas && hdrClicks === 0, JSON.stringify({ ...afterVenda, hdrClicks }));
+    await pg(`document.querySelector('#main header [data-hdr="compra"]').click(); await wait(400); return true;`);
+    const afterCompra = await q(`return sh.querySelector('.panel').classList.contains('sec-conversoes');`);
+    await pg(`document.querySelector('#main header [data-hdr="agendar"]').click(); await wait(400); return true;`);
+    const afterAgendar = await q(`return sh.querySelector('.panel').classList.contains('sec-sched');`);
+    check('📈 abre o 📈 (Conversões) e ⏰ abre o agendar desta conversa', afterCompra && afterAgendar, JSON.stringify({ afterCompra, afterAgendar }));
+    await q(`const b = [...sh.querySelectorAll('.tab, [data-section]')].find((x) => x.dataset && x.dataset.section === 'mensagens'); if (b) b.click(); await wait(200); return true;`);
+    // 🏷️: lista suspensa
+    await pg(`document.querySelector('#main header [data-hdr="etiqueta"]').click(); await wait(300); return true;`);
+    const popOk = await pgWait(`const p = document.getElementById('tsp-hdr-pop'); return !!p && !!p.shadowRoot.querySelector('.opt[data-label-id]');`);
+    await pg(`const sh2 = document.getElementById('tsp-hdr-pop').shadowRoot; const i = sh2.querySelector('input'); i.value = 'Atacado'; i.dispatchEvent(new Event('input')); await wait(150); return true;`);
+    const newBtn = await pg(`return document.getElementById('tsp-hdr-pop').shadowRoot.querySelector('.new').textContent;`);
+    await pg(`document.getElementById('tsp-hdr-pop').shadowRoot.querySelector('.new').click(); return true;`);
+    const createdOk = await pgWait(`const sh2 = document.getElementById('tsp-hdr-pop').shadowRoot; const o = [...sh2.querySelectorAll('.opt[data-label-id]')];
+      const g = (n) => o.find((x) => x.querySelector('.nm').textContent === n); return !!g('Atacado') && g('Atacado').getAttribute('aria-checked') === 'true' && !!g('VIP') && g('VIP').getAttribute('aria-checked') === 'true';`, 10000);
+    const atacado = (fake.db.wa_labels || []).find((l) => l.name === 'Atacado');
+    check('🏷️: lista suspensa ali mesmo; "+ Nova etiqueta" cria e já marca; a que a conversa tem aparece ✓',
+      popOk && /Nova etiqueta “Atacado”/.test(newBtn) && createdOk && !!atacado, JSON.stringify({ popOk, newBtn, createdOk, atacado: !!atacado }));
+    await pg(`const sh2 = document.getElementById('tsp-hdr-pop').shadowRoot; [...sh2.querySelectorAll('.opt[data-label-id]')].find((x) => x.querySelector('.nm').textContent === 'VIP').click(); return true;`);
+    await sleep(1200);
+    const vipGone = !(fake.db.wa_contact_labels || []).some((r) => r.contact_id === contacts['Cliente 3'] && r.label_id === VIP);
+    const vipUnchecked = await pg(`const o = [...document.getElementById('tsp-hdr-pop').shadowRoot.querySelectorAll('.opt[data-label-id]')].find((x) => x.querySelector('.nm').textContent === 'VIP'); return o && o.getAttribute('aria-checked');`);
+    await pg(`const sh2 = document.getElementById('tsp-hdr-pop').shadowRoot; const i = sh2.querySelector('input'); i.value = 'atac'; i.dispatchEvent(new Event('input')); await wait(100); return true;`);
+    const filtered = await pg(`return [...document.getElementById('tsp-hdr-pop').shadowRoot.querySelectorAll('.opt[data-label-id] .nm')].map((x) => x.textContent);`);
+    await pg(`document.getElementById('tsp-hdr-pop').shadowRoot.querySelector('input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(150); return true;`);
+    const popClosed = await pg(`return !document.getElementById('tsp-hdr-pop');`);
+    check('🏷️: desmarcar em 1 clique grava no banco; a busca filtra; Esc fecha', vipGone && vipUnchecked === 'false' && JSON.stringify(filtered) === '["Atacado"]' && popClosed, JSON.stringify({ vipGone, vipUnchecked, filtered, popClosed }));
+    // o WhatsApp recria o cabeçalho / troca de conversa
+    await pg(`window.__rebuildHeader(true); return true;`);
+    const hdrBack = await pgWait(`return !!document.querySelector('#main header .tsp-hdr');`, 5000);
+    await openChat('Cliente 6');
+    const afterSwitch = await pgWait(`return document.querySelectorAll('#main header .tsp-hdr').length === 1 && !document.querySelector('#main header .tsp-hdr').hidden;`, 5000);
+    check('reinsere quando o WhatsApp recria o cabeçalho e ao trocar de conversa (um só grupo de ícones)', hdrBack && afterSwitch, JSON.stringify({ hdrBack, afterSwitch }));
+    await pg(`window.__group(true); return true;`);
+    const grpHidden = await pgWait(`const b = document.querySelector('#main header .tsp-hdr'); return !b || b.hidden;`, 5000);
+    await pg(`window.__group(false); return true;`);
+    const grpBack = await pgWait(`const b = document.querySelector('#main header .tsp-hdr'); return !!b && !b.hidden;`, 5000);
+    check('em grupo os atalhos somem (só conversa individual); voltam na conversa individual', grpHidden && grpBack, JSON.stringify({ grpHidden, grpBack }));
+    // Personalizar
+    await czOpen();
+    const czHdr = await q(`return [...sh.querySelectorAll('.cz [data-cz-hdr]')].map((x) => x.dataset.czHdr + ':' + x.querySelector('input').checked);`);
+    await q(`sh.querySelector('.cz [data-cz-hdr="etiqueta"] input').click(); await wait(200); sh.querySelector('.cz [data-cz-hdr="hide"] input').click(); await wait(200); return true;`);
+    await czClose();
+    const czApplied = await pg(`const b = document.querySelector('#main header [data-hdr="etiqueta"]'); return !!b && b.hidden;`);
+    const panelBtns = await q(`return [...sh.querySelectorAll('.qbtns .sale-quick')].map((b) => getComputedStyle(b).display);`);
+    await czOpen();
+    await q(`sh.querySelector('.cz [data-cz-hdr="on"] input').click(); await wait(200); return true;`);
+    await czClose();
+    const allOff = await pgWait(`return !document.querySelector('#main header .tsp-hdr');`, 4000);
+    const panelBtnsBack = await q(`return sh.querySelector('.panel').classList.contains('cz-hdr-hide');`);
+    check('Personalizar: "Atalhos no cabeçalho" (ligado) e os 4; esconder 🏷️; esconder do painel Venda/Compra/Automação; desligar tudo',
+      JSON.stringify(czHdr) === '["on:true","venda:true","compra:true","agendar:true","etiqueta:true","hide:false"]' && czApplied && panelBtns.every((d) => d === 'none') && allOff && panelBtnsBack === false,
+      JSON.stringify({ czHdr, czApplied, panelBtns, allOff, panelBtnsBack }));
+    await czClickLabel('Atalhos no cabeçalho da conversa');
+    await czClickLabel('🏷️ Etiqueta CRM');
+    // WhatsApp mudou (sem os ícones de vídeo/ligação): não faz nada
+    await pg(`window.__rebuildHeader(false); return true;`);
+    await sleep(2800);
+    const noIcons = await pg(`return !document.querySelector('#main header .tsp-hdr');`);
+    await pg(`window.__rebuildHeader(true); return true;`);
+    const iconsAgain = await pgWait(`return !!document.querySelector('#main header [data-hdr="etiqueta"]:not([hidden])');`, 5000);
+    check('cabeçalho sem os ícones do WhatsApp: não insere nada (e volta quando eles voltam)', noIcons && iconsAgain, JSON.stringify({ noIcons, iconsAgain }));
+    // etiquetas CRM: 3 tentativas sozinho, depois o motivo e "Tentar de novo"
+    fake.fail = { wa_contact_labels: 2 };
+    fake.failed = 0;
+    await openChat('Cliente 4');
+    const retried = await waitFor(`return [...sh.querySelectorAll('.labels .chips .lchip')].some((c) => c.textContent === 'VIP');`, 12000);
+    check('etiquetas CRM: falhou 2 vezes e carregou sozinho na 3ª tentativa', retried && fake.failed === 2, JSON.stringify({ retried, failed: fake.failed }));
+    fake.fail = { wa_contact_labels: 99 };
+    fake.failed = 0;
+    await openChat('Cliente 5');
+    const errShown = await waitFor(`return !!sh.querySelector('.labels .chips .lerr .lerr-retry');`, 15000);
+    const errTxt = await q(`const e = sh.querySelector('.labels .chips .lerr'); return e ? { why: e.querySelector('.lerr-why').textContent, raw: e.querySelector('.lerr-raw').textContent, txt: e.querySelector('.none').textContent } : null;`);
+    const tries = fake.failed;
+    fake.fail = {};
+    await q(`sh.querySelector('.labels .chips .lerr-retry').click(); return true;`);
+    const fixed = await waitFor(`return [...sh.querySelectorAll('.labels .chips .lchip')].some((c) => c.textContent === 'VIP') && !sh.querySelector('.labels .chips .lerr');`, 12000);
+    check('etiquetas CRM: depois de 3 tentativas mostra "Não consegui carregar", o motivo real nos detalhes e "Tentar de novo" (que carrega)',
+      errShown && tries === 3 && !!errTxt && errTxt.txt === 'Não consegui carregar' && /Supabase deu erro ou demorou demais \(503\)/.test(errTxt.why) && /Supabase 503/.test(errTxt.raw) && fixed,
+      JSON.stringify({ errShown, tries, errTxt, fixed }));
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console nos atalhos do cabeçalho', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

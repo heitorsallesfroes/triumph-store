@@ -799,6 +799,42 @@ guardada.
 
 ## O que mudou
 
+### 2.12.1 — atalhos no cabeçalho da conversa + etiquetas/nome que falhavam calados
+- **Atalhos no cabeçalho do WhatsApp**: no topo da conversa aberta, logo à esquerda dos ícones de vídeo/ligação e no
+  mesmo tamanho deles, entram 💰 Venda (formulário de venda pelo chat), 📈 Compra p/ Facebook, ⏰ Agendar mensagem
+  (o agendar desta conversa) e 🏷️ Etiqueta CRM — uma lista suspensa ali mesmo, com as etiquetas CRM marcáveis e
+  desmarcáveis em 1 clique, busca e "+ Nova etiqueta" (cria com o que foi digitado e já marca). Cada ícone tem dica
+  ao passar o mouse; com o painel fechado, abre o painel na tela certa. O clique não abre os dados do contato.
+  - Só em conversa individual: em grupo os atalhos somem (grupo não recebe etiqueta nem agendamento).
+  - Uma verificação leve (uma consulta ao DOM a cada 1,2 s, só com a aba visível) reinsere quando você troca de
+    conversa ou o WhatsApp recria o cabeçalho. Se o WhatsApp mudar e os ícones dele não forem achados, não faz nada:
+    os botões continuam no painel.
+  - Personalizar → "Atalhos no cabeçalho da conversa" (ligado), quais dos 4 aparecem e "Esconder do painel 💰 Venda,
+    📈 Compra p/ Facebook e 🔁 Automação" (desligado).
+- **"Etiquetas CRM: Não consegui carregar" (07/11, conversa "Meu Numero Pessoal")**: a consulta estava certa — as
+  mesmas leituras feitas direto no Supabase devolvem as 2 etiquetas e o nome dessa conversa (`36369816625228@lid`,
+  contato salvo pelo nome, sem telefone). No mesmo minuto, naquela aba, falharam a leitura das etiquetas, a do nome
+  (por isso "Nome: —", embora o banco já tivesse um nome) e a gravação do "Heitor": as chamadas da aba para a
+  extensão/Supabase falharam (rede, o serviço da extensão reiniciando ou a aba com a versão anterior da extensão
+  depois de atualizar). Não há registro do motivo exato, porque o painel o descartava. Agora:
+  - lê de novo sozinho (3 tentativas, com intervalo); não repete o que nunca vai dar certo (extensão atualizada →
+    "recarregue o WhatsApp (F5)", conversa não identificada);
+  - mostra o motivo real em **Detalhes** (sessão expirada 401, sem conexão, Supabase com erro/lento, extensão não
+    respondeu, consulta recusada, conversa não identificada) com a mensagem técnica e um botão **Tentar de novo** —
+    na linha das etiquetas, na aba Etiquetas e na lista suspensa do 🏷️.
+- **Nome não aprendido ("Olá, Heitor!! Tudo bem?" e "Bommm dia, Heitor!! Tduo bem?")**: a regra da 2.9.1 aprende
+  "Heitor" nas duas (testado com essas frases exatas; nem o "!!" nem a etiqueta da conversa atrapalham). O problema
+  era a gravação: a fila das suas mensagens era esvaziada e, se a gravação falhasse (a mesma falha das etiquetas),
+  o nome se perdia sem aviso. Agora o nome aprendido fica guardado e grava de novo sozinho (3 tentativas na hora e
+  depois 8 s, 16 s, 32 s… até 5 min); se não gravar, a linha "Nome" mostra "Não consegui gravar o nome aprendido
+  “Heitor”" com o motivo e "Tentar de novo". Se a leitura do nome falhar, mostra "Não consegui ler o nome desta
+  conversa" (em vez de "—" calado).
+- Testes: `tests/learn.test.cjs` (as duas frases, gravação que falha e volta, "Tentar de novo", 3 tentativas, o que
+  não repete, motivos, preferências) e o Chrome real com um cabeçalho simulado com os ícones do WhatsApp (posição e
+  tamanho, abrir o painel na tela certa, lista suspensa: criar/marcar/desmarcar/buscar/Esc, reinserir ao recriar e
+  ao trocar de conversa, grupo, Personalizar, cabeçalho sem ícones, e as etiquetas que falham 2 vezes e carregam,
+  ou falham 3 e mostram o motivo + "Tentar de novo").
+
 ### 2.12.0 — automação em SEQUÊNCIA com caminhos "Respondeu / Não respondeu"
 - Dois modelos novos em "+ Nova automação": **Sequência (respondeu / não respondeu)** e **Follow-up de lead
   novo**. Abrem um editor visual em lista vertical (de cima para baixo, como uma receita):

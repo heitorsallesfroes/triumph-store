@@ -166,7 +166,7 @@
     ctx: null,
     // Etiquetas
     labels: [], labelsLoaded: false, labelsSource: null, labelsSyncedAt: null, labelsError: null,
-    convKey: null, convLabelIds: [], convLoading: false, convError: false, menuOpen: false,
+    convKey: null, convLabelIds: [], convLoading: false, convError: false, convErrorMsg: '', menuOpen: false,
   };
   // 2.10.2: painel personalizável (abas, filtros, botões da conversa, densidade, seções recolhidas, altura do topo).
   // Só visual; guardado em chrome.storage.local (panelPrefs), por computador. Regras em engine.js (normPanelPrefs).
@@ -337,7 +337,7 @@
   const crmNames = new Map();
   // 2.8.3: "Nome para mensagens" (wa_chat_names): definido à mão → aprendido da SUA mensagem → vazio.
   // available false = tabela ainda não criada: o {nome} funciona como antes (nome do contato).
-  const chatNames = { available: null, map: new Map(), current: null };
+  const chatNames = { available: null, map: new Map(), current: null, readErr: new Map() }; // 2.12.1: readErr = motivo da leitura que falhou
 
   function getContext() {
     const conv     = findConversation();
@@ -1377,6 +1377,16 @@
       /* ═══ 2.10.0: follow-up ═══ */
       .ed-follow { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; padding: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); }
       .ed-check { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--fs-2); font-weight: 600; cursor: pointer; }
+      /* ═══ 2.12.1: erro com motivo + atalhos ═══ */
+      .panel.cz-hdr-hide .qbtns .sale-quick { display: none !important; }
+      .lerr { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px var(--s-1); min-width: 0; }
+      .lerr-retry { padding: 1px 8px; border-radius: var(--r-pill); border: 1px solid color-mix(in srgb, currentColor 45%, transparent); background: var(--card); color: var(--fg); font-size: var(--fs-1); font-weight: 600; cursor: pointer; }
+      .lerr-retry:hover { border-color: var(--accent); color: var(--accent-text); }
+      .lerr-det { font-size: var(--fs-1); color: var(--muted); max-width: 100%; }
+      .lerr-det summary { cursor: pointer; }
+      .lerr-why { color: var(--fg); margin-top: 2px; }
+      .lerr-raw { font-size: 11px; word-break: break-all; opacity: .8; }
+      .cname-err { flex-basis: 100%; }
       /* ═══ 2.12.0: sequências ═══ */
       .sq-list { display: flex; flex-direction: column; gap: var(--s-2); }
       .sq-node { display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); background: var(--card); }
@@ -2240,7 +2250,8 @@
   async function loadChatName(chatId) {
     if (!CHAT_ID_OK.test(chatId || '')) return null;
     let r = null;
-    try { r = await call('getChatName', { chatId }); } catch { r = null; }
+    // 2.12.1: 3 tentativas; se falhar, o motivo aparece na linha do nome (antes ficava "—" sem dizer nada)
+    try { r = await globalThis.TspEngine.withRetry(() => call('getChatName', { chatId })); chatNames.readErr.delete(chatId); } catch (e) { r = null; chatNames.readErr.set(chatId, String((e && e.message) || e)); }
     if (!r) return chatNames.map.get(chatId) || null;
     chatNames.available = r.available !== false;
     if (r.available === false) return null;
@@ -2282,20 +2293,33 @@
   // Aprender da SUA mensagem (fila da ponte: só o começo do texto, só na memória)
   const noLearnUntil = new Map(); // 2.9.1: chatId → até quando não aprende (envio com {nome} vazio)
   const learnBlocked = (chatId) => { const u = noLearnUntil.get(chatId); if (u == null) return false; if (u > Date.now()) return true; noLearnUntil.delete(chatId); return false; };
+  // 2.12.1: antes, a fila da ponte era esvaziada e uma gravação que falhava (rede, extensão reiniciando,
+  // aba com a versão velha da extensão) perdia o nome para sempre. Agora fica guardado e tenta de novo.
+  const nameLearner = globalThis.TspEngine.createNameLearner({
+    save: async (chatId, name) => {
+      const r = await globalThis.TspEngine.withRetry(() => call('setChatName', { chatId, name, source: 'aprendido' }));
+      if (!r) throw new Error('Sem resposta da extensão');
+      return r;
+    },
+    blocked: (chatId) => learnBlocked(chatId),
+  });
+  let learnBusy = false;
+  async function learnFlush(opts) {
+    if (learnBusy) return;
+    learnBusy = true;
+    try {
+      const done = await nameLearner.flush(opts);
+      done.forEach(({ chatId, result: r }) => { chatNames.map.set(chatId, { name: r.name || null, source: r.source || null }); chatNames.readErr.delete(chatId); });
+      const cur = chatNames.current;
+      if (cur && (done.some((d) => d.chatId === cur) || nameLearner.error(cur))) { state.ctx = getContext(); renderNameRow(); refreshOpenBubble(); }
+    } finally { learnBusy = false; }
+  }
   async function learnTick() {
     if (chatNames.available === false) return;
     let got = null;
     try { got = await waRequest('myMessages', {}, { timeout: 2000 }); } catch { got = null; }
-    if (!Array.isArray(got) || !got.length) return;
-    const last = new Map();
-    got.forEach((x) => { const n = x && globalThis.TspEngine.learnNameFrom(x.head); if (n && CHAT_ID_OK.test(x.chatId) && !learnBlocked(x.chatId)) last.set(x.chatId, n); });
-    for (const [chatId, name] of last) {
-      let r = null;
-      try { r = await call('setChatName', { chatId, name, source: 'aprendido' }); } catch { r = null; }
-      if (!r) continue;
-      chatNames.map.set(chatId, { name: r.name || null, source: r.source || null });
-      if (chatId === chatNames.current) { state.ctx = getContext(); renderNameRow(); refreshOpenBubble(); }
-    }
+    if (Array.isArray(got) && got.length) nameLearner.push(got);
+    if (nameLearner.size()) await learnFlush();
   }
   setInterval(() => { learnTick().catch(() => {}); }, 4000);
   // descobre já se a tabela existe (sem ela, o {nome} funciona como antes)
@@ -2356,6 +2380,26 @@
     edit.addEventListener('click', () => { cn.editing = true; renderNameRow(); });
     box.append(edit);
     if (v.name) box.append(el('span', 'cname-src', v.source === 'manual' ? 'definido por você' : 'aprendido da sua mensagem'));
+    // 2.12.1: o que deu errado, com o motivo e "Tentar de novo"
+    const lerr = nameLearner.error(chatId);
+    const rerr = !lerr && !chatNames.map.has(chatId) ? chatNames.readErr.get(chatId) : null;
+    if (lerr || rerr) {
+      const raw = lerr ? lerr.detail : rerr;
+      const line = el('span', 'lerr cname-err');
+      line.append(el('span', 'none', lerr ? `Não consegui gravar o nome aprendido “${lerr.name}”` : 'Não consegui ler o nome desta conversa'));
+      const retry = el('button', 'lerr-retry', 'Tentar de novo');
+      retry.type = 'button';
+      retry.addEventListener('click', () => {
+        if (lerr) { learnFlush({ force: true, only: chatId }).catch(() => {}); return; }
+        chatNames.readErr.delete(chatId);
+        renderNameRow();
+        loadChatName(chatId).then(() => { if (chatNames.current === chatId) { state.ctx = getContext(); renderNameRow(); refreshOpenBubble(); } });
+      });
+      const det = el('details', 'lerr-det');
+      det.append(el('summary', null, 'Detalhes'), el('div', 'lerr-why', globalThis.TspEngine.errorReason(raw)), el('div', 'lerr-raw', raw || ''));
+      line.append(retry, det);
+      box.append(line);
+    }
   }
 
   // Um formulário da conversa está abrindo agora (com a conversa ativa da WA-JS em mãos): se ela não é a
@@ -2416,6 +2460,7 @@
       state.convLabelIds = key && convCache.has(key) ? convCache.get(key) : [];
       state.convLoading  = !!key;
       state.convError    = false;
+      state.convErrorMsg = '';
       clearTimeout(convTimer);
       if (key) convTimer = setTimeout(() => loadConvLabels(key), 300);
     }
@@ -2429,7 +2474,8 @@
     const identity = state.ctx && state.ctx.identity;
     if (!canLabel(identity) || identity.key !== key) return;
     try {
-      const ids = await call('getContactLabels', { identity: identityPayload(identity) });
+      // 2.12.1: 3 tentativas (rede, Supabase lento, extensão reiniciando); o motivo real fica nos detalhes
+      const ids = await globalThis.TspEngine.withRetry(() => call('getContactLabels', { identity: identityPayload(identity) }));
       convCache.set(key, ids);
       // Nome do CRM para o {nome} (2.1.0)
       call('getContactName', { identity: identityPayload(identity) }).then((r) => {
@@ -2441,9 +2487,10 @@
       if (state.convKey === key && pendingLabelOps === 0) {
         state.convLabelIds = ids;
         state.convError = false;
+        state.convErrorMsg = '';
       }
-    } catch {
-      if (state.convKey === key) state.convError = true;
+    } catch (e) {
+      if (state.convKey === key) { state.convError = true; state.convErrorMsg = String((e && e.message) || e); }
     } finally {
       if (state.convKey === key) {
         state.convLoading = false;
@@ -2484,14 +2531,35 @@
         chip.style.setProperty('--c', l.color);
         lchipsEl.append(chip);
       });
-      if (!applied.length) {
-        const msg = state.convLoading ? '…' : state.convError ? 'Não consegui carregar' : 'Nenhuma';
-        lchipsEl.append(el('span', 'none', msg));
-      }
+      if (state.convError && !state.convLoading) lchipsEl.append(convErrorEl());
+      else if (!applied.length) lchipsEl.append(el('span', 'none', state.convLoading ? '…' : 'Nenhuma'));
     }
     laddBtn.hidden = !canLabel(identity);
     if (state.menuOpen) renderMenu();
     renderConvTab();
+    try { if (hdr.pop) hdrPopList(); } catch { /* 2.12.1: atalhos ainda iniciando */ }
+  }
+
+  // 2.12.1: "Não consegui carregar" com o motivo real (Detalhes) e "Tentar de novo"
+  function convErrorEl(text = 'Não consegui carregar') {
+    const box = el('span', 'lerr');
+    box.append(el('span', 'none', text));
+    const retry = el('button', 'lerr-retry', 'Tentar de novo');
+    retry.type = 'button';
+    retry.addEventListener('click', (e) => { e.stopPropagation(); retryConvLabels(); });
+    const det = el('details', 'lerr-det');
+    det.append(el('summary', null, 'Detalhes'), el('div', 'lerr-why', globalThis.TspEngine.errorReason(state.convErrorMsg)), el('div', 'lerr-raw', state.convErrorMsg || ''));
+    det.addEventListener('click', (e) => e.stopPropagation());
+    box.append(retry, det);
+    return box;
+  }
+  function retryConvLabels() {
+    if (!state.convKey) return;
+    state.convError = false;
+    state.convErrorMsg = '';
+    state.convLoading = true;
+    renderLabelsRow();
+    loadConvLabels(state.convKey);
   }
 
   // Etiquetas CRM ocultas só aparecem para a conversa que já as tem
@@ -2635,7 +2703,7 @@
       chip.addEventListener('click', () => toggleLabel(l.id));
       ltChips.append(chip);
     });
-    if (!warning && state.convError) ltChips.append(el('span', 'lt-none', 'Não consegui carregar as etiquetas CRM desta conversa.'));
+    if (!warning && state.convError) ltChips.append(convErrorEl('Não consegui carregar as etiquetas CRM desta conversa.'));
     renderNote();
   }
 
@@ -3039,6 +3107,8 @@
     applyTabs();
     panel.classList.toggle('dense', pz.prefs.density === 'compacta');
     E2P.PANEL_CONV_BTNS.forEach((k) => panel.classList.toggle(`cz-no-${k}`, !pz.prefs.convBtns[k]));
+    panel.classList.toggle('cz-hdr-hide', pz.prefs.hdr.on && pz.prefs.hdrHidePanel); // 2.12.1
+    try { hdrTick(); hdrApplyVisibility(); } catch { /* 2.12.1: atalhos ainda iniciando */ }
     Object.keys(CS_BLOCKS).forEach(csDecorate);
     applyTopH();
     renderFilters();
@@ -3094,6 +3164,20 @@
       ...filterIds.map((id) => czCheck((FILTERS.find(([x]) => x === id) || [id, id])[1], p.filters.includes(id), (v) => set((n) => { n.filters = v ? [...n.filters, id] : n.filters.filter((x) => x !== id); }))),
     ]));
     box.append(czGroup('Botões da conversa', 'Próxima conversa ▼ abre a conversa logo abaixo da aberta na lista.', E2P.PANEL_CONV_BTNS.map((k) => czCheck(CONV_LABEL[k], p.convBtns[k], (v) => set((n) => { n.convBtns[k] = v; })))));
+    // 2.12.1: atalhos no cabeçalho da conversa do WhatsApp
+    const HDR_LABEL = { venda: '💰 Venda', compra: '📈 Compra p/ Facebook', agendar: '⏰ Agendar mensagem', etiqueta: '🏷️ Etiqueta CRM' };
+    const hdrOn = czCheck('Atalhos no cabeçalho da conversa', p.hdr.on, (v) => set((n) => { n.hdr.on = v; }));
+    hdrOn.dataset.czHdr = 'on';
+    const hdrItems = E2P.PANEL_HDR_BTNS.map((k) => {
+      const c = czCheck(HDR_LABEL[k], p.hdr[k], (v) => set((n) => { n.hdr[k] = v; }));
+      c.dataset.czHdr = k;
+      if (!p.hdr.on) c.querySelector('input').disabled = true;
+      return c;
+    });
+    const hdrHide = czCheck('Esconder do painel 💰 Venda, 📈 Compra p/ Facebook e 🔁 Automação', p.hdrHidePanel, (v) => set((n) => { n.hdrHidePanel = v; }));
+    hdrHide.dataset.czHdr = 'hide';
+    if (!p.hdr.on) hdrHide.querySelector('input').disabled = true;
+    box.append(czGroup('Atalhos no cabeçalho da conversa', 'Ícones no topo da conversa do WhatsApp, à esquerda do vídeo/ligação (só em conversa individual). Se o WhatsApp mudar e o cabeçalho não for achado, os botões continuam no painel.', [hdrOn, ...hdrItems, hdrHide]));
     box.append(czGroup('Lista de conversas', 'Depois de você enviar, se a lista do WhatsApp pular para o topo, ela volta para onde você estava. Se você rolar ou clicar na lista, não mexe.', [
       czCheck('Manter a posição da lista de conversas ao enviar', p.keepListPos, (v) => set((n) => { n.keepListPos = v; })),
     ]));
@@ -10044,6 +10128,293 @@
   shadow.querySelector('.conv-quick').addEventListener('click', () => { if (!state.open) setOpen(true); setSection('conversoes'); openConversionForm(); });
   // 2.5.0: 🔁 abre "Esta conversa nas automações" (seção Automações)
   shadow.querySelector('.auto-quick').addEventListener('click', () => { if (!state.open) setOpen(true); setSection('follows'); openChatAutomations(); });
+
+  // ── 2.12.1: atalhos no cabeçalho da conversa (💰 📈 ⏰ 🏷️ à esquerda do vídeo/ligação do WhatsApp) ──
+  // Ficam no DOM do WhatsApp (fora do painel). Uma verificação leve a cada 1,2 s (uma consulta ao DOM, só com a aba
+  // visível) reinsere quando o WhatsApp troca de conversa ou recria o cabeçalho. Sem os ícones do WhatsApp (mudou o
+  // WhatsApp), não faz nada: os botões continuam no painel.
+  const HDR_DEFS = [
+    ['venda', '💰', 'Registrar venda desta conversa'],
+    ['compra', '📈', 'Enviar compra desta conversa para o Facebook'],
+    ['agendar', '⏰', 'Agendar mensagem nesta conversa'],
+    ['etiqueta', '🏷️', 'Etiquetas CRM desta conversa'],
+  ];
+  const HDR_ANCHORS = [
+    '[data-icon="video-call"]', '[data-icon="video-call-refreshed"]', '[data-icon="voice-call"]', '[data-icon="voice-call-refreshed"]',
+    'button[aria-label*="vídeo" i]', 'button[aria-label*="video" i]', 'button[aria-label*="ligar" i]', 'button[aria-label*="ligação" i]', 'button[aria-label*="call" i]',
+    '[role="button"][aria-label*="vídeo" i]', '[role="button"][aria-label*="video" i]', '[role="button"][aria-label*="ligar" i]', '[role="button"][aria-label*="call" i]',
+    '[data-icon="search-alt"]', '[data-icon="search-refreshed"]', 'button[aria-label*="pesquisar" i]', 'button[aria-label*="search" i]', '[role="button"][aria-label*="pesquisar" i]',
+    '[data-icon="menu"]',
+  ].join(',');
+  const hdr = { el: null, btn: null, pop: null, popShadow: null, listEl: null, footEl: null, q: '', creating: false, msg: '', kind: null, kindFor: null, title: null };
+  function hdrStyle() {
+    if (document.getElementById('tsp-hdr-style')) return;
+    const st = document.createElement('style');
+    st.id = 'tsp-hdr-style';
+    st.textContent = '.tsp-hdr{display:inline-flex;align-items:center;gap:2px;flex:none;margin-right:2px}'
+      + '.tsp-hdr[hidden],.tsp-hdr-b[hidden]{display:none!important}'
+      + '.tsp-hdr-b{display:inline-flex;align-items:center;justify-content:center;border:0;margin:0;padding:0;border-radius:50%;background:transparent;cursor:pointer;line-height:1;color:inherit;font-family:inherit}'
+      + '.tsp-hdr-b:hover,.tsp-hdr-b[aria-expanded="true"]{background:rgba(128,128,128,.2)}'
+      + '.tsp-hdr-b:focus-visible{outline:2px solid #25d366;outline-offset:1px}';
+    (document.head || document.documentElement).append(st);
+  }
+  function hdrAnchor(header) {
+    const a = header.querySelector(HDR_ANCHORS);
+    if (!a || (hdr.el && hdr.el.contains(a))) return null;
+    const btn = a.closest('button,[role="button"]') || a;
+    if (!header.contains(btn)) return null;
+    let item = btn;
+    while (item.parentElement && item.parentElement !== header && item.parentElement.children.length === 1) item = item.parentElement;
+    return { btn, item };
+  }
+  // grupo? a WA-JS responde quando está pronta; senão, pelo DOM (mensagens @g.us)
+  function hdrKind(header) {
+    if (hdr.kind && hdr.kindFor === hdr.title) return hdr.kind;
+    const main = header.closest('#main') || document;
+    return main.querySelector('[data-id*="@g.us"]') ? 'grupo' : 'individual';
+  }
+  function hdrSize(box, size) {
+    const px = Math.round(Math.min(48, Math.max(28, size || 40)));
+    box.querySelectorAll('.tsp-hdr-b').forEach((b) => { b.style.width = `${px}px`; b.style.height = `${px}px`; b.style.fontSize = `${Math.round(px * 0.48)}px`; });
+  }
+  function hdrBuild(size) {
+    const box = document.createElement('div');
+    box.className = 'tsp-hdr';
+    box.dataset.tsp = 'hdr';
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'Atalhos da extensão');
+    HDR_DEFS.forEach(([k, icon, tip]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tsp-hdr-b';
+      b.dataset.hdr = k;
+      b.title = tip;
+      b.setAttribute('aria-label', tip);
+      b.textContent = icon;
+      if (k === 'etiqueta') { b.setAttribute('aria-haspopup', 'true'); b.setAttribute('aria-expanded', 'false'); }
+      box.append(b);
+    });
+    // o clique não chega no cabeçalho do WhatsApp (que abriria os dados do contato)
+    ['mousedown', 'pointerdown', 'mouseup', 'pointerup', 'click', 'dblclick'].forEach((t) => box.addEventListener(t, (e) => {
+      e.stopPropagation();
+      if (t !== 'click') return;
+      e.preventDefault();
+      const b = e.target && e.target.closest ? e.target.closest('.tsp-hdr-b') : null;
+      if (b) hdrAction(b.dataset.hdr, b);
+    }));
+    hdrSize(box, size);
+    return box;
+  }
+  function hdrApplyVisibility() {
+    if (!hdr.el) return;
+    const p = pz.prefs.hdr;
+    const header = hdr.el.closest('header');
+    const group = header ? hdrKind(header) === 'grupo' : false;
+    hdr.el.hidden = !p.on || group; // só em conversa individual
+    hdr.el.querySelectorAll('.tsp-hdr-b').forEach((b) => { b.hidden = !p[b.dataset.hdr]; });
+    if (hdr.el.hidden && hdr.pop) hdrPopClose();
+  }
+  function hdrTick() {
+    const header = document.querySelector('#main header');
+    if (!pz.prefs.hdr.on || !header) {
+      if (hdr.el) hdr.el.remove();
+      if (hdr.pop) hdrPopClose();
+      return;
+    }
+    const t = header.querySelector('span[dir="auto"][title]');
+    const title = t ? t.title : header.textContent.slice(0, 80);
+    if (title !== hdr.title) { hdr.title = title; hdr.kind = null; hdr.kindFor = null; hdrPopClose(); hdrAskKind(title); }
+    if (hdr.el && header.contains(hdr.el)) { hdrApplyVisibility(); return; }
+    const at = hdrAnchor(header);
+    if (!at) { if (hdr.el) hdr.el.remove(); return; }
+    hdrStyle();
+    const size = at.btn.getBoundingClientRect().height;
+    if (!hdr.el) hdr.el = hdrBuild(size); else hdrSize(hdr.el, size);
+    at.item.parentElement.insertBefore(hdr.el, at.item);
+    hdrApplyVisibility();
+  }
+  async function hdrAskKind(title) {
+    let c = null;
+    try { c = await waRequest('activeChat', {}, { timeout: 1500 }); } catch { c = null; }
+    if (hdr.title !== title || !c || (c.kind !== 'grupo' && c.kind !== 'individual')) return;
+    hdr.kind = c.kind;
+    hdr.kindFor = title;
+    hdrApplyVisibility();
+  }
+  setInterval(() => { if (!document.hidden) { try { hdrTick(); } catch { /* WhatsApp mudou: não faz nada */ } } }, 1200);
+
+  function hdrAction(k, btn) {
+    if (k === 'etiqueta') { if (hdr.pop) hdrPopClose(); else hdrPopOpen(btn); return; }
+    hdrPopClose();
+    if (!state.open) setOpen(true); else updateContext();
+    if (k === 'venda') { setSection('vendas'); openSaleForm(); }
+    else if (k === 'compra') { setSection('conversoes'); openConversionForm(); }
+    else if (k === 'agendar') setSection('agendados');
+  }
+
+  // 🏷️: lista suspensa ali mesmo (etiquetas CRM em 1 clique, busca e "+ Nova etiqueta")
+  const hdrNorm = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  function hdrPopOpen(btn) {
+    hdrPopClose();
+    updateContext(); // conversa aberta e as etiquetas dela, mesmo com o painel fechado
+    if (!state.labelsLoaded || !state.labels.length) syncLabels().then(() => hdrPopList()).catch(() => hdrPopList());
+    const host = document.createElement('div');
+    host.id = 'tsp-hdr-pop';
+    host.style.cssText = 'position:fixed;z-index:2147483646;top:0;left:0';
+    // o que se digita aqui não vai para o WhatsApp
+    ['keydown', 'keyup', 'keypress', 'input', 'paste', 'mousedown', 'pointerdown', 'click'].forEach((t) => host.addEventListener(t, (e) => e.stopPropagation()));
+    const sh = host.attachShadow({ mode: 'open' });
+    const head = document.querySelector('#main header');
+    const bg = head ? getComputedStyle(head).backgroundColor : '';
+    const rgb = (bg.match(/\d+/g) || [255, 255, 255]).map(Number);
+    const dark = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2] < 110;
+    const st = document.createElement('style');
+    st.textContent = ':host{all:initial}'
+      + '.pop{--bg:#fff;--fg:#111b21;--bd:#d1d7db;--mut:#667781;--hv:#f0f2f5;width:280px;max-height:min(440px,70vh);display:flex;flex-direction:column;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.25);font:14px/1.35 "Segoe UI",Helvetica,Arial,sans-serif;overflow:hidden}'
+      + '.pop.dark{--bg:#233138;--fg:#e9edef;--bd:#3b4a54;--mut:#aebac1;--hv:#2a3942}'
+      + '.hd{padding:10px 12px 6px;font-weight:700;font-size:13px;color:var(--mut)}'
+      + 'input{margin:0 12px 6px;padding:7px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit;outline:none}'
+      + 'input:focus{border-color:#25d366}'
+      + '.list{overflow-y:auto;flex:1;min-height:0}'
+      + '.opt{display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}'
+      + '.opt:hover,.opt:focus-visible{background:var(--hv);outline:none}'
+      + '.dot{width:12px;height:12px;border-radius:50%;flex:none}'
+      + '.nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+      + '.ck{color:#25d366;font-weight:700}'
+      + '.ft{border-top:1px solid var(--bd);padding:4px 0}'
+      + '.new{color:#00a884;font-weight:600}'
+      + '.msg{padding:8px 12px;color:var(--mut);font-size:13px}'
+      + '.err{color:#e5484d}'
+      + '.retry{margin:0 12px 8px;padding:4px 10px;border:1px solid var(--bd);border-radius:999px;background:none;color:inherit;font:inherit;font-size:13px;cursor:pointer}';
+    const box = el('div', `pop${dark ? ' dark' : ''}`);
+    box.setAttribute('role', 'menu');
+    box.setAttribute('aria-label', 'Etiquetas CRM desta conversa');
+    const ident = state.ctx && state.ctx.identity;
+    box.append(el('div', 'hd', `ETIQUETAS CRM${ident && ident.name ? ` · ${ident.name}` : ''}`));
+    const input = el('input');
+    input.type = 'search';
+    input.placeholder = 'Buscar ou criar etiqueta…';
+    input.setAttribute('aria-label', 'Buscar etiqueta CRM');
+    input.addEventListener('input', () => { hdr.q = input.value; hdr.msg = ''; hdrPopList(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); hdrPopClose(); if (hdr.btn) hdr.btn.focus(); }
+      if (e.key === 'Enter') { e.preventDefault(); const first = hdr.listEl && hdr.listEl.querySelector('.opt'); if (first) first.click(); else hdrNewLabel(); }
+    });
+    hdr.listEl = el('div', 'list');
+    hdr.footEl = el('div', 'ft');
+    box.append(input, hdr.listEl, hdr.footEl);
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); hdrPopClose(); if (hdr.btn) hdr.btn.focus(); } });
+    sh.append(st, box);
+    hdr.pop = host;
+    hdr.popShadow = sh;
+    hdr.btn = btn;
+    hdr.q = '';
+    hdr.msg = '';
+    document.body.append(host);
+    btn.setAttribute('aria-expanded', 'true');
+    hdrPopList();
+    hdrPopPlace();
+    setTimeout(() => input.focus(), 0);
+  }
+  function hdrPopPlace() {
+    if (!hdr.pop || !hdr.btn) return;
+    const r = hdr.btn.getBoundingClientRect();
+    const left = Math.max(8, Math.min(window.innerWidth - 288, r.right - 280));
+    hdr.pop.style.left = `${Math.round(left)}px`;
+    hdr.pop.style.top = `${Math.round(r.bottom + 6)}px`;
+  }
+  function hdrPopList() {
+    if (!hdr.pop || !hdr.listEl) return;
+    const list = hdr.listEl;
+    const foot = hdr.footEl;
+    list.textContent = '';
+    foot.textContent = '';
+    const identity = state.ctx && state.ctx.identity;
+    if (!canLabel(identity)) {
+      list.append(el('div', 'msg', identity && identity.kind === 'group' ? 'Grupos não recebem etiquetas.' : 'Não consegui identificar a conversa.'));
+      return;
+    }
+    if (state.convError && !state.convLoading) {
+      list.append(el('div', 'msg err', `Não consegui carregar as etiquetas desta conversa: ${globalThis.TspEngine.errorReason(state.convErrorMsg)}`));
+      const b = el('button', 'retry', 'Tentar de novo');
+      b.type = 'button';
+      b.addEventListener('click', () => retryConvLabels());
+      list.append(b);
+      return;
+    }
+    if (state.convLoading || (!state.labelsLoaded && !state.labels.length)) { list.append(el('div', 'msg', 'Carregando…')); return; }
+    const q = hdrNorm(hdr.q);
+    const all = visibleCrmLabels();
+    const shown = all.filter((l) => !q || hdrNorm(l.name).includes(q));
+    shown.forEach((l) => {
+      const on = state.convLabelIds.includes(l.id);
+      const opt = el('button', 'opt');
+      opt.type = 'button';
+      opt.dataset.labelId = l.id;
+      opt.setAttribute('role', 'menuitemcheckbox');
+      opt.setAttribute('aria-checked', String(on));
+      const dot = el('span', 'dot');
+      dot.style.background = l.color;
+      opt.append(dot, el('span', 'nm', l.name), el('span', 'ck', on ? '✓' : ''));
+      opt.title = on ? `Desmarcar "${l.name}"` : `Marcar "${l.name}"`;
+      opt.addEventListener('click', () => toggleLabel(l.id));
+      list.append(opt);
+    });
+    if (!shown.length) list.append(el('div', 'msg', all.length ? 'Nenhuma etiqueta com esse nome.' : 'Nenhuma etiqueta CRM ainda.'));
+    const name = String(hdr.q || '').replace(/\s+/g, ' ').trim();
+    const exists = name && all.some((l) => hdrNorm(l.name) === hdrNorm(name));
+    const nb = el('button', 'opt new', hdr.creating ? 'Criando…' : name && !exists ? `+ Nova etiqueta “${name}”` : '+ Nova etiqueta');
+    nb.type = 'button';
+    nb.disabled = hdr.creating;
+    nb.addEventListener('click', () => hdrNewLabel());
+    foot.append(nb);
+    if (hdr.msg) foot.append(el('div', `msg${hdr.msgErr ? ' err' : ''}`, hdr.msg));
+  }
+  async function hdrNewLabel() {
+    const name = String(hdr.q || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!name) {
+      hdr.msg = 'Digite o nome da nova etiqueta no campo acima.';
+      hdr.msgErr = false;
+      hdrPopList();
+      const i = hdr.popShadow && hdr.popShadow.querySelector('input');
+      if (i) i.focus();
+      return;
+    }
+    const same = state.labels.find((l) => hdrNorm(l.name) === hdrNorm(name));
+    if (same) { if (!state.convLabelIds.includes(same.id)) toggleLabel(same.id); return; }
+    hdr.creating = true;
+    hdrPopList();
+    try {
+      const created = await call('createLabel', { name, color: '#3b82f6' });
+      await syncLabels().catch(() => {});
+      hdr.q = '';
+      const i = hdr.popShadow && hdr.popShadow.querySelector('input');
+      if (i) i.value = '';
+      hdr.msg = `Etiqueta CRM “${name}” criada e marcada.`;
+      hdr.msgErr = false;
+      if (created && created.id && !state.convLabelIds.includes(created.id)) toggleLabel(created.id);
+    } catch (e) {
+      hdr.msg = `Não consegui criar: ${globalThis.TspEngine.errorReason(e.message)}`;
+      hdr.msgErr = true;
+    }
+    hdr.creating = false;
+    hdrPopList();
+  }
+  function hdrPopClose() {
+    if (!hdr.pop) return;
+    hdr.pop.remove();
+    hdr.pop = null;
+    hdr.popShadow = null;
+    hdr.listEl = null;
+    hdr.footEl = null;
+    if (hdr.btn) hdr.btn.setAttribute('aria-expanded', 'false');
+  }
+  document.addEventListener('mousedown', (e) => {
+    if (!hdr.pop) return;
+    const path = e.composedPath();
+    if (!path.includes(hdr.pop) && !(hdr.el && path.includes(hdr.el))) hdrPopClose();
+  }, true);
+  window.addEventListener('resize', () => hdrPopPlace());
 
   function syncConversoesActive() {
     const want = state.open && state.section === 'conversoes';
