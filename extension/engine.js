@@ -573,6 +573,18 @@
     return a.trigger_label_source === 'whatsapp' && WA_LABEL_TRIGGERS.includes(a.trigger_type) && a.trigger_wa_label_id ? String(a.trigger_wa_label_id) : null;
   }
 
+  // 2.12.6: frase da confirmação de "ligar". kind: 'etiqueta' | 'dia_hora' | 'venda' | 'outro'; n = quantos já estão
+  // na etiqueta (null = ainda contando / não se aplica)
+  function activationSentence({ name, label, kind, n }) {
+    let t = `Ligar '${name || 'automação'}'? `;
+    if (label) t += `Vale só para quem entrar na etiqueta ${label} a partir de agora.`;
+    else if (kind === 'dia_hora') t += 'Vale a partir do próximo dia e hora.';
+    else if (kind === 'venda') t += 'Só as vendas registradas a partir de agora disparam.';
+    else t += 'Vale só para quem entrar a partir de agora.';
+    if (label && Number.isInteger(n)) t += n ? ` ${n} contato${n === 1 ? '' : 's'} que já ${n === 1 ? 'está' : 'estão'} nela não ${n === 1 ? 'vai' : 'vão'} receber.` : ' Ninguém está nela agora.';
+    return t;
+  }
+
   // ── 2.12.4: depois de registrar a venda (💰) ─────────────────────────────
   // Escolhas: leaveAll (tirar de todas as automações e sequências), waAdd (etiqueta do WhatsApp; '' = nenhuma),
   // waRemove ('' = nenhuma, SALE_WA_ALL = todas menos a que vai colocar, ou uma etiqueta), crmAdd ('' = não mexe).
@@ -2132,6 +2144,7 @@
     setGreetings, greetingFor, greetingPeriod, learnNameFrom, GREET_DEFAULT, convTracker,
     SALE_WA_ALL, saleAfterDefaults, saleWaPlan, // 2.12.4
     waTriggerLabelOf, // 2.12.5
+    activationSentence, // 2.12.6
     withRetry, errorReason, createNameLearner, PANEL_HDR_BTNS, // 2.12.1
     defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, previewSendPlan, sendLabelsApply,
     normBrPhone, matchSalesForPurchase, salePhoneOf, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,

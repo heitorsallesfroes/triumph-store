@@ -799,6 +799,26 @@ guardada.
 
 ## O que mudou
 
+### 2.12.6 — ligar/desligar as automações mais simples
+- O editor da automação não tem mais a caixa **"Ativa"** nem o quadro **"Segurança"** no meio. Perto dos botões fica
+  só a linha: "Só vale para quem entrar depois de ligar. Nunca envia para 'Não enviar'."
+- Botões no fim do editor:
+  - automação desligada (ou nova): **Salvar desligada** (cinza), **Salvar e ligar** (laranja) e **Testar comigo**;
+  - automação ligada: **Salvar** (continua ligada) e **Salvar e desligar**;
+  - em teste: **Salvar**, **Salvar e desligar** e **Ligar para todos**.
+- **Salvar e ligar** (e "Ligar para todos", e o interruptor da lista) abre uma confirmação só: "Ligar 'Pedido de
+  avaliação'? Vale só para quem entrar na etiqueta CLIENTE - TESTE a partir de agora. 16 contatos que já estão nela
+  não vão receber." [Ligar] [Cancelar]. Incluir quem já está na etiqueta fica em **Opções avançadas** (fechado e
+  desmarcado); marcando, aparece a lista e o botão vira "Ligar e incluir 16".
+- **Testar comigo**: escolhe a conversa (a aberta já vem escolhida) e liga só para ela ("EM TESTE" na lista). **Ligar
+  para todos** sai do teste pela mesma confirmação, e o "daqui pra frente" recomeça nessa hora.
+- Na lista: um **interruptor** liga/desliga em cada automação (ligar abre a confirmação; desligar é na hora) e a
+  etiqueta EM TESTE quando for o caso.
+- Nada mudou nas regras (só daqui pra frente, limites, horário, "Não enviar").
+- Testes: `tests/activation.test.cjs` (a frase da confirmação, os botões de cada estado, o interruptor) e o Chrome
+  real (editor ligado/desligado/em teste, confirmação com opções avançadas, "Ligar e incluir 23", "Testar comigo",
+  "Ligar para todos", interruptor).
+
 ### 2.12.5 — "só daqui pra frente" à prova de falhas para etiquetas do WhatsApp
 - Antes: ao ligar uma automação/sequência com gatilho de etiqueta do WhatsApp, só as conversas **carregadas** no
   WhatsApp Web eram registradas como "já estavam"; um contato antigo que carregava depois era visto pela 1ª vez e

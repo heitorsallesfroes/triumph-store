@@ -1023,9 +1023,10 @@ async function main() {
     await q(`sh.querySelector('[data-sec="vendas"]').click(); await wait(200); sh.querySelector('[data-sec="follows"]').click(); await wait(300); return true;`);
     const waCard = `[...sh.querySelectorAll('.fw-card')].find((c) => (c.querySelector('.fw-name') || {}).textContent === 'Etiqueta do WhatsApp')`;
     const cardOk = await waitFor(`return !!${waCard};`, 15000);
-    await q(`const c = ${waCard}; const b = [...c.querySelectorAll('button')].find((x) => x.textContent === 'Ligar'); b.click(); await wait(200); return true;`);
-    await waitFor(`const c = ${waCard}; return !!(c && c.querySelector('.act-count'));`, 15000);
-    const actTxt = await q(`const c = ${waCard}; return c.querySelector('.act-count').textContent;`);
+    // 2.12.6: o interruptor da lista abre a confirmação
+    await q(`const c = ${waCard}; c.querySelector('.fw-switch').click(); await wait(200); return true;`);
+    await waitFor(`const c = ${waCard}; return !!(c && c.querySelector('.act-box') && !c.querySelector('.act-box .loading'));`, 15000);
+    const actTxt = await q(`const c = ${waCard}; return c.querySelector('.act-text').textContent;`);
     await q(`const c = ${waCard}; c.querySelector('.act-go').click(); return true;`);
     await waitFor(`return /ficaram de fora/.test((sh.querySelector('.ftab') || {}).textContent || '');`, 15000);
     const flashTxt = await q(`return [...sh.querySelectorAll('.ftab .ed-msg')].map((x) => x.textContent).join(' | ');`);
@@ -1033,7 +1034,7 @@ async function main() {
     const baseRows = rows.filter((r) => r.first_seen_at === '2000-01-01T00:00:00.000Z').length;
     const autoRow = fake.db.wa_automations.find((x) => x.id === AW);
     check('ligar com etiqueta do WhatsApp: conta TODAS as 23 conversas da etiqueta (não só as carregadas), registra como "já estavam" e diz quantas ficaram de fora',
-      cardOk && /23 contatos já estão nessa etiqueta/.test(actTxt) && /23 contatos com a etiqueta cliente ficaram de fora/i.test(flashTxt)
+      cardOk && /^Ligar 'Etiqueta do WhatsApp'\? Vale só para quem entrar na etiqueta \S+ a partir de agora\. 23 contatos que já estão nela não vão receber\.$/.test(actTxt) && /23 contatos com a etiqueta cliente ficaram de fora/i.test(flashTxt)
       && rows.length === 23 && baseRows === 22 && rows.find((r) => r.chat_id === CHATS23[0]).first_seen_at === '2026-11-01T10:00:00.000Z' && autoRow.active === true && !!autoRow.activated_at,
       JSON.stringify({ cardOk, actTxt, flashTxt, rows: rows.length, baseRows, active: autoRow.active }));
     const ignoredOk = await waitFor(`const c = ${waCard}; return /Ignorados por já estarem na etiqueta: 23/.test((c && c.textContent) || '');`, 15000);
@@ -1042,6 +1043,82 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console ao ligar com etiqueta do WhatsApp', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 12. ligar/desligar mais simples (2.12.6): editor sem a caixa "Ativa" e sem o quadro Segurança; "Salvar desligada" /
+    // "Salvar e ligar" (com a confirmação e as opções avançadas escondidas); ligada: "Salvar" / "Salvar e desligar";
+    // "Testar comigo" (EM TESTE) e "Ligar para todos"; interruptor da lista
+    fake.on = true;
+    fake.generic = true;
+    const TEST_CH = '5521911112222@c.us';
+    await pg(`window.__fakeBridge = { labels: [{ id: '1', name: 'Cliente', hexColor: '#22c55e', count: 5 }], activeChat: { kind: 'individual', chatId: '${TEST_CH}' }, recentChats: [{ id: '${TEST_CH}', name: 'Cliente Teste' }],
+      labelAllChats: { count: 5, source: 'associacoes', chats: ${JSON.stringify(CHATS23.map((id) => ({ id, name: null })))} }, labelEvents: { events: [] } }; return true;`);
+    const row12 = () => fake.db.wa_automations.find((x) => x.id === AW);
+    const editBtns = () => q(`const e = sh.querySelector('.fw-editor'); return e ? [...e.querySelectorAll('.fw-save-row button')].map((b) => b.textContent) : null;`);
+    const openEdit = async () => { await q(`const c = ${waCard}; [...c.querySelectorAll('button')].find((x) => x.textContent === 'Editar').click(); await wait(300); return true;`); await waitFor(`return !!sh.querySelector('.fw-editor .fw-footer');`, 10000); };
+    const clickEd = (text) => q(`const b = [...sh.querySelectorAll('.fw-editor button')].find((x) => x.textContent === ${JSON.stringify(text)}); if (!b) return false; b.click(); return true;`);
+    const backList = () => waitFor(`return !sh.querySelector('.fw-editor') && !!(${waCard});`, 15000);
+    // a) ligada: "Salvar" e "Salvar e desligar"; sem "Ativa" e sem o quadro Segurança; a linha de segurança perto dos botões
+    await openEdit();
+    const edOn = await q(`const e = sh.querySelector('.fw-editor'); return { ativa: [...e.querySelectorAll('label')].some((l) => l.textContent.trim() === 'Ativa'), seg: /SEGURANÇA/.test(e.textContent),
+      line: (e.querySelector('.fw-safety-line') || {}).textContent || '', state: (e.querySelector('.fw-state') || {}).textContent || '' };`);
+    const btnsOn = await editBtns();
+    check('editor de automação ligada: sem a caixa "Ativa" e sem o quadro Segurança; botões "Salvar" e "Salvar e desligar"; a linha de segurança',
+      !edOn.ativa && !edOn.seg && edOn.line === 'Só vale para quem entrar depois de ligar. Nunca envia para "Não enviar".' && /LIGADA/.test(edOn.state)
+      && JSON.stringify(btnsOn) === JSON.stringify(['Salvar', 'Salvar e desligar', 'Cancelar']), JSON.stringify({ edOn, btnsOn }));
+    await clickEd('Salvar e desligar');
+    await backList();
+    check('"Salvar e desligar" desliga', row12().active === false, JSON.stringify({ active: row12().active }));
+    // b) desligada: "Salvar desligada" (cinza), "Salvar e ligar" (laranja), "Testar comigo"; a confirmação
+    await openEdit();
+    const btnsOff = await editBtns();
+    const cls = await q(`const e = sh.querySelector('.fw-editor'); return { off: e.querySelector('.fw-save-off').className, on: e.querySelector('.fw-save-on').className };`);
+    await clickEd('Salvar e ligar');
+    await waitFor(`const b = sh.querySelector('.fw-editor .act-box'); return !!b && !b.querySelector('.loading');`, 15000);
+    const conf = await q(`const b = sh.querySelector('.fw-editor .act-box'); const d = b.querySelector('details.act-adv'); return { text: b.querySelector('.act-text').textContent, advOpen: d ? d.open : null,
+      inc: d ? d.querySelector('input').checked : null, go: b.querySelector('.act-go').textContent, rowHidden: !sh.querySelector('.fw-editor .fw-save-row') };`);
+    if (SHOTS_DIR) { await q(`sh.querySelector('.fw-editor .act-box').scrollIntoView({ block: 'center' }); return true;`); await sleep(300); const { data } = await s('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(SHOTS_DIR, 'ligar-confirmacao.png'), Buffer.from(data, 'base64')); }
+    await q(`const d = sh.querySelector('.fw-editor details.act-adv'); d.open = true; const i = d.querySelector('input'); i.click(); await wait(200); return true;`);
+    const inc = await q(`const b = sh.querySelector('.fw-editor .act-box'); return { go: b.querySelector('.act-go').textContent, list: b.querySelectorAll('.act-list li').length, open: b.querySelector('details.act-adv').open };`);
+    await q(`const i = sh.querySelector('.fw-editor details.act-adv input'); i.click(); await wait(200); return true;`);
+    const actBefore = row12().activated_at;
+    await q(`sh.querySelector('.fw-editor .act-go').click(); return true;`);
+    await backList();
+    check('desligada: "Salvar desligada" (cinza), "Salvar e ligar" (laranja), "Testar comigo"; confirmação com o nome, a etiqueta e quantos ficam de fora; opções avançadas escondidas e desmarcadas; "Ligar e incluir 23"',
+      JSON.stringify(btnsOff) === JSON.stringify(['Salvar desligada', 'Salvar e ligar', 'Testar comigo', 'Cancelar']) && !/primary/.test(cls.off) && /primary/.test(cls.on)
+      && /^Ligar 'Etiqueta do WhatsApp'\? Vale só para quem entrar na etiqueta \S+ a partir de agora\. 23 contatos que já estão nela não vão receber\.$/.test(conf.text)
+      && conf.advOpen === false && conf.inc === false && conf.go === 'Ligar' && conf.rowHidden && inc.go === 'Ligar e incluir 23' && inc.list === 23 && inc.open === true
+      && row12().active === true && row12().include_existing === false && !row12().test_chat_id && row12().activated_at !== actBefore,
+      JSON.stringify({ btnsOff, cls, conf, inc, row: { active: row12().active, include: row12().include_existing } }));
+    // c) interruptor da lista: desligar é na hora
+    await q(`const c = ${waCard}; c.querySelector('.fw-switch').click(); return true;`);
+    await waitFor(`const c = ${waCard}; return !!c && c.querySelector('.fw-switch').getAttribute('aria-checked') === 'false';`, 10000);
+    check('interruptor da lista: desligar na hora (sem confirmação)', row12().active === false, JSON.stringify({ active: row12().active }));
+    // d) "Testar comigo": a conversa aberta já vem escolhida; liga só para ela (EM TESTE)
+    await openEdit();
+    await clickEd('Testar comigo');
+    await waitFor(`const s = sh.querySelector('.fw-editor .fw-testpick select'); return !!s && s.value === '${TEST_CH}';`, 10000);
+    await q(`sh.querySelector('.fw-editor .fw-test-go').click(); return true;`);
+    await backList();
+    const testCard = await q(`const c = ${waCard}; return { badge: [...c.querySelectorAll('.fw-badge')].map((x) => x.textContent), on: c.querySelector('.fw-switch').getAttribute('aria-checked') };`);
+    check('"Testar comigo": liga só para a conversa escolhida e a lista mostra EM TESTE',
+      row12().active === true && row12().test_chat_id === TEST_CH && testCard.badge.includes('EM TESTE') && testCard.on === 'true', JSON.stringify({ test: row12().test_chat_id, testCard }));
+    // e) em teste: "Ligar para todos" abre a mesma confirmação e o "daqui pra frente" recomeça
+    await openEdit();
+    const btnsTest = await editBtns();
+    const testAt = row12().activated_at;
+    await sleep(20);
+    await clickEd('Ligar para todos');
+    await waitFor(`const b = sh.querySelector('.fw-editor .act-box'); return !!b && !b.querySelector('.loading');`, 15000);
+    const confAll = await q(`return sh.querySelector('.fw-editor .act-text').textContent;`);
+    await q(`sh.querySelector('.fw-editor .act-go').click(); return true;`);
+    await backList();
+    check('em teste: "Salvar", "Salvar e desligar", "Ligar para todos" → a mesma confirmação → ligada para todos (sem teste, daqui pra frente recomeça)',
+      JSON.stringify(btnsTest) === JSON.stringify(['Salvar', 'Salvar e desligar', 'Ligar para todos', 'Cancelar']) && /23 contatos que já estão nela não vão receber/.test(confAll)
+      && row12().active === true && !row12().test_chat_id && Date.parse(row12().activated_at) > Date.parse(testAt), JSON.stringify({ btnsTest, confAll, row: { test: row12().test_chat_id, at: row12().activated_at, testAt } }));
+    await pg('window.__fakeBridge = null; return true;');
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console no ligar/desligar das automações', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

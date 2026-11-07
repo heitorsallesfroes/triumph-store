@@ -1390,6 +1390,20 @@
       .fw-badge.test { background: var(--warn-soft); color: var(--warn); }
       .act-box { gap: var(--s-2); border-color: var(--accent); }
       .act-count { font-weight: 600; color: var(--fg); }
+      /* 2.12.6: ligar/desligar mais simples */
+      .act-text { font-weight: 600; color: var(--fg); }
+      .act-adv > summary { cursor: pointer; font-size: var(--fs-1); color: var(--muted); font-weight: 600; }
+      .act-adv[open] > summary { margin-bottom: var(--s-1); }
+      .fw-footer { display: flex; flex-direction: column; gap: var(--s-2); margin-top: var(--s-2); }
+      .fw-safety-line { font-size: var(--fs-1); color: var(--muted); }
+      .fw-save-off { background: var(--bg2); }
+      .fw-state { font-weight: 700; color: var(--ok); }
+      .fw-state.test { color: var(--warn); }
+      .fw-switch { flex: none; position: relative; width: 34px; height: 20px; padding: 0; border: none; border-radius: 999px; background: var(--border); cursor: pointer; transition: background .15s; }
+      .fw-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .15s; }
+      .fw-switch[aria-checked="true"] { background: var(--ok); }
+      .fw-switch[aria-checked="true"]::after { left: 16px; }
+      .fw-switch:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
       .act-list { margin: 0; padding-left: var(--s-4); max-height: 160px; overflow-y: auto; font-size: var(--fs-2); }
       /* ═══ 2.8.7: várias imagens (álbum) ═══ */
       .alb { display: flex; flex-direction: column; gap: var(--s-2); border-radius: var(--r-md); }
@@ -7321,7 +7335,15 @@
   function automationCard(a) {
     const card = el('div', `fw-card${a.active ? ' on' : ''}`);
     const head = el('div', 'fw-head');
-    head.append(el('span', 'fw-name', a.name), el('span', `fw-badge${a.active ? ' on' : ''}`, a.active ? 'LIGADA' : 'DESLIGADA'));
+    // 2.12.6: interruptor (ligar abre a confirmação; desligar é na hora)
+    const sw = el('button', 'fw-switch');
+    sw.type = 'button';
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', a.active ? 'true' : 'false');
+    sw.setAttribute('aria-label', `${a.active ? 'Desligar' : 'Ligar'} ${a.name}`);
+    sw.title = a.active ? 'Desligar' : 'Ligar';
+    sw.addEventListener('click', () => toggleAutomation(a));
+    head.append(sw, el('span', 'fw-name', a.name), el('span', `fw-badge${a.active ? ' on' : ''}`, a.active ? 'LIGADA' : 'DESLIGADA'));
     if (a.test_chat_id) head.append(el('span', 'fw-badge test', 'EM TESTE')); // 2.8.8
     card.append(head);
     if (a.test_chat_id) card.append(el('div', 'crm-intro', `Em teste: roda só para ${testChatLabel(a.test_chat_id)}; ignora todos os outros.`));
@@ -7341,16 +7363,6 @@
     const confirmKey = `del:${a.id}`;
     actions.append(
       fbtn('ed-mini', 'Editar', () => (a.kind === 'sequencia' ? openSeqEditor(a) : openAutomationEditor(a))),
-      fbtn('ed-mini', a.active ? 'Desligar' : 'Ligar', async () => {
-        // 2.8.8: ligar mostra antes quem já está na etiqueta (e NÃO vai receber)
-        if (!a.active) { fl.activating = { id: a.id, include: false, info: null }; renderFollows(); loadActivationInfo(a); return; }
-        try {
-          await call('setAutomationActive', { id: a.id, active: false });
-          await motor.loadAutomations();
-        } catch (e) { flash(`Não consegui mudar: ${e.message}`, true); }
-        renderFollows();
-        renderFootPause();
-      }),
       fbtn('ed-mini', 'Duplicar', () => (a.kind === 'sequencia' ? openSeqEditor({ ...a, id: null, name: `${a.name} (cópia)`.slice(0, 60), active: false }) : openAutomationEditor({ ...a, id: null, name: `${a.name} (cópia)`.slice(0, 60), active: false }))),
       fbtn('ed-mini', fl.confirmDelete === confirmKey ? 'Confirmar exclusão' : 'Excluir', async () => {
         if (fl.confirmDelete !== confirmKey) { fl.confirmDelete = confirmKey; renderFollows(); return; }
@@ -7366,6 +7378,7 @@
     card.append(actions);
     if (fl.activating && fl.activating.id === a.id) card.append(activationEl(a, fl.activating, async () => {
       const act = fl.activating;
+      act.busy = true;
       try {
         const base = await baselineWaLabel(a).catch(() => null); // 2.12.5 (a regra da ponte protege mesmo se falhar)
         await call('setAutomationActive', { id: a.id, active: true, includeExisting: !!act.include });
@@ -7373,11 +7386,23 @@
         fl.statsAt = 0; // 2.12.5: "ignorados" de novo
         await motor.loadAutomations();
         flash(act.include ? 'Automação ligada (incluindo quem já estava na etiqueta).' : `Automação ligada: vale para quem entrar daqui pra frente.${baselineText(base)}`);
-      } catch (e) { act.err = e.message; }
+      } catch (e) { act.err = e.message; act.busy = false; }
       renderFollows();
       renderFootPause();
     }, () => { fl.activating = null; renderFollows(); }));
     return card;
+  }
+
+  async function toggleAutomation(a) {
+    // ligar: mostra antes quem já está na etiqueta (e NÃO vai receber); desligar: na hora
+    if (!a.active) { fl.activating = { id: a.id, include: false, info: null, advanced: false }; renderFollows(); loadActivationInfo(a); return; }
+    try {
+      await call('setAutomationActive', { id: a.id, active: false });
+      await motor.loadAutomations();
+      flash(`"${a.name}" desligada.`);
+    } catch (e) { flash(`Não consegui mudar: ${e.message}`, true); }
+    renderFollows();
+    renderFootPause();
   }
 
   // ── 2.8.8: ativar = vale daqui pra frente ──
@@ -7389,7 +7414,7 @@
   // quem já está na etiqueta do gatilho (CRM pelo banco; WhatsApp: 2.12.5 TODAS as conversas da etiqueta, não só as
   // carregadas na lista). Também para a sequência que começa por etiqueta do WhatsApp.
   async function loadActivationInfo(a) {
-    const act = fl.activating || (fl.edit && fl.edit.activation);
+    const act = (fl.view === 'edit' && fl.edit && fl.edit.activation) || fl.activating || (fl.edit && fl.edit.activation);
     const waLabel = E.waTriggerLabelOf(a);
     if (!act || (!waLabel && !LABEL_TRIGGERS.includes(a.trigger_type))) return;
     let list = null;
@@ -7417,40 +7442,59 @@
   // "23 contatos com a etiqueta Cliente ficaram de fora"
   const baselineText = (b) => (b && b.total ? ` ${b.total} contato${b.total === 1 ? '' : 's'} com a etiqueta ${b.label} ficaram de fora.` : '');
 
+  // 2.12.6: confirmação única de "ligar" (interruptor da lista, "Salvar e ligar" e "Ligar para todos" do editor):
+  // "Ligar 'Nome'? Vale só para quem entrar na etiqueta X a partir de agora. N contatos que já estão nela não vão
+  // receber." [Ligar] [Cancelar]. Incluir quem já está fica em "Opções avançadas" (desmarcado).
+  function activationLabelName(a) {
+    const wa = E.waTriggerLabelOf(a);
+    if (wa) return waLabelName(wa);
+    if (a.kind === 'sequencia') {
+      const s = a.sequence && a.sequence.start;
+      return s && s.type === 'etiqueta' && s.label_id ? labelName(s.label_id) : null;
+    }
+    if (!LABEL_TRIGGERS.includes(a.trigger_type) || !a.trigger_label_id) return null;
+    return String(a.trigger_label_id).startsWith(NEW_LABEL) ? String(a.trigger_label_id).slice(NEW_LABEL.length) : labelName(a.trigger_label_id);
+  }
+  const activationNeedsInfo = (a) => (a.kind !== 'sequencia' && LABEL_TRIGGERS.includes(a.trigger_type)) || !!E.waTriggerLabelOf(a);
+  function activationText(a, n) {
+    const kind = a.kind === 'sequencia' ? 'outro' : a.trigger_type === 'dia_hora' ? 'dia_hora' : a.trigger_type === 'venda_registrada' ? 'venda' : 'etiqueta';
+    return E.activationSentence({ name: a.name, label: activationLabelName(a), kind, n: activationNeedsInfo(a) ? n : null });
+  }
   function activationEl(a, act, onConfirm, onCancel) {
     const box = el('div', 'fw-block act-box');
     box.setAttribute('role', 'group');
-    box.setAttribute('aria-label', 'Ligar a automação');
-    if (a.kind === 'sequencia' && !E.waTriggerLabelOf(a)) box.append(el('div', 'crm-intro', 'Vale só para quem entrar daqui pra frente (quem já estava não entra).')); // 2.12.0
-    else if (a.trigger_type === 'dia_hora') box.append(el('div', 'crm-intro', 'Vale a partir do próximo dia e hora depois de ligar.'));
-    else if (a.trigger_type === 'venda_registrada') box.append(el('div', 'crm-intro', 'Só vendas registradas depois de ligar disparam (as antigas não).'));
-    else if (act.info == null) box.append(el('div', 'lt-none loading', act.infoErr ? `Não consegui ver quem já está na etiqueta: ${act.infoErr}` : 'Carregando…'));
-    else {
-      const n = act.info.length;
-      box.append(el('div', 'act-count', `${n} contato${n === 1 ? '' : 's'} já ${n === 1 ? 'está' : 'estão'} nessa etiqueta e NÃO ${n === 1 ? 'vai' : 'vão'} receber.`));
-      if (n) {
-        const lab = el('label', 'sc-radio');
-        const cb = el('input');
-        cb.type = 'checkbox';
-        cb.checked = !!act.include;
-        cb.setAttribute('aria-label', 'Incluir também quem já está na etiqueta');
-        cb.addEventListener('change', () => { act.include = cb.checked; renderFollows(); });
-        lab.append(cb, ' Incluir também quem já está na etiqueta');
-        box.append(lab);
-        if (act.include) {
-          box.append(el('div', 'ed-note', `Confirme: estes ${n} vão receber${n > 50 ? ' (mostrando 50)' : ''}:`));
-          const ul = el('ul', 'act-list');
-          act.info.slice(0, 50).forEach((c) => ul.append(el('li', null, [c.name, c.phone].filter(Boolean).join(' · ') || 'sem nome')));
-          box.append(ul);
-        }
+    box.setAttribute('aria-label', `Ligar ${a.name || 'automação'}`);
+    const needs = activationNeedsInfo(a);
+    const n = act.info ? act.info.length : null;
+    box.append(el('div', 'act-text', activationText(a, n)));
+    if (needs && n == null) box.append(el('div', 'lt-none loading', act.infoErr ? `Não consegui ver quem já está na etiqueta: ${act.infoErr}` : 'Contando quem já está na etiqueta…'));
+    if (n) {
+      const adv = el('details', 'act-adv');
+      adv.open = !!act.advanced;
+      adv.addEventListener('toggle', () => { act.advanced = adv.open; });
+      adv.append(el('summary', null, 'Opções avançadas'));
+      const lab = el('label', 'sc-radio');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = !!act.include;
+      cb.setAttribute('aria-label', 'Incluir também quem já está na etiqueta');
+      cb.addEventListener('change', () => { act.include = cb.checked; act.advanced = true; renderFollows(); });
+      lab.append(cb, ` Incluir também quem já está na etiqueta (${n})`);
+      adv.append(lab);
+      if (act.include) {
+        adv.append(el('div', 'ed-note', `Estes ${n} vão receber${n > 50 ? ' (mostrando 50)' : ''}:`));
+        const ul = el('ul', 'act-list');
+        act.info.slice(0, 50).forEach((c) => ul.append(el('li', null, [c.name, c.phone].filter(Boolean).join(' · ') || 'sem nome')));
+        adv.append(ul);
       }
+      box.append(adv);
     }
     const row = el('div', 'ed-add');
-    const go = el('button', 'bbtn primary act-go', act.include && act.info && act.info.length ? `Confirmar e ligar (incluir ${act.info.length})` : 'Ligar daqui pra frente');
+    const go = el('button', 'bbtn primary act-go', act.include && n ? `Ligar e incluir ${n}` : 'Ligar');
     go.type = 'button';
-    go.disabled = (LABEL_TRIGGERS.includes(a.trigger_type) || !!E.waTriggerLabelOf(a)) && act.info == null && !act.infoErr;
+    go.disabled = (needs && n == null && !act.infoErr) || !!act.busy;
     go.addEventListener('click', onConfirm);
-    const no = el('button', 'bbtn', 'Cancelar');
+    const no = el('button', 'bbtn act-no', 'Cancelar');
     no.type = 'button';
     no.addEventListener('click', onCancel);
     row.append(go, no);
@@ -8352,13 +8396,7 @@
     name.placeholder = 'Ex.: Follow de venda';
     name.addEventListener('input', () => { f.name = name.value; });
     sec.append(mark(schedField('Nome', name), 'name'));
-    const act = el('label', 'sc-radio');
-    const cb = el('input');
-    cb.type = 'checkbox';
-    cb.checked = f.active;
-    cb.addEventListener('change', () => { f.active = cb.checked; if (f.active && !f.wasActive) { f.activation = { include: false, info: null }; loadActivationInfo(editorToAutomation(f)); } renderFollows(); });
-    act.append(cb, 'Ativa');
-    sec.append(act);
+    if (f.wasActive) sec.append(el('div', `crm-intro fw-state${f.testOn ? ' test' : ''}`, f.testOn ? 'EM TESTE: liga só para a conversa escolhida.' : 'Esta automação está LIGADA.'));
 
     // QUANDO
     const q = el('div', 'fw-block');
@@ -8552,21 +8590,15 @@
 
     sec.append(el('div', 'crm-sub', 'Resumo'), summaryBox);
     updateSummary();
-    sec.append(automationSafetyEl(f)); // 2.8.8
-    const actions = el('div', 'ed-add');
-    const save = fbtn('bbtn primary', fl.saving ? 'Salvando…' : 'Salvar', () => saveAutomationForm());
-    save.disabled = fl.saving;
-    actions.append(save, fbtn('bbtn', 'Cancelar', () => backToList()));
-    sec.append(actions, el('div', `ed-msg${f.err ? ' err' : ''}`, f.msg));
+    sec.append(automationFooterEl(f)); // 2.12.6
+    sec.append(el('div', `ed-msg${f.err ? ' err' : ''}`, f.msg));
     ftabEl.append(sec);
   }
 
-  async function saveAutomationForm() {
-    const f = fl.edit;
-    if (!f || fl.saving) return;
-    const automation = editorToAutomation(f);
-    // 2.11.0: valida antes de salvar e marca o lugar de cada problema
+  // 2.12.6: valida o editor e marca o lugar de cada problema (antes de salvar ou de abrir a confirmação)
+  function editorProblems(f) {
     f.triedSave = true;
+    const automation = editorToAutomation(f);
     const problems = E.validateAutomationDraft(automation, { testOn: f.testOn });
     if (problems.length) {
       f.msg = problems.length === 1 ? problems[0].msg : `${problems[0].msg} (e mais ${problems.length - 1} problema${problems.length === 2 ? '' : 's'} marcado${problems.length === 2 ? '' : 's'} em vermelho)`;
@@ -8574,20 +8606,63 @@
       renderFollows();
       const first = ftabEl.querySelector('.fw-invalid');
       if (first) first.scrollIntoView({ block: 'center' });
-      return;
+      return true;
     }
     const pending = JSON.stringify(automation).match(/"new:([^"]+)"/);
-    if (pending) { f.msg = `A etiqueta "${pending[1]}" ainda não existe: clique em "Criar agora".`; f.err = true; renderFollows(); return; }
+    if (pending) { f.msg = `A etiqueta "${pending[1]}" ainda não existe: clique em "Criar agora".`; f.err = true; renderFollows(); return true; }
+    return false;
+  }
+
+  // "Salvar e ligar" / "Ligar para todos": valida e abre a confirmação (mesma da lista)
+  function openEditorConfirm(f, mode) {
+    const was = { active: f.active, testOn: f.testOn };
+    f.active = true;
+    f.testOn = false;
+    const bad = editorProblems(f);
+    f.active = was.active;
+    f.testOn = was.testOn;
+    if (bad) return;
+    f.msg = '';
+    f.err = false;
+    f.testPick = false;
+    f.confirm = { mode, include: false, info: null, advanced: false };
+    f.activation = f.confirm; // loadActivationInfo lê daqui
+    renderFollows();
+    loadActivationInfo({ ...editorToAutomation(f), active: true, test_chat_id: null });
+  }
+
+  // Salvar. mode: 'off' (desligada), 'keep' (como está: ligada, ou em teste), 'on' (ligar para todos, depois da
+  // confirmação), 'todos' (sair do teste e ligar para todos), 'test' (ligar só para a conversa escolhida)
+  async function saveAutomationForm(mode = 'keep') {
+    const f = fl.edit;
+    if (!f || fl.saving) return;
+    const prevState = { active: f.active, testOn: f.testOn };
+    if (mode === 'off') f.active = false;
+    if (mode === 'on' || mode === 'todos') { f.active = true; f.testOn = false; }
+    if (mode === 'test') { f.active = true; f.testOn = true; }
+    if (editorProblems(f)) { Object.assign(f, prevState); renderFollows(); return; }
+    const automation = editorToAutomation(f);
+    const include = (mode === 'on' || mode === 'todos') && !!(f.confirm && f.confirm.include);
     fl.saving = true;
+    if (f.confirm) f.confirm.busy = true;
     f.msg = '';
     renderFollows();
     try {
       // 2.8.8: ligar (ou trocar gatilho/etiqueta de uma ligada) = vale daqui pra frente
       const base = automation.active ? await baselineWaLabel(automation).catch(() => null) : null; // 2.12.5
-      await call('saveAutomation', { id: f.id || undefined, automation, includeExisting: !!(f.activation && f.activation.include) });
+      const saved = await call('saveAutomation', { id: f.id || undefined, automation, includeExisting: include });
+      // sair do teste e ligar para todos: o "daqui pra frente" recomeça agora
+      if (mode === 'todos') await call('setAutomationActive', { id: (saved && saved.id) || f.id, active: true, includeExisting: include });
       await motor.loadAutomations();
       fl.statsAt = 0;
-      flash(`Automação salva.${automation.active && !(f.activation && f.activation.include) ? baselineText(base) : ''}`);
+      const msg = {
+        off: 'Automação salva (desligada).',
+        test: 'Ligada EM TESTE: roda só para a conversa escolhida.',
+        on: include ? 'Automação ligada (incluindo quem já estava na etiqueta).' : `Automação ligada: vale para quem entrar daqui pra frente.${baselineText(base)}`,
+        todos: include ? 'Ligada para todos (incluindo quem já estava na etiqueta).' : `Ligada para todos: vale para quem entrar daqui pra frente.${baselineText(base)}`,
+        keep: automation.active ? 'Automação salva (continua ligada).' : 'Automação salva.',
+      }[mode];
+      flash(msg);
       fl.saving = false;
       backToList();
       renderFootPause();
@@ -8595,50 +8670,67 @@
     } catch (e) {
       f.msg = e.message;
       f.err = true;
+      if (f.confirm) f.confirm.busy = false;
     }
     fl.saving = false;
     renderFollows();
   }
 
-  // 2.8.8: bloco do editor: aviso ao ligar + modo teste (só uma conversa)
-  function automationSafetyEl(f) {
-    const box = el('div', 'fw-block');
-    box.append(el('div', 'fw-k', 'SEGURANÇA'));
-    box.append(el('div', 'crm-intro', 'Só vale daqui pra frente: quem já estava na etiqueta antes de ligar (ou de trocar o gatilho/etiqueta) não recebe. "Dia e hora" e "venda registrada" também só valem depois de ligar.'));
-    if (f.active && !f.wasActive && f.activation) {
-      box.append(activationEl(editorToAutomation(f), f.activation, () => saveAutomationForm(), () => { f.active = false; f.activation = null; renderFollows(); }));
+  // 2.12.6: rodapé do editor: uma linha de segurança e só os botões de salvar.
+  //   desligada: [Salvar desligada] [Salvar e ligar] [Testar comigo] · ligada: [Salvar] [Salvar e desligar]
+  //   em teste: [Salvar] [Salvar e desligar] [Ligar para todos]
+  function automationFooterEl(f) {
+    const box = el('div', 'fw-footer');
+    box.append(el('div', 'fw-safety-line', 'Só vale para quem entrar depois de ligar. Nunca envia para "Não enviar".'));
+    if (f.confirm) {
+      box.append(activationEl({ ...editorToAutomation(f), active: true }, f.confirm, () => saveAutomationForm(f.confirm.mode), () => { f.confirm = null; f.activation = null; renderFollows(); }));
+      return box;
     }
-    const lab = el('label', 'sc-radio');
-    const cb = el('input');
-    cb.type = 'checkbox';
-    cb.checked = !!f.testOn;
-    cb.setAttribute('aria-label', 'Testar só com uma conversa');
-    cb.addEventListener('change', async () => {
-      f.testOn = cb.checked;
-      if (f.testOn && !fl.recentChats) { try { fl.recentChats = await waRequest('recentChats', { limit: 30 }, { timeout: 6000 }); } catch { fl.recentChats = []; } }
-      renderFollows();
-    });
-    lab.append(cb, ' Testar só com uma conversa');
-    box.append(lab);
-    if (f.testOn) {
-      const opts = [['', 'Escolha a conversa…'], ...(fl.recentChats || []).map((c) => [c.id, `${c.name || c.id.split('@')[0]}`])];
-      if (f.test_chat_id && !opts.some(([v]) => v === f.test_chat_id)) opts.push([f.test_chat_id, f.test_chat_id.split('@')[0]]);
-      const sel = el('select', 'ed-cat');
-      sel.setAttribute('aria-label', 'Conversa de teste');
-      opts.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === (f.test_chat_id || ''); sel.append(o); });
-      sel.addEventListener('change', () => { f.test_chat_id = sel.value; });
-      const here = fbtn('ed-mini', 'Usar a conversa aberta', async () => {
-        let c = null;
-        try { c = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { c = null; }
-        if (!c || c.kind !== 'individual') { flash('Abra uma conversa individual.', true); return; }
-        if (!(fl.recentChats || []).some((x) => x.id === c.chatId)) fl.recentChats = [{ id: c.chatId, name: c.name || null }, ...(fl.recentChats || [])];
-        f.test_chat_id = c.chatId;
-        renderFollows();
-      });
-      const row = el('div', 'sc-row');
-      row.append(sel, here);
-      box.append(row, el('div', 'ed-note', 'Em teste, roda só para esta conversa e ignora todos os outros ("EM TESTE" na lista).'));
+    if (f.testPick) { box.append(testPickEl(f)); return box; }
+    const row = el('div', 'ed-add fw-save-row');
+    const b = (cls, text, fn) => { const x = fbtn(cls, text, fn); x.disabled = !!fl.saving; return x; };
+    if (f.wasActive) {
+      row.append(b('bbtn primary fw-save', fl.saving ? 'Salvando…' : 'Salvar', () => saveAutomationForm('keep')), b('bbtn fw-save-disable', 'Salvar e desligar', () => saveAutomationForm('off')));
+      if (f.testOn) row.append(b('bbtn fw-all', 'Ligar para todos', () => openEditorConfirm(f, 'todos')));
+    } else {
+      row.append(b('bbtn fw-save-off', fl.saving ? 'Salvando…' : 'Salvar desligada', () => saveAutomationForm('off')), b('bbtn primary fw-save-on', 'Salvar e ligar', () => openEditorConfirm(f, 'on')),
+        b('bbtn fw-test-me', 'Testar comigo', () => openTestPick(f)));
     }
+    row.append(fbtn('bbtn', 'Cancelar', () => backToList()));
+    box.append(row);
+    return box;
+  }
+
+  // "Testar comigo": escolhe a conversa (a aberta já vem escolhida) e liga só para ela
+  async function openTestPick(f) {
+    f.testPick = true;
+    f.msg = '';
+    renderFollows();
+    let c = null;
+    try { c = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { c = null; }
+    if (!fl.recentChats) { try { fl.recentChats = await waRequest('recentChats', { limit: 30 }, { timeout: 6000 }); } catch { fl.recentChats = []; } }
+    if (c && c.kind === 'individual') {
+      if (!(fl.recentChats || []).some((x) => x.id === c.chatId)) fl.recentChats = [{ id: c.chatId, name: c.name || null }, ...(fl.recentChats || [])];
+      if (!f.test_chat_id) f.test_chat_id = c.chatId;
+    }
+    if (fl.edit === f && f.testPick) renderFollows();
+  }
+  function testPickEl(f) {
+    const box = el('div', 'fw-block act-box fw-testpick');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'Testar comigo');
+    box.append(el('div', 'act-text', 'Ligar EM TESTE: roda só para esta conversa e ignora todos os outros. Para valer para todos depois, use "Ligar para todos".'));
+    const opts = [['', 'Escolha a conversa…'], ...(fl.recentChats || []).map((c) => [c.id, `${c.name || c.id.split('@')[0]}`])];
+    if (f.test_chat_id && !opts.some(([v]) => v === f.test_chat_id)) opts.push([f.test_chat_id, f.test_chat_id.split('@')[0]]);
+    const sel = el('select', 'ed-cat');
+    sel.setAttribute('aria-label', 'Conversa de teste');
+    opts.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === (f.test_chat_id || ''); sel.append(o); });
+    sel.addEventListener('change', () => { f.test_chat_id = sel.value; });
+    const row = el('div', 'ed-add');
+    const go = fbtn('bbtn primary fw-test-go', fl.saving ? 'Ligando…' : 'Ligar em teste', () => saveAutomationForm('test'));
+    go.disabled = !!fl.saving;
+    row.append(go, fbtn('bbtn', 'Cancelar', () => { f.testPick = false; renderFollows(); }));
+    box.append(sel, row);
     return box;
   }
 
