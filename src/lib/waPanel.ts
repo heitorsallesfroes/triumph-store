@@ -66,9 +66,17 @@ export interface SendRow {
 export interface SaleRowP { id: string; sale_date: string; created_at?: string | null; total_sale_price: number | string | null; customer_phone: string | null; wa_chat_id?: string | null; origin?: string | null }
 export interface AttributionRow { chat_id: string; phone: string | null; ad_id: string | null; ad_title: string | null; first_message_at: string | null }
 export interface ItemInfo { id: string; title: string; follow_step?: number | null }
+// 2.12.8: atividade de todas as conversas individuais (wa_chat_activity) e os dias em que o cliente/a loja falaram
+export interface ActivityRow {
+  chat_id: string; phone: string | null; name?: string | null; first_seen_at?: string | null; first_message_at: string | null;
+  last_message_at: string | null; last_from: string | null; last_customer_at: string | null; is_new_lead: boolean | null;
+}
+export interface ActivityDayRow { chat_id: string; day: string; from_customer: boolean; from_store: boolean }
 export interface PanelInput {
   leads: LeadRow[]; replies: ReplyRow[]; sends: SendRow[]; sales: SaleRowP[]; attributions: AttributionRow[];
   items: ItemInfo[]; names: Record<string, string>;
+  activityDays?: ActivityDayRow[];
+  activityPhones?: { chat_id: string; phone: string | null }[]; // @lid → telefone, da atividade
   fb?: { cur: { count: number; total: number }; prev: { count: number; total: number } };
 }
 
@@ -127,6 +135,7 @@ export function buildIndex(input: PanelInput): Index {
   };
   input.leads.forEach((l) => addLid(l.chat_id, l.phone));
   input.attributions.forEach((a) => addLid(a.chat_id, a.phone));
+  (input.activityPhones || []).forEach((a) => addLid(a.chat_id, a.phone)); // 2.12.8
   const keyOfChat = (chatId: string | null | undefined) => {
     if (!chatId) return null;
     const p = phoneOfChatId(chatId) || lidPhone.get(chatId);
@@ -180,7 +189,33 @@ export function stepOfSend(s: SendRow, itemSteps: Map<string, number>): number |
 }
 
 // ── Resumo (cartões) ──────────────────────────────────────────────────────
+// 2.12.8: leads novos que a extensão achou pela atividade (is_new_lead) e que ainda não estão em wa_leads
+// (a varredura grava nos dois; isto cobre o que só chegou a uma das tabelas)
+export function mergeActivityLeads(leads: LeadRow[], activity: ActivityRow[] | null | undefined): LeadRow[] {
+  const have = new Set(leads.map((l) => l.chat_id));
+  const extra: LeadRow[] = [];
+  (activity || []).forEach((a) => {
+    if (a.is_new_lead !== true || !a.first_message_at || have.has(a.chat_id)) return;
+    have.add(a.chat_id);
+    extra.push({ chat_id: a.chat_id, phone: a.phone, first_message_at: a.first_message_at, origin: 'organico', ad_id: null, ad_title: null });
+  });
+  return extra.length ? [...leads, ...extra] : leads;
+}
+
+// 2.12.8: "Conversas ativas" = conversas (uma por pessoa) em que o cliente mandou mensagem no período:
+// dia com mensagem do cliente (wa_chat_activity_days), lead novo do período ou resposta do cliente no período
+export function activeKeys(input: Pick<PanelInput, 'activityDays' | 'replies'>, keyOfChat: (c: string | null | undefined) => string | null, r: Pick<Range, 'fromDay' | 'toDay' | 'from' | 'to'>, leadKeys: Iterable<string> = []): Set<string> {
+  const out = new Set<string>(leadKeys);
+  (input.activityDays || []).forEach((d) => {
+    const day = String(d.day || '').slice(0, 10);
+    if (d.from_customer && day >= r.fromDay && day <= r.toDay) { const k = keyOfChat(d.chat_id); if (k) out.add(k); }
+  });
+  input.replies.forEach((x) => { const t = Date.parse(x.replied_at); if (t >= r.from && t <= r.to) { const k = keyOfChat(x.chat_id); if (k) out.add(k); } });
+  return out;
+}
+
 export interface Summary {
+  active: number;
   leads: number; leadsAd: number; leadsOrganic: number; replied: number;
   sales: number; revenue: number; ticket: number | null; conversion: number | null; leadsBought: number;
   afterFollow: number; afterFollowRevenue: number; fromAd: number; fromAdRevenue: number;
@@ -213,6 +248,7 @@ export function summaryFor(input: PanelInput, idx: Index, r: Range, itemSteps: M
   }));
   const fromAd = sales.filter((s) => s.ad);
   return {
+    active: activeKeys(input, idx.keyOfChat, r, leads.map((l) => l.key)).size,
     leads: leads.length, leadsAd, leadsOrganic: leads.length - leadsAd, replied,
     sales: sales.length, revenue, ticket: sales.length ? money2(revenue / sales.length) : null,
     conversion: pct(leadsBought, leads.length), leadsBought,

@@ -1382,8 +1382,8 @@
     return { saved };
   }
 
-  // 2.12.2: última mensagem e último sinal de compra da conversa (wa_leads, só conversas que já são lead).
-  // Só avança (grava quando é mais nova). Sem a migration 20261107120000: não grava nada (o resto segue).
+  // 2.12.2: última mensagem da conversa (wa_leads, só conversas que já são lead). Só avança (grava quando é
+  // mais nova). Sem a migration 20261107120000: não grava nada (o resto segue). 2.12.8: sem o sinal de compra.
   const trackingCols = () => probe('wa_leads.last_message_at', () => hasColumn('wa_leads', 'last_message_at'));
   async function touchLeads({ items }) {
     if (!Array.isArray(items) || items.length > 200) throw new Error('Lista inválida');
@@ -1396,13 +1396,52 @@
       const chat = encodeURIComponent(it.chatId);
       const last = isoOfSec(it.t);
       await rest(`wa_leads?chat_id=eq.${chat}&or=(last_message_at.is.null,last_message_at.lt.${encodeURIComponent(last)})`, json('PATCH', 'return=minimal', { last_message_at: last }));
-      if (it.buy != null) {
-        const buy = isoOfSec(it.buy);
-        await rest(`wa_leads?chat_id=eq.${chat}&or=(buy_signal_at.is.null,buy_signal_at.lt.${encodeURIComponent(buy)})`, json('PATCH', 'return=minimal', { buy_signal_at: buy }));
-      }
       saved++;
     }
     return { saved };
+  }
+
+  // 2.12.8: atividade de TODAS as conversas individuais (wa_chat_activity + wa_chat_activity_days). Um upsert por
+  // tabela (on_conflict): os gatilhos do banco fazem a linha só avançar (migration 20261109120000). Sem a
+  // migration: { missing: true } e nada é gravado (o painel para de tentar até recarregar). Nunca o texto.
+  const activityTables = () => probe('wa_chat_activity', async () => {
+    try { await rest('wa_chat_activity?select=chat_id&limit=1'); await rest('wa_chat_activity_days?select=chat_id&limit=1'); return true; } catch (err) {
+      if (tableMissing(err, ['wa_chat_activity', 'wa_chat_activity_days'])) return false;
+      throw err;
+    }
+  });
+  const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const optIsoOfSec = (t) => (t == null || t === '' ? null : isoOfSec(t));
+  async function saveChatActivity({ items }) {
+    if (!Array.isArray(items) || items.length > 1000) throw new Error('Lista inválida');
+    if (!(await activityTables())) return { saved: 0, missing: true };
+    const rows = [];
+    const days = [];
+    const seen = new Set();
+    const nowIso = new Date().toISOString();
+    for (const it of items) {
+      if (!it || !PANEL_CHAT_RE.test(it.chatId || '') || seen.has(it.chatId)) continue;
+      let lastAt;
+      try { lastAt = optIsoOfSec(it.lastAt); } catch { continue; }
+      seen.add(it.chatId);
+      rows.push({
+        chat_id: it.chatId, phone: panelPhone(it.phone), name: short(it.name, 100), first_seen_at: nowIso,
+        first_message_at: (() => { try { return optIsoOfSec(it.firstMessageAt); } catch { return null; } })(),
+        last_message_at: lastAt, last_from: it.lastFrom === 'cliente' || it.lastFrom === 'loja' ? it.lastFrom : null,
+        last_customer_at: (() => { try { return optIsoOfSec(it.lastCustomerAt); } catch { return null; } })(),
+        is_new_lead: typeof it.isNewLead === 'boolean' ? it.isNewLead : null,
+      });
+      (Array.isArray(it.days) ? it.days : []).slice(0, 10).forEach((d) => {
+        if (d && DAY_RE.test(d.day || '') && (d.customer || d.store)) days.push({ chat_id: it.chatId, day: d.day, from_customer: !!d.customer, from_store: !!d.store });
+      });
+    }
+    for (let i = 0; i < rows.length; i += 500) {
+      await rest('wa_chat_activity?on_conflict=chat_id', json('POST', 'resolution=merge-duplicates,return=minimal', rows.slice(i, i + 500)));
+    }
+    for (let i = 0; i < days.length; i += 1000) {
+      await rest('wa_chat_activity_days?on_conflict=chat_id,day', json('POST', 'resolution=merge-duplicates,return=minimal', days.slice(i, i + 1000)));
+    }
+    return { saved: rows.length, days: days.length };
   }
 
   async function finishSendLog({ id, status, reason }) {
@@ -3418,7 +3457,7 @@
     fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,
-    saveLeads, logQuickSend, logManualSends, recordReplies, touchLeads,
+    saveLeads, logQuickSend, logManualSends, recordReplies, touchLeads, saveChatActivity,
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,

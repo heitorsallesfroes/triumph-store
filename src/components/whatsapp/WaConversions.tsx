@@ -1,8 +1,9 @@
 // Aba "Conversões (Facebook)": eventos enviados pela extensão (wa_conversion_events). Só leitura, paginado,
 // com filtro por período e totais do período inteiro (sem o limite de 1000 linhas do Supabase).
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { fetchAllRows } from '../../lib/resumoAnualCalc';
+import { pageInfo } from '../../lib/waTracking';
 import {
   conversionContact, conversionTotals, eventKind, hasAd, linkedSaleLabel, periodBounds, type ContactSources, type ConversionRow, type ConversionTotals, type LinkedSale,
 } from '../../lib/waConversions';
@@ -42,58 +43,67 @@ async function contactSources(chatIds: string[], sales: Record<string, SaleInfo>
 }
 
 // Seção "Eventos enviados ao Facebook" do Rastreamento: começa no período da aba (startDay/endDay) e segue o
-// período quando ele muda; os filtros De/Até continuam editáveis aqui
+// período quando ele muda; os filtros De/Até continuam editáveis aqui.
+// 2.12.8: carrega TODOS os eventos do período (em lotes de 1000, os mesmos dos totais) e faz o filtro
+// Todos / Compras / Contatos e a paginação aqui (antes a página dependia da contagem do Supabase e não ia para a 2ª).
+// Cliente, telefone e venda do ERP são buscados só para as linhas da página aberta.
+export type KindFilter = 'todos' | 'compras' | 'contatos';
+const KINDS: [KindFilter, string][] = [['todos', 'Todos'], ['compras', 'Compras'], ['contatos', 'Contatos']];
+export const filterKind = <T extends Pick<ConversionRow, 'event_name' | 'error' | 'value'>>(rows: T[], k: KindFilter): T[] =>
+  (k === 'todos' ? rows : rows.filter((r) => eventKind(r) === (k === 'compras' ? 'Compra' : 'Contato')));
+
 export default function WaConversions({ title = 'Conversões enviadas ao Facebook', startDay, endDay }: { title?: string; startDay?: string; endDay?: string } = {}) {
   const today = new Date();
   const [start, setStart] = useState(startDay || ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30)));
   const [end, setEnd] = useState(endDay || ymd(today));
   useEffect(() => { if (startDay) setStart(startDay); if (endDay) setEnd(endDay); }, [startDay, endDay]);
   const [page, setPage] = useState(0);
-  const [rows, setRows] = useState<ConversionRow[] | null>(null);
+  const [kind, setKind] = useState<KindFilter>('todos');
+  const [all, setAll] = useState<ConversionRow[] | null>(null);
   const [sales, setSales] = useState<Record<string, LinkedSale>>({});
   const [contacts, setContacts] = useState<ContactSources>({ leadPhone: {}, attribution: {}, chatName: {}, sales: {} });
-  const [total, setTotal] = useState(0);
-  const [totals, setTotals] = useState<ConversionTotals | null>(null);
   const [error, setError] = useState('');
 
-  useEffect(() => { setPage(0); }, [start, end]);
-
+  // período: carrega todos os eventos dele (mais novos primeiro) e volta para a página 1
   useEffect(() => {
     let alive = true;
-    setRows(null);
+    setAll(null);
+    setPage(0);
     setError('');
     (async () => {
       const { from, to } = periodBounds(start, end);
       const cols = await selectCols();
-      const { data, error: e, count } = await supabase.from('wa_conversion_events').select(cols, { count: 'exact' })
-        .gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false }).order('event_id')
-        .range(page * PAGE, page * PAGE + PAGE - 1);
-      if (e) throw e;
-      if (!alive) return;
-      const pageRows = (data || []) as unknown as ConversionRow[];
-      // 2.10.5: vendas do ERP ligadas às compras desta página
-      const saleIds = [...new Set(pageRows.map((r) => r.sale_id).filter(Boolean))] as string[];
+      const rows = await fetchAllRows((f, t) => supabase.from('wa_conversion_events').select(cols)
+        .gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false }).order('event_id').range(f, t));
+      if (alive) setAll(rows as unknown as ConversionRow[]);
+    })().catch((e) => { if (alive) setError(/wa_conversion_events/.test(String(e && e.message)) ? 'Atualize o banco para usar este recurso.' : (e && e.message) || 'Erro ao carregar'); });
+    return () => { alive = false; };
+  }, [start, end]);
+
+  const totals: ConversionTotals | null = useMemo(() => (all ? conversionTotals(all) : null), [all]);
+  const filtered = useMemo(() => (all ? filterKind(all, kind) : null), [all, kind]);
+  const pi = pageInfo(filtered ? filtered.length : 0, page, PAGE, ['evento', 'eventos']);
+  const rows = useMemo(() => (filtered ? filtered.slice(pi.from, pi.to) : null), [filtered, pi.from, pi.to]);
+
+  // 2.10.5 / 2.12.2: vendas do ERP ligadas e de onde vêm Cliente e Telefone — só das linhas desta página
+  useEffect(() => {
+    if (!rows || !rows.length) return undefined;
+    let alive = true;
+    (async () => {
+      const saleIds = [...new Set(rows.map((r) => r.sale_id).filter(Boolean))] as string[];
       const found: Record<string, SaleInfo> = {};
       if (saleIds.length) {
         const { data: rowsSales } = await supabase.from('sales').select('id, customer_name, customer_phone, total_sale_price').in('id', saleIds);
         ((rowsSales || []) as SaleInfo[]).forEach((x) => { found[x.id] = x; });
       }
-      const chatIds = [...new Set(pageRows.map((r) => r.chat_id).filter(Boolean))] as string[];
+      const chatIds = [...new Set(rows.map((r) => r.chat_id).filter(Boolean))] as string[];
       const src = await contactSources(chatIds, found);
       if (!alive) return;
       setSales(found);
       setContacts(src);
-      setRows(pageRows);
-      setTotal(count || 0);
-      // Totais do período inteiro, em páginas de 1000
-      const all = await fetchAllRows((f, t) => supabase.from('wa_conversion_events').select(cols)
-        .gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false }).order('event_id').range(f, t));
-      if (alive) setTotals(conversionTotals(all as unknown as ConversionRow[]));
-    })().catch((e) => { if (alive) setError(/wa_conversion_events/.test(String(e && e.message)) ? 'Atualize o banco para usar este recurso.' : (e && e.message) || 'Erro ao carregar'); });
+    })().catch(() => { /* sem os nomes: mostra o que veio no evento */ });
     return () => { alive = false; };
-  }, [start, end, page]);
-
-  const pages = Math.max(1, Math.ceil(total / PAGE));
+  }, [rows]);
   const th: React.CSSProperties = { textAlign: 'left', padding: '8px 10px', fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-main)' };
   const td: React.CSSProperties = { padding: '8px 10px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-main)' };
   const fmt = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -102,6 +112,12 @@ export default function WaConversions({ title = 'Conversões enviadas ao Faceboo
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <SectionHeader title={title} subtitle="Compras e contatos que a extensão enviou à API de Conversões" right={(
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div data-testid="conv-kind" role="group" aria-label="Tipo de evento" style={{ display: 'flex', gap: 4, padding: 4, borderRadius: 12, background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
+            {KINDS.map(([id, label]) => (
+              <button key={id} type="button" aria-pressed={kind === id} onClick={() => { setKind(id); setPage(0); }}
+                style={{ padding: '4px 10px', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer', background: kind === id ? ORANGE : 'transparent', color: kind === id ? '#fff' : 'var(--text-muted)' }}>{label}</button>
+            ))}
+          </div>
           <label style={muted}>De <input type="date" value={start} onChange={(e) => setStart(e.target.value)} style={input} aria-label="Data inicial" /></label>
           <label style={muted}>Até <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} style={input} aria-label="Data final" /></label>
         </div>
@@ -120,7 +136,7 @@ export default function WaConversions({ title = 'Conversões enviadas ao Faceboo
           </thead>
           <tbody>
             {rows === null && !error && <tr><td style={td} colSpan={9}><span style={muted}>Carregando…</span></td></tr>}
-            {rows && rows.length === 0 && <tr><td style={td} colSpan={9}><span style={muted}>Nenhuma conversão no período.</span></td></tr>}
+            {rows && rows.length === 0 && <tr><td style={td} colSpan={9}><span style={muted}>{kind === 'todos' ? 'Nenhuma conversão no período.' : kind === 'compras' ? 'Nenhuma compra no período.' : 'Nenhum contato no período.'}</span></td></tr>}
             {(rows || []).map((r) => {
               const kind = eventKind(r);
               const who = conversionContact(r, contacts);
@@ -141,10 +157,10 @@ export default function WaConversions({ title = 'Conversões enviadas ao Faceboo
           </tbody>
         </table>
       </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button type="button" style={btn} disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>Anterior</button>
-        <span style={muted}>Página {page + 1} de {pages} · {total} evento{total === 1 ? '' : 's'}</span>
-        <button type="button" style={{ ...btn, color: page + 1 < pages ? ORANGE : 'var(--text-muted)' }} disabled={page + 1 >= pages} onClick={() => setPage((p) => p + 1)}>Próxima</button>
+      <div data-testid="conv-pager" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <button type="button" style={{ ...btn, color: pi.hasPrev ? 'var(--text-primary)' : 'var(--text-muted)' }} disabled={!pi.hasPrev} onClick={() => setPage(pi.page - 1)}>Anterior</button>
+        <span style={muted}>{pi.label}</span>
+        <button type="button" style={{ ...btn, color: pi.hasNext ? ORANGE : 'var(--text-muted)' }} disabled={!pi.hasNext} onClick={() => setPage(pi.page + 1)}>Próxima</button>
       </div>
     </div>
   );

@@ -17,7 +17,8 @@ const br = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
 
 // Regras explicadas no (i) de cada número
 const INFO = {
-  leads: 'Conversas novas: a 1ª mensagem do cliente numa conversa sem nenhuma mensagem antes (gravado pela extensão 2.10.0 na aba que tem a trava; ao abrir o WhatsApp, recupera as das últimas 24 h). De anúncio = a mensagem veio de um anúncio (ctwa). Conversas de anúncio de antes da 2.10.0 entram pelo registro do anúncio.',
+  active: 'Conversas (uma por pessoa) em que o CLIENTE mandou mensagem no período, novas ou antigas — igual ao "Conversas novas ativas" do Tintim. Gravado pela extensão 2.12.8 (aba com a trava) a cada mensagem; ao abrir o WhatsApp Web, ela varre todas as conversas com mensagem nas últimas 72 h, então quem chamou com o PC desligado entra quando você abrir. Também contam os leads novos e as respostas a envios nossos do período.',
+  leads: 'Conversas que falaram com a loja pela PRIMEIRA vez no período: a 1ª mensagem da conversa é do cliente e não havia nenhuma antes (anúncio ou orgânico). Gravado pela extensão na aba que tem a trava; ao abrir o WhatsApp, ela recupera as das últimas 72 h (carregando as mensagens antigas quando precisa). De anúncio = a mensagem veio de um anúncio (ctwa). Conversas de anúncio de antes da 2.10.0 entram pelo registro do anúncio.',
   replied: 'Conversas (não mensagens) em que o cliente respondeu a um envio nosso no período: mensagem que você digitou, mensagem rápida, agendada, automação ou disparo. Só a 1ª resposta depois de cada envio conta.',
   sales: 'Venda pelo WhatsApp = venda registrada pelo 💰 da conversa, ou venda do ERP (não cancelada/reembolsada) com o telefone de uma conversa do WhatsApp (lead, anúncio, envio ou resposta registrados). Data: dia da venda.',
   ticket: 'Valor das vendas pelo WhatsApp dividido pela quantidade.',
@@ -72,15 +73,17 @@ export default function WaPanel() {
       {error && <div style={{ ...panel, color: '#ef4444', fontSize: 13 }}>{error}</div>}
       {data && data.load.missing.length > 0 && (
         <div style={{ ...panel, padding: '12px 16px', background: 'rgba(249,115,22,0.08)', borderColor: 'rgba(249,115,22,0.35)', color: ORANGE, fontSize: 13 }}>
-          Ainda sem: {data.load.missing.join(', ')}. Aplique a migration 20261106150000_wa_panel.sql e use a extensão 2.10.0 para ver esses números; o resto já funciona.
+          Ainda sem: {data.load.missing.join(', ')}. Aplique a migration indicada (e use a extensão nessa versão) para ver esses números; o resto já funciona.
         </div>
       )}
 
       {/* Cartões */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-        {!s ? Array.from({ length: 8 }, (_, i) => (
+        {!s ? Array.from({ length: 9 }, (_, i) => (
           <div key={i} style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 10 }}><Skeleton h={10} w="55%" /><Skeleton h={28} w="45%" /><Skeleton h={10} w="70%" /></div>
         )) : (<>
+          <StatCard accent label="Conversas ativas" value={fmtInt(s.active)} delta={d('active')} deltaTitle={dt('active')} info={INFO.active}
+            sub="o cliente mandou mensagem no período" />
           <StatCard accent label="Leads novos" value={fmtInt(s.leads)} delta={d('leads')} deltaTitle={dt('leads')} info={INFO.leads}
             sub={<><b style={{ color: ORANGE }}>{fmtInt(s.leadsAd)}</b> anúncio · <b style={{ color: 'var(--text-secondary)' }}>{fmtInt(s.leadsOrganic)}</b> orgânico</>} />
           <StatCard label="Conversas respondidas" value={fmtInt(s.replied)} delta={d('replied')} deltaTitle={dt('replied')} info={INFO.replied} sub="clientes que responderam a um envio" />

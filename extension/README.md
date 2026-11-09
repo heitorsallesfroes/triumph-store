@@ -799,6 +799,40 @@ guardada.
 
 ## O que mudou
 
+### 2.12.8 + ERP — conversas como no Tintim (todas as conversas, ativas x leads novos, ao vivo)
+- **Precisa da migration `supabase/migrations/20261109120000_wa_chat_activity.sql`** (tabelas `wa_chat_activity` e
+  `wa_chat_activity_days`, mesmas políticas das `wa_*`, já preparada para a Fase 2 e com o "desfazer" no topo).
+  Sem ela, a extensão e o ERP continuam como antes (só os leads de `wa_leads`) e o ERP avisa "Ainda sem: conversas
+  ativas…".
+- **A extensão registra TODAS as conversas individuais**, não só os leads novos. Para cada conversa grava: telefone,
+  nome, quando viu pela 1ª vez, a 1ª mensagem (se souber), a última mensagem e de quem foi (cliente/loja), a última
+  do cliente, se é lead novo e, por dia, se o cliente e/ou a loja falaram. Nunca o texto. Só a aba com a trava
+  grava, e **no máximo 1 vez por conversa a cada 30 s** (o que chega no meio espera e vai junto).
+- **Ao abrir o WhatsApp Web**, a extensão varre todas as conversas individuais com mensagem nas **últimas 72 h**
+  (WPP.chat.list, inclusive as que não estão na tela). Para saber se é lead novo, usa as mensagens carregadas e,
+  só quando não dá para saber, carrega as antigas pela WA-JS (até 150 conversas, 50 mensagens cada, no máximo
+  ~1,5 min, sem segurar o motor de envios). Assim **quem chamou com o PC desligado entra quando você abrir**
+  (também em `wa_leads`, como antes; antes eram só 24 h e só as conversas carregadas).
+- **Painel e Rastreamento**: dois números separados, cada um com (i):
+  - **Conversas ativas**: conversas em que o cliente mandou mensagem no período (novas ou antigas), igual ao
+    "Conversas novas ativas" do Tintim;
+  - **Leads novos**: conversas que falaram com a loja pela 1ª vez no período (anúncio/orgânico).
+- **Tabela "Conversas" do Rastreamento**: mostra todas as conversas ativas do período (não só leads), com a etapa
+  (Fez contato / Respondeu / Comprou + valor) e de quem foi a última mensagem; ordem padrão **última mensagem, mais
+  recente primeiro**; atualiza sozinha a cada 30 s com o selo **Ao vivo** (quando o período inclui hoje) sem sair
+  da página em que você está; **Próxima/Anterior** corrigidos ("Página X de Y · N conversas", 25 por página); filtro
+  de etapa **Todas / Comprou / Respondeu / Só fez contato**.
+- **Saiu "Possíveis vendas não marcadas"**, e a extensão **parou de gravar o sinal de compra** (`buy_signal_at` fica
+  no banco, sem uso).
+- **Eventos enviados ao Facebook**: Próxima/Anterior corrigidos (carrega os eventos do período e pagina na tela, sem
+  depender da contagem do Supabase) e filtro **Todos / Compras / Contatos**.
+- Testes: `tests/panel.test.cjs` (atividade sem sinal de compra, 1 gravação a cada 30 s, upsert das duas tabelas,
+  varredura de 72 h com mensagens antigas carregadas só quando precisa), Chrome real da extensão (a varredura da
+  abertura grava a atividade e o lead que chegou com o PC desligado), `scripts/tests/waTracking.test.ts` e
+  `scripts/tests/waPanel.test.ts` (conversas ativas x leads novos, ordem, filtro de etapa, paginação) e o novo
+  **`scripts/tests/waChrome.test.ts`**: a aba WhatsApp do ERP no Chrome real, com um Supabase falso (Painel,
+  cartões, Próxima/Anterior, Ao vivo sem voltar para a página 1, filtros de etapa e de evento).
+
 ### 2.12.7 — busca de produtos por pedaços de palavras (💰 e Nova Venda do ERP)
 - A busca "Digite modelo, cor ou nome do acessório..." do 💰 e da **Nova Venda** do ERP agora acha por pedaços:
   "pul ros go 38" acha "Pulseira Aço Milanese Rose Gold 38/41mm". Cada pedaço (separado por espaço) tem que

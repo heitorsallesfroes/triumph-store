@@ -1,16 +1,18 @@
-// Aba "Rastreamento": de onde vêm as conversas novas (anúncio x não rastreada), tempo da 1ª resposta,
-// jornada Fez contato → Respondeu → Comprou, vendas por dia, a lista de conversas e as possíveis vendas
-// não marcadas. Contas em src/lib/waTracking.ts; leitura em src/lib/waTrackingDb.ts. Só leitura.
-import { useEffect, useMemo, useState } from 'react';
+// Aba "Rastreamento": conversas ativas e leads novos (anúncio x não rastreada), tempo da 1ª resposta,
+// jornada Fez contato → Respondeu → Comprou, vendas por dia e a lista de conversas (como o Tintim: todas as
+// conversas ativas, pela última mensagem, ao vivo). Contas em src/lib/waTracking.ts; leitura em
+// src/lib/waTrackingDb.ts. Só leitura.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, ComposedChart, LabelList, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Download, ExternalLink, Search } from 'lucide-react';
-import { periodRanges, type PeriodPreset } from '../../lib/waPanel';
+import { Download, Search } from 'lucide-react';
+import { periodRanges, spDay, type PeriodPreset } from '../../lib/waPanel';
 import {
-  buildConversations, conversationsCsv, conversationsIn, journey, originByDay, possibleUnmarkedSales, salesByDay, searchConversations,
-  sortConversations, trackSummary, businessHoursLabel, businessHoursOf, saleLinksText, STAGE_LABEL,
-  type Conversation, type OriginFilter, type SalesDateMode, type SortKey, type Stage,
+  buildConversations, conversationsCsv, conversationsIn, filterStage, journey, originByDay, pageInfo, salesByDay, searchConversations,
+  sortConversations, trackSummary, businessHoursLabel, businessHoursOf, saleLinksText, DEFAULT_SORT, STAGE_FILTERS, STAGE_LABEL,
+  type Conversation, type OriginFilter, type SalesDateMode, type SortKey, type Stage, type StageFilter,
 } from '../../lib/waTracking';
 import { loadTracking, type TrackLoad } from '../../lib/waTrackingDb';
+import { startVisibleInterval } from '../../lib/visibleInterval';
 import { btn, input, ORANGE } from './shared';
 import WaConversions from './WaConversions';
 import { EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoTip, panel, SectionHeader, Skeleton, SkeletonStyle, SLATE, StatCard } from './ui';
@@ -18,25 +20,28 @@ import { EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoT
 const PRESETS: [PeriodPreset, string][] = [['hoje', 'Hoje'], ['7d', '7 dias'], ['30d', '30 dias'], ['mes', 'Este mês'], ['custom', 'Personalizado']];
 const ORIGINS: [OriginFilter, string][] = [['todas', 'Todas'], ['anuncio', 'Anúncio'], ['nao_rastreada', 'Não rastreada']];
 const PAGE = 25;
+// 2.12.8: atualiza sozinha a cada 30 s (com a aba visível e o período incluindo hoje). O teste no Chrome real
+// usa um intervalo menor (window.__TSP_LIVE_MS).
+const LIVE_MS = Number((globalThis as { __TSP_LIVE_MS?: number }).__TSP_LIVE_MS) || 30 * 1000;
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const br = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
 const when = (ms: number | null) => (ms == null ? '—' : new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
 
 const INFO = {
-  total: 'Conversas novas = chegaram no período sem nenhuma mensagem antes (a 1ª mensagem é do cliente), uma por pessoa, gravadas pela extensão (aba com a trava) ou pelo anúncio. Também entram as conversas que já existiam antes do rastreamento e tiveram venda no período (💰, 📈 ou o telefone da venda): o início delas não foi registrado.',
+  active: 'Conversas (uma por pessoa) em que o CLIENTE mandou mensagem no período, novas ou antigas — igual ao "Conversas novas ativas" do Tintim. Gravado pela extensão 2.12.8 (aba com a trava) a cada mensagem; ao abrir o WhatsApp Web, ela varre todas as conversas com mensagem nas últimas 72 h (quem chamou com o PC desligado entra quando você abrir). Também contam os leads novos e as respostas a envios nossos do período.',
+  leads: 'Conversas que falaram com a loja pela PRIMEIRA vez no período: a 1ª mensagem da conversa é do cliente e não havia nenhuma antes, uma por pessoa (anúncio ou orgânico). Gravado pela extensão (aba com a trava), pelo anúncio ou pela varredura das últimas 72 h ao abrir o WhatsApp Web.',
   ad: 'Conversas que vieram de um anúncio do Meta (Facebook/Instagram, clique para o WhatsApp).',
   untracked: 'Conversas sem anúncio: o cliente chamou direto, pelo link, indicação etc.',
   reply: 'Média do tempo entre a 1ª mensagem do cliente e o 1º envio nosso registrado na conversa (o que você digitou, mensagem rápida, automação…). "Só horário comercial" (ligado por padrão) conta só os minutos dentro do horário do motor de envios da extensão (Automações → horário). Conversas sem resposta e as com início não registrado não entram na média.',
   sales: 'Vendas das conversas do período: registradas pelo 💰 na conversa, ligadas pelo 📈 (a Compra enviada ao Facebook ligada à venda do ERP) ou vendas do ERP com o telefone da conversa. Conversa nova: as vendas depois da 1ª mensagem; conversa que já existia: as vendas do período. Canceladas/reembolsadas não contam. Como cada venda foi ligada: (i) na etapa da tabela.',
   conversion: 'Conversas do período que compraram, divididas pelas conversas do período.',
-  origin: 'Conversas novas por dia, separadas pela origem (anúncio ou não rastreada). O número em cada pedaço é a quantidade.',
+  origin: 'Leads novos por dia (dia do 1º contato), separados pela origem (anúncio ou não rastreada). O número em cada pedaço é a quantidade.',
   journey: 'Fez contato = conversas do período. Respondeu = o cliente respondeu a uma mensagem nossa depois do 1º contato. Comprou = teve venda pelo WhatsApp depois do 1º contato (quem comprou conta também em Respondeu).',
   salesDay: '"Data do primeiro contato": as vendas das conversas novas do período, no dia em que a conversa começou. "Data da venda": as vendas pelo WhatsApp feitas no período, no dia da venda (de conversas de qualquer data).',
-  table: 'Uma linha por conversa do período ("início não registrado" = já existia antes do rastreamento e entrou pela venda). Contato: nome aprendido/salvo → nome do WhatsApp → telefone. Última mensagem: gravada pela extensão 2.12.2 (antes disso, o último envio ou resposta registrados).',
-  unmarked: 'Conversas novas do período em que uma mensagem (sua ou do cliente) falou em "pix", "comprovante", "paguei", "endereço de entrega" ou "pagamento", mas sem venda ligada. A extensão confere isso no navegador e grava só a hora (nunca o texto). Abra, confira e lance com 💰 / 📈.',
+  table: 'Uma linha por conversa do período: todas as conversas ativas (o cliente mandou mensagem no período), os leads novos e as que tiveram venda no período. Ordem padrão: última mensagem, mais recente primeiro (clique no título da coluna para trocar). Atualiza sozinha a cada 30 s ("Ao vivo") quando o período inclui hoje, sem sair da página em que você está. Etapa: Fez contato / Respondeu (o cliente respondeu a uma mensagem nossa) / Comprou + valor. Contato: nome aprendido/salvo → nome do WhatsApp → telefone. "início não registrado" = a 1ª mensagem da conversa não é conhecida.',
 };
 
-type Loaded = { load: TrackLoad; key: string };
+type Loaded = { load: TrackLoad; key: string; at: number };
 
 export default function WaTracking() {
   const today = new Date();
@@ -56,27 +61,44 @@ export default function WaTracking() {
     let alive = true;
     setError('');
     loadTracking(r)
-      .then((load) => { if (alive) setData({ load, key }); })
+      .then((load) => { if (alive) setData({ load, key, at: Date.now() }); })
       .catch((e) => { if (alive) setError((e && e.message) || 'Erro ao carregar'); });
     return () => { alive = false; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 2.12.8: "Ao vivo" — com o período incluindo hoje, recarrega a cada 30 s (aba visível), sem esqueleto e sem
+  // mexer na página/filtros da tabela. Uma atualização por vez; se o período mudar no meio, a resposta é descartada.
+  const live = r.toDay >= spDay(Date.now());
+  const busy = useRef(false);
+  useEffect(() => {
+    if (!live) return undefined;
+    let alive = true;
+    const stop = startVisibleInterval(() => {
+      if (busy.current) return;
+      busy.current = true;
+      loadTracking(r)
+        .then((load) => { if (alive) setData((cur) => (cur && cur.key === key ? { load, key, at: Date.now() } : cur)); })
+        .catch(() => { /* tenta de novo na próxima */ })
+        .finally(() => { busy.current = false; });
+    }, LIVE_MS);
+    return () => { alive = false; stop(); };
+  }, [key, live]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const loading = !data || data.key !== key;
   const bh = useMemo(() => businessHoursOf(data ? data.load.settings : null), [data]);
   const model = useMemo(() => (data && !loading ? buildConversations(data.load.input, bh) : null), [data, loading, bh]);
-  const list = useMemo(() => (model ? conversationsIn(model, r, origin) : null), [model, r, origin]);
+  const list = useMemo(() => (model && data ? conversationsIn(model, r, origin, data.load.input.replies) : null), [model, data, r, origin]);
   const s = useMemo(() => (list ? trackSummary(list, businessOnly) : null), [list, businessOnly]);
   const daily = useMemo(() => (list ? originByDay(list, r) : null), [list, r]);
   const steps = useMemo(() => (list ? journey(list) : null), [list]);
   const salesDaily = useMemo(() => (model ? salesByDay(model, r, origin, salesMode) : null), [model, r, origin, salesMode]);
-  const unmarked = useMemo(() => (list ? possibleUnmarkedSales(list) : null), [list]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <SkeletonStyle />
       <SectionHeader
         title="Rastreamento das conversas"
-        subtitle={`${br(r.fromDay)} a ${br(r.toDay)} · de onde vêm as conversas novas e quantas viram venda`}
+        subtitle={`${br(r.fromDay)} a ${br(r.toDay)} · conversas ativas, leads novos e quantas viram venda`}
         right={(
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end', maxWidth: '100%' }}>
             <Segmented label="Período" options={PRESETS} value={preset} onChange={setPreset} />
@@ -99,10 +121,13 @@ export default function WaTracking() {
 
       {/* Visão geral */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }} data-testid="track-cards">
-        {!s ? Array.from({ length: 6 }, (_, i) => (
+        {!s ? Array.from({ length: 7 }, (_, i) => (
           <div key={i} style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 10 }}><Skeleton h={10} w="55%" /><Skeleton h={28} w="45%" /><Skeleton h={10} w="70%" /></div>
         )) : (<>
-          <StatCard accent label="Conversas" value={fmtInt(s.total)} info={INFO.total} sub={s.older ? `${fmtInt(s.fresh)} novas · ${fmtInt(s.older)} já existiam (com venda)` : `${fmtInt(s.fresh)} novas · ${br(r.fromDay)} a ${br(r.toDay)}`} />
+          <StatCard accent label="Conversas ativas" value={fmtInt(s.active)} info={INFO.active}
+            sub={s.total > s.active ? `o cliente mandou mensagem · + ${fmtInt(s.total - s.active)} só com venda no período` : 'o cliente mandou mensagem no período'} />
+          <StatCard accent label="Leads novos" value={fmtInt(s.leads)} info={INFO.leads}
+            sub={<><b style={{ color: ORANGE }}>{fmtInt(s.leadsAd)}</b> anúncio · <b style={{ color: 'var(--text-secondary)' }}>{fmtInt(s.leads - s.leadsAd)}</b> orgânico</>} />
           <StatCard label="Rastreadas (anúncio)" value={fmtInt(s.ad)} info={INFO.ad} sub={<><b style={{ color: ORANGE }}>{fmtPct(s.adPct, 1)}</b> das conversas</>} />
           <StatCard label="Não rastreadas" value={fmtInt(s.untracked)} info={INFO.untracked} sub={<><b style={{ color: 'var(--text-secondary)' }}>{fmtPct(s.untrackedPct, 1)}</b> das conversas</>} />
           <StatCard label="Tempo médio da 1ª resposta" value={fmtMinutes(s.avgReplyMinutes)} info={INFO.reply} sub={(
@@ -120,7 +145,7 @@ export default function WaTracking() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 460px), 1fr))', gap: 20 }}>
         {/* Origem por dia */}
-        <Card title="Origem das conversas por dia" info={INFO.origin}>
+        <Card title="Origem dos leads novos por dia" info={INFO.origin}>
           {!daily ? <Skeleton h={260} /> : daily.every((x) => !x.anuncio && !x.nao_rastreada) ? <EmptyState /> : (
             <div style={{ width: '100%', height: 280 }}>
               <ResponsiveContainer>
@@ -179,13 +204,9 @@ export default function WaTracking() {
       </Card>
 
       {/* Conversas */}
-      <Card title="Conversas" info={INFO.table}>
-        {!list ? <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} h={18} />)}</div> : <ConversationsTable list={list} fileTag={`${r.fromDay}_a_${r.toDay}`} />}
-      </Card>
-
-      {/* Possíveis vendas não marcadas */}
-      <Card title="Possíveis vendas não marcadas" info={INFO.unmarked} right={unmarked && unmarked.length > 0 ? <span style={{ fontSize: 12, fontWeight: 700, color: ORANGE }}>{fmtInt(unmarked.length)} para conferir</span> : undefined}>
-        {!unmarked ? <Skeleton h={80} /> : unmarked.length === 0 ? <EmptyState text="Nada para conferir neste período." /> : <Unmarked list={unmarked} />}
+      <Card title="Conversas" info={INFO.table} right={live && data && !loading ? <LiveBadge at={data.at} /> : undefined}>
+        {!list ? <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} h={18} />)}</div>
+          : <ConversationsTable list={list} fileTag={`${r.fromDay}_a_${r.toDay}`} resetKey={`${key}|${origin}`} />}
       </Card>
 
       {/* Eventos enviados ao Facebook (a antiga sub-aba "Conversões (Facebook)") */}
@@ -288,14 +309,32 @@ const COLS: { key: SortKey | null; label: string; align?: 'right' }[] = [
   { key: null, label: 'Facebook' },
 ];
 
-function ConversationsTable({ list, fileTag }: { list: Conversation[]; fileTag: string }) {
+// 2.12.8: selo "Ao vivo" (com a hora da última atualização)
+function LiveBadge({ at }: { at: number }) {
+  return (<>
+    <style>{'@keyframes waLive{0%,100%{opacity:1}50%{opacity:.35}}@media (prefers-reduced-motion: reduce){.wa-live-dot{animation:none!important}}'}</style>
+    <span data-testid="track-live" title={`Atualiza sozinha a cada 30 s · última: ${new Date(at).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: GREEN }}>
+      <span className="wa-live-dot" style={{ width: 8, height: 8, borderRadius: 999, background: GREEN, animation: 'waLive 1.6s ease-in-out infinite' }} />
+      Ao vivo
+      <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {new Date(at).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+    </span>
+  </>);
+}
+
+// resetKey: período/origem; ao trocar, volta para a página 1. A atualização ao vivo (nova lista com o mesmo
+// resetKey) NÃO volta: a página só é ajustada se a lista diminuir (pageInfo).
+function ConversationsTable({ list, fileTag, resetKey }: { list: Conversation[]; fileTag: string; resetKey: string }) {
   const [q, setQ] = useState('');
-  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'firstAt', desc: true });
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>(DEFAULT_SORT);
+  const [stage, setStage] = useState<StageFilter>('todas');
   const [page, setPage] = useState(0);
-  const rows = useMemo(() => sortConversations(searchConversations(list, q), sort.key, sort.desc), [list, q, sort]);
-  useEffect(() => { setPage(0); }, [list, q, sort]);
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
-  const cur = rows.slice(page * PAGE, page * PAGE + PAGE);
+  const lastReset = useRef(resetKey);
+  if (lastReset.current !== resetKey) { lastReset.current = resetKey; if (page !== 0) setPage(0); }
+  const rows = useMemo(() => sortConversations(filterStage(searchConversations(list, q), stage), sort.key, sort.desc), [list, q, stage, sort]);
+  const pi = pageInfo(rows.length, page, PAGE);
+  const cur = rows.slice(pi.from, pi.to);
+  const go = (p: number) => setPage(pageInfo(rows.length, p, PAGE).page);
   const exportCsv = () => {
     const blob = new Blob([String.fromCharCode(0xfeff) + conversationsCsv(rows)], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -314,12 +353,13 @@ function ConversationsTable({ list, fileTag }: { list: Conversation[]; fileTag: 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
         <label style={{ position: 'relative', flex: '1 1 240px', maxWidth: 360 }}>
           <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nome ou telefone" aria-label="Buscar conversa por nome ou telefone"
+          <input type="search" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder="Buscar por nome ou telefone" aria-label="Buscar conversa por nome ou telefone"
             style={{ ...input, width: '100%', paddingLeft: 30, boxSizing: 'border-box' }} />
         </label>
+        <div data-testid="track-stage"><Segmented label="Etapa" small options={STAGE_FILTERS} value={stage} onChange={(v) => { setStage(v); setPage(0); }} /></div>
         <button type="button" style={btn} onClick={exportCsv} disabled={!rows.length}><Download size={14} /> Exportar CSV</button>
       </div>
-      {!rows.length ? <EmptyState text={q ? 'Nenhuma conversa com essa busca.' : 'Nenhuma conversa nova neste período.'} /> : (
+      {!rows.length ? <EmptyState text={q ? 'Nenhuma conversa com essa busca.' : stage !== 'todas' ? 'Nenhuma conversa nesta etapa.' : 'Nenhuma conversa neste período.'} /> : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }} data-testid="track-table">
             <thead>
@@ -329,7 +369,7 @@ function ConversationsTable({ list, fileTag }: { list: Conversation[]; fileTag: 
                   return (
                     <th key={c.label} style={{ ...th, textAlign: c.align || 'left' }} aria-sort={active ? (sort.desc ? 'descending' : 'ascending') : 'none'}>
                       {c.key ? (
-                        <button type="button" onClick={() => setSort({ key: c.key as SortKey, desc: active ? !sort.desc : c.key !== 'name' })}
+                        <button type="button" onClick={() => { setSort({ key: c.key as SortKey, desc: active ? !sort.desc : c.key !== 'name' }); setPage(0); }}
                           style={{ padding: 0, border: 'none', background: 'transparent', font: 'inherit', letterSpacing: 'inherit', textTransform: 'inherit', cursor: 'pointer', color: active ? ORANGE : 'var(--text-muted)' }}>
                           {c.label}{active ? (sort.desc ? ' ↓' : ' ↑') : ''}
                         </button>
@@ -351,7 +391,7 @@ function ConversationsTable({ list, fileTag }: { list: Conversation[]; fileTag: 
                   <td style={td}><OriginBadge c={c} /></td>
                   <td style={td}><StageBadge c={c} /></td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{when(c.firstAt)}{!c.tracked && <div style={{ fontSize: 11, color: 'var(--text-muted)' }} title="A conversa já existia antes do rastreamento: entrou pela venda; a data é a 1ª atividade conhecida">início não registrado</div>}</td>
-                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{when(c.lastAt)}</td>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{when(c.lastAt)}{c.lastFrom && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.lastFrom === 'cliente' ? 'do cliente' : 'da loja'}</div>}</td>
                   <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>{c.replyMinutes == null ? <span style={{ color: 'var(--text-muted)' }}>{c.tracked ? 'sem resposta' : '—'}</span> : fmtMinutes(c.replyMinutes)}</td>
                   <td style={td}><span style={{ display: 'flex', gap: 10 }}>{check(c.fbContact, 'Contato')}{check(c.fbPurchase, 'Compra')}</span></td>
                 </tr>
@@ -360,34 +400,18 @@ function ConversationsTable({ list, fileTag }: { list: Conversation[]; fileTag: 
           </table>
         </div>
       )}
-      {rows.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button type="button" style={btn} disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>Anterior</button>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Página {page + 1} de {pages} · {fmtInt(rows.length)} conversa{rows.length === 1 ? '' : 's'}</span>
-          <button type="button" style={{ ...btn, color: page + 1 < pages ? ORANGE : 'var(--text-muted)' }} disabled={page + 1 >= pages} onClick={() => setPage((p) => p + 1)}>Próxima</button>
-        </div>
-      )}
+      {rows.length > 0 && <Pager info={pi} onPage={go} testId="track-pager" />}
     </div>
   );
 }
 
-function Unmarked({ list }: { list: Conversation[] }) {
+// Anterior · "Página X de Y · N conversas" · Próxima (a página vem de pageInfo, nunca passa da última)
+export function Pager({ info, onPage, testId }: { info: ReturnType<typeof pageInfo>; onPage: (p: number) => void; testId?: string }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="track-unmarked">
-      {list.map((c) => (
-        <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '10px 12px', borderRadius: 12, background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
-          <span style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: '1 1 200px', minWidth: 0 }}>
-            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 13 }}>{c.name}</span>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{[c.phoneLabel !== c.name ? c.phoneLabel : '', c.ad ? `Meta Ads${c.adTitle ? ` · ${c.adTitle}` : ''}` : 'Não rastreada'].filter(Boolean).join(' · ')}</span>
-          </span>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>sinal de compra em {when(c.buySignalAt)}</span>
-          {c.waLink ? (
-            <a href={c.waLink} target="_blank" rel="noopener noreferrer" style={{ ...btn, textDecoration: 'none', color: ORANGE, borderColor: 'rgba(249,115,22,0.45)' }}>
-              <ExternalLink size={14} /> Abrir conversa
-            </a>
-          ) : <span style={{ fontSize: 12, color: 'var(--text-muted)' }} title="Conversa sem número conhecido (@lid): procure pelo nome no WhatsApp">sem número</span>}
-        </div>
-      ))}
+    <div data-testid={testId} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <button type="button" style={{ ...btn, color: info.hasPrev ? 'var(--text-primary)' : 'var(--text-muted)', cursor: info.hasPrev ? 'pointer' : 'default' }} disabled={!info.hasPrev} onClick={() => onPage(info.page - 1)}>Anterior</button>
+      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{info.label}</span>
+      <button type="button" style={{ ...btn, color: info.hasNext ? ORANGE : 'var(--text-muted)', cursor: info.hasNext ? 'pointer' : 'default' }} disabled={!info.hasNext} onClick={() => onPage(info.page + 1)}>Próxima</button>
     </div>
   );
 }

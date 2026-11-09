@@ -11206,8 +11206,12 @@
   // Só a aba com a trava: pega da ponte as mensagens novas das conversas (só conversa, lado e hora) e grava
   // leads novos (wa_leads), o que você digitou (wa_send_log origin 'manual') e a 1ª resposta do cliente
   // depois de cada envio nosso (wa_replies). Espera 45 s para os envios de outras abas/PCs já estarem
-  // gravados. Ao abrir, recupera os leads das últimas 24 h. Sem a migration: para até recarregar.
-  const pnl = { off: false, scanned: false, pending: [], tracker: globalThis.TspEngine.convTracker() };
+  // gravados. Sem a migration: para até recarregar.
+  // 2.12.8: grava também a atividade de TODAS as conversas individuais (wa_chat_activity: última mensagem, de
+  // quem, dias em que o cliente/a loja falaram, lead novo), no máximo 1 vez por conversa a cada 30 s. Ao abrir,
+  // varre as conversas com mensagem nas últimas 72 h (activityScan da ponte, inclusive as que não estão na tela)
+  // e grava os leads novos delas em wa_leads. Sem a migration 20261109120000: só a atividade para.
+  const pnl = { off: false, scanned: false, actOff: false, pending: [], tracker: globalThis.TspEngine.convTracker(), act: globalThis.TspEngine.activityBuffer(30 * 1000) };
   const PANEL_DELAY_MS = 45 * 1000;
   const extSends = new Map(); // chatId → [{ from, to }] (ms) dos envios da extensão nesta aba
   function markExtSend(chatId) {
@@ -11224,25 +11228,46 @@
   }
   async function panelTick() {
     if (pnl.off) return;
+    // 2.12.8: varredura da abertura (72 h, todas as conversas individuais), uma vez por abertura. Roda por fora
+    // (pode levar até ~1,5 min carregando mensagens antigas) para não segurar o motor de envios.
+    if (!pnl.scanned && !pnl.scanning) {
+      pnl.scanning = waRequest('activityScan', {}, { timeout: 150000 }).then((scan) => {
+        if (!scan || !scan.scanned) return;
+        pnl.scanned = true;
+        (Array.isArray(scan.leads) ? scan.leads : []).forEach((e) => pnl.pending.push({ ...e, at: 0 }));
+        pnl.act.add(Array.isArray(scan.items) ? scan.items : []);
+      }).catch(() => {}).finally(() => { pnl.scanning = null; });
+    }
     let got = null;
-    try { got = await waRequest('convEvents', { scan: !pnl.scanned }, { timeout: 20000 }); } catch { got = null; }
-    if (!got) return;
-    if (got.scanned) pnl.scanned = true;
+    try { got = await waRequest('convEvents', {}, { timeout: 20000 }); } catch { got = null; }
     const now = Date.now();
-    (Array.isArray(got.events) ? got.events : []).forEach((e) => pnl.pending.push({ ...e, at: e.scan ? 0 : now }));
+    (got && Array.isArray(got.events) ? got.events : []).forEach((e) => pnl.pending.push({ ...e, at: e.scan ? 0 : now }));
     if (pnl.pending.length > 5000) pnl.pending.splice(0, pnl.pending.length - 5000);
     const ready = pnl.pending.filter((e) => now - e.at >= PANEL_DELAY_MS);
-    if (!ready.length) return;
     pnl.pending = pnl.pending.filter((e) => now - e.at < PANEL_DELAY_MS);
-    const out = pnl.tracker.ingest(ready, isExtSend);
+    const out = ready.length ? pnl.tracker.ingest(ready, isExtSend) : { leads: [], manual: [], replies: [], activity: [] };
+    pnl.act.add(out.activity);
     try {
       if (out.leads.length) await panelBatch('saveLeads', out.leads, 500);
       if (out.manual.length) await panelBatch('logManualSends', out.manual, 200);
       if (out.replies.length) await panelBatch('recordReplies', out.replies, 200);
-      if (out.activity.length) await panelBatch('touchLeads', out.activity, 200); // 2.12.2 (depois dos leads)
+      if (out.activity.length) await panelBatch('touchLeads', out.activity.map((a) => ({ chatId: a.chatId, t: a.lastAt })), 200); // 2.12.2 (depois dos leads)
     } catch (e) {
       if (e.message === 'Atualize o banco para usar este recurso') pnl.off = true;
     }
+    await activityFlush(now);
+  }
+  // no máximo 1 gravação por conversa a cada 30 s (o resto espera na fila, juntando o que chegar)
+  async function activityFlush(now = Date.now()) {
+    if (pnl.actOff) return;
+    const batch = pnl.act.take(now);
+    if (!batch.length) return;
+    try {
+      for (let i = 0; i < batch.length; i += 500) {
+        const r = await call('saveChatActivity', { items: batch.slice(i, i + 500) });
+        if (r && r.missing) { pnl.actOff = true; return; }
+      }
+    } catch { pnl.act.putBack(batch); }
   }
   // envio pelo painel (seta, prévia, mídia): registra como mensagem rápida (sem a migration, não faz nada)
   const logQuickSend = (chatId, itemId) => call('logQuickSend', { chat_id: chatId, item_id: itemId || null }).catch(() => {});

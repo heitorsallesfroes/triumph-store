@@ -1,8 +1,9 @@
 // Testes da 2.10.0 (registros para o Painel de resultados do ERP). Sem dependências: node extension/tests/panel.test.cjs
 // - convTracker (engine.js): leads, "você digitou" uma vez por vez de falar, 1ª resposta depois de cada envio
 // - supabase-api.js com fetch falso: saveLeads, logManualSends, recordReplies, logSend com origem/etapa, filtros dos automáticos
-// - wa-bridge.js com uma WA-JS falsa: convEvents (lead novo, conversa antiga, varredura das últimas 24 h)
-// - 2.12.2 (aba Rastreamento do ERP): última mensagem e sinal de compra por conversa (touchLeads), sem o texto
+// - wa-bridge.js com uma WA-JS falsa: convEvents (lead novo, conversa antiga) e a varredura da abertura (2.12.8: 72 h)
+// - 2.12.2 (aba Rastreamento do ERP): última mensagem por conversa (touchLeads), sem o texto
+// - 2.12.8: atividade de todas as conversas (wa_chat_activity), 1 gravação por conversa a cada 30 s, sem sinal de compra
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -69,21 +70,52 @@ test('tracker: fora de ordem é ordenado; varredura da abertura só gera lead', 
   assert.strictEqual(out.manual.length, 1);
 });
 
-test('tracker 2.12.2: activity = última mensagem e último sinal de compra por conversa (varredura não entra)', () => {
+// 2.12.8: dias em SP (UTC−3): 1762398000 = 06/11/2026 00:00 em SP
+const D0 = Date.parse('2026-11-06T00:00:00-03:00') / 1000;
+test('tracker 2.12.8: activity = última mensagem e de quem, última do cliente, lead novo e os dias; sem sinal de compra; varredura não entra', () => {
   const t = E.convTracker();
   const out = t.ingest([
-    { chatId: A, fromMe: false, t: 100, first: true },
-    { chatId: A, fromMe: true, t: 300, buy: true },
-    { chatId: A, fromMe: false, t: 200, buy: true },
-    { chatId: A, fromMe: false, t: 400 },
-    { chatId: B, fromMe: true, t: 50 },
-    { chatId: '5511900000003@c.us', fromMe: false, t: 70, first: true, scan: true },
+    { chatId: A, fromMe: false, t: D0 - 600, first: true, phone: '5511900000001' }, // 05/11 23:50
+    { chatId: A, fromMe: true, t: D0 + 300 }, // 06/11
+    { chatId: A, fromMe: false, t: D0 + 200, buy: true }, // "buy" antigo é ignorado
+    { chatId: B, fromMe: true, t: D0 + 50 },
+    { chatId: '5511900000003@c.us', fromMe: false, t: D0 + 70, first: true, scan: true },
   ]);
-  assert.deepStrictEqual(plain(out.activity), [{ chatId: B, t: 50, buy: null }, { chatId: A, t: 400, buy: 300 }]);
+  assert.deepStrictEqual(plain(out.activity), [
+    { chatId: A, phone: '5511900000001', name: null, lastAt: D0 + 300, lastFrom: 'loja', lastCustomerAt: D0 + 200, isNewLead: true, firstMessageAt: D0 - 600,
+      days: [{ day: '2026-11-05', customer: true, store: false }, { day: '2026-11-06', customer: true, store: true }] },
+    { chatId: B, phone: null, name: null, lastAt: D0 + 50, lastFrom: 'loja', lastCustomerAt: null, isNewLead: null, firstMessageAt: null, days: [{ day: '2026-11-06', customer: false, store: true }] },
+  ]);
+  assert.ok(!JSON.stringify(out).includes('buy'));
+});
+test('2.12.8: no máximo 1 gravação por conversa a cada 30 s (o que chega no meio espera e é juntado)', () => {
+  const buf = E.activityBuffer(30000);
+  const act = (chatId, t, fromMe = false) => E.activityOfEvent({ chatId, fromMe, t });
+  buf.add([act(A, D0 + 1), act(B, D0 + 2)]);
+  assert.deepStrictEqual(plain(buf.take(1000)).map((x) => x.chatId), [A, B]); // 1ª vez: grava na hora
+  buf.add([act(A, D0 + 10), act(A, D0 + 20, true)]);
+  assert.deepStrictEqual(plain(buf.take(20000)), []); // 19 s depois: espera
+  buf.add([act(A, D0 + 25)]);
+  const w = plain(buf.take(31000)); // 30 s depois da última gravação: uma só, com tudo junto
+  assert.deepStrictEqual(w.map((x) => [x.chatId, x.lastAt, x.lastFrom, x.lastCustomerAt]), [[A, D0 + 25, 'cliente', D0 + 25]]);
+  assert.strictEqual(buf.size(), 0);
+  // falhou ao gravar: volta para a fila e respeita os 30 s de novo
+  buf.add([act(B, D0 + 40)]);
+  const b = buf.take(40000);
+  buf.putBack(b);
+  assert.deepStrictEqual(plain(buf.take(50000)), []);
+  assert.deepStrictEqual(plain(buf.take(70001)).map((x) => x.chatId), [B]);
+});
+test('2.12.8: juntar atividades só avança (última mensagem mais nova, 1ª mais antiga, lead já sabido fica)', () => {
+  const m = E.mergeActivity(
+    { chatId: A, phone: null, name: 'Ana', lastAt: 500, lastFrom: 'cliente', lastCustomerAt: 500, isNewLead: true, firstMessageAt: 100, days: [{ day: '2026-11-06', customer: true, store: false }] },
+    { chatId: A, phone: '55119', name: null, lastAt: 300, lastFrom: 'loja', lastCustomerAt: 200, isNewLead: false, firstMessageAt: 50, days: [{ day: '2026-11-06', customer: false, store: true }] },
+  );
+  assert.deepStrictEqual(plain(m), { chatId: A, phone: '55119', name: 'Ana', lastAt: 500, lastFrom: 'cliente', lastCustomerAt: 500, isNewLead: true, firstMessageAt: 50, days: [{ day: '2026-11-06', customer: true, store: true }] });
 });
 
 // ── supabase-api.js ──
-function api({ migration = true, sends = [], tracking = true } = {}) {
+function api({ migration = true, sends = [], tracking = true, activity = true } = {}) {
   const calls = [];
   const res = (status, body) => ({ ok: status < 300, status, text: async () => (body == null ? '' : JSON.stringify(body)) });
   const fetch = async (url, init = {}) => {
@@ -92,6 +124,7 @@ function api({ migration = true, sends = [], tracking = true } = {}) {
     calls.push({ method, path: p, prefer: init.headers && init.headers.Prefer, body: init.body ? JSON.parse(init.body) : undefined });
     if (!migration && (/wa_send_log\?select=origin/.test(p) || /wa_replies|wa_leads/.test(p))) return res(400, { code: '42703', message: 'column wa_send_log.origin does not exist' });
     if (!tracking && p.startsWith('wa_leads?select=last_message_at')) return res(400, { code: '42703', message: 'column wa_leads.last_message_at does not exist' });
+    if (!activity && /^wa_chat_activity/.test(p)) return res(404, { code: 'PGRST205', message: "Could not find the table 'public.wa_chat_activity' in the schema cache" });
     if (p.startsWith('wa_items?select=id,follow_step')) return res(200, [{ id: '11111111-1111-1111-1111-111111111111', follow_step: 2 }]);
     if (method === 'GET' && p.startsWith('wa_send_log?select=id,created_at')) return res(200, sends.filter((s) => p.includes(s.chat_id)).slice(0, 1));
     if (method === 'GET' && p.startsWith('wa_send_log?select=id&chat_id=')) return res(200, p.includes('5511900000009') ? [{ id: 'x' }] : []);
@@ -169,7 +202,7 @@ test('api: etapa do follow-up na mensagem rápida (1 a 20) e sem a coluna → "A
   await assert.rejects(a.saveItem({ category_id: '33333333-3333-3333-3333-333333333333', title: 'X', parts: [{ type: 'texto', body: 'oi' }], follow_step: 25 }), /Etapa do follow-up/);
 });
 
-test('api 2.12.2: touchLeads só avança a última mensagem e o sinal de compra (PATCH condicional)', async () => {
+test('api 2.12.2/2.12.8: touchLeads só avança a última mensagem (PATCH condicional) e não grava mais o sinal de compra', async () => {
   const { api: a, calls } = api();
   const r = await a.touchLeads({ items: [{ chatId: A, t: 1762430400, buy: 1762430300 }, { chatId: B, t: 1762430500, buy: null }, { chatId: A, t: 1 }, { chatId: 'x@g.us', t: 5 }] });
   assert.strictEqual(r.saved, 2);
@@ -177,10 +210,40 @@ test('api 2.12.2: touchLeads só avança a última mensagem e o sinal de compra 
   const iso = (sec) => new Date(sec * 1000).toISOString();
   assert.deepStrictEqual(patches.map((c) => c.path), [
     `wa_leads?chat_id=eq.${A}&or=(last_message_at.is.null,last_message_at.lt.${iso(1762430400)})`,
-    `wa_leads?chat_id=eq.${A}&or=(buy_signal_at.is.null,buy_signal_at.lt.${iso(1762430300)})`,
     `wa_leads?chat_id=eq.${B}&or=(last_message_at.is.null,last_message_at.lt.${iso(1762430500)})`,
   ]);
-  assert.deepStrictEqual(patches.map((c) => c.body), [{ last_message_at: iso(1762430400) }, { buy_signal_at: iso(1762430300) }, { last_message_at: iso(1762430500) }]);
+  assert.deepStrictEqual(patches.map((c) => c.body), [{ last_message_at: iso(1762430400) }, { last_message_at: iso(1762430500) }]);
+  assert.ok(!calls.some((c) => /buy_signal/.test(c.path + JSON.stringify(c.body || ''))));
+});
+test('api 2.12.8: saveChatActivity = um upsert por tabela (on_conflict, merge-duplicates), dias só com quem falou; nunca texto', async () => {
+  const { api: a, calls } = api();
+  const iso = (sec) => new Date(sec * 1000).toISOString();
+  const r = await a.saveChatActivity({ items: [
+    { chatId: A, phone: '5511900000001', name: 'Ana', lastAt: D0 + 300, lastFrom: 'loja', lastCustomerAt: D0 + 200, isNewLead: true, firstMessageAt: D0 - 600,
+      days: [{ day: '2026-11-05', customer: true, store: false }, { day: '2026-11-06', customer: true, store: true }, { day: 'x', customer: true }, { day: '2026-11-07', customer: false, store: false }] },
+    { chatId: B, lastAt: D0 + 50, lastFrom: 'zzz', isNewLead: 'sim', days: [] },
+    { chatId: A, lastAt: D0 }, // repetida: ignora
+    { chatId: 'grupo@g.us', lastAt: D0 },
+  ] });
+  assert.deepStrictEqual(plain(r), { saved: 2, days: 2 });
+  const posts = calls.filter((c) => c.method === 'POST');
+  assert.deepStrictEqual(posts.map((c) => [c.path, /merge-duplicates/.test(c.prefer)]), [['wa_chat_activity?on_conflict=chat_id', true], ['wa_chat_activity_days?on_conflict=chat_id,day', true]]);
+  const [rowA, rowB] = posts[0].body;
+  assert.deepStrictEqual([rowA.chat_id, rowA.phone, rowA.name, rowA.last_message_at, rowA.last_from, rowA.last_customer_at, rowA.is_new_lead, rowA.first_message_at],
+    [A, '5511900000001', 'Ana', iso(D0 + 300), 'loja', iso(D0 + 200), true, iso(D0 - 600)]);
+  assert.deepStrictEqual([rowB.last_from, rowB.is_new_lead, rowB.first_message_at, rowB.phone], [null, null, null, null]);
+  assert.deepStrictEqual(Object.keys(rowA).sort(), Object.keys(rowB).sort()); // mesmas colunas em todas as linhas (exigência do upsert em lote)
+  assert.deepStrictEqual(posts[1].body, [
+    { chat_id: A, day: '2026-11-05', from_customer: true, from_store: false },
+    { chat_id: A, day: '2026-11-06', from_customer: true, from_store: true },
+  ]);
+  await assert.rejects(a.saveChatActivity({ items: 'x' }), /Lista inválida/);
+});
+test('api 2.12.8: sem a migration 20261109120000 → { missing: true } e nada é gravado', async () => {
+  const { api: a, calls } = api({ activity: false });
+  const r = await a.saveChatActivity({ items: [{ chatId: A, lastAt: D0 }] });
+  assert.deepStrictEqual(plain(r), { saved: 0, missing: true });
+  assert.ok(!calls.some((c) => c.method !== 'GET'));
 });
 test('api 2.12.2: sem a coluna (migration 20261107120000 não aplicada) → não grava nada e não para o painel', async () => {
   const { api: a, calls } = api({ tracking: false });
@@ -191,15 +254,20 @@ test('api 2.12.2: sem a coluna (migration 20261107120000 não aplicada) → não
 });
 
 // ── wa-bridge.js ──
-function bridge({ msgs = {}, noEarlier = {} } = {}) {
+// older[chatId] = mensagens que a WA-JS entrega em getMessages (as antigas, ainda não carregadas); chatT = chat.t
+function bridge({ msgs = {}, noEarlier = {}, older = {}, chatT = {}, extraChats = [] } = {}) {
   let onMsg = null;
   let listener = null;
   const replies = [];
-  const chatModel = (id) => ({ id: { _serialized: id }, msgs: { getModelsArray: () => msgs[id] || [], msgLoadState: { noEarlierMsgs: noEarlier[id] } } });
+  const loads = [];
+  const chatModel = (id) => ({ id: { _serialized: id }, t: chatT[id], name: `Nome ${id.slice(-6, -5)}`, msgs: { getModelsArray: () => msgs[id] || [], msgLoadState: { noEarlierMsgs: noEarlier[id] } } });
   const wpp = {
     isReady: true,
     on: (ev, fn) => { if (ev === 'chat.new_message') onMsg = fn; },
-    chat: { get: (id) => chatModel(id), list: async () => Object.keys(msgs).map(chatModel) },
+    chat: {
+      get: (id) => chatModel(id), list: async () => [...new Set([...Object.keys(msgs), ...extraChats])].map(chatModel),
+      getMessages: async (id, opts) => { loads.push([id, opts.count]); return (older[id] || []).slice(-opts.count); },
+    },
     contact: { getPnLidEntry: async () => ({ phoneNumber: { id: '5511977776666' } }) },
   };
   const win = { console, setTimeout, clearTimeout, Intl, URL, Promise, Blob, WPP: wpp, location: { origin: 'x' },
@@ -217,7 +285,7 @@ function bridge({ msgs = {}, noEarlier = {} } = {}) {
     const wait = () => { const r = replies.find((x) => x.id === id); if (r) resolve(r); else if (Date.now() > until) resolve({ ok: false }); else setTimeout(wait, 5); };
     wait();
   });
-  return { emit: (m) => onMsg(m), request };
+  return { emit: (m) => onMsg(m), request, loads };
 }
 const msg = (chat, id, fromMe, t, extra = {}) => ({ id: { remote: { _serialized: chat }, fromMe, id }, t, type: 'chat', ...extra });
 test('ponte: 1ª mensagem do cliente numa conversa sem nada antes = lead (com anúncio); conversa antiga não', async () => {
@@ -238,22 +306,21 @@ test('ponte: 1ª mensagem do cliente numa conversa sem nada antes = lead (com an
   assert.strictEqual(ev[2].fromMe, true);
   assert.strictEqual((await b.request('convEvents', {})).data.events.length, 0); // a fila esvazia
 });
-test('ponte 2.12.2: "buy" só quando a mensagem (nossa ou do cliente, texto ou legenda) tem sinal de compra; sem o texto', async () => {
+test('ponte 2.12.8: sem o "sinal de compra" (nem "buy" nem o texto saem da ponte)', async () => {
   const now = Math.floor(Date.now() / 1000);
   const list = [
     msg(A, 'p1', false, now, { body: 'Oi, quero o relógio' }),
     msg(A, 'p2', true, now + 1, { body: 'Segue a chave PIX: 123' }),
     msg(A, 'p3', false, now + 2, { type: 'image', caption: 'Comprovante 😊' }),
-    msg(A, 'p4', false, now + 3, { body: 'Qual o endereço de entrega?' }),
-    msg(A, 'p5', true, now + 4, { body: 'Pagamento confirmado' }),
     msg(A, 'p6', false, now + 5, { body: 'paguei agora' }),
-    msg(A, 'p7', false, now + 6, { body: 'vi no pixel do site' }),
   ];
   const b = bridge({ msgs: { [A]: list } });
   list.forEach((m) => b.emit(m));
   const r = await b.request('convEvents', {});
-  assert.deepStrictEqual(plain(r.data.events.map((e) => e.buy === true)), [false, true, true, true, true, true, false]);
-  assert.ok(!/rel[oó]gio|chave|omprovante|endere|confirmado/i.test(JSON.stringify(r.data)), 'o texto não sai da ponte');
+  assert.strictEqual(r.data.events.length, 4);
+  assert.ok(r.data.events.every((e) => !('buy' in e)));
+  assert.ok(!/rel[oó]gio|chave|omprovante|paguei/i.test(JSON.stringify(r.data)), 'o texto não sai da ponte');
+  assert.ok(!/BUY_SIGNAL|buySignalOf/.test(src('wa-bridge.js')));
 });
 test('ponte: o WhatsApp avisa que há mensagens mais antigas não carregadas → não é lead', async () => {
   const now = Math.floor(Date.now() / 1000);
@@ -263,27 +330,57 @@ test('ponte: o WhatsApp avisa que há mensagens mais antigas não carregadas →
   const r = await b.request('convEvents', {});
   assert.strictEqual(r.data.events[0].first, undefined);
 });
-test('ponte: ao abrir, recupera os leads das últimas 24 h (conversa completa, 1ª mensagem do cliente)', async () => {
+test('ponte 2.12.8: ao abrir, varre TODAS as conversas com mensagem nas últimas 72 h (inclusive as que chegaram com o PC desligado)', async () => {
   const now = Math.floor(Date.now() / 1000);
   const L = '123456@lid';
+  const C3 = '5511900000003@c.us'; const C4 = '5511900000004@c.us'; const C5 = '5511900000005@c.us'; const C6 = '5511900000006@c.us';
   const b = bridge({
     msgs: {
-      [A]: [msg(A, 'a1', false, now - 3600), msg(A, 'a2', true, now - 3500)], // lead de 1 h atrás
-      [B]: [msg(B, 'b1', false, now - 30 * 3600)], // mais de 24 h
-      [L]: [msg(L, 'l1', false, now - 600)], // lead @lid (sem saber se está completa)
-      '5511900000003@c.us': [msg('5511900000003@c.us', 'c1', true, now - 600)], // a loja falou primeiro
+      [A]: [msg(A, 'a1', false, now - 10 * 3600), msg(A, 'a2', true, now - 9 * 3600)], // chegou há 10 h (PC desligado), completa
+      [B]: [msg(B, 'b1', false, now - 80 * 3600)], // mais de 72 h: fica de fora
+      [C3]: [msg(C3, 'c1', true, now - 600)], // a loja falou primeiro (completa): não é lead
+      [C4]: [msg(C4, 'd0', false, now - 100 * 3600), msg(C4, 'd1', false, now - 3600)], // antiga (tem mensagem antes das 72 h)
+      [L]: [msg(L, 'l1', false, now - 600)], // não dá para saber: carrega as antigas → chegou ao começo → lead
+      [C5]: [msg(C5, 'e2', false, now - 1200)], // carrega as antigas → chegou ao começo, que é da loja (5 dias atrás) → não é lead
     },
-    noEarlier: { [A]: true, [B]: true, '5511900000003@c.us': true },
+    noEarlier: { [A]: true, [B]: true, [C3]: true },
+    older: { [L]: [], [C5]: [msg(C5, 'e1', true, now - 5 * 86400)], [C6]: [msg(C6, 'f1', false, now - 7200), msg(C6, 'f2', true, now - 7000)] },
+    chatT: { [C6]: now - 7000 }, // C6: nenhuma mensagem carregada na tela (só a hora da conversa)
+    extraChats: [C6, '120363@g.us'],
   });
-  const r = await b.request('convEvents', { scan: true });
+  const r = await b.request('activityScan', {});
+  assert.ok(r.ok, JSON.stringify(r.error));
   assert.strictEqual(r.data.scanned, true);
-  assert.deepStrictEqual(plain(r.data.events.map((e) => [e.chatId, e.scan, e.first])), [[A, true, true]]);
+  const by = Object.fromEntries(r.data.items.map((i) => [i.chatId, i]));
+  assert.deepStrictEqual(Object.keys(by).sort(), [A, C3, C4, C5, C6, L].sort()); // B (> 72 h) e o grupo ficam de fora
+  assert.deepStrictEqual([by[A].isNewLead, by[A].firstMessageAt, by[A].lastAt, by[A].lastFrom, by[A].lastCustomerAt], [true, now - 10 * 3600, now - 9 * 3600, 'loja', now - 10 * 3600]);
+  // C4: tem mensagem antes das 72 h e o WhatsApp não diz se está completa → não sabe (null), e não é lead do período
+  assert.deepStrictEqual([by[C3].isNewLead, by[C4].isNewLead, by[C5].isNewLead, by[L].isNewLead, by[C6].isNewLead], [false, null, false, true, true]);
+  assert.deepStrictEqual([by[C6].lastAt, by[C6].lastFrom, by[C6].lastCustomerAt], [now - 7000, 'loja', now - 7200]);
+  assert.ok(by[A].days.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.day)) && by[A].days.some((d) => d.customer) && by[A].days.some((d) => d.store));
+  assert.deepStrictEqual(by[C4].days.length >= 1 && by[C4].days.every((d) => d.customer && !d.store), true); // só a mensagem das últimas 72 h
+  assert.strictEqual(by[A].phone, '5511900000001');
+  // carregou as antigas só de quem precisava (L, C5 e C6), com limite por conversa
+  assert.deepStrictEqual(plain(b.loads.map((x) => x[0])).sort(), [L, C5, C6].sort());
+  assert.ok(b.loads.every((x) => x[1] === 50));
+  // leads para wa_leads (como os eventos da varredura): A, L e C6
+  assert.deepStrictEqual(plain(r.data.leads.map((e) => [e.chatId, e.first, e.scan, e.fromMe])).sort(), [[A, true, true, false], [C6, true, true, false], [L, true, true, false]].sort());
+  assert.ok(!/body|caption/.test(JSON.stringify(r.data)));
+});
+test('ponte 2.12.8: a mensagem nova não espera a varredura (convEvents só esvazia a fila)', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const m = msg(A, 'z1', false, now);
+  const b = bridge({ msgs: { [A]: [m] }, noEarlier: { [A]: true } });
+  b.emit(m);
+  const r = await b.request('convEvents', { scan: true });
+  assert.deepStrictEqual(plain(r.data.events.map((e) => [e.chatId, e.first, e.scan === true])), [[A, true, false]]);
+  assert.strictEqual(r.data.scanned, false);
 });
 
 (async () => {
   let ok = 0;
   for (const [name, fn] of tests) {
-    try { await fn(); ok++; console.log(`ok   ${name}`); } catch (e) { console.log(`FAIL ${name}\n     ${e.stack.split('\n').slice(0, 4).join('\n     ')}`); process.exitCode = 1; }
+    try { await fn(); ok++; console.log(`ok   ${name}`); } catch (e) { console.log(`FAIL ${name}\n     ${e.stack.split('\n').slice(0, 14).join('\n     ')}`); process.exitCode = 1; }
   }
   console.log(`\n${ok}/${tests.length} testes passaram`);
 })();

@@ -3,9 +3,11 @@
 import assert from 'node:assert/strict';
 import { periodRanges, type SendRow } from '../../src/lib/waPanel.ts';
 import {
-  buildConversations, businessMinutesBetween, conversationsCsv, conversationsIn, formatPhone, journey, originByDay, possibleUnmarkedSales,
+  buildConversations, businessMinutesBetween, conversationsCsv, conversationsIn, formatPhone, journey, originByDay,
   salesByDay, searchConversations, sortConversations, trackingWindow, trackSummary, waLinkOf, businessHoursOf, businessHoursLabel, saleLinksText, saleDateFilter, type TrackInput,
+  filterStage, pageInfo, DEFAULT_SORT, STAGE_FILTERS,
 } from '../../src/lib/waTracking.ts';
+import * as tracking from '../../src/lib/waTracking.ts';
 import { conversionContact, maskPhoneDigits } from '../../src/lib/waConversions.ts';
 
 const tests: [string, () => void][] = [];
@@ -31,7 +33,7 @@ function scenario(): TrackInput {
   const input = base();
   input.leads.push(
     lead(A, '2026-11-02T10:00:00', { phone: '5511911112222', origin: 'anuncio', ad_id: 'AD1', ad_title: 'Relógio Promo', last_message_at: sp('2026-11-03T09:00:00') }),
-    lead(L, '2026-11-03T19:00:00', { phone: '5511955556666', buy_signal_at: sp('2026-11-03T19:30:00') }),
+    lead(L, '2026-11-03T19:00:00', { phone: '5511955556666' }),
     lead(B, '2026-10-20T10:00:00'),
     lead('5511944445555@c.us', '2026-11-05T09:00:00'),
   );
@@ -277,14 +279,101 @@ test('vendas por dia: pela data do 1º contato x pela data da venda', () => {
   assert.equal(salesByDay(m, R, 'todas', 'contato').length, 7);
 });
 
-// ── Possíveis vendas não marcadas ──
-test('possíveis vendas não marcadas: sinal de compra e nenhuma venda ligada', () => {
+// ── 2.12.8: "Possíveis vendas não marcadas" saiu ──
+test('2.12.8: "Possíveis vendas não marcadas" e o sinal de compra saíram', () => {
+  assert.equal('possibleUnmarkedSales' in tracking, false);
+  const c = conversationsIn(buildConversations(scenario()), R, 'todas')[0];
+  assert.equal('buySignalAt' in c, false);
+});
+
+// ── 2.12.8: todas as conversas (wa_chat_activity), como o Tintim ──
+const OLD = '5511966667777@c.us'; // conversa antiga (começou em setembro) que voltou a falar no período
+const QUIET = '5511988889999@c.us'; // conversa antiga em que só a loja falou no período
+const OFF = '5511922223333@c.us'; // chegou com o PC desligado: entrou pela varredura da abertura (72 h)
+function withActivity(): TrackInput {
   const input = scenario();
-  input.leads[0].buy_signal_at = sp('2026-11-04T14:00:00'); // A tem sinal, mas já tem venda
-  const list = possibleUnmarkedSales(conversationsIn(buildConversations(input), R, 'todas'));
-  assert.deepEqual(list.map((c) => [c.chatId, c.waLink]), [[L, 'https://wa.me/5511955556666']]);
-  input.leads[1].buy_signal_at = null;
-  assert.equal(possibleUnmarkedSales(conversationsIn(buildConversations(input), R, 'todas')).length, 0);
+  input.activity = [
+    { chat_id: OLD, phone: '5511966667777', name: 'Paula WhatsApp', first_seen_at: sp('2026-09-01T10:00:00'), first_message_at: sp('2026-09-01T10:00:00'), last_message_at: sp('2026-11-06T14:00:00'), last_from: 'cliente', last_customer_at: sp('2026-11-06T14:00:00'), is_new_lead: false },
+    { chat_id: QUIET, phone: '5511988889999', name: 'Rui', first_seen_at: sp('2026-08-01T10:00:00'), first_message_at: null, last_message_at: sp('2026-11-05T11:00:00'), last_from: 'loja', last_customer_at: sp('2026-10-01T10:00:00'), is_new_lead: null },
+    { chat_id: OFF, phone: '5511922223333', name: 'Bia', first_seen_at: sp('2026-11-06T08:00:00'), first_message_at: sp('2026-11-05T23:10:00'), last_message_at: sp('2026-11-05T23:30:00'), last_from: 'loja', last_customer_at: sp('2026-11-05T23:10:00'), is_new_lead: true },
+    { chat_id: A, phone: '5511911112222', name: null, first_seen_at: sp('2026-11-02T10:00:00'), first_message_at: sp('2026-11-02T10:00:00'), last_message_at: sp('2026-11-06T12:00:00'), last_from: 'loja', last_customer_at: sp('2026-11-06T11:00:00'), is_new_lead: true },
+  ];
+  input.activityDays = [
+    { chat_id: OLD, day: '2026-11-06', from_customer: true, from_store: true },
+    { chat_id: QUIET, day: '2026-11-05', from_customer: false, from_store: true },
+    { chat_id: OFF, day: '2026-11-05', from_customer: true, from_store: true },
+    { chat_id: A, day: '2026-11-06', from_customer: true, from_store: true },
+  ];
+  return input;
+}
+test('2.12.8: as conversas do período são TODAS as ativas (o cliente falou no período), não só leads', () => {
+  const list = conversationsIn(buildConversations(withActivity()), R, 'todas');
+  const ids = list.map((c) => c.chatId).sort();
+  assert.deepEqual(ids, [A, L, '5511944445555@c.us', OLD, OFF].sort()); // QUIET (só a loja falou) não entra; B fora do período
+  const old = list.find((c) => c.chatId === OLD)!;
+  assert.deepEqual([old.periodActive, old.periodLead, old.tracked, old.name, old.lastFrom], [true, false, false, 'Paula WhatsApp', 'cliente']);
+  assert.equal(old.lastAt, ms('2026-11-06T14:00:00'));
+  assert.equal(old.firstAt, ms('2026-09-01T10:00:00')); // a 1ª mensagem conhecida
+  const a = list.find((c) => c.chatId === A)!;
+  assert.deepEqual([a.periodLead, a.periodActive, a.lastAt, a.lastFrom], [true, true, ms('2026-11-06T12:00:00'), 'loja']);
+});
+test('2.12.8: "Conversas ativas" e "Leads novos" separados (lead do período conta nos dois)', () => {
+  const s = trackSummary(conversationsIn(buildConversations(withActivity()), R, 'todas'));
+  assert.deepEqual([s.total, s.active, s.leads, s.leadsAd], [5, 5, 4, 1]);
+  // por origem: só anúncio
+  const sAd = trackSummary(conversationsIn(buildConversations(withActivity()), R, 'anuncio'));
+  assert.deepEqual([sAd.active, sAd.leads], [1, 1]);
+});
+test('2.12.8: conversa que chegou com o PC desligado (varredura de 72 h ao abrir) entra como lead novo do dia em que chegou', () => {
+  const list = conversationsIn(buildConversations(withActivity()), R, 'todas');
+  const off = list.find((c) => c.chatId === OFF)!;
+  assert.deepEqual([off.periodLead, off.periodActive, off.tracked, off.ad, off.name], [true, true, true, false, 'Bia']);
+  assert.equal(off.firstAt, ms('2026-11-05T23:10:00'));
+  const day = originByDay(list, R).find((d) => d.day === '2026-11-05')!;
+  assert.equal(day.nao_rastreada, 2); // a 5555 (wa_leads) e a Bia (atividade)
+  // sem a atividade (migration não aplicada), ela simplesmente não aparece
+  const plain = conversationsIn(buildConversations(scenario()), R, 'todas');
+  assert.equal(plain.some((c) => c.chatId === OFF), false);
+});
+test('2.12.8: conversa antiga ativa só leva as vendas do período; resposta a envio nosso também conta como ativa', () => {
+  const input = withActivity();
+  input.sales.push(
+    { id: 'old1', sale_date: '2026-10-10', created_at: sp('2026-10-10T10:00:00'), total_sale_price: 999, customer_phone: null, wa_chat_id: OLD },
+    { id: 'old2', sale_date: '2026-11-06', created_at: sp('2026-11-06T14:30:00'), total_sale_price: 120, customer_phone: null, wa_chat_id: OLD },
+  );
+  input.replies.push({ chat_id: QUIET, replied_at: sp('2026-11-04T10:00:00'), send_log_id: 'x9', minutes: 5 }); // o Rui respondeu
+  const list = conversationsIn(buildConversations(input), R, 'todas', input.replies);
+  const old = list.find((c) => c.chatId === OLD)!;
+  assert.deepEqual([old.stage, old.sales, old.revenue], ['comprou', 1, 120]);
+  assert.ok(list.find((c) => c.chatId === QUIET)?.periodActive);
+});
+
+// ── 2.12.8: tabela ──
+test('2.12.8: ordem padrão = última mensagem, mais recente primeiro', () => {
+  assert.deepEqual(DEFAULT_SORT, { key: 'lastAt', desc: true });
+  const list = conversationsIn(buildConversations(withActivity()), R, 'todas');
+  const sorted = sortConversations(list, DEFAULT_SORT.key, DEFAULT_SORT.desc);
+  // OLD 06/11 14:00 · A 06/11 12:00 · OFF 05/11 23:30 · 5555 05/11 09:20 (resposta) · L 03/11 19:00
+  assert.deepEqual(sorted.map((c) => c.chatId), [OLD, A, OFF, '5511944445555@c.us', L]);
+  sorted.slice(1).forEach((c, i) => assert.ok(c.lastAt <= sorted[i].lastAt));
+});
+test('2.12.8: filtro de etapa Todas / Comprou / Respondeu / Só fez contato', () => {
+  assert.deepEqual(STAGE_FILTERS.map((x) => x[1]), ['Todas', 'Comprou', 'Respondeu', 'Só fez contato']);
+  const list = conversationsIn(buildConversations(withActivity()), R, 'todas');
+  assert.equal(filterStage(list, 'todas').length, 5);
+  assert.deepEqual(filterStage(list, 'comprou').map((c) => c.chatId), [A]);
+  assert.deepEqual(filterStage(list, 'respondeu').map((c) => c.chatId), ['5511944445555@c.us']);
+  assert.deepEqual(filterStage(list, 'contato').map((c) => c.chatId).sort(), [L, OLD, OFF].sort());
+});
+test('2.12.8: paginação: "Página X de Y · N conversas", 25 por página, nunca passa da última', () => {
+  assert.deepEqual(pageInfo(60, 0, 25), { page: 0, pages: 3, from: 0, to: 25, total: 60, label: 'Página 1 de 3 · 60 conversas', hasPrev: false, hasNext: true });
+  assert.deepEqual([pageInfo(60, 1, 25).from, pageInfo(60, 1, 25).to, pageInfo(60, 1, 25).label], [25, 50, 'Página 2 de 3 · 60 conversas']);
+  assert.deepEqual([pageInfo(60, 2, 25).to, pageInfo(60, 2, 25).hasNext], [60, false]);
+  assert.equal(pageInfo(60, 9, 25).page, 2); // página que não existe mais (a lista diminuiu) → a última
+  assert.equal(pageInfo(60, -3, 25).page, 0);
+  assert.equal(pageInfo(0, 0, 25).label, 'Página 1 de 1 · 0 conversas');
+  assert.equal(pageInfo(1, 0, 25).label, 'Página 1 de 1 · 1 conversa');
+  assert.equal(pageInfo(1200, 0, 50, ['evento', 'eventos']).label, 'Página 1 de 24 · 1.200 eventos');
 });
 
 // ── Tabela ──
@@ -307,7 +396,7 @@ test('CSV com ";" e vírgula decimal, aspas quando precisa', () => {
   const lines = csv.split('\r\n');
   assert.equal(lines.length, 4);
   assert.equal(lines[0].split(';')[0], 'Contato');
-  assert.equal(lines[1], '"Maria ""Mari""; Silva";(11) 91111-2222;Meta Ads;Relógio Promo;Comprou;1;300,00;02/11/2026 10:00;03/11/2026 09:00;30;sim;sim');
+  assert.equal(lines[1], '"Maria ""Mari""; Silva";(11) 91111-2222;Meta Ads;Relógio Promo;Comprou;1;300,00;sim;02/11/2026 10:00;03/11/2026 09:00;;30;sim;sim');
   assert.ok(lines[2].includes(';Não rastreada;;Fez contato;0;0,00;'));
 });
 test('sem dados: tudo zerado, sem quebrar', () => {

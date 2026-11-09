@@ -1124,23 +1124,14 @@
   // ── 2.10.0: painel de resultados — eventos das conversas individuais (só memória desta aba) ──
   // Para cada mensagem nova: conversa, se é sua ou do cliente e a hora. Mensagem do cliente sem nenhuma
   // mensagem antes na conversa = lead novo (first), com o anúncio se vier de anúncio. Nunca o texto
-  // (2.12.2: só "buy: true" quando a mensagem tem um sinal de compra, conferido aqui).
-  // O painel (aba com a trava) grava leads, respostas e o que você digitou.
+  // (2.12.8: o "sinal de compra" saiu). O painel (aba com a trava) grava leads, respostas, o que você
+  // digitou e a atividade da conversa (wa_chat_activity).
   const CONV_MAX = 2000;
   const convQueue = [];
   const SKIP_TYPES = new Set(['e2e_notification', 'notification', 'notification_template', 'gp2', 'protocol', 'reaction', 'call_log', 'revoked', 'ciphertext_failed']);
   const realMsg = (x) => !SKIP_TYPES.has(String(safe(() => x.type, '') || '')) && !safe(() => x.isNotification, false);
   const convChatId = (m) => safe(() => m.id.remote._serialized, '') || String(safe(() => m.id.remote, '') || '');
   const noEarlierOf = (chat) => safe(() => chat.msgs.msgLoadState.noEarlierMsgs, undefined);
-  // 2.12.2: sinal de compra na mensagem (nossa ou do cliente), conferido aqui; só sai "sim" (nunca o texto)
-  const BUY_SIGNAL_RE = /\bpix\b|comprovante|\bpaguei\b|endereco de entrega|\bpagamento/;
-  const stripAccents = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  function buySignalOf(m) {
-    const type = String(safe(() => m.type, '') || '');
-    const body = type === 'chat' ? safe(() => m.body, '') : safe(() => m.caption, '');
-    if (typeof body !== 'string' || !body) return false;
-    return BUY_SIGNAL_RE.test(stripAccents(body.slice(0, 2000).toLowerCase()));
-  }
   function leadAd(m) {
     const ctx = ctxOf(m);
     if (!ctx) return null;
@@ -1156,7 +1147,6 @@
     if (!labelSeen.has(chatId)) { const ch = safe(() => wpp.chat.get(chatId), null); if (ch) rememberLabels(chatId, labelIdsOf(ch)); }
     const t = msgT(m) || Math.floor(Date.now() / 1000);
     const ev = { chatId, fromMe, t };
-    if (buySignalOf(m)) ev.buy = true; // 2.12.2
     if (!fromMe) {
       const chat = safe(() => wpp.chat.get(chatId), null);
       const msgs = (chat && safe(() => chat.msgs.getModelsArray(), null)) || [];
@@ -1174,32 +1164,94 @@
     pnCache.set(chatId, pn);
     return pn;
   }
-  // scan (1 vez por abertura): conversas carregadas cuja 1ª mensagem é do cliente e chegou nas últimas 24 h
-  // (com o PC desligado). Só conta se o WhatsApp diz que não há mensagens mais antigas na conversa.
-  const LEAD_SCAN_MS = 24 * 3600 * 1000;
-  async function convEvents(payload) {
-    let scanned = false;
-    const scan = [];
-    if (payload && payload.scan === true && isReady()) {
-      let loaded = null;
-      try { loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS); } catch { loaded = null; }
-      if (Array.isArray(loaded)) {
-        scanned = true;
-        const since = (Date.now() - LEAD_SCAN_MS) / 1000;
-        for (const chat of loaded.slice(0, 3000)) {
-          const id = chatIdOf(chat);
-          if (!/^[0-9]+@(c\.us|lid)$/.test(id) || noEarlierOf(chat) !== true) continue;
-          const msgs = (safe(() => chat.msgs.getModelsArray(), null) || []).filter(realMsg);
-          if (!msgs.length) continue;
-          const first = msgs.reduce((a, b) => (msgT(b) < msgT(a) ? b : a));
-          if (safe(() => first.id.fromMe, true) || msgT(first) < since) continue;
-          scan.push({ chatId: id, fromMe: false, t: msgT(first), first: true, ad: leadAd(first), scan: true });
-        }
-      }
-    }
-    const events = [...convQueue.splice(0, convQueue.length), ...scan];
+  // Mensagens novas desde a última vez (a varredura da abertura agora é a activityScan, 2.12.8)
+  async function convEvents() {
+    const events = convQueue.splice(0, convQueue.length);
     if (isReady()) for (const e of events) if (!e.fromMe) e.phone = await cachedPn(e.chatId);
-    return { events, scanned };
+    return { events, scanned: false };
+  }
+
+  // ── 2.12.8: varredura da abertura — TODAS as conversas individuais com mensagem nas últimas 72 h ──
+  // WPP.chat.list traz as conversas da memória do WhatsApp Web, inclusive as que não estão na tela (e as que
+  // chegaram com o PC desligado). Para cada uma: última mensagem (e de quem), última do cliente, os dias em
+  // que o cliente/a loja falaram (horário de São Paulo) e se é lead novo (a conversa começou com o cliente).
+  // Para saber se é lead novo precisa ver se há mensagens ANTES: usa as carregadas; se não der para saber,
+  // carrega as antigas pela WA-JS (getMessages, só leitura), no máximo ACT_LOAD_MAX conversas por abertura.
+  // Nunca o texto. leads = no formato dos eventos (scan: true) para gravar em wa_leads como antes.
+  const ACT_SCAN_MS = 72 * 3600 * 1000;
+  const ACT_LIST_MAX = 5000;
+  const ACT_LOAD_MAX = 150;
+  const ACT_LOAD_COUNT = 50;
+  const ACT_LOAD_TIMEOUT_MS = 6000;
+  const ACT_LOAD_BUDGET_MS = 90 * 1000; // depois disso, não carrega mais mensagens antigas nesta abertura
+  const spDayOfSec = (t) => new Date((t - 3 * 3600) * 1000).toISOString().slice(0, 10);
+  async function activityScan(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const p = payload || {};
+    const nowS = Number.isFinite(p.now) ? p.now : Math.floor(Date.now() / 1000);
+    const since = nowS - Math.floor(ACT_SCAN_MS / 1000);
+    const startedAt = Date.now();
+    let loaded = null;
+    try { loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS * 2); } catch { loaded = null; }
+    if (!Array.isArray(loaded)) return { scanned: false, items: [], leads: [], loadedOld: 0 };
+    const canLoad = !!(wpp.chat && typeof wpp.chat.getMessages === 'function');
+    let loads = 0;
+    const items = [];
+    const leads = [];
+    const candidates = loaded.slice(0, ACT_LIST_MAX)
+      .map((chat) => ({ chat, id: chatIdOf(chat), t: Number(safe(() => chat.t, 0)) || 0 }))
+      .filter((c) => /^[0-9]+@(c\.us|lid)$/.test(c.id));
+    // a hora da conversa (chat.t) ou a da última mensagem carregada
+    candidates.forEach((c) => { const ms = (safe(() => c.chat.msgs.getModelsArray(), null) || []).filter(realMsg); c.msgs = ms; c.t = Math.max(c.t, ...ms.map(msgT)); });
+    const recent = candidates.filter((c) => c.t >= since).sort((a, b) => b.t - a.t);
+    for (const c of recent) {
+      let msgs = c.msgs.slice();
+      let complete = noEarlierOf(c.chat) === true;
+      let before = msgs.some((m) => msgT(m) && msgT(m) < since);
+      // não dá para saber se há mensagens antes (ou não há nenhuma carregada): carrega as antigas, com limite
+      if (!complete && !before && canLoad && loads < ACT_LOAD_MAX && Date.now() - startedAt < ACT_LOAD_BUDGET_MS) {
+        loads++;
+        try {
+          const oldest = msgs.slice().sort((a, b) => msgT(a) - msgT(b))[0];
+          const anchor = oldest ? safe(() => oldest.id._serialized, '') : '';
+          const opts = anchor ? { count: ACT_LOAD_COUNT, direction: 'before', id: anchor } : { count: ACT_LOAD_COUNT };
+          const got = await withTimeout(wpp.chat.getMessages(c.id, opts), ACT_LOAD_TIMEOUT_MS);
+          const list = (Array.isArray(got) ? got : []).filter(realMsg);
+          const seen = new Set(msgs.map((m) => safe(() => m.id._serialized, '')));
+          list.forEach((m) => { const k = safe(() => m.id._serialized, ''); if (!k || !seen.has(k)) { msgs.push(m); seen.add(k); } });
+          if (Array.isArray(got) && got.length < ACT_LOAD_COUNT) complete = true; // chegou ao começo
+          if (noEarlierOf(c.chat) === true) complete = true;
+          before = msgs.some((m) => msgT(m) && msgT(m) < since);
+        } catch { /* não entregou: fica sem saber */ }
+      }
+      msgs = msgs.filter((m) => msgT(m) > 0).sort((a, b) => msgT(a) - msgT(b));
+      const last = msgs[msgs.length - 1] || null;
+      const lastCust = msgs.filter((m) => safe(() => m.id.fromMe, true) === false).pop() || null;
+      const days = new Map();
+      msgs.filter((m) => msgT(m) >= since).forEach((m) => {
+        const d = spDayOfSec(msgT(m));
+        const cur = days.get(d) || { day: d, customer: false, store: false };
+        if (safe(() => m.id.fromMe, null) === true) cur.store = true; else if (safe(() => m.id.fromMe, null) === false) cur.customer = true;
+        days.set(d, cur);
+      });
+      let isNewLead = null;
+      let firstAt = null;
+      if (complete && msgs.length) {
+        const first = msgs[0];
+        firstAt = msgT(first);
+        isNewLead = safe(() => first.id.fromMe, true) === false;
+        if (isNewLead && firstAt >= since) leads.push({ chatId: c.id, fromMe: false, t: firstAt, first: true, ad: leadAd(first), scan: true });
+      }
+      const lastAt = Math.max(c.t, last ? msgT(last) : 0);
+      items.push({
+        chatId: c.id, name: realName(chatCard(c.chat, false).name), lastAt,
+        lastFrom: last && msgT(last) >= lastAt ? (safe(() => last.id.fromMe, true) ? 'loja' : 'cliente') : null,
+        lastCustomerAt: lastCust ? msgT(lastCust) : null, firstMessageAt: firstAt, isNewLead, days: [...days.values()],
+      });
+    }
+    for (const it of items) it.phone = await cachedPn(it.chatId);
+    for (const l of leads) l.phone = await cachedPn(l.chatId);
+    return { scanned: true, items, leads, loadedOld: loads };
   }
 
   function onNewMessage(m) {
@@ -1400,6 +1452,7 @@
     catalogProducts: () => catalogProducts(),
     contactSearch: (payload) => contactSearch(payload),
     convEvents: (payload) => convEvents(payload), // 2.10.0
+    activityScan: (payload) => activityScan(payload), // 2.12.8
   };
 
   function reply(request, ok, data, error) {

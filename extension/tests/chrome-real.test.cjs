@@ -1140,6 +1140,53 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console no ligar/desligar das automações', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 13. atividade de todas as conversas (2.12.8): ao abrir, a varredura de 72 h (ponte simulada) grava a atividade
+    // (wa_chat_activity + dias) e o lead novo que chegou com o PC desligado (wa_leads); a aba com a trava faz isso
+    // sozinha, pelo motor. Nada de sinal de compra.
+    fake.on = true;
+    fake.generic = true;
+    const OFF_CH = '5521933334444@c.us';
+    const OLD_CH = '5521955556666@c.us';
+    const nowS = Math.floor(Date.now() / 1000);
+    const dayS = (t) => new Date((t - 3 * 3600) * 1000).toISOString().slice(0, 10);
+    fake.db.wa_chat_activity = [];
+    fake.db.wa_chat_activity_days = [];
+    fake.db.wa_leads = (fake.db.wa_leads || []).filter((l) => l.chat_id !== OFF_CH);
+    let scans = 0;
+    // o motor só faz o trabalho da aba com a trava com o WhatsApp "pronto": a ponte simulada diz que está pronto e
+    // as automações ficam desligadas (nada é enviado); a trava fica livre para esta aba pegar
+    (fake.db.wa_automations || []).forEach((a) => { a.active = false; });
+    (fake.db.wa_settings || []).forEach((w) => { w.paused_all = false; w.runner_id = null; w.lease_until = null; });
+    await pg(`window.__actScan = 0; window.__fakeBridge = {
+      status: { ready: true, version: 'teste' },
+      activityScan: () => { window.__actScan++; return { scanned: true, loadedOld: 1, items: [
+        { chatId: '${OFF_CH}', phone: '5521933334444', name: 'Bia', lastAt: ${nowS - 9 * 3600}, lastFrom: 'cliente', lastCustomerAt: ${nowS - 9 * 3600}, firstMessageAt: ${nowS - 10 * 3600}, isNewLead: true, days: [{ day: '${dayS(nowS - 10 * 3600)}', customer: true, store: false }] },
+        { chatId: '${OLD_CH}', phone: '5521955556666', name: 'Rui', lastAt: ${nowS - 3600}, lastFrom: 'loja', lastCustomerAt: ${nowS - 7200}, firstMessageAt: null, isNewLead: null, days: [{ day: '${dayS(nowS - 3600)}', customer: true, store: true }] },
+      ], leads: [{ chatId: '${OFF_CH}', fromMe: false, t: ${nowS - 10 * 3600}, first: true, ad: null, scan: true, phone: '5521933334444' }] }; },
+      convEvents: { events: [], scanned: false },
+    }; return true;`);
+    const actOk = await waitFor(`return true;`, 10).then(async () => {
+      for (const stop = Date.now() + 90000; Date.now() < stop;) {
+        if ((fake.db.wa_chat_activity || []).some((r) => r.chat_id === OFF_CH) && (fake.db.wa_leads || []).some((l) => l.chat_id === OFF_CH)) return true;
+        await sleep(500);
+      }
+      return false;
+    });
+    scans = await pg('return window.__actScan;');
+    const offRow = (fake.db.wa_chat_activity || []).find((r) => r.chat_id === OFF_CH) || {};
+    const oldRow = (fake.db.wa_chat_activity || []).find((r) => r.chat_id === OLD_CH) || {};
+    const offLead = (fake.db.wa_leads || []).find((l) => l.chat_id === OFF_CH) || {};
+    const actDays = (fake.db.wa_chat_activity_days || []).map((d) => [d.chat_id, d.from_customer, d.from_store]);
+    check('2.12.8: ao abrir, a varredura de 72 h grava a atividade de todas as conversas e o lead que chegou com o PC desligado (1 varredura por abertura)',
+      actOk && scans === 1 && offRow.is_new_lead === true && offRow.last_from === 'cliente' && offRow.name === 'Bia' && Date.parse(offRow.first_message_at) === (nowS - 10 * 3600) * 1000
+      && oldRow.last_from === 'loja' && oldRow.is_new_lead === null && offLead.origin === 'organico' && Date.parse(offLead.first_message_at) === (nowS - 10 * 3600) * 1000
+      && JSON.stringify(actDays) === JSON.stringify([[OFF_CH, true, false], [OLD_CH, true, true]]) && !JSON.stringify(fake.db.wa_chat_activity).includes('buy'),
+      JSON.stringify({ actOk, scans, offRow, oldRow, offLead, actDays }));
+    await pg('window.__fakeBridge = null; return true;');
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console na atividade das conversas', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

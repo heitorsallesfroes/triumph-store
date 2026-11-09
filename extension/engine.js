@@ -519,9 +519,67 @@
   //             último envio, ou 30 min sem a loja falar, ou a 1ª vez que vemos a conversa)
   //   replies : 1ª mensagem do cliente depois de uma mensagem nossa (as seguintes, até a loja falar de
   //             novo, não contam; o banco ainda confere com o último envio registrado)
-  //   activity: 2.12.2 — por conversa, a hora da última mensagem (t) e a da última com sinal de compra
-  //             (buy, ou null); a varredura da abertura não entra
+  //   activity: 2.12.8 — por conversa: última mensagem (lastAt, lastFrom 'cliente'|'loja'), última do
+  //             cliente, lead novo (isNewLead/firstMessageAt) e os dias (SP) em que o cliente/a loja falaram;
+  //             a varredura da abertura não entra (ela traz a própria atividade). Sem o sinal de compra.
   const TURN_GAP_S = 30 * 60;
+  // 2.12.8: dia em São Paulo (UTC−3, como o ERP) de uma hora em segundos
+  const spDayOfSec = (t) => new Date((Number(t) - 3 * 3600) * 1000).toISOString().slice(0, 10);
+  // atividade de uma mensagem (evento da ponte)
+  function activityOfEvent(e) {
+    const mine = e.fromMe === true;
+    return {
+      chatId: e.chatId, phone: e.phone || null, name: null, lastAt: e.t, lastFrom: mine ? 'loja' : 'cliente', lastCustomerAt: mine ? null : e.t,
+      isNewLead: !mine && e.first ? true : null, firstMessageAt: !mine && e.first ? e.t : null,
+      days: [{ day: spDayOfSec(e.t), customer: !mine, store: mine }],
+    };
+  }
+  // junta duas atividades da mesma conversa (como o gatilho do banco: só avança, o que já se sabe fica)
+  function mergeActivity(a, b) {
+    if (!a) return { ...b, days: (b.days || []).map((d) => ({ ...d })) };
+    if (!b) return a;
+    const max = (x, y) => (x == null ? (y == null ? null : y) : y == null ? x : Math.max(x, y));
+    const min = (x, y) => (x == null ? (y == null ? null : y) : y == null ? x : Math.min(x, y));
+    const bNewer = (b.lastAt ?? -Infinity) >= (a.lastAt ?? -Infinity);
+    const days = new Map((a.days || []).map((d) => [d.day, { ...d }]));
+    (b.days || []).forEach((d) => {
+      const c = days.get(d.day) || { day: d.day, customer: false, store: false };
+      c.customer = c.customer || !!d.customer;
+      c.store = c.store || !!d.store;
+      days.set(d.day, c);
+    });
+    return {
+      chatId: a.chatId, phone: b.phone || a.phone || null, name: b.name || a.name || null,
+      lastAt: max(a.lastAt, b.lastAt), lastFrom: (bNewer ? b.lastFrom || a.lastFrom : a.lastFrom || b.lastFrom) || null,
+      lastCustomerAt: max(a.lastCustomerAt, b.lastCustomerAt),
+      isNewLead: a.isNewLead ?? b.isNewLead ?? null, firstMessageAt: min(a.firstMessageAt, b.firstMessageAt),
+      days: [...days.values()].sort((x, y) => (x.day < y.day ? -1 : 1)),
+    };
+  }
+  // 2.12.8: fila da atividade com no máximo 1 gravação por conversa a cada gapMs (30 s). add() junta; take(now)
+  // devolve as conversas que já podem ser gravadas (as outras esperam, juntando o que chegar)
+  function activityBuffer(gapMs = 30 * 1000) {
+    const pending = new Map();
+    const lastWrite = new Map();
+    return {
+      add(items) { (items || []).forEach((it) => { if (it && typeof it.chatId === 'string') pending.set(it.chatId, mergeActivity(pending.get(it.chatId), it)); }); },
+      take(now = Date.now()) {
+        const out = [];
+        pending.forEach((it, id) => {
+          const w = lastWrite.get(id);
+          if (w !== undefined && now - w < gapMs) return;
+          out.push(it);
+          lastWrite.set(id, now);
+        });
+        out.forEach((it) => pending.delete(it.chatId));
+        if (lastWrite.size > 20000) lastWrite.clear();
+        return out;
+      },
+      // devolve à fila o que não deu para gravar (a próxima tentativa respeita os 30 s)
+      putBack(items) { (items || []).forEach((it) => { if (it && typeof it.chatId === 'string') pending.set(it.chatId, mergeActivity(it, pending.get(it.chatId))); }); },
+      size: () => pending.size,
+    };
+  }
   function convTracker() {
     const lastOur = new Map();
     const lastCust = new Map();
@@ -535,10 +593,7 @@
             const chat = e.chatId;
             if (!e.fromMe && e.first) out.leads.push({ chatId: chat, phone: e.phone || null, t: e.t, ad: e.ad || null });
             if (e.scan) return; // varredura da abertura: só o lead
-            const a = act.get(chat) || { chatId: chat, t: e.t, buy: null };
-            a.t = Math.max(a.t, e.t);
-            if (e.buy === true) a.buy = Math.max(a.buy ?? 0, e.t);
-            act.set(chat, a);
+            act.set(chat, mergeActivity(act.get(chat), activityOfEvent(e)));
             if (e.fromMe) {
               const prev = lastOur.get(chat);
               const cust = lastCust.get(chat);
@@ -2145,6 +2200,7 @@
     SALE_WA_ALL, saleAfterDefaults, saleWaPlan, // 2.12.4
     waTriggerLabelOf, // 2.12.5
     activationSentence, // 2.12.6
+    activityOfEvent, mergeActivity, activityBuffer, spDayOfSec, // 2.12.8
     withRetry, errorReason, createNameLearner, PANEL_HDR_BTNS, // 2.12.1
     defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, previewSendPlan, sendLabelsApply,
     normBrPhone, matchSalesForPurchase, salePhoneOf, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,

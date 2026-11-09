@@ -5,7 +5,7 @@ import { fetchAllRows } from './resumoAnualCalc';
 import { INVALID_STATUSES } from './crmBridge';
 import { conversionTotals, type ConversionRow } from './waConversions';
 import {
-  loadWindow, type AttributionRow, type ItemInfo, type LeadRow, type PanelInput, type PeriodRanges, type ReplyRow, type SaleRowP, type SendRow,
+  loadWindow, mergeActivityLeads, type ActivityDayRow, type ActivityRow, type AttributionRow, type ItemInfo, type LeadRow, type PanelInput, type PeriodRanges, type ReplyRow, type SaleRowP, type SendRow,
 } from './waPanel';
 
 export interface PanelLoad { input: PanelInput; missing: string[] }
@@ -54,6 +54,16 @@ export async function loadPanel(ranges: PeriodRanges): Promise<PanelLoad> {
       .order('event_id').range(f, t) as any)),
   ]);
 
+  // 2.12.8: atividade de todas as conversas (sem a migration 20261109120000: só os leads de wa_leads, como antes)
+  const [activity, activityDays] = await Promise.all([
+    orEmpty<ActivityRow>('conversas ativas (wa_chat_activity, migration 20261109120000 + extensão 2.12.8)', missing, () => fetchAllRows<ActivityRow>((f, t) => supabase.from('wa_chat_activity')
+      .select('chat_id, phone, first_message_at, last_message_at, last_from, last_customer_at, is_new_lead').gte('last_message_at', iso(ranges.prev.from))
+      .order('chat_id').range(f, t) as any)),
+    orEmpty<ActivityDayRow>('conversas ativas (wa_chat_activity, migration 20261109120000 + extensão 2.12.8)', missing, () => fetchAllRows<ActivityDayRow>((f, t) => supabase.from('wa_chat_activity_days')
+      .select('chat_id, day, from_customer, from_store').eq('from_customer', true).gte('day', ranges.prev.fromDay).lte('day', ranges.cur.toDay)
+      .order('chat_id').order('day').range(f, t) as any)),
+  ]);
+
   // nomes das automações, réguas de follow e disparos (as tabelas que existirem)
   const names: Record<string, string> = {};
   await Promise.all(['wa_automations', 'wa_flows', 'wa_campaigns'].map(async (table) => {
@@ -67,7 +77,8 @@ export async function loadPanel(ranges: PeriodRanges): Promise<PanelLoad> {
   const fbOf = (rows: ConversionRow[]) => { const t = conversionTotals(rows); return { count: t.purchases, total: t.purchaseSum }; };
   return {
     input: {
-      leads, replies, sends, sales, attributions, items, names,
+      leads: mergeActivityLeads(leads, activity), replies, sends, sales, attributions, items, names, activityDays,
+      activityPhones: activity.map((a) => ({ chat_id: a.chat_id, phone: a.phone })),
       fb: { cur: fbOf(conv.filter(inCur)), prev: fbOf(conv.filter((r) => !inCur(r))) },
     },
     missing: [...new Set(missing)],

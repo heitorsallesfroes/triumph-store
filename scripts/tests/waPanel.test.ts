@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {
   periodRanges, computePanel, buildIndex, summaryFor, followFunnel, quickMessageTable, automationTable, adTable, leadHeatmap,
-  dailySeries, saleTime, spDay, delta, median, originOf, stepOfSend, loadWindow,
+  dailySeries, saleTime, spDay, delta, median, originOf, stepOfSend, loadWindow, mergeActivityLeads,
   type PanelInput, type SendRow,
 } from '../../src/lib/waPanel.ts';
 
@@ -225,9 +225,40 @@ test('compras enviadas ao Facebook vêm prontas (atual e anterior)', () => {
   const r = computePanel(input, ranges);
   assert.deepEqual([r.summary.fbPurchases, r.summary.fbRevenue, r.previous.fbPurchases], [3, 450.5, 1]);
 });
+// ── 2.12.8: Conversas ativas x Leads novos ──
+test('2.12.8: "Conversas ativas" (o cliente falou no período, novas ou antigas) separado de "Leads novos" (1º contato)', () => {
+  const input = base();
+  const OLD1 = '5511900000081@c.us'; const OLD2 = '5511900000082@c.us'; const LEAD = '5511900000083@c.us'; const STORE = '5511900000084@c.us'; const PREV = '5511900000085@c.us';
+  input.leads.push({ chat_id: LEAD, phone: '5511900000083', first_message_at: sp('2026-11-04T10:00:00'), origin: 'organico', ad_id: null, ad_title: null });
+  input.activityDays = [
+    { chat_id: OLD1, day: '2026-11-03', from_customer: true, from_store: false },
+    { chat_id: OLD1, day: '2026-11-05', from_customer: true, from_store: true }, // a mesma conversa em 2 dias: conta 1
+    { chat_id: OLD2, day: '2026-11-06', from_customer: true, from_store: false },
+    { chat_id: LEAD, day: '2026-11-04', from_customer: true, from_store: true }, // lead do período: conta 1 só
+    { chat_id: STORE, day: '2026-11-05', from_customer: false, from_store: true }, // só a loja falou: não conta
+    { chat_id: PREV, day: '2026-10-28', from_customer: true, from_store: false }, // período anterior
+  ];
+  input.replies.push({ chat_id: STORE, replied_at: sp('2026-10-29T10:00:00'), send_log_id: 'r1', minutes: 3 }); // respondeu no anterior
+  const r = computePanel(input, ranges);
+  assert.deepEqual([r.summary.active, r.summary.leads], [3, 1]);
+  assert.deepEqual([r.previous.active, r.previous.leads], [2, 0]);
+});
+test('2.12.8: lead novo achado pela atividade (is_new_lead) entra nos leads sem repetir o de wa_leads', () => {
+  const leads = [{ chat_id: 'a@c.us', phone: null, first_message_at: sp('2026-11-02T10:00:00'), origin: 'anuncio', ad_id: 'X', ad_title: 'Promo' }];
+  const out = mergeActivityLeads(leads, [
+    { chat_id: 'a@c.us', phone: null, first_message_at: sp('2026-11-02T10:00:00'), last_message_at: null, last_from: null, last_customer_at: null, is_new_lead: true },
+    { chat_id: '5511900000091@c.us', phone: '5511900000091', first_message_at: sp('2026-11-05T23:00:00'), last_message_at: null, last_from: null, last_customer_at: null, is_new_lead: true },
+    { chat_id: '5511900000092@c.us', phone: null, first_message_at: sp('2026-11-05T23:00:00'), last_message_at: null, last_from: null, last_customer_at: null, is_new_lead: false },
+    { chat_id: '5511900000093@c.us', phone: null, first_message_at: null, last_message_at: null, last_from: null, last_customer_at: null, is_new_lead: true },
+  ]);
+  assert.deepEqual(out.map((l) => [l.chat_id, l.origin]), [['a@c.us', 'anuncio'], ['5511900000091@c.us', 'organico']]);
+  assert.equal(mergeActivityLeads(leads, undefined), leads);
+});
+
 test('sem dados: tudo zerado, sem erro', () => {
   const r = computePanel(base(), ranges);
   assert.equal(r.summary.leads, 0);
+  assert.equal(r.summary.active, 0);
   assert.equal(r.summary.ticket, null);
   assert.equal(r.summary.conversion, null);
   assert.deepEqual([r.funnel, r.quick, r.ads, r.automations], [[], [], [], []]);

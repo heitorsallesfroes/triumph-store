@@ -50,6 +50,8 @@ export const BACKUP_TABLES: { name: string; order: string[] }[] = [
   { name: 'wa_leads', order: ['id'] },
   { name: 'wa_ad_attribution', order: ['id'] },
   { name: 'wa_conversion_events', order: ['id'] },
+  { name: 'wa_chat_activity', order: ['chat_id'] }, // 2.12.8
+  { name: 'wa_chat_activity_days', order: ['chat_id', 'day'] }, // 2.12.8
 ];
 
 // Tabelas das migrations que NÃO vão no backup, com o motivo. (Tabelas fora do schema public, como a cópia
