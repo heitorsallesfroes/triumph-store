@@ -1961,12 +1961,18 @@
       if (start.source === 'whatsapp') start.wa_label_id = checkWaLabel(st.wa_label_id, 'Sequência: escolha a etiqueta do WhatsApp de quem entra');
       else start.label_id = checkUuid(st.label_id, 'Sequência: escolha a etiqueta de quem entra');
     }
+    // 2.13.0: "Nunca para quem tem a etiqueta" (o Não enviar vale sempre, não precisa estar aqui)
+    if (Array.isArray(st.exclude) && st.exclude.length) {
+      if (st.exclude.length > 20) throw new Error('Sequência: no máximo 20 etiquetas em "Nunca para quem tem"');
+      start.exclude = st.exclude.map((x) => (x && x.source === 'whatsapp'
+        ? { source: 'whatsapp', wa_label_id: checkWaLabel(x.wa_label_id, 'Sequência: escolha a etiqueta do WhatsApp de "Nunca para quem tem"') }
+        : { source: 'crm', label_id: checkUuid(x && x.label_id, 'Sequência: escolha a etiqueta de "Nunca para quem tem"') }));
+    }
     const ids = new Set();
     let count = 0;
     const gotos = [];
     const walk = (list, depth, what) => {
       if (!Array.isArray(list)) throw new Error(`${what}: passos inválidos`);
-      if (depth > 5) throw new Error('Sequência: no máximo 5 esperas uma dentro da outra');
       return list.map((n, i) => {
         if (++count > 80) throw new Error('Sequência: no máximo 80 passos');
         const w = `${what}, passo ${i + 1}`;
@@ -1982,7 +1988,14 @@
           if (op === 'colocar' && n.remove_others === true) out.remove_others = true;
           return out;
         }
+        // 2.13.0: ⏳ ESPERAR (só o tempo)
+        if (n.type === 'pausa') {
+          const unit = ['minutos', 'horas', 'dias'].includes(n.unit) ? n.unit : 'horas';
+          return { id: n.id, type: 'pausa', amount: intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`), unit };
+        }
         if (n.type === 'esperar') {
+          // até 5 "esperar resposta" um dentro do outro (o 5º ainda pode ter caixas nos caminhos)
+          if (depth > 5) throw new Error('Sequência: no máximo 5 esperas uma dentro da outra');
           const unit = ['minutos', 'horas', 'dias'].includes(n.unit) ? n.unit : 'horas';
           const amount = intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`);
           return { id: n.id, type: 'esperar', amount, unit, ...(n.after_mine === true ? { after_mine: true } : {}),
@@ -2144,6 +2157,8 @@
     return autoRest(`wa_automations?select=${await autoCols()}&order=position.asc,created_at.asc`);
   }
 
+  // quem entra numa sequência (sem as exclusões): mudou = ligar de novo
+  const startKey = (seq) => { const s = (seq && seq.start) || {}; return [s.type || null, s.origin || null, s.source || null, s.label_id || null, s.wa_label_id || null]; };
   async function saveAutomation({ id, automation, includeExisting = false }) {
     const row = checkAutomation(automation);
     const testChat = row.test_chat_id;
@@ -2166,7 +2181,9 @@
       prev = got[0];
     }
     const sameTrigger = !!prev && prev.trigger_type === row.trigger_type && (prev.trigger_label_id || null) === (row.trigger_label_id || null)
-      && (prev.trigger_wa_label_id || null) === (row.trigger_wa_label_id || null) && (prev.trigger_label_source || 'crm') === (row.trigger_label_source || 'crm');
+      && (prev.trigger_wa_label_id || null) === (row.trigger_wa_label_id || null) && (prev.trigger_label_source || 'crm') === (row.trigger_label_source || 'crm')
+      // 2.13.0: sequência ligada com outro COMEÇA (outra etiqueta/tipo) = vale daqui pra frente de novo
+      && (row.kind !== 'sequencia' || JSON.stringify(startKey(prev.sequence)) === JSON.stringify(startKey(row.sequence)));
     const activating = row.active && (!prev || !prev.active || !sameTrigger);
     if ((activating || testChat) && !v288) throw new Error(ENGINE_MISSING);
     if (v288) {

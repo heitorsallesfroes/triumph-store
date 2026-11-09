@@ -637,7 +637,7 @@ async function main() {
     await q(`sh.querySelector('[data-sec="follows"]').click(); await wait(300); return true;`);
     const listOk = await waitFor(`return !!sh.querySelector('.fw-new');`, 15000);
     check('automações: a lista abre com "+ Nova automação"', listOk, `${(await q(`return (sh.querySelector('.ftab') || {}).textContent || '';`)).slice(0, 120)}`);
-    await q(`sh.querySelector('.fw-new').click(); await wait(200); return true;`);
+    await q(`sh.querySelector('.fw-new').click(); await wait(200); sh.querySelector('.vb .vb-legacy').click(); await wait(200); return true;`);
     const models = await q(`return [...sh.querySelectorAll('.fw-model')].map((b) => b.dataset.wizard || b.dataset.seq || 'branco');`);
     check('"+ Nova automação": 4 modelos + 2 sequências + "Em branco (avançado)"', JSON.stringify(models) === JSON.stringify(['posvenda', 'followup', 'lead', 'sumido', 'seq_blank', 'lead_followup', 'branco']), JSON.stringify(models));
     await q(`sh.querySelector('.fw-model[data-wizard="posvenda"]').click(); await wait(200); sh.querySelector('.wiz-next').click(); await wait(150); sh.querySelector('.wiz-next').click(); await wait(200); return true;`);
@@ -671,7 +671,7 @@ async function main() {
     check('lista: frase-resumo, DESLIGADA, na fila e já receberam', card && /DESLIGADA/.test(cardTxt) && /Já receberam: 0/.test(cardTxt), cardTxt.slice(0, 300));
     // editor avançado: "Colocar uma etiqueta" sem etiqueta não salva e mostra onde
     const nAuto = (fake.db.wa_automations || []).length;
-    await q(`sh.querySelector('.fw-new').click(); await wait(200); sh.querySelector('.fw-blank').click(); await wait(300);
+    await q(`sh.querySelector('.fw-new').click(); await wait(200); sh.querySelector('.vb .vb-legacy').click(); await wait(200); sh.querySelector('.fw-blank').click(); await wait(300);
       const n = sh.querySelector('.fw-editor input.ed-title'); n.value = 'Teste validação'; n.dispatchEvent(new Event('input', { bubbles: true }));
       const a = sh.querySelector('.fw-editor select[aria-label="Ação 1"]'); a.value = 'adicionar_etiqueta'; a.dispatchEvent(new Event('change', { bubbles: true })); await wait(200);
       [...sh.querySelectorAll('.fw-editor .bbtn.primary')].find((b) => /Salvar/.test(b.textContent)).click(); await wait(400); return true;`);
@@ -684,7 +684,7 @@ async function main() {
 
     // 8. sequência (2.12.0): modelo "Follow-up de lead novo" no editor visual, validação por passo, salvar e os
     // números da lista (quantos em cada passo e saídas por ✅ / ❌)
-    await q(`const b = [...sh.querySelectorAll('.fw-editor .bbtn')].find((x) => x.textContent === 'Cancelar'); if (b) b.click(); await wait(200); sh.querySelector('.fw-new').click(); await wait(200);
+    await q(`const b = [...sh.querySelectorAll('.fw-editor .bbtn')].find((x) => x.textContent === 'Cancelar'); if (b) b.click(); await wait(200); sh.querySelector('.fw-new').click(); await wait(200); sh.querySelector('.vb .vb-legacy').click(); await wait(200);
       sh.querySelector('.fw-seq[data-seq="lead_followup"]').click(); await wait(300); return true;`);
     const seqOpen = await q(`const e = sh.querySelector('.sq-editor'); return e ? { nodes: e.querySelectorAll('.sq-node').length, yes: e.querySelectorAll('.sq-branch.sq-yes').length, no: e.querySelectorAll('.sq-branch.sq-no').length,
       start: e.querySelector('.sq-start select').value, sends: e.querySelectorAll('.sq-enviar').length, waits: e.querySelectorAll('.sq-esperar').length } : null;`);
@@ -1037,7 +1037,8 @@ async function main() {
     const baseAuto = (fake.db.wa_automations || []).find((x) => x.kind !== 'sequencia' && x.trigger_type) || {};
     const AW = uuid();
     fake.db.wa_automations.push({ ...baseAuto, id: AW, name: 'Etiqueta do WhatsApp', active: false, activated_at: null, include_existing: false, test_chat_id: null,
-      trigger_type: 'entrou_etiqueta', trigger_label_source: 'whatsapp', trigger_wa_label_id: '1', trigger_label_id: null, position: 97 });
+      trigger_type: 'entrou_etiqueta', trigger_label_source: 'whatsapp', trigger_wa_label_id: '1', trigger_label_id: null, position: 97,
+      conditions: [{ type: 'parada_max_dias', days: 30 }] }); // 2.13.0: com condição não dá para desenhar: fica no editor antigo (o que esta parte testa)
     fake.db.wa_native_label_seen = [{ chat_id: CHATS23[0], wa_label_id: '1', first_seen_at: '2026-11-01T10:00:00.000Z', last_seen_at: '2026-11-01T10:00:00.000Z', removed_at: null }];
     await pg(`window.__fakeBridge = { labels: [{ id: '1', name: 'Cliente', hexColor: '#22c55e', count: 5 }],
       labelAllChats: { count: 5, source: 'associacoes', chats: ${JSON.stringify(CHATS23.map((id) => ({ id, name: null })))} }, labelEvents: { events: [] } }; return true;`);
@@ -1187,6 +1188,111 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console na atividade das conversas', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 14. construtor visual (2.13.0): "+ Nova automação" abre a tela ampla; modelo "Régua de follow-up (3 etapas)" já
+    // desenhado (as mensagens com o mesmo título já vêm escolhidas); trocar uma mensagem; caixa incompleta em vermelho
+    // não deixa ligar; Simular; Testar comigo (EM TESTE); Ligar para todos (confirmação)
+    fake.on = true;
+    fake.generic = true;
+    const TCH = '5521977776666@c.us';
+    const autoCat = (fake.db.wa_categories || []).find((c) => c.name === 'Automações') || { id: uuid() };
+    if (!(fake.db.wa_categories || []).some((c) => c.id === autoCat.id)) fake.db.wa_categories = [...(fake.db.wa_categories || []), { id: autoCat.id, name: 'Automações', position: 50, created_at: new Date().toISOString() }];
+    const mkItem = (title, body) => ({ id: uuid(), category_id: autoCat.id, title, type: 'texto', body, position: 90, use_count: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    fake.db.wa_items = [...(fake.db.wa_items || []), mkItem('Follow 1', 'Oi {nome}! Conseguiu ver o relógio?'), mkItem('Follow 2', 'Ainda tem interesse?'), mkItem('Follow 3', 'Última chamada!'), mkItem('Oferta especial', '{saudacao}, {nome}! Hoje com 10% de desconto no Pix.')];
+    (fake.db.wa_automations || []).forEach((a) => { a.active = false; });
+    const nAutos = (fake.db.wa_automations || []).length;
+    await pg(`window.__fakeBridge = { activeChat: { kind: 'individual', chatId: '${TCH}', name: 'Teste Comigo' }, recentChats: [{ id: '${TCH}', name: 'Teste Comigo' }], labels: [], labelEvents: { events: [] } }; return true;`);
+    // recarrega para a biblioteca ler as mensagens novas do banco falso
+    await s('Page.reload', { ignoreCache: true });
+    await sleep(1500);
+    for (const stop = Date.now() + TIMEOUT_MS; Date.now() < stop;) {
+      const opened = await evalPage(`(() => { const sh = document.getElementById('tsp-wa-host')?.shadowRoot; const t = sh && sh.querySelector('.toggle'); if (t && !sh.querySelector('.root.open')) t.click(); return !!(sh && sh.querySelector('.root.open')); })()`);
+      if (opened) break;
+      await sleep(300);
+    }
+    await pg(`window.__fakeBridge = { activeChat: { kind: 'individual', chatId: '${TCH}', name: 'Teste Comigo' }, recentChats: [{ id: '${TCH}', name: 'Teste Comigo' }], labels: [], labelEvents: { events: [] } }; return true;`);
+    await sleep(800);
+    await q(`sh.querySelector('[data-sec="follows"]').click(); await wait(300); return true;`);
+    await waitFor(`return !!sh.querySelector('.fw-new');`, 15000);
+    const shot = async (name) => { if (!SHOTS_DIR) return; await sleep(250); const { data } = await s('Page.captureScreenshot', { format: 'png' }); fs.mkdirSync(SHOTS_DIR, { recursive: true }); fs.writeFileSync(path.join(SHOTS_DIR, name), Buffer.from(data, 'base64')); };
+    await q(`sh.querySelector('.fw-new').click(); await wait(300); return true;`);
+    const tpls = await q(`const v = sh.querySelector('.vb'); if (!v) return null; const r = v.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), vw: innerWidth, bg: getComputedStyle(v).backgroundColor,
+      tpls: [...v.querySelectorAll('.vb-tpl')].map((b) => b.dataset.tpl), close: !!v.querySelector('.vb-close'), legacy: !!v.querySelector('.vb-legacy') };`);
+    check('construtor: "+ Nova automação" abre a tela ampla (por cima do WhatsApp, fundo claro) com os 4 modelos, "Fechar" e o editor antigo à parte',
+      !!tpls && tpls.w === tpls.vw && tpls.h > 500 && /rgb\(24[0-9], 24[0-9], 2[45][0-9]\)|rgb\(255, 255, 255\)/.test(tpls.bg) && JSON.stringify(tpls.tpls) === '["followup3","posvenda","lead_sumiu","vazio"]' && tpls.close && tpls.legacy, JSON.stringify(tpls));
+    await q(`sh.querySelector('.vb [data-tpl="followup3"]').click(); await wait(300); return true;`);
+    const drawn = await q(`const v = sh.querySelector('.vb'); const t = (sel) => [...v.querySelectorAll(sel)].map((b) => b.querySelector('.vb-btxt').textContent);
+      return { name: v.querySelector('.vb-name').value, start: t('.vb-box.vb-start')[0], sends: t('.vb-box.vb-enviar'), waits: t('.vb-box.vb-esperar'), tags: t('.vb-box.vb-etiqueta'),
+        fims: v.querySelectorAll('.vb-box.vb-fim').length, yes: v.querySelectorAll('.vb-lane.vb-yes').length, no: v.querySelectorAll('.vb-lane.vb-no').length, plus: v.querySelectorAll('.vb-plus').length,
+        btns: [...v.querySelectorAll('.vb-tr button')].map((b) => b.textContent), side: v.querySelector('.vb-side .vb-sh').textContent };`);
+    check('modelo "Régua de follow-up (3 etapas)" desenhado em cascata: COMEÇA (Follow Up 1) → Follow 1/2/3 já escolhidas → 3 esperas de resposta com ✅ / ❌ → Em atendimento / Frio, todo caminho em FIM; "+" entre as caixas; botões no topo',
+      drawn.name === 'Régua de follow-up' && /etiqueta “Follow Up 1”/.test(drawn.start) && JSON.stringify(drawn.sends) === '["Envia “Follow 1”","Envia “Follow 2”","Envia “Follow 3”"]'
+      && JSON.stringify(drawn.waits) === '["Espera resposta por até 1 dia","Espera resposta por até 2 dias","Espera resposta por até 3 dias"]'
+      && drawn.tags.filter((x) => /Em atendimento/.test(x)).length === 3 && drawn.tags.filter((x) => /Frio/.test(x)).length === 1 && drawn.fims === 4 && drawn.yes === 3 && drawn.no === 3 && drawn.plus >= 10
+      && JSON.stringify(drawn.btns) === '["Simular","Testar comigo","Salvar desligada","Salvar e ligar","Fechar"]' && drawn.side === '▶ COMEÇA', JSON.stringify(drawn));
+    await shot('regua-3-etapas.png');
+    // trocar a mensagem do Follow 2 pela "Oferta especial" (busca + prévia)
+    await q(`sh.querySelectorAll('.vb .vb-box.vb-enviar')[1].click(); await wait(200); const i = sh.querySelector('.vb-side .vb-search'); i.value = 'oferta'; i.dispatchEvent(new Event('input', { bubbles: true })); await wait(150);
+      [...sh.querySelectorAll('.vb-side .vb-mitem')].find((b) => b.textContent.includes('Oferta especial')).click(); await wait(200); return true;`);
+    const swapped = await q(`const v = sh.querySelector('.vb'); return { sends: [...v.querySelectorAll('.vb-box.vb-enviar .vb-btxt')].map((x) => x.textContent), prev: (v.querySelector('.vb-side .vb-prev') || {}).textContent || '',
+      newmsg: !!v.querySelector('.vb-side .vb-newmsg') };`);
+    check('trocar a mensagem: busca na mensagem pronta, a caixa muda ("Envia “Oferta especial”") e a prévia mostra o texto com {nome}; "+ Criar mensagem aqui" no quadro',
+      JSON.stringify(swapped.sends) === '["Envia “Follow 1”","Envia “Oferta especial”","Envia “Follow 3”"]' && /Hoje com 10% de desconto no Pix/.test(swapped.prev) && /Maria/.test(swapped.prev) && swapped.newmsg, JSON.stringify(swapped));
+    // caixa nova sem mensagem: "Salvar e ligar" não liga, a caixa fica vermelha com o que falta
+    await q(`sh.querySelector('.vb .vb-plus').click(); await wait(150); sh.querySelector('.vb .vb-menu .vb-mi-enviar').click(); await wait(200); sh.querySelector('.vb .vb-save-on').click(); await wait(300); return true;`);
+    const red = await q(`const v = sh.querySelector('.vb'); const b = v.querySelector('.vb-box.vb-bad'); return { bad: v.querySelectorAll('.vb-box.vb-bad').length, txt: b ? b.querySelector('.vb-berr').textContent : '', border: b ? getComputedStyle(b).borderTopColor : '',
+      msg: (v.querySelector('.vb-msg.err') || {}).textContent || '', modal: !!v.querySelector('.vb-modal') };`);
+    check('caixa incompleta: borda vermelha e "Escolha ou crie a mensagem."; não abre a confirmação de ligar',
+      red.bad === 1 && red.txt === 'Escolha ou crie a mensagem.' && /rgb\(220, 38, 38\)/.test(red.border) && /Escolha ou crie a mensagem/.test(red.msg) && !red.modal && (fake.db.wa_automations || []).length === nAutos, JSON.stringify(red));
+    await shot('caixa-incompleta.png');
+    await q(`sh.querySelector('.vb .vb-side .vb-del').click(); await wait(200); return true;`);
+    // Simular
+    await q(`sh.querySelector('.vb .vb-sim').click(); await wait(300); return true;`);
+    const sim = await q(`const m = sh.querySelector('.vb .vb-modal'); const col = (c) => [...m.querySelectorAll('.' + c + ' .vb-ev')].map((r) => r.textContent);
+      return { never: col('vb-sim-nunca'), first: col('vb-sim-primeiro') };`);
+    check('Simular: linha do tempo de quem nunca responde (Follow 1 → Oferta especial +1 dia → Follow 3 +3 dias → Frio +6 dias) e de quem responde no 1º passo (Em atendimento)',
+      sim.never.some((x) => /^na horaRecebe “Follow 1”$/.test(x)) && sim.never.some((x) => /^\+1 diaRecebe “Oferta especial”$/.test(x)) && sim.never.some((x) => /^\+3 diasRecebe “Follow 3”$/.test(x))
+      && sim.never.some((x) => /^\+6 diasEntra na etiqueta “Frio”$/.test(x)) && sim.first.some((x) => /✅ Respondeu/.test(x)) && sim.first.some((x) => /Entra na etiqueta “Em atendimento”/.test(x)) && !sim.first.some((x) => /Oferta/.test(x)),
+      JSON.stringify(sim));
+    await shot('simulacao.png');
+    await q(`sh.querySelector('.vb .vb-simclose').click(); await wait(200); return true;`);
+    // Testar comigo
+    await q(`sh.querySelector('.vb .vb-test').click(); return true;`);
+    await waitFor(`const s0 = sh.querySelector('.vb .vb-testchat'); return !!s0 && s0.value === '${TCH}';`, 8000);
+    await q(`sh.querySelector('.vb .vb-test-go').click(); return true;`);
+    const testSaved = await waitFor(`return !sh.querySelector('.vb') && !!sh.querySelector('.fw-new');`, 15000);
+    const row14 = () => (fake.db.wa_automations || []).find((a) => a.name === 'Régua de follow-up');
+    const r14 = row14() || {};
+    const flat14 = [];
+    const walk14 = (list) => (list || []).forEach((n) => { flat14.push(n); if (n.type === 'esperar') { walk14(n.yes); walk14(n.no); } });
+    walk14((r14.sequence || {}).steps);
+    const frio = (fake.db.wa_labels || []).find((l) => l.name === 'Frio');
+    const testCard14 = await q(`const c = [...sh.querySelectorAll('.fw-card')].find((x) => (x.querySelector('.fw-name') || {}).textContent === 'Régua de follow-up'); return c ? c.textContent : '';`);
+    check('"Testar comigo": salva a régua (sequência, todo caminho em FIM, etiquetas criadas) ligada EM TESTE só para a conversa escolhida',
+      testSaved && r14.kind === 'sequencia' && r14.active === true && r14.test_chat_id === TCH && flat14.filter((n) => n.type === 'enviar').length === 3 && flat14.filter((n) => n.type === 'fim').length === 4
+      && !!frio && flat14.some((n) => n.type === 'etiqueta' && n.label_id === frio.id) && !JSON.stringify(r14.sequence).includes('new:') && !JSON.stringify(r14.sequence).includes('hint') && /EM TESTE/.test(testCard14),
+      JSON.stringify({ testSaved, kind: r14.kind, active: r14.active, test: r14.test_chat_id, types: flat14.map((n) => n.type), card: testCard14.slice(0, 200) }));
+    // Editar: abre no construtor (EM TESTE) → "Ligar para todos" → confirmação → ligada para todos
+    await q(`const c = [...sh.querySelectorAll('.fw-card')].find((x) => (x.querySelector('.fw-name') || {}).textContent === 'Régua de follow-up'); c.querySelector('.fw-edit').click(); await wait(300); return true;`);
+    const edit14 = await q(`const v = sh.querySelector('.vb'); return v ? { btns: [...v.querySelectorAll('.vb-tr button')].map((b) => b.textContent), badge: (v.querySelector('.vb-tl .fw-badge') || {}).textContent || '', sends: [...v.querySelectorAll('.vb-box.vb-enviar .vb-btxt')].map((x) => x.textContent) } : null;`);
+    await q(`sh.querySelector('.vb .vb-all').click(); return true;`);
+    await waitFor(`const g = sh.querySelector('.vb .vb-on-go'); return !!g && !g.disabled;`, 15000);
+    const conf14 = await q(`const m = sh.querySelector('.vb .vb-modal'); return { title: m.querySelector('.vb-sh').textContent, text: (m.querySelector('.act-text') || {}).textContent || '', go: m.querySelector('.vb-on-go').textContent };`);
+    const actBefore14 = r14.activated_at;
+    await q(`sh.querySelector('.vb .vb-on-go').click(); return true;`);
+    const allOk = await waitFor(`return !sh.querySelector('.vb') && !!sh.querySelector('.fw-new');`, 15000);
+    const r14b = row14() || {};
+    check('Editar abre a régua no construtor (EM TESTE: Salvar / Salvar e desligar / Ligar para todos); "Ligar para todos" confirma ("Vale para quem se encaixar daqui pra frente.") e liga para todos',
+      !!edit14 && edit14.badge === 'EM TESTE' && JSON.stringify(edit14.btns) === '["Simular","Salvar","Salvar e desligar","Ligar para todos","Fechar"]' && edit14.sends[1] === 'Envia “Oferta especial”'
+      && conf14.title === 'Ligar “Régua de follow-up”?' && /^Vale para quem se encaixar daqui pra frente\./.test(conf14.text) && conf14.go === 'Ligar'
+      && allOk && r14b.active === true && !r14b.test_chat_id && r14b.activated_at && r14b.activated_at !== actBefore14, JSON.stringify({ edit14, conf14, active: r14b.active, test: r14b.test_chat_id, at: [actBefore14, r14b.activated_at] }));
+    const listCard = await q(`const c = [...sh.querySelectorAll('.fw-card')].find((x) => (x.querySelector('.fw-name') || {}).textContent === 'Régua de follow-up'); return c ? { on: c.querySelector('.fw-switch').getAttribute('aria-checked'), txt: c.textContent } : null;`);
+    check('lista: interruptor ligado, frase-resumo e os números da régua', !!listCard && listCard.on === 'true' && /Sequência: começa quando entra na etiqueta “Follow Up 1”; 3 mensagens e 3 esperas de resposta/.test(listCard.txt) && /Ninguém entrou ainda|Saíram por ✅/.test(listCard.txt),
+      JSON.stringify(listCard && listCard.txt.slice(0, 300)));
+    await pg('window.__fakeBridge = null; return true;');
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console no construtor visual', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

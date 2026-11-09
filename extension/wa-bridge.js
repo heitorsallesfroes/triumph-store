@@ -765,6 +765,7 @@
         last: last ? { fromMe: !!safe(() => last.id.fromMe, false), t: Number(safe(() => last.t, 0)) || 0 } : null,
         lastIn: lastIn || null,
         ad: ads ? kws.filter((k) => ads.includes(k)) : [],
+        labels: labelIdsOf(chat), // 2.13.0: "Nunca para quem tem a etiqueta" do WhatsApp (só os ids)
       };
     });
     return { chats };

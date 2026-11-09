@@ -955,6 +955,19 @@
       if (n.type === 'ir') { id = n.to; continue; }
       if (n.type === 'etiqueta') { ops.push({ op: n.op, source: n.source, label_id: n.label_id || null, wa_label_id: n.wa_label_id || null, remove_others: !!n.remove_others }); id = seqNextOf(idx, id); continue; }
       if (n.type === 'enviar') return { status: 'run', node: seqNextOf(idx, id), sendNode: id, send: { itemId: n.item_id || null }, ops, branches, waitStart: null };
+      // 2.13.0: ⏳ ESPERAR (só o tempo, sem caminhos): chegou agora → grava o começo; venceu → segue
+      if (n.type === 'pausa') {
+        if (run.node !== id || !waitStart) return { status: 'progress', node: id, waitStart: now, ops, branches };
+        const need = Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60) * MIN_MS;
+        const done = def.business ? businessMsBetween(waitStart, now, settings) >= need : now - waitStart >= need;
+        if (!done) return { status: 'wait', node: id, ops, branches, dueAt: def.business ? addBusinessMs(waitStart, need, settings) : waitStart + need, reason: 'esperando o tempo' };
+        id = seqNextOf(idx, id);
+        if (!id) return end('fim');
+        // a próxima caixa começa agora (outra espera grava o próprio começo no ciclo seguinte)
+        const nx = idx.get(id);
+        if (nx && (nx.node.type === 'esperar' || nx.node.type === 'pausa')) return { status: 'progress', node: id, waitStart: now, ops, branches };
+        continue;
+      }
       if (n.type === 'esperar') {
         // chegou agora na espera: grava o começo (a decisão vem no próximo ciclo)
         if (run.node !== id || !waitStart) return { status: 'progress', node: id, waitStart: now, ops, branches };
@@ -1015,6 +1028,7 @@
         if (!(Number(n.amount) >= 1)) out.push({ node: n.id, msg: 'Escolha quanto tempo esperar.' });
         if (depth > SEQ_MAX_DEPTH) out.push({ node: n.id, msg: `No máximo ${SEQ_MAX_DEPTH} esperas uma dentro da outra.` });
       }
+      if (n.type === 'pausa' && !(Number(n.amount) >= 1)) out.push({ node: n.id, msg: 'Escolha quanto tempo esperar.' }); // 2.13.0
       if (n.type === 'ir') {
         if (!n.to || !idx.has(n.to)) out.push({ node: n.id, msg: 'Escolha para onde continuar.' });
         else {
@@ -1034,7 +1048,153 @@
       }
     });
     if (def && def.steps && def.steps.length && !sends && ![...idx.values()].some((e) => e.node.type === 'etiqueta')) out.push({ node: 'start', msg: 'A sequência não faz nada: adicione uma mensagem ou etiqueta.' });
+    // 2.13.0: "Nunca para quem tem a etiqueta" (além do Não enviar, sempre)
+    (Array.isArray(st.exclude) ? st.exclude : []).forEach((x) => { if (!(x && (x.source === 'whatsapp' ? x.wa_label_id : x.label_id))) out.push({ node: 'start', msg: 'Escolha a etiqueta de "Nunca para quem tem".' }); });
     return out;
+  }
+
+  // ── 2.13.0: construtor visual (em cascata) ──
+  // ⏳ ESPERAR = { id, type: 'pausa', amount, unit } (só o tempo). start.exclude = [{ source, label_id | wa_label_id }]:
+  // quem tem uma dessas etiquetas sai (como o "Não enviar", que vale sempre).
+  // Toda lista termina em FIM: põe { type: 'fim' } no fim de cada caminho que não termina (nem em espera de
+  // resposta, que já abre os dois caminhos). Não muda o que o motor faz (fim da lista já é fim); só deixa o desenho claro.
+  function seqNormalize(def) {
+    const d = JSON.parse(JSON.stringify(def || {}));
+    const fix = (list) => {
+      (list || []).forEach((n) => { if (n && n.type === 'esperar') { n.yes = fix(n.yes || []); n.no = fix(n.no || []); } });
+      const last = list[list.length - 1];
+      if (!last || !['fim', 'ir', 'esperar'].includes(last.type)) list.push({ id: seqId(), type: 'fim' });
+      return list;
+    };
+    d.steps = fix(Array.isArray(d.steps) ? d.steps : []);
+    return d;
+  }
+  // Inserir uma caixa na posição i da lista. ❓ ESPERAR RESPOSTA no meio: o que vinha embaixo vai para o caminho
+  // ❌ "Se não responder" (depois de uma espera de resposta a lista só continua pelos caminhos). FIM no meio corta
+  // o que vinha embaixo. Devolve a caixa inserida.
+  function seqInsert(list, i, node) {
+    const at = Math.max(0, Math.min(list.length, i));
+    const rest = list.splice(at);
+    if (node.type === 'esperar') {
+      const moved = rest.slice();
+      if (moved.length && moved[moved.length - 1].type === 'fim') moved.pop(); // o caminho ganha o próprio FIM
+      node.yes = node.yes || [];
+      node.no = [...(node.no || []), ...moved];
+      list.push(node);
+    } else if (node.type === 'fim') list.push(node);
+    else list.push(node, ...rest);
+    return node;
+  }
+  // tira a caixa (espera de resposta: os dois caminhos saem junto)
+  function seqRemove(def, id) {
+    const e = seqIndex(def).get(id);
+    if (!e) return false;
+    e.list.splice(e.i, 1);
+    return true;
+  }
+  // a conversa tem alguma etiqueta de "Nunca para quem tem"? (CRM: ids do contato; WhatsApp: ids da conversa)
+  function seqExcluded(start, crmIds, waIds) {
+    const ex = (start && Array.isArray(start.exclude)) ? start.exclude : [];
+    const crm = new Set((crmIds || []).map(String));
+    const wa = new Set((waIds || []).map(String));
+    return ex.some((x) => (x.source === 'whatsapp' ? wa.has(String(x.wa_label_id)) : crm.has(String(x.label_id))));
+  }
+  const unitText = (amount, unit) => {
+    const n = Number(amount) || 0;
+    if (unit === 'minutos') return `${n} minuto${n === 1 ? '' : 's'}`;
+    if (unit === 'horas') return `${n} hora${n === 1 ? '' : 's'}`;
+    return `${n} dia${n === 1 ? '' : 's'}`;
+  };
+  // Simular (não envia nem grava): linha do tempo de uma pessoa que NUNCA responde (scenario 'nunca') ou que
+  // responde no 1º "esperar resposta" ('primeiro'). Tempo corrido a partir da entrada (minutos); com horário
+  // comercial ligado, pode levar mais. → [{ at (min), kind, text, node }]
+  function seqSimulate(def, scenario = 'nunca', { itemTitle = (x) => x || '(sem mensagem)', labelName = (x) => x || '(sem etiqueta)' } = {}) {
+    const idx = seqIndex(def);
+    const out = [];
+    let at = 0;
+    let replied = false;
+    let id = seqFirstOf(def && def.steps);
+    const lab = (n) => (n.source === 'whatsapp' ? labelName(n.wa_label_id, 'whatsapp') : labelName(n.label_id, 'crm'));
+    out.push({ at, kind: 'inicio', text: 'Entra na automação', node: 'start' });
+    for (let g = 0; g < 200; g++) {
+      if (!id) { out.push({ at, kind: 'fim', text: 'Fim: sai da automação', node: null }); break; }
+      const e = idx.get(id);
+      if (!e) { out.push({ at, kind: 'fim', text: 'Fim', node: null }); break; }
+      const n = e.node;
+      if (n.type === 'fim') { out.push({ at, kind: 'fim', text: 'Fim: sai da automação', node: n.id }); break; }
+      if (n.type === 'ir') { id = n.to; continue; }
+      if (n.type === 'enviar') out.push({ at, kind: 'enviar', text: `Recebe “${itemTitle(n.item_id)}”`, node: n.id });
+      if (n.type === 'etiqueta') out.push({ at, kind: 'etiqueta', text: `${n.op === 'tirar' ? 'Sai da' : 'Entra na'} etiqueta “${lab(n)}”${n.op !== 'tirar' && n.remove_others ? ' (e sai das outras)' : ''}`, node: n.id });
+      if (n.type === 'pausa') { at += Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60); out.push({ at, kind: 'pausa', text: `Esperou ${unitText(n.amount, n.unit)}`, node: n.id }); }
+      if (n.type === 'esperar') {
+        if (scenario === 'primeiro' && !replied) {
+          replied = true;
+          at += 5;
+          out.push({ at, kind: 'respondeu', text: '✅ Respondeu', node: n.id });
+          id = seqFirstOf(n.yes);
+          continue;
+        }
+        at += Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60);
+        out.push({ at, kind: 'nao', text: `❌ Não respondeu em ${unitText(n.amount, n.unit)}`, node: n.id });
+        id = seqFirstOf(n.no);
+        continue;
+      }
+      id = seqNextOf(idx, id);
+    }
+    return out;
+  }
+  // tempo da simulação: "agora", "+2 h", "+1 dia 3 h"
+  function simAtText(min) {
+    if (!min) return 'na hora';
+    const d = Math.floor(min / 1440);
+    const h = Math.floor((min % 1440) / 60);
+    const m = min % 60;
+    return `+${[d ? `${d} dia${d === 1 ? '' : 's'}` : '', h ? `${h} h` : '', m ? `${m} min` : ''].filter(Boolean).join(' ')}`;
+  }
+  // minutos → { amount, unit } (o maior que dá certo)
+  const seqAmountOf = (min) => {
+    const n = Math.max(1, Math.round(Number(min) || 0));
+    if (n % 1440 === 0) return { amount: n / 1440, unit: 'dias' };
+    if (n % 60 === 0) return { amount: n / 60, unit: 'horas' };
+    return { amount: n, unit: 'minutos' };
+  };
+  // Automação antiga (editor "Quando → Se → Então") → desenho. { def } ou { reason } (fica no editor antigo).
+  //   entrou na etiqueta + X tempo → COMEÇA etiqueta → ⏳ X → ações → FIM
+  //   venda registrada (+ X dias)   → COMEÇA venda → (⏳ X) → ações → FIM
+  //   não respondeu X tempo          → COMEÇA etiqueta → ❓ X depois da SUA mensagem: ✅ FIM / ❌ ações → FIM
+  // Não dá: "O cliente respondeu", dia e hora fixos, condições ("Só se…") e variantes da mensagem.
+  function seqFromAutomation(a) {
+    if (!a) return { reason: 'automação vazia' };
+    if (a.kind === 'sequencia') return a.sequence ? { def: JSON.parse(JSON.stringify(a.sequence)) } : { reason: 'sequência sem passos' };
+    if (!['entrou_etiqueta', 'venda_registrada', 'sem_resposta'].includes(a.trigger_type)) return { reason: a.trigger_type === 'respondeu' ? 'o gatilho "O cliente respondeu" não existe no desenho' : 'o gatilho "dia e hora fixos" não existe no desenho' };
+    if ((a.conditions || []).length) return { reason: 'tem condições ("Só se…")' };
+    const wa = a.trigger_label_source === 'whatsapp';
+    const start = a.trigger_type === 'venda_registrada'
+      ? { type: 'venda', ...(a.trigger_label_id ? { source: 'crm', label_id: a.trigger_label_id } : {}) }
+      : wa ? { type: 'etiqueta', source: 'whatsapp', wa_label_id: String(a.trigger_wa_label_id || '') } : { type: 'etiqueta', source: 'crm', label_id: a.trigger_label_id || '' };
+    const acts = [];
+    for (const x of a.actions || []) {
+      if (x.type === 'parar') break;
+      if (x.type === 'enviar') {
+        if ((x.variants || []).length) return { reason: 'a mensagem tem variantes (por etiqueta ou anúncio)' };
+        acts.push({ id: seqId(), type: 'enviar', item_id: x.item_id || '' });
+      } else if (x.type === 'adicionar_etiqueta') acts.push({ id: seqId(), type: 'etiqueta', op: 'colocar', source: 'crm', label_id: x.label_id });
+      else if (x.type === 'remover_etiqueta') acts.push({ id: seqId(), type: 'etiqueta', op: 'tirar', source: 'crm', label_id: x.label_id || a.trigger_label_id });
+      else if (x.type === 'adicionar_etiqueta_wa') acts.push({ id: seqId(), type: 'etiqueta', op: 'colocar', source: 'whatsapp', wa_label_id: String(x.wa_label_id) });
+      else if (x.type === 'remover_etiqueta_wa') acts.push({ id: seqId(), type: 'etiqueta', op: 'tirar', source: 'whatsapp', wa_label_id: String(x.wa_label_id) });
+      else if (x.type === 'mover') {
+        if (wa) acts.push({ id: seqId(), type: 'etiqueta', op: 'tirar', source: 'whatsapp', wa_label_id: String(a.trigger_wa_label_id) });
+        else if (a.trigger_label_id) acts.push({ id: seqId(), type: 'etiqueta', op: 'tirar', source: 'crm', label_id: a.trigger_label_id });
+        acts.push({ id: seqId(), type: 'etiqueta', op: 'colocar', source: 'crm', label_id: x.label_id });
+      } else return { reason: `a ação "${x.type}" não existe no desenho` };
+    }
+    let steps;
+    if (a.trigger_type === 'sem_resposta') {
+      steps = [{ id: seqId(), type: 'esperar', ...seqAmountOf(a.wait_minutes || 60), after_mine: true, yes: [{ id: seqId(), type: 'fim' }], no: [...acts, { id: seqId(), type: 'fim' }] }];
+    } else {
+      steps = [...(Number(a.wait_minutes) > 0 ? [{ id: seqId(), type: 'pausa', ...seqAmountOf(a.wait_minutes) }] : []), ...acts, { id: seqId(), type: 'fim' }];
+    }
+    return { def: { start, business: a.trigger_type === 'sem_resposta', steps } };
   }
   // Texto do passo atual de uma conversa ("esperando resposta (faltam 1h20)")
   function seqDescribe(def, run, now, { itemTitle = (id) => id } = {}) {
@@ -1049,6 +1209,7 @@
       if (n.after_mine && !due) return 'esperando a sua mensagem';
       return due ? `esperando resposta (faltam ${formatLeft(Math.max(0, due - now))})` : 'esperando resposta';
     }
+    if (n.type === 'pausa') { const due = Number(run.due_at) || null; return due ? `esperando (faltam ${formatLeft(Math.max(0, due - now))})` : `esperando ${unitText(n.amount, n.unit)}`; } // 2.13.0
     if (n.type === 'enviar') return `vai mandar “${itemTitle(n.item_id)}”`;
     if (n.type === 'etiqueta') return 'vai mexer nas etiquetas';
     return 'continuando';
@@ -1059,6 +1220,7 @@
     if (!e) return 'passo removido';
     const n = e.node;
     if (n.type === 'esperar') return `Esperando resposta (${n.amount} ${n.unit === 'minutos' ? 'min' : n.unit === 'horas' ? 'h' : n.amount === 1 ? 'dia' : 'dias'})`;
+    if (n.type === 'pausa') return `Esperando ${unitText(n.amount, n.unit)}`; // 2.13.0
     if (n.type === 'enviar') return `Antes de mandar “${itemTitle(n.item_id)}”`;
     return n.type;
   }
@@ -1066,6 +1228,33 @@
   const seqId = () => `n${Date.now().toString(36)}${(seqCounter++).toString(36)}`;
   // Modelos prontos: em branco e "Follow-up de lead novo" (etiquetas como "new:Nome")
   function seqTemplate(kind) {
+    const fim = () => ({ id: seqId(), type: 'fim' });
+    const tag = (name) => ({ id: seqId(), type: 'etiqueta', op: 'colocar', source: 'crm', label_id: `new:${name}` });
+    const send = (hint) => ({ id: seqId(), type: 'enviar', item_id: '', hint });
+    // 2.13.0: modelos do construtor visual (já desenhados; só trocar as mensagens)
+    if (kind === 'followup3') {
+      const ok = () => [tag('Em atendimento'), fim()];
+      return {
+        start: { type: 'etiqueta', source: 'crm', label_id: 'new:Follow Up 1' }, business: true,
+        steps: [send('Follow 1'), { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', yes: ok(), no: [
+          send('Follow 2'), { id: seqId(), type: 'esperar', amount: 2, unit: 'dias', yes: ok(), no: [
+            send('Follow 3'), { id: seqId(), type: 'esperar', amount: 3, unit: 'dias', yes: ok(), no: [tag('Frio'), fim()] },
+          ] },
+        ] }],
+      };
+    }
+    if (kind === 'posvenda') {
+      return { start: { type: 'venda' }, business: false, steps: [{ id: seqId(), type: 'pausa', amount: 7, unit: 'dias' }, send('pedido de avaliação'), fim()] };
+    }
+    if (kind === 'lead_sumiu') {
+      return {
+        start: { type: 'lead', origin: 'todos' }, business: true,
+        steps: [{ id: seqId(), type: 'esperar', amount: 1, unit: 'dias', after_mine: true, yes: [fim()], no: [
+          send('ainda tem interesse?'), { id: seqId(), type: 'esperar', amount: 2, unit: 'dias', yes: [tag('Em atendimento'), fim()], no: [tag('Frio'), fim()] },
+        ] }],
+      };
+    }
+    if (kind === 'vazio') return { start: { type: 'etiqueta', source: 'crm', label_id: '' }, business: true, steps: [fim()] };
     if (kind === 'lead_followup') {
       const tag = () => ({ id: seqId(), type: 'etiqueta', op: 'colocar', source: 'crm', label_id: 'new:Em atendimento' });
       return {
@@ -1825,6 +2014,18 @@
       }
     }
     const seqIndexFirst = (def) => (def && def.steps && def.steps[0] ? def.steps[0].id : null);
+    // 2.13.0: ids das etiquetas do WhatsApp chamadas "Não enviar" (relidas a cada 5 min; sem a ponte: nenhuma)
+    const waNoSend = new Set();
+    let waNoSendAt = 0;
+    async function loadWaNoSend() {
+      if (!deps.wa || typeof deps.wa.labels !== 'function' || now() - waNoSendAt < 5 * MIN_MS) return;
+      waNoSendAt = now();
+      try {
+        const list = await deps.wa.labels();
+        waNoSend.clear();
+        (Array.isArray(list) ? list : []).filter((l) => isNoSendLabel(l)).forEach((l) => waNoSend.add(String(l.id)));
+      } catch { /* fica com a lista de antes */ }
+    }
     async function seqPatch(run, patch) {
       let r = null;
       try { r = await api('seqUpdateRun', { id: run.id, version: run.version, patch }); } catch { r = null; }
@@ -1839,7 +2040,9 @@
             await setWaLabel(run.chat_id, { add: op.wa_label_id });
             if (op.remove_others && deps.wa.chatLabels) {
               const cur = await deps.wa.chatLabels({ chatId: run.chat_id });
-              const ids = ((cur && cur.labelIds) || []).map(String).filter((id) => id !== String(op.wa_label_id));
+              await loadWaNoSend();
+              // 2.13.0: "Não enviar" nunca sai
+              const ids = ((cur && cur.labelIds) || []).map(String).filter((id) => id !== String(op.wa_label_id) && !waNoSend.has(id));
               for (const id of ids) await setWaLabel(run.chat_id, { remove: id });
             }
             continue;
@@ -1872,6 +2075,7 @@
         try { r = await deps.wa.chatsInfo({ chatIds: chatIds.slice(i, i + 500), keywords: [] }); } catch { r = null; }
         Object.assign(chats, (r && r.chats) || {});
       }
+      await loadWaNoSend();
       const starts = runs.map((r) => msOf(r.wait_started_at) || msOf(r.last_sent_at)).filter(Boolean);
       let replies = {};
       if (starts.length) { try { replies = await api('seqReplies', { chatIds, since: new Date(Math.min(...starts) - 60 * 1000).toISOString() }) || {}; } catch { replies = {}; } }
@@ -1882,6 +2086,10 @@
         if (a.test_chat_id && r.chat_id !== a.test_chat_id) continue; // modo teste: só a conversa escolhida
         // nunca para quem tem "Não enviar": sai da sequência
         if (st.noSendLabelId && r.contact && (r.contact.labelIds || []).includes(st.noSendLabelId)) { await seqPatch(r, { status: 'saiu', outcome: 'nao_enviar' }); continue; }
+        // 2.13.0: "Não enviar" do WhatsApp e as etiquetas de "Nunca para quem tem" (CRM ou WhatsApp)
+        const waIds = ((chats[r.chat_id] || {}).labels || []).map(String);
+        if (waIds.some((id) => waNoSend.has(id))) { await seqPatch(r, { status: 'saiu', outcome: 'nao_enviar' }); continue; }
+        if (seqExcluded(a.sequence.start, r.contact ? r.contact.labelIds : [], waIds)) { await seqPatch(r, { status: 'saiu', outcome: 'etiqueta_excluida' }); continue; }
         const res = seqStep({ def: a.sequence, run: seqRunState(r), chat: chats[r.chat_id] || null, replies: replies[r.chat_id] || [], now: t, settings: st.settings });
         if (res.status === 'wait') {
           const due = res.dueAt || null;
@@ -1909,7 +2117,7 @@
     async function runSequenceJob({ automation, run, res }) {
       const def = automation.sequence;
       const t = now();
-      const nextIsWait = res.node && (seqIndex(def).get(res.node) || {}).node && seqIndex(def).get(res.node).node.type === 'esperar';
+      const nextIsWait = res.node && (seqIndex(def).get(res.node) || {}).node && ['esperar', 'pausa'].includes(seqIndex(def).get(res.node).node.type); // 2.13.0: ⏳ também
       const branches = [...(run.branches || []), ...res.branches];
       // trava: avança o percurso ANTES de mandar (só uma aba/PC consegue esta versão)
       const claimed = await seqPatch(run, { node: res.node, wait_started_at: nextIsWait ? t : null, due_at: null, skip_wait: false, branches, last_sent_at: t,
@@ -2209,6 +2417,7 @@
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
     WIZARDS, wizardToAutomations, wizardSentence, wizardMinutes, businessMinutesPerDay, validateAutomationDraft,
     seqIndex, seqStep, seqValidate, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
+    seqNormalize, seqInsert, seqRemove, seqExcluded, seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
     limitCheck, randomGapMs, estimateDuration, estimateText,
     createMotor,
   };

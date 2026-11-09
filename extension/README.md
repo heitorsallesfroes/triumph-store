@@ -799,6 +799,42 @@ guardada.
 
 ## O que mudou
 
+### 2.13.0 — construtor visual de automações (em cascata)
+- **"+ Nova automação" e "Editar" abrem uma tela ampla por cima do WhatsApp Web** (fundo claro): nome e botões no
+  topo (**Simular · Testar comigo · Salvar desligada · Salvar e ligar · Fechar**), o desenho no meio e a edição da
+  caixa escolhida no quadro da direita. Rolagem e zoom (− / + / ↺). Esc fecha.
+- **O desenho em cascata**: caixas ligadas por linhas, de cima para baixo; um **"+"** entre duas caixas insere
+  outra ali; clicar numa caixa abre a edição dela. Cada caixa diz numa frase o que faz.
+- **Caixas**: ▶ **COMEÇA** (a primeira, uma só: entrar numa etiqueta CRM ou do WhatsApp · lead novo — todos / só
+  anúncio / só orgânico · venda registrada · adicionada por mim pelo 🔁; "Quem entra: só daqui pra frente (padrão) /
+  também quem já está" com a contagem e a lista; "Só no horário comercial"; "Nunca para quem tem a etiqueta": o
+  **Não enviar sempre** + outras) · ✉ **ENVIAR MENSAGEM** (mensagem pronta com busca e prévia, ou "+ Criar mensagem
+  aqui", o mesmo editor das mensagens rápidas) · ⏳ **ESPERAR** (só o tempo, sem caminhos) · ❓ **ESPERAR RESPOSTA**
+  (abre dois caminhos lado a lado: ✅ Se responder / ❌ Se não responder; até 5 níveis) · 🏷 **ETIQUETA** (colocar ou
+  tirar, CRM ou WhatsApp; "tirar de todas menos a que vou colocar"; o Não enviar nunca sai) · ⏹ **FIM**. Todo
+  caminho termina em FIM (posto sozinho). ❓ inserido no meio leva o que vinha embaixo para o ❌.
+- **Validação visual**: caixa incompleta fica com borda vermelha e a frase do que falta ("Escolha ou crie a
+  mensagem."); não liga (nem testa) com caixa vermelha.
+- **Modelos já desenhados**: Régua de follow-up (3 etapas) · Pós-venda · Lead novo que sumiu · Em branco. Mensagens
+  com o mesmo título da sugestão ("Follow 1"…) já vêm escolhidas; etiquetas que não existem são criadas ao salvar.
+  Os modelos antigos continuam em "Mais modelos (editor antigo)".
+- **Simular**: linha do tempo de quem nunca responde e de quem responde no 1º passo (nada é enviado).
+  **Testar comigo**: escolhe a conversa (a aberta já vem), só ela recebe (EM TESTE). **Salvar e ligar**: "Vale para
+  quem se encaixar daqui pra frente. N já estão e não vão receber." (ou a lista, se escolheu incluir).
+- **Mesmo motor das sequências da 2.12.0** (mesmo jsonb, limites, horário, Não enviar, só daqui pra frente).
+  Novidades no motor: ⏳ ESPERAR (`type: 'pausa'`), "Nunca para quem tem a etiqueta" (`start.exclude`; quem tem sai
+  com `etiqueta_excluida`), o "Não enviar" do WhatsApp também tira da automação e nunca é tirado; mudar o COMEÇA de
+  uma automação ligada vale daqui pra frente de novo. **Sem migration nova.**
+- **Automações antigas abrem no desenho** quando dá (entrou na etiqueta, venda registrada, não respondeu); ao salvar,
+  passam a rodar como régua. As que não dá (O cliente respondeu, dia e hora fixos, condições "Só se…", variantes)
+  abrem no editor antigo com o aviso "Editor antigo: …".
+- Na conversa e na lista nada muda (já existiam desde a 2.12.0): "Na automação X · esperando resposta (faltam 3h)"
+  com "Tirar da automação" / "Pular espera"; interruptor, frase-resumo, quantos em cada caixa e saídas por ✅/❌.
+- Prints em `screenshots/2.13.0` (régua de 3 etapas, caixa incompleta em vermelho, simulação). Testes:
+  `tests/builder.test.cjs` (modelos; respondeu no 1º passo; não respondeu até o fim; resposta durante a espera;
+  incluir quem já está; ⏳; exclusões; FIM automático; "+"; simulação; conversão; servidor) e o Chrome real (montar
+  a régua pelo modelo, trocar mensagem, caixa vermelha, simular, testar comigo, ligar para todos).
+
 ### 2.12.8 + ERP — conversas como no Tintim (todas as conversas, ativas x leads novos, ao vivo)
 - **Precisa da migration `supabase/migrations/20261109120000_wa_chat_activity.sql`** (tabelas `wa_chat_activity` e
   `wa_chat_activity_days`, mesmas políticas das `wa_*`, já preparada para a Fase 2 e com o "desfazer" no topo).

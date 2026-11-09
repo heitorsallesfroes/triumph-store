@@ -1456,6 +1456,112 @@
       .lerr-why { color: var(--fg); margin-top: 2px; }
       .lerr-raw { font-size: 11px; word-break: break-all; opacity: .8; }
       .cname-err { flex-basis: 100%; }
+      /* ═══ 2.13.0: construtor visual (tela ampla, fundo claro sempre) ═══ */
+      .vb {
+        --bg: #ffffff; --bg2: #f4f6f8; --card: #ffffff; --fg: #111b21; --fg2: #3b4a54; --muted: #5f6f7a; --border: #dfe4e8; --border-strong: #c3ccd3;
+        --hover: #f3f5f6; --ok: #15803d; --ok-soft: rgba(34,197,94,.10); --err: #dc2626; --err-soft: rgba(239,68,68,.08); --accent-text: #c2410c;
+        position: fixed; inset: 0; z-index: 2147483600; display: flex; flex-direction: column; background: var(--bg2); color: var(--fg);
+        font-size: var(--fs-3);
+      }
+      .vb[hidden] { display: none !important; }
+      .vb-topwrap { flex: none; background: var(--bg); border-bottom: 1px solid var(--border); box-shadow: 0 1px 3px rgba(11,20,26,.06); }
+      .vb-top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-3) var(--s-4); flex-wrap: wrap; }
+      .vb-tl, .vb-tr { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; min-width: 0; }
+      .vb-brand { font-weight: 700; color: var(--accent-text); white-space: nowrap; }
+      .vb-name { height: var(--field-h); min-width: 220px; max-width: 360px; padding: 0 var(--s-2); border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-4); font-weight: 600; }
+      .vb-name.vb-bad { border-color: var(--err); box-shadow: 0 0 0 3px var(--err-soft); }
+      .vb-msg { padding: var(--s-2) var(--s-4); font-size: var(--fs-2); color: var(--ok); }
+      .vb-msg.err { color: var(--err); font-weight: 600; background: var(--err-soft); }
+      .vb .bbtn { background: var(--bg); color: var(--fg); border: 1px solid var(--border-strong); }
+      .vb .bbtn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+      .vb-body { flex: 1; display: flex; min-height: 0; position: relative; }
+      .vb-canvas { flex: 1; overflow: auto; padding: var(--s-6) var(--s-6) 80px; }
+      .vb-inner { display: flex; flex-direction: column; align-items: center; min-width: max-content; margin: 0 auto; }
+      .vb-note { max-width: 560px; margin-bottom: var(--s-3); padding: var(--s-2) var(--s-3); border-radius: var(--r-md); background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: var(--fs-2); }
+      .vb-zoom { position: absolute; left: var(--s-4); bottom: var(--s-4); display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: var(--r-lg); background: var(--bg); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(11,20,26,.10); }
+      .vb-zbtn { min-width: 28px; height: 28px; padding: 0 6px; border: none; border-radius: var(--r-sm); background: transparent; font-weight: 700; color: var(--fg); }
+      .vb-zbtn:hover { background: var(--hover); }
+      .vb-zval { min-width: 42px; text-align: center; font-size: var(--fs-2); color: var(--muted); }
+      .vb-col { display: flex; flex-direction: column; align-items: center; }
+      .vb-box { width: 260px; padding: var(--s-2) var(--s-3); border-radius: var(--r-lg); background: var(--card); border: 1.5px solid var(--border-strong); box-shadow: 0 1px 2px rgba(11,20,26,.06); cursor: pointer; text-align: left; position: relative; }
+      .vb-box:hover { border-color: var(--accent); }
+      .vb-box.vb-sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+      .vb-box.vb-bad { border-color: var(--err); background: #fff5f5; }
+      .vb-bh { display: flex; align-items: center; gap: 6px; font-size: var(--fs-1); font-weight: 800; letter-spacing: .04em; color: var(--muted); }
+      .vb-bi { font-size: 14px; }
+      .vb-btxt { margin-top: 2px; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
+      .vb-bx { margin-top: 2px; font-size: var(--fs-1); color: var(--muted); }
+      .vb-berr { margin-top: 4px; font-size: var(--fs-2); font-weight: 700; color: var(--err); }
+      .vb-start { border-color: var(--accent); background: #fff7ed; width: 300px; }
+      .vb-start .vb-bh { color: var(--accent-text); }
+      .vb-esperar { border-color: #7c3aed; }
+      .vb-esperar .vb-bh { color: #6d28d9; }
+      .vb-pausa .vb-bh { color: #0369a1; }
+      .vb-etiqueta .vb-bh { color: #0f766e; }
+      .vb-fim { width: 140px; text-align: center; border-radius: var(--r-pill); background: #f1f5f9; border-color: #cbd5e1; cursor: default; }
+      .vb-fim:not(.vb-auto) { cursor: pointer; }
+      .vb-fim .vb-bh { justify-content: center; color: #475569; }
+      .vb-fim .vb-btxt { font-weight: 400; font-size: var(--fs-1); color: var(--muted); }
+      .vb-conn { display: flex; flex-direction: column; align-items: center; position: relative; }
+      .vb-wire { width: 2px; height: 14px; background: #b6c0c8; }
+      .vb-arrow { position: relative; height: 12px; }
+      .vb-arrow::after { content: ""; position: absolute; left: -4px; bottom: -6px; border: 5px solid transparent; border-top: 6px solid #b6c0c8; }
+      .vb-plus { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 1.5px solid #b6c0c8; background: var(--bg); color: var(--muted); font-weight: 800; line-height: 1; }
+      .vb-plus:hover, .vb-plus.on { border-color: var(--accent); color: #fff; background: var(--accent); }
+      .vb-menu { position: absolute; top: 40px; z-index: 5; display: flex; flex-direction: column; min-width: 200px; padding: 4px; border-radius: var(--r-lg); background: var(--bg); border: 1px solid var(--border); box-shadow: 0 12px 32px rgba(11,20,26,.18); }
+      .vb-mi { text-align: left; padding: 8px 10px; border: none; border-radius: var(--r-md); background: transparent; color: var(--fg); font-weight: 600; }
+      .vb-mi:hover:not(:disabled) { background: var(--hover); }
+      .vb-mi:disabled { opacity: .5; cursor: not-allowed; }
+      .vb-mi-x { color: var(--muted); font-weight: 400; border-top: 1px solid var(--border); border-radius: 0; margin-top: 2px; }
+      .vb-split { display: flex; gap: var(--s-5); align-items: flex-start; margin-top: var(--s-2); padding-top: var(--s-2); border-top: 2px solid #b6c0c8; }
+      .vb-lane { display: flex; flex-direction: column; align-items: center; padding: var(--s-2); border-radius: var(--r-lg); border-top: 4px solid; }
+      .vb-lane.vb-yes { border-color: var(--ok); background: var(--ok-soft); }
+      .vb-lane.vb-no { border-color: var(--err); background: var(--err-soft); }
+      .vb-lh { font-weight: 800; font-size: var(--fs-2); padding: 2px 10px; border-radius: var(--r-pill); background: var(--bg); }
+      .vb-yes > .vb-lh { color: var(--ok); }
+      .vb-no > .vb-lh { color: var(--err); }
+      .vb-side { flex: none; width: 360px; max-width: 42vw; overflow-y: auto; padding: var(--s-4); background: var(--bg); border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: var(--s-2); }
+      .vb-sh { font-size: var(--fs-4); font-weight: 800; }
+      .vb-sub { color: var(--muted); font-size: var(--fs-2); }
+      .vb-red { color: var(--err) !important; font-weight: 700; }
+      .vb-field { display: flex; flex-direction: column; gap: 4px; padding-top: var(--s-2); border-top: 1px solid var(--border); }
+      .vb-fl { font-size: var(--fs-1); font-weight: 800; letter-spacing: .04em; color: var(--muted); text-transform: uppercase; }
+      .vb-radios { display: flex; flex-direction: column; gap: 2px; }
+      .vb-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+      .vb-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--r-pill); background: #eef2f5; font-size: var(--fs-2); }
+      .vb-chip.fixed { background: #fee2e2; color: #991b1b; font-weight: 600; }
+      .vb-chip-x { border: none; background: transparent; padding: 0 2px; color: var(--muted); }
+      .vb-mlist { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--r-md); padding: 4px; }
+      .vb-mitem { display: flex; justify-content: space-between; gap: 8px; text-align: left; padding: 6px 8px; border: none; border-radius: var(--r-sm); background: transparent; color: var(--fg); }
+      .vb-mitem:hover { background: var(--hover); }
+      .vb-mitem.on { background: var(--accent-soft); font-weight: 700; }
+      .vb-mk { color: var(--muted); font-size: var(--fs-1); white-space: nowrap; }
+      .vb-prev { display: flex; flex-direction: column; gap: 4px; padding: var(--s-2); border-radius: var(--r-md); background: #e7fbe3; border: 1px solid #c6efbe; }
+      .vb-pline { display: flex; gap: 6px; font-size: var(--fs-2); }
+      .vb-pk { flex: none; font-weight: 700; color: var(--ok); }
+      .vb-pt { white-space: pre-wrap; overflow-wrap: anywhere; }
+      .vb-del { margin-top: var(--s-3); color: var(--err) !important; }
+      .vb-modal-bg { position: absolute; inset: 0; z-index: 10; display: flex; align-items: flex-start; justify-content: center; padding-top: 10vh; background: rgba(11,20,26,.35); }
+      .vb-modal { width: min(720px, 92vw); max-height: 78vh; overflow-y: auto; display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-5); border-radius: var(--r-lg); background: var(--bg); box-shadow: 0 12px 32px rgba(11,20,26,.25); }
+      .vb-m-on, .vb-m-test, .vb-m-close { width: min(480px, 92vw); }
+      .vb-simcols { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
+      .vb-simcol { display: flex; flex-direction: column; gap: 4px; padding: var(--s-2); border-radius: var(--r-md); border-top: 4px solid; }
+      .vb-sim-nunca { border-color: var(--err); background: var(--err-soft); }
+      .vb-sim-primeiro { border-color: var(--ok); background: var(--ok-soft); }
+      .vb-ev { display: flex; gap: 8px; font-size: var(--fs-2); }
+      .vb-evt { flex: none; width: 92px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .vb-ev-enviar .vb-evx { font-weight: 700; }
+      .vb-ev-respondeu .vb-evx { color: var(--ok); font-weight: 700; }
+      .vb-ev-nao .vb-evx { color: var(--err); }
+      .vb-ev-fim .vb-evx { color: var(--muted); font-style: italic; }
+      .vb-tpls { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: var(--s-3); padding: var(--s-6); }
+      .vb-h { margin: 0; font-size: 20px; }
+      .vb-tgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--s-3); width: min(1000px, 100%); }
+      .vb-tpl { display: flex; flex-direction: column; gap: 6px; padding: var(--s-4); border-radius: var(--r-lg); background: var(--bg); border: 1.5px solid var(--border-strong); text-align: left; color: var(--fg); }
+      .vb-tpl:hover:not(:disabled) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+      .vb-tname { font-weight: 800; font-size: var(--fs-4); }
+      .vb-thelp { color: var(--muted); font-size: var(--fs-2); }
+      @media (max-width: 900px) { .vb-side { width: 300px; } .vb-simcols { grid-template-columns: 1fr; } }
       /* ═══ 2.12.0: sequências ═══ */
       .sq-list { display: flex; flex-direction: column; gap: var(--s-2); }
       .sq-node { display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); background: var(--card); }
@@ -6387,6 +6493,7 @@
       labelChatIds: (p) => waRequest('labelChatIds', p, { timeout: 8000 }),
       setChatLabels: (p) => waRequest('setChatLabels', p, { timeout: 15000 }),
       chatLabels: (p) => waRequest('chatLabels', p, { timeout: 5000 }), // 2.12.0: "Todas menos a que vai colocar" (WhatsApp)
+      labels: () => waRequest('labels', {}, { timeout: 5000 }), // 2.13.0: o "Não enviar" do WhatsApp nunca sai nem recebe
     },
     sendParts: (o) => runSequence(o),
     partsOf: (item) => partsOf(item),
@@ -7364,8 +7471,9 @@
     const actions = el('div', 'ed-add');
     const confirmKey = `del:${a.id}`;
     actions.append(
-      fbtn('ed-mini', 'Editar', () => (a.kind === 'sequencia' ? openSeqEditor(a) : openAutomationEditor(a))),
-      fbtn('ed-mini', 'Duplicar', () => (a.kind === 'sequencia' ? openSeqEditor({ ...a, id: null, name: `${a.name} (cópia)`.slice(0, 60), active: false }) : openAutomationEditor({ ...a, id: null, name: `${a.name} (cópia)`.slice(0, 60), active: false }))),
+      // 2.13.0: abrem no construtor visual (as que não dá para desenhar: editor antigo, com o aviso)
+      fbtn('ed-mini fw-edit', 'Editar', () => vbOpen(a)),
+      fbtn('ed-mini', 'Duplicar', () => vbOpen({ ...a, id: null, name: `${a.name} (cópia)`.slice(0, 60), active: false, test_chat_id: null })),
       fbtn('ed-mini', fl.confirmDelete === confirmKey ? 'Confirmar exclusão' : 'Excluir', async () => {
         if (fl.confirmDelete !== confirmKey) { fl.confirmDelete = confirmKey; renderFollows(); return; }
         fl.confirmDelete = false;
@@ -7532,7 +7640,7 @@
     const items = [...motor.state.automations].sort((a, b) => (a.position || 0) - (b.position || 0));
     if (!items.length) list.append(el('div', 'lt-none', fl.loading ? 'Carregando…' : 'Nenhuma automação ainda.'));
     items.forEach((a) => list.append(automationCard(a)));
-    list.append(fbtn('fw-card fw-new', '+ Nova automação', () => { fl.view = 'templates'; renderFollows(); }));
+    list.append(fbtn('fw-card fw-new', '+ Nova automação', () => vbOpen(null))); // 2.13.0: construtor visual
     ftabEl.append(list);
 
     const tools = el('section', 'crmsec');
@@ -7572,19 +7680,21 @@
   const withInfo = (text, info) => { const t = el('span', 'fw-lbl'); t.append(text); if (info) t.append(infoTip(info)); return t; };
 
   // 2.11.0: mensagem da ação: escolher pronta, criar aqui (o MESMO editor das mensagens rápidas) ou editar a escolhida
-  async function openMessageEditorFor(apply, item = null) {
+  // 2.13.0: onBack = volta para o construtor visual (sempre, com ou sem mensagem salva)
+  async function openMessageEditorFor(apply, item = null, onBack = null) {
     let cat = state.categories.find((c) => c.name.trim().toLowerCase() === 'automações');
     if (!cat && !item) {
       try {
         const c = await call('createCategory', { name: 'Automações' });
         await reloadLibrary().catch(() => {});
         cat = state.categories.find((x) => x.id === c.id) || c;
-      } catch (e) { flash(`Não consegui criar a categoria "Automações": ${e.message}`, true); renderFollows(); return; }
+      } catch (e) { flash(`Não consegui criar a categoria "Automações": ${e.message}`, true); renderFollows(); if (onBack) onBack(); return; }
     }
     const back = (itemId) => {
       setSection('follows');
       if (itemId) apply(itemId);
       renderFollows();
+      if (onBack) onBack(itemId);
     };
     setSection('mensagens');
     openEditor(item, { categoryId: cat ? cat.id : null, returnTo: back });
@@ -7933,6 +8043,662 @@
     await loadChatSequence(cseq.chatId);
   }
   setInterval(() => { if (state.open && cseq.chatId && cseq.runs.length && !document.hidden) renderChatSequence(); }, 30 * 1000); // "faltam…" anda sozinho
+
+  // ══ 2.13.0: CONSTRUTOR VISUAL de automações (em cascata) ══════════════════════════════════════════
+  // Tela ampla por cima do WhatsApp Web (fundo claro): COMEÇA → caixas ligadas por linhas, de cima para baixo; "+"
+  // entre duas caixas insere outra; clicar numa caixa abre a edição no quadro da direita. Usa o motor das
+  // sequências (2.12.0: o mesmo jsonb, só daqui pra frente, limites, horário, Não enviar, até 5 níveis).
+  // Automações antigas que dá para desenhar abrem aqui (E.seqFromAutomation); as outras ficam no editor antigo.
+  const VB_TYPES = {
+    enviar: { icon: '✉', title: 'ENVIAR MENSAGEM' }, pausa: { icon: '⏳', title: 'ESPERAR' }, esperar: { icon: '❓', title: 'ESPERAR RESPOSTA' },
+    etiqueta: { icon: '🏷', title: 'ETIQUETA' }, fim: { icon: '⏹', title: 'FIM' }, ir: { icon: '↪', title: 'CONTINUAR EM' },
+  };
+  const VB_TEMPLATES = [
+    ['followup3', 'Régua de follow-up (3 etapas)', 'Entra na etiqueta Follow Up 1 → Follow 1 → espera resposta 1 dia → ✅ Em atendimento / ❌ Follow 2 → 2 dias → ❌ Follow 3 → 3 dias → ❌ Frio.'],
+    ['posvenda', 'Pós-venda', 'Venda registrada (💰) → espera 7 dias → envia o pedido de avaliação → fim.'],
+    ['lead_sumiu', 'Lead novo que sumiu', 'Lead novo chamou, você respondeu e ele sumiu por 1 dia → envia "ainda tem interesse?" → 2 dias → ✅ Em atendimento / ❌ Frio.'],
+    ['vazio', 'Em branco', 'Só o COMEÇA e o FIM: monte do seu jeito com o "+".'],
+  ];
+  const VB_TPL_NAME = { followup3: 'Régua de follow-up', posvenda: 'Pós-venda', lead_sumiu: 'Lead novo que sumiu', vazio: 'Nova automação' };
+  const vb = { el: null, f: null };
+  const vbLabelName = (id, src = 'crm') => (src === 'whatsapp' ? waLabelName(id) : String(id || '').startsWith(NEW_LABEL) ? String(id).slice(NEW_LABEL.length) : labelName(id));
+  const vbIsNoSend = (name) => E.foldName ? E.foldName(name) === 'nao enviar' : String(name || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase() === 'nao enviar';
+  const vbItemByTitle = (t) => state.items.find((i) => String(i.title || '').trim().toLowerCase() === String(t || '').trim().toLowerCase());
+  // modelo: etiquetas que já existem pelo nome; mensagens com o mesmo título da sugestão já ficam escolhidas
+  function vbFillTemplate(def) {
+    const fix = (o, k) => { if (String(o[k] || '').startsWith(NEW_LABEL)) { const id = labelIdByName(String(o[k]).slice(NEW_LABEL.length)); if (id) o[k] = id; } };
+    if (def.start) fix(def.start, 'label_id');
+    E.seqIndex(def).forEach(({ node: n }) => {
+      if (n.type === 'etiqueta' && n.source !== 'whatsapp') fix(n, 'label_id');
+      if (n.type === 'enviar' && !n.item_id && n.hint) { const it = vbItemByTitle(n.hint); if (it) n.item_id = it.id; }
+    });
+    return def;
+  }
+  function vbOpen(a = null, { template = null, legacyReason = null } = {}) {
+    let def = null;
+    let converted = false;
+    if (a) {
+      const r = E.seqFromAutomation(a);
+      if (!r.def) { openAutomationEditor(a); if (fl.edit) fl.edit.legacyNote = `Editor antigo: ${r.reason}.`; renderFollows(); return; }
+      def = r.def;
+      converted = a.kind !== 'sequencia';
+    } else if (template) def = vbFillTemplate(E.seqTemplate(template));
+    vb.f = {
+      mode: def ? 'edit' : 'templates', id: a ? a.id : null, name: a ? a.name : template ? VB_TPL_NAME[template] : '', def, converted, legacyReason,
+      wasActive: !!(a && a.id && a.active), testOn: !!(a && a.test_chat_id), test_chat_id: (a && a.test_chat_id) || '', include: !!(a && a.include_existing),
+      sel: def ? 'start' : null, zoom: 1, insert: null, triedSave: false, invalid: [], msg: '', err: false, existing: null, existingKey: '', modal: null, dirty: false, saving: false,
+    };
+    if (!Array.isArray(state.waLabels)) refreshBar().then(() => { if (vb.f) vbRender(); }).catch(() => {});
+    vbRender();
+  }
+  function vbClose(force = false) {
+    const f = vb.f;
+    if (f && f.dirty && !force) { f.modal = { kind: 'close' }; vbRender(); return; }
+    vb.f = null;
+    if (vb.el) { vb.el.remove(); vb.el = null; }
+    renderFollows();
+  }
+  function vbProblems(f) {
+    const def = E.seqNormalize(f.def);
+    const out = E.seqValidate(def);
+    E.seqIndex(f.def).forEach(({ node: n }) => {
+      if (n.type === 'etiqueta' && n.op === 'tirar' && (n.source === 'whatsapp' ? vbIsNoSend(waLabelName(n.wa_label_id)) : n.label_id && n.label_id === motor.state.noSendLabelId)) out.push({ node: n.id, msg: '"Não enviar" nunca sai.' });
+    });
+    if (!String(f.name || '').trim()) out.unshift({ node: 'name', msg: 'Dê um nome para a automação.' });
+    return out;
+  }
+  const vbBad = (f, id) => (f.triedSave || f.showErrors ? (f.invalid || []).filter((x) => x.node === id).map((x) => x.msg) : []);
+  function vbStartText(st) {
+    if (!st || !st.type) return 'Escolha quando começa';
+    return `Começa ${seqStartText(st)}`;
+  }
+  function vbSentence(n) {
+    if (n.type === 'enviar') return n.item_id ? `Envia “${itemTitle(n.item_id)}”` : n.hint ? `Escolha a mensagem (sugestão: ${n.hint})` : 'Escolha a mensagem';
+    if (n.type === 'pausa') return `Espera ${E.seqNodeLabel({ steps: [n] }, n.id).replace(/^Esperando /, '')}`;
+    if (n.type === 'esperar') return `Espera resposta por até ${E.seqNodeLabel({ steps: [n] }, n.id).replace(/^Esperando resposta \((.*)\)$/, '$1')}${n.after_mine ? ', contando da SUA última mensagem' : ''}`;
+    if (n.type === 'etiqueta') {
+      const id = n.source === 'whatsapp' ? n.wa_label_id : n.label_id;
+      if (!id) return 'Escolha a etiqueta';
+      return `${n.op === 'tirar' ? 'Tira' : 'Coloca'} a etiqueta “${vbLabelName(id, n.source)}”${n.source === 'whatsapp' ? ' (WhatsApp)' : ''}${n.op !== 'tirar' && n.remove_others ? ' e tira todas as outras' : ''}`;
+    }
+    if (n.type === 'ir') return `Continua em: ${seqNodeTitle(vb.f.def, n.to)}`;
+    return 'Termina a automação para essa pessoa';
+  }
+  function vbNew(type) {
+    const id = E.seqId();
+    if (type === 'enviar') return { id, type, item_id: '' };
+    if (type === 'pausa') return { id, type, amount: 1, unit: 'dias' };
+    if (type === 'esperar') return { id, type, amount: 1, unit: 'dias', yes: [], no: [] };
+    if (type === 'etiqueta') return { id, type, op: 'colocar', source: 'crm', label_id: '' };
+    return { id, type: 'fim' };
+  }
+  const vbChange = () => { if (vb.f) { vb.f.dirty = true; if (vb.f.triedSave || vb.f.showErrors) vb.f.invalid = vbProblems(vb.f); } };
+
+  function vbRender() {
+    const f = vb.f;
+    if (!f) return;
+    const root = shadow.querySelector('.root');
+    if (!vb.el) {
+      vb.el = el('div', 'vb');
+      vb.el.setAttribute('role', 'dialog');
+      vb.el.setAttribute('aria-modal', 'true');
+      vb.el.setAttribute('aria-label', 'Construtor de automação');
+      // Esc: fecha o quadro aberto (menu do "+", simulação…) ou a tela; as teclas não vão para o WhatsApp
+      vb.el.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key !== 'Escape' || !vb.f) return;
+        if (vb.f.modal && vb.f.modal.kind !== 'close') vb.f.modal = null; else if (vb.f.insert) vb.f.insert = null; else { vbClose(); return; }
+        vbRender();
+      });
+      root.append(vb.el);
+    }
+    const canvas = vb.el.querySelector('.vb-canvas');
+    const keep = canvas ? { top: canvas.scrollTop, left: canvas.scrollLeft } : null;
+    vb.el.textContent = '';
+    if (f.triedSave || f.showErrors) f.invalid = vbProblems(f);
+    vb.el.append(vbTop(f));
+    if (f.mode === 'templates') { vb.el.append(vbTemplatesEl(f)); return; }
+    const body = el('div', 'vb-body');
+    const cv = el('div', 'vb-canvas');
+    const zoom = el('div', 'vb-zoom');
+    const zb = (t, aria, fn) => { const b = fbtn('vb-zbtn', t, fn); b.setAttribute('aria-label', aria); return b; };
+    zoom.append(zb('−', 'Diminuir', () => { f.zoom = Math.max(0.4, Math.round((f.zoom - 0.1) * 10) / 10); vbRender(); }), el('span', 'vb-zval', `${Math.round(f.zoom * 100)}%`),
+      zb('+', 'Aumentar', () => { f.zoom = Math.min(1.6, Math.round((f.zoom + 0.1) * 10) / 10); vbRender(); }), zb('↺', 'Tamanho normal (100%)', () => { f.zoom = 1; vbRender(); }));
+    const inner = el('div', 'vb-inner');
+    inner.style.zoom = String(f.zoom);
+    if (f.converted) inner.append(el('div', 'vb-note', 'Esta automação foi feita no editor antigo e foi desenhada aqui. Ao salvar, ela passa a rodar como régua do construtor visual (vale daqui pra frente a partir de quando for ligada).'));
+    inner.append(vbStartBox(f), vbFlow(f, f.def.steps, 1));
+    cv.append(inner);
+    body.append(cv, zoom, vbSide(f));
+    vb.el.append(body);
+    if (f.modal) vb.el.append(vbModal(f));
+    if (keep) { cv.scrollTop = keep.top; cv.scrollLeft = keep.left; }
+  }
+  function vbTop(f) {
+    const top = el('div', 'vb-top');
+    const name = el('input', 'vb-name');
+    name.maxLength = 60;
+    name.value = f.name;
+    name.placeholder = 'Nome da automação';
+    name.setAttribute('aria-label', 'Nome da automação');
+    name.addEventListener('input', () => { f.name = name.value; f.dirty = true; });
+    if (vbBad(f, 'name').length) name.classList.add('vb-bad');
+    const left = el('div', 'vb-tl');
+    left.append(el('span', 'vb-brand', '🔁 Automação'), name);
+    if (f.testOn && f.wasActive) left.append(el('span', 'fw-badge test', 'EM TESTE'));
+    else if (f.wasActive) left.append(el('span', 'fw-badge on', 'LIGADA'));
+    const right = el('div', 'vb-tr');
+    const b = (cls, text, fn) => { const x = fbtn(cls, text, fn); x.disabled = !!f.saving; return x; };
+    if (f.mode === 'edit') {
+      right.append(b('bbtn vb-sim', 'Simular', () => { f.modal = { kind: 'sim' }; vbRender(); }));
+      if (f.wasActive) {
+        right.append(b('bbtn primary vb-save', f.saving ? 'Salvando…' : 'Salvar', () => vbSave('keep')), b('bbtn vb-save-disable', 'Salvar e desligar', () => vbSave('off')));
+        if (f.testOn) right.append(b('bbtn vb-all', 'Ligar para todos', () => vbAskOn('todos')));
+      } else {
+        right.append(b('bbtn vb-test', 'Testar comigo', () => vbAskTest()), b('bbtn vb-save-off', f.saving ? 'Salvando…' : 'Salvar desligada', () => vbSave('off')),
+          b('bbtn primary vb-save-on', 'Salvar e ligar', () => vbAskOn('on')));
+      }
+    }
+    right.append(fbtn('bbtn vb-close', 'Fechar', () => vbClose()));
+    top.append(left, right);
+    const wrap = el('div', 'vb-topwrap');
+    wrap.append(top);
+    if (f.msg) wrap.append(el('div', `vb-msg${f.err ? ' err' : ''}`, f.msg));
+    return wrap;
+  }
+  function vbTemplatesEl(f) {
+    const box = el('div', 'vb-tpls');
+    box.append(el('h2', 'vb-h', 'Nova automação'), el('div', 'vb-sub', 'Escolha um modelo já desenhado (depois é só trocar as mensagens) ou comece em branco.'));
+    const grid = el('div', 'vb-tgrid');
+    VB_TEMPLATES.forEach(([key, title, help]) => {
+      const c = el('button', 'vb-tpl');
+      c.type = 'button';
+      c.dataset.tpl = key;
+      c.append(el('div', 'vb-tname', title), el('div', 'vb-thelp', help));
+      if (motor.state.sequencesAvailable !== true) { c.disabled = true; c.append(el('div', 'vb-thelp vb-red', 'Atualize o banco (migration 20261106210000).')); }
+      c.addEventListener('click', () => { const ff = vb.f; ff.def = vbFillTemplate(E.seqTemplate(key)); ff.name = VB_TPL_NAME[key]; ff.mode = 'edit'; ff.sel = 'start'; ff.dirty = true; vbRender(); });
+      grid.append(c);
+    });
+    box.append(grid);
+    const legacy = fbtn('ed-mini vb-legacy', 'Mais modelos (editor antigo)', () => { vbClose(true); fl.view = 'templates'; renderFollows(); });
+    box.append(legacy);
+    return box;
+  }
+  // caixa (cartão) do desenho
+  function vbCard(f, { id, kind, title, icon, text, extra = [], sel }) {
+    const c = el('div', `vb-box vb-${kind}${sel ? ' vb-sel' : ''}`);
+    c.dataset.node = id;
+    c.setAttribute('role', 'button');
+    c.tabIndex = 0;
+    const head = el('div', 'vb-bh');
+    head.append(el('span', 'vb-bi', icon), el('span', 'vb-bt', title));
+    c.append(head, el('div', 'vb-btxt', text));
+    extra.forEach((x) => c.append(el('div', 'vb-bx', x)));
+    const bad = vbBad(f, id);
+    if (bad.length) { c.classList.add('vb-bad'); c.append(el('div', 'vb-berr', bad.join(' '))); }
+    const pick = () => { f.sel = id; f.insert = null; vbRender(); };
+    c.addEventListener('click', pick);
+    c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+    return c;
+  }
+  function vbStartBox(f) {
+    const st = f.def.start || {};
+    const ex = (st.exclude || []).map((x) => vbLabelName(x.source === 'whatsapp' ? x.wa_label_id : x.label_id, x.source));
+    return vbCard(f, {
+      id: 'start', kind: 'start', icon: '▶', title: 'COMEÇA', text: vbStartText(st), sel: f.sel === 'start',
+      extra: [st.type === 'etiqueta' && f.include ? 'Quem entra: também quem já está na etiqueta' : 'Quem entra: só quem se encaixar daqui pra frente',
+        ...(f.def.business !== false ? ['Esperas só no horário comercial'] : []), `Nunca para quem tem: Não enviar${ex.length ? `, ${ex.join(', ')}` : ''}`],
+    });
+  }
+  function vbConn(f, list, i, { last = false } = {}) {
+    const c = el('div', 'vb-conn');
+    c.append(el('span', 'vb-wire'));
+    const plus = fbtn('vb-plus', '+', (e) => { e.stopPropagation(); f.insert = { list, i, last }; f.sel = null; vbRender(); });
+    plus.setAttribute('aria-label', 'Inserir uma caixa aqui');
+    const open = f.insert && f.insert.list === list && f.insert.i === i;
+    if (open) plus.classList.add('on');
+    c.append(plus);
+    if (open) {
+      const menu = el('div', 'vb-menu');
+      menu.setAttribute('role', 'menu');
+      const depth = vbDepthOf(f, list);
+      [['enviar', '✉ Enviar mensagem'], ['pausa', '⏳ Esperar'], ['esperar', '❓ Esperar resposta'], ['etiqueta', '🏷 Etiqueta'], ...(last ? [['fim', '⏹ Fim']] : [])].forEach(([t, txt]) => {
+        const m = fbtn(`vb-mi vb-mi-${t}`, txt, (e) => {
+          e.stopPropagation();
+          const node = E.seqInsert(list, i, vbNew(t));
+          f.insert = null;
+          f.sel = node.id;
+          vbChange();
+          vbRender();
+        });
+        m.setAttribute('role', 'menuitem');
+        if (t === 'esperar' && depth >= E.SEQ_MAX_DEPTH) { m.disabled = true; m.title = `No máximo ${E.SEQ_MAX_DEPTH} "esperar resposta" um dentro do outro`; }
+        menu.append(m);
+      });
+      menu.append(fbtn('vb-mi vb-mi-x', 'Cancelar', (e) => { e.stopPropagation(); f.insert = null; vbRender(); }));
+      c.append(menu);
+    }
+    c.append(el('span', 'vb-wire vb-arrow'));
+    return c;
+  }
+  // em que nível (quantos "esperar resposta" por cima) está a lista
+  function vbDepthOf(f, list) {
+    if (list === f.def.steps) return 0;
+    let d = 0;
+    E.seqIndex(f.def).forEach((e) => { if (e.node.type === 'esperar' && (e.node.yes === list || e.node.no === list)) d = e.depth; });
+    return d;
+  }
+  function vbFlow(f, list, depth) {
+    const col = el('div', 'vb-col');
+    list.forEach((n, i) => {
+      col.append(vbConn(f, list, i));
+      const t = VB_TYPES[n.type] || { icon: '•', title: n.type };
+      col.append(vbCard(f, { id: n.id, kind: n.type, icon: t.icon, title: t.title, text: vbSentence(n), sel: f.sel === n.id }));
+      if (n.type === 'esperar') {
+        const split = el('div', 'vb-split');
+        const lane = (cls, label, sub) => { const l = el('div', `vb-lane ${cls}`); l.append(el('div', 'vb-lh', label), vbFlow(f, sub, depth + 1)); return l; };
+        split.append(lane('vb-yes', '✅ Se responder', n.yes), lane('vb-no', '❌ Se não responder', n.no));
+        col.append(split);
+      }
+    });
+    const last = list[list.length - 1];
+    if (!last || !['fim', 'ir', 'esperar'].includes(last.type)) {
+      col.append(vbConn(f, list, list.length, { last: true }));
+      // todo caminho termina em FIM (posto sozinho ao salvar)
+      const fim = el('div', 'vb-box vb-fim vb-auto');
+      fim.append(el('div', 'vb-bh', '⏹ FIM'), el('div', 'vb-btxt', 'Termina aqui (automático)'));
+      col.append(fim);
+    }
+    return col;
+  }
+
+  // ── quadro da direita: edição da caixa escolhida ──
+  function vbSide(f) {
+    const side = el('aside', 'vb-side');
+    if (f.sel === 'start') { vbSideStart(f, side); return side; }
+    const e = f.sel ? E.seqIndex(f.def).get(f.sel) : null;
+    if (!e) {
+      side.append(el('div', 'vb-sh', 'Como montar'), el('div', 'vb-sub', 'Clique numa caixa para editar. Use o "+" entre duas caixas para inserir uma nova ali.'),
+        el('div', 'vb-sub', '❓ Esperar resposta abre dois caminhos: ✅ Se responder e ❌ Se não responder. Cada caminho termina em FIM.'));
+      const probs = f.invalid || [];
+      if ((f.triedSave || f.showErrors) && probs.length) side.append(el('div', 'vb-sub vb-red', `${probs.length} caixa${probs.length === 1 ? '' : 's'} em vermelho para completar.`));
+      return side;
+    }
+    const n = e.node;
+    const t = VB_TYPES[n.type] || { icon: '', title: n.type };
+    side.append(el('div', 'vb-sh', `${t.icon} ${t.title}`));
+    const bad = vbBad(f, n.id);
+    if (bad.length) side.append(el('div', 'vb-sub vb-red', bad.join(' ')));
+    if (n.type === 'enviar') vbSideSend(f, n, side);
+    else if (n.type === 'pausa' || n.type === 'esperar') {
+      side.append(el('div', 'vb-sub', n.type === 'pausa' ? 'Espera esse tempo e segue para a próxima caixa (responda ou não).' : 'Espera até esse tempo. Se o cliente mandar qualquer mensagem, segue por ✅; se não, por ❌.'));
+      const r = el('div', 'sc-row');
+      const amount = numberInput(n.amount, 1, 8760, n.type === 'pausa' ? 'Quanto tempo esperar' : 'Esperar resposta por até');
+      amount.addEventListener('input', () => { n.amount = Math.floor(Number(amount.value) || 0); vbChange(); vbRefreshBox(f, n); });
+      const unit = el('select', 'ed-cat');
+      unit.setAttribute('aria-label', 'Unidade');
+      ['minutos', 'horas', 'dias'].forEach((u) => { const o = el('option', null, u); o.value = u; o.selected = n.unit === u; unit.append(o); });
+      unit.addEventListener('change', () => { n.unit = unit.value; vbChange(); vbRender(); });
+      r.append(amount, unit);
+      side.append(r);
+      if (n.type === 'esperar') {
+        const l = el('label', 'sc-radio');
+        const cb = el('input');
+        cb.type = 'checkbox';
+        cb.checked = !!n.after_mine;
+        cb.addEventListener('change', () => { n.after_mine = cb.checked; vbChange(); vbRender(); });
+        l.append(cb, ' Contar a partir da MINHA última mensagem (espera você responder antes)');
+        side.append(l);
+      }
+    } else if (n.type === 'etiqueta') {
+      const ops = el('div', 'vb-radios');
+      [['colocar', 'Colocar'], ['tirar', 'Tirar']].forEach(([v, txt]) => {
+        const l = el('label', 'sc-radio');
+        const r = el('input');
+        r.type = 'radio';
+        r.name = `vb-op-${n.id}`;
+        r.checked = (n.op || 'colocar') === v;
+        r.addEventListener('change', () => { n.op = v; if (v === 'tirar') delete n.remove_others; vbChange(); vbRender(); });
+        l.append(r, ` ${txt}`);
+        ops.append(l);
+      });
+      side.append(ops, vbLabelField(n, 'Etiqueta', () => { vbChange(); vbRender(); }));
+      if (n.op !== 'tirar') {
+        const l = el('label', 'sc-radio');
+        const cb = el('input');
+        cb.type = 'checkbox';
+        cb.checked = !!n.remove_others;
+        cb.addEventListener('change', () => { n.remove_others = cb.checked; vbChange(); vbRender(); });
+        l.append(cb, ' Tirar de todas as outras (menos a que vou colocar)');
+        side.append(l);
+      }
+      side.append(el('div', 'vb-sub', '"Não enviar" nunca sai.'));
+    } else if (n.type === 'fim') side.append(el('div', 'vb-sub', 'Termina a automação para essa pessoa.'));
+    else if (n.type === 'ir') side.append(el('div', 'vb-sub', `Volta para: ${seqNodeTitle(f.def, n.to)}. (Feito no editor antigo.)`));
+    if (n.type !== 'fim' || e.list.length > 1 || e.parent) {
+      const del = fbtn('bbtn vb-del', n.type === 'esperar' ? 'Excluir (com os dois caminhos)' : 'Excluir esta caixa', () => { E.seqRemove(f.def, n.id); f.sel = null; vbChange(); vbRender(); });
+      side.append(del);
+    }
+    return side;
+  }
+  // só o texto da caixa (sem redesenhar tudo, para não perder o cursor do campo)
+  function vbRefreshBox(f, n) {
+    const box = vb.el && vb.el.querySelector(`.vb-box[data-node="${n.id}"] .vb-btxt`);
+    if (box) box.textContent = vbSentence(n);
+  }
+  // etiqueta CRM ou do WhatsApp (a que entra, a da caixa ETIQUETA e as de "Nunca para quem tem")
+  function vbLabelField(o, label, onDone, { idKey = 'label_id', waKey = 'wa_label_id' } = {}) {
+    const box = el('div', 'vb-field');
+    box.append(el('div', 'vb-fl', label));
+    const row = el('div', 'sc-row');
+    const src = el('select', 'ed-cat');
+    src.setAttribute('aria-label', `${label}: tipo`);
+    [['crm', 'CRM'], ['whatsapp', 'WhatsApp']].forEach(([v, t]) => { const op = el('option', null, t); op.value = v; op.selected = (o.source || 'crm') === v; src.append(op); });
+    src.addEventListener('change', () => { o.source = src.value; o[idKey] = ''; o[waKey] = ''; if (o.source === 'crm') delete o[waKey]; else delete o[idKey]; onDone(); });
+    row.append(src);
+    if (o.source === 'whatsapp') {
+      const ws = waLabelSelect(o[waKey] || '', label);
+      ws.addEventListener('change', () => { o[waKey] = ws.value; onDone(); });
+      row.append(ws);
+    } else row.append(labelPicker(o[idKey] || '', (v) => { o[idKey] = v; }, { aria: label, rerender: onDone, onError: (m) => { vb.f.msg = m; vb.f.err = true; } }));
+    box.append(row);
+    return box;
+  }
+  function vbSideStart(f, side) {
+    const st = f.def.start;
+    side.append(el('div', 'vb-sh', '▶ COMEÇA'), el('div', 'vb-sub', 'Quando a pessoa…'));
+    const bad = vbBad(f, 'start');
+    if (bad.length) side.append(el('div', 'vb-sub vb-red', bad.join(' ')));
+    const types = el('div', 'vb-radios');
+    [['etiqueta', 'entrar numa etiqueta'], ['lead', 'chamar pela primeira vez (lead novo)'], ['venda', 'tiver uma venda registrada (💰)'], ['manual', 'for adicionada por mim (🔁 na conversa)']].forEach(([v, txt]) => {
+      const l = el('label', 'sc-radio');
+      const r = el('input');
+      r.type = 'radio';
+      r.name = 'vb-start';
+      r.checked = st.type === v;
+      r.addEventListener('change', () => {
+        const exclude = st.exclude;
+        f.def.start = { type: v, ...(v === 'lead' ? { origin: 'todos' } : v === 'etiqueta' ? { source: 'crm', label_id: '' } : {}), ...(exclude ? { exclude } : {}) };
+        f.include = false;
+        vbChange();
+        vbRender();
+      });
+      l.append(r, ` ${txt}`);
+      types.append(l);
+    });
+    side.append(types);
+    if (st.type === 'etiqueta') side.append(vbLabelField(st, 'Etiqueta', () => { f.existing = null; vbChange(); vbRender(); }));
+    if (st.type === 'lead') {
+      const o = el('select', 'ed-cat');
+      o.setAttribute('aria-label', 'Quais leads');
+      [['todos', 'todos'], ['anuncio', 'só de anúncio'], ['organico', 'só orgânico']].forEach(([v, t]) => { const op = el('option', null, t); op.value = v; op.selected = (st.origin || 'todos') === v; o.append(op); });
+      o.addEventListener('change', () => { st.origin = o.value; vbChange(); vbRender(); });
+      side.append(schedField('Quais leads', o));
+    }
+    if (st.type === 'venda') side.append(schedField('Só quem estiver na etiqueta CRM (opcional)', labelPicker(st.label_id || '', (v) => { st.label_id = v; if (!v) delete st.label_id; }, { empty: '(qualquer cliente)', aria: 'Etiqueta (opcional)', rerender: () => { vbChange(); vbRender(); } })));
+    if (st.type === 'manual') side.append(el('div', 'vb-sub', 'Entra quem você adicionar pela conversa: botão 🔁 → Adicionar à automação.'));
+    // Quem entra
+    const who = el('div', 'vb-field');
+    who.append(el('div', 'vb-fl', 'Quem entra'));
+    const canInclude = st.type === 'etiqueta' && !!(st.source === 'whatsapp' ? st.wa_label_id : st.label_id) && !String(st.label_id || '').startsWith(NEW_LABEL);
+    [[false, 'só quem se encaixar daqui pra frente'], [true, 'também quem já está']].forEach(([v, txt]) => {
+      const l = el('label', 'sc-radio');
+      const r = el('input');
+      r.type = 'radio';
+      r.name = 'vb-who';
+      r.checked = !!f.include === v;
+      r.disabled = v && !canInclude;
+      r.addEventListener('change', () => { f.include = v; vbChange(); vbRender(); if (v) vbLoadExisting(f); });
+      l.append(r, ` ${txt}`);
+      who.append(l);
+    });
+    if (!canInclude && st.type !== 'etiqueta') who.append(el('div', 'vb-sub', '"Também quem já está" só vale para quem entra por etiqueta.'));
+    if (f.include && canInclude) {
+      if (f.existing == null || f.existingKey !== vbStartKey(st)) { who.append(el('div', 'lt-none loading', 'Contando quem já está na etiqueta…')); queueMicrotask(() => vbLoadExisting(f)); } else {
+        who.append(el('div', 'vb-sub', `${f.existing.length} já est${f.existing.length === 1 ? 'á' : 'ão'} na etiqueta e vão entrar${f.existing.length > 50 ? ' (mostrando 50)' : ''}:`));
+        const ul = el('ul', 'act-list vb-exist');
+        f.existing.slice(0, 50).forEach((c) => ul.append(el('li', null, [c.name, c.phone].filter(Boolean).join(' · ') || 'sem nome')));
+        who.append(ul);
+      }
+    }
+    side.append(who);
+    // horário e exclusões
+    const biz = el('label', 'sc-radio');
+    const bcb = el('input');
+    bcb.type = 'checkbox';
+    bcb.checked = f.def.business !== false;
+    bcb.addEventListener('change', () => { f.def.business = bcb.checked; vbChange(); vbRender(); });
+    biz.append(bcb, ` Só no horário comercial (as esperas contam ${E.scheduleText(motor.state.settings)}; os envios sempre respeitam o horário)`);
+    side.append(biz);
+    const ex = el('div', 'vb-field');
+    ex.append(el('div', 'vb-fl', 'Nunca para quem tem a etiqueta'));
+    const chips = el('div', 'vb-chips');
+    chips.append(el('span', 'vb-chip fixed', 'Não enviar (sempre)'));
+    (st.exclude || []).forEach((x, i) => {
+      const id = x.source === 'whatsapp' ? x.wa_label_id : x.label_id;
+      if (!id) return;
+      const c = el('span', 'vb-chip', `${vbLabelName(id, x.source)}${x.source === 'whatsapp' ? ' (WhatsApp)' : ''}`);
+      const rm = fbtn('vb-chip-x', '✕', () => { st.exclude.splice(i, 1); if (!st.exclude.length) delete st.exclude; vbChange(); vbRender(); });
+      rm.setAttribute('aria-label', `Tirar ${vbLabelName(id, x.source)}`);
+      c.append(rm);
+      chips.append(c);
+    });
+    ex.append(chips);
+    const pend = (st.exclude || []).find((x) => !(x.source === 'whatsapp' ? x.wa_label_id : x.label_id));
+    if (pend) ex.append(vbLabelField(pend, 'Outra etiqueta', () => { vbChange(); vbRender(); }));
+    else ex.append(fbtn('ed-mini vb-ex-add', '+ outra etiqueta', () => { st.exclude = [...(st.exclude || []), { source: 'crm', label_id: '' }]; vbChange(); vbRender(); }));
+    side.append(ex);
+  }
+  const vbStartKey = (st) => `${st.type}|${st.source || ''}|${st.label_id || ''}|${st.wa_label_id || ''}`;
+  async function vbLoadExisting(f) {
+    const st = f.def.start;
+    const key = vbStartKey(st);
+    if (f.loadingKey === key) return;
+    f.loadingKey = key;
+    let list = [];
+    try {
+      if (st.source === 'whatsapp') {
+        const r = await waRequest('labelAllChats', { labelId: st.wa_label_id }, { timeout: 15000 });
+        list = (r && r.chats ? r.chats : []).map((c) => ({ name: c.name || null, phone: c.phone || (/@c\.us$/.test(c.id) ? c.id.split('@')[0] : null) }));
+      } else if (st.label_id && !String(st.label_id).startsWith(NEW_LABEL)) list = await call('automationExisting', { labelId: st.label_id });
+    } catch (e) { list = []; f.msg = `Não consegui ver quem já está na etiqueta: ${e.message}`; f.err = true; }
+    f.loadingKey = '';
+    if (vb.f !== f) return;
+    f.existing = Array.isArray(list) ? list : [];
+    f.existingKey = key;
+    vbRender();
+  }
+  // ✉: mensagem pronta (busca + prévia) ou "+ Criar mensagem aqui" (o mesmo editor das mensagens rápidas)
+  const VB_PART = { texto: 'Texto', audio: 'Áudio', foto: 'Foto', imagem: 'Foto', video: 'Vídeo', documento: 'PDF/arquivo', album: 'Álbum', localizacao: 'Localização', produto: 'Produto', catalogo: 'Catálogo', contato: 'Contato', pix: 'Pix' };
+  function vbSideSend(f, n, side) {
+    const cur = n.item_id && state.items.find((i) => i.id === n.item_id);
+    if (n.hint && !n.item_id) side.append(el('div', 'vb-sub', `Sugestão: ${n.hint}.`));
+    const q = el('input', 'ed-title vb-search');
+    q.type = 'search';
+    q.placeholder = 'Buscar mensagem pronta…';
+    q.setAttribute('aria-label', 'Buscar mensagem pronta');
+    q.value = f.msgQuery || '';
+    const list = el('div', 'vb-mlist');
+    const fold = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const fill = () => {
+      list.textContent = '';
+      const words = fold(q.value).split(/\s+/).filter(Boolean);
+      const items = state.items.filter((i) => { const t = fold(`${i.title} ${i.body || ''}`); return words.every((w) => t.includes(w)); }).slice(0, 40);
+      if (!items.length) list.append(el('div', 'vb-sub', state.items.length ? 'Nenhuma mensagem com essa busca.' : 'Nenhuma mensagem pronta ainda.'));
+      items.forEach((i) => {
+        const b = fbtn(`vb-mitem${i.id === n.item_id ? ' on' : ''}`, '', () => { n.item_id = i.id; delete n.hint; vbChange(); vbRender(); });
+        b.append(el('span', 'vb-mt', i.title), el('span', 'vb-mk', isMultiPart(i) ? `${i.parts.length} partes` : (VB_PART[i.type] || i.type || '')));
+        list.append(b);
+      });
+    };
+    q.addEventListener('input', () => { f.msgQuery = q.value; fill(); });
+    fill();
+    side.append(q, list);
+    const row = el('div', 'ed-add');
+    row.append(fbtn('ed-mini vb-newmsg', '+ Criar mensagem aqui', () => vbMessageEditor(f, n, null)));
+    if (cur) row.append(fbtn('ed-mini vb-editmsg', 'Editar esta mensagem', () => vbMessageEditor(f, n, cur)));
+    side.append(row);
+    if (cur) {
+      const pv = el('div', 'vb-prev');
+      pv.append(el('div', 'vb-fl', `Prévia: ${cur.title}`));
+      partsOf(cur).slice(0, 8).forEach((p) => {
+        const line = el('div', 'vb-pline');
+        line.append(el('span', 'vb-pk', VB_PART[p.type] || p.type));
+        const txt = p.body ? fillVars(String(p.body), 'Maria').slice(0, 300) : p.file_name || '';
+        if (txt) line.append(el('span', 'vb-pt', txt));
+        pv.append(line);
+      });
+      side.append(pv);
+    }
+  }
+  function vbMessageEditor(f, n, item) {
+    if (vb.el) vb.el.hidden = true;
+    openMessageEditorFor((id) => { n.item_id = id; delete n.hint; vbChange(); }, item, () => { if (vb.f === f && vb.el) { vb.el.hidden = false; vbRender(); } });
+  }
+
+  // ── Simular · Testar comigo · Salvar e ligar ──
+  function vbCheck(f) {
+    f.showErrors = true;
+    f.invalid = vbProblems(f);
+    if (!f.invalid.length) { f.msg = ''; f.err = false; return true; }
+    const n = f.invalid.length;
+    f.msg = n === 1 ? f.invalid[0].msg : `${f.invalid[0].msg} (e mais ${n - 1} marcado${n === 2 ? '' : 's'} em vermelho)`;
+    f.err = true;
+    const firstNode = f.invalid.find((x) => x.node !== 'name');
+    if (firstNode) f.sel = firstNode.node;
+    vbRender();
+    const bad = vb.el && vb.el.querySelector('.vb-box.vb-bad');
+    if (bad) bad.scrollIntoView({ block: 'center', inline: 'center' });
+    return false;
+  }
+  function vbAskOn(mode) {
+    const f = vb.f;
+    if (!vbCheck(f)) return;
+    f.modal = { kind: 'on', mode };
+    vbRender();
+    const st = f.def.start;
+    if (st.type === 'etiqueta' && (f.existing == null || f.existingKey !== vbStartKey(st))) vbLoadExisting(f);
+  }
+  async function vbAskTest() {
+    const f = vb.f;
+    if (!vbCheck(f)) return;
+    f.modal = { kind: 'test' };
+    vbRender();
+    let c = null;
+    try { c = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { c = null; }
+    if (!fl.recentChats) { try { fl.recentChats = await waRequest('recentChats', { limit: 30 }, { timeout: 6000 }); } catch { fl.recentChats = []; } }
+    if (c && c.kind === 'individual') {
+      if (!(fl.recentChats || []).some((x) => x.id === c.chatId)) fl.recentChats = [{ id: c.chatId, name: c.name || null }, ...(fl.recentChats || [])];
+      if (!f.test_chat_id) f.test_chat_id = c.chatId;
+    }
+    if (vb.f === f && f.modal && f.modal.kind === 'test') vbRender();
+  }
+  function vbModal(f) {
+    const back = el('div', 'vb-modal-bg');
+    const m = el('div', `vb-modal vb-m-${f.modal.kind}`);
+    m.setAttribute('role', 'dialog');
+    const close = () => { f.modal = null; vbRender(); };
+    back.addEventListener('click', (e) => { if (e.target === back && !f.saving) close(); });
+    if (f.modal.kind === 'close') {
+      m.append(el('div', 'vb-sh', 'Fechar sem salvar?'), el('div', 'vb-sub', 'As mudanças que você fez aqui vão se perder.'));
+      const row = el('div', 'ed-add');
+      row.append(fbtn('bbtn primary vb-discard', 'Fechar sem salvar', () => vbClose(true)), fbtn('bbtn', 'Continuar editando', close));
+      m.append(row);
+    } else if (f.modal.kind === 'sim') {
+      m.append(el('div', 'vb-sh', 'Simular'), el('div', 'vb-sub', 'O que aconteceria com uma pessoa que entra agora. Tempo corrido; com "só no horário comercial" as esperas podem levar mais. Nada é enviado.'));
+      const cols = el('div', 'vb-simcols');
+      const opt = { itemTitle: (id) => (id ? itemTitle(id) : '(sem mensagem)'), labelName: (id, src) => (id ? vbLabelName(id, src) : '(sem etiqueta)') };
+      [['nunca', 'Se nunca responder'], ['primeiro', 'Se responder no 1º passo']].forEach(([sc, title]) => {
+        const col = el('div', `vb-simcol vb-sim-${sc}`);
+        col.append(el('div', 'vb-fl', title));
+        E.seqSimulate(E.seqNormalize(f.def), sc, opt).forEach((ev) => {
+          const r = el('div', `vb-ev vb-ev-${ev.kind}`);
+          r.append(el('span', 'vb-evt', E.simAtText(ev.at)), el('span', 'vb-evx', ev.text));
+          col.append(r);
+        });
+        cols.append(col);
+      });
+      m.append(cols, fbtn('bbtn vb-simclose', 'Fechar', close));
+    } else if (f.modal.kind === 'test') {
+      m.append(el('div', 'vb-sh', 'Testar comigo'), el('div', 'vb-sub', 'Liga EM TESTE: só a conversa escolhida recebe; todos os outros são ignorados. Para valer para todos depois, use "Ligar para todos".'));
+      const opts = [['', 'Escolha a conversa…'], ...(fl.recentChats || []).map((c) => [c.id, c.name || c.id.split('@')[0]])];
+      if (f.test_chat_id && !opts.some(([v]) => v === f.test_chat_id)) opts.push([f.test_chat_id, f.test_chat_id.split('@')[0]]);
+      const sel = el('select', 'ed-cat vb-testchat');
+      sel.setAttribute('aria-label', 'Conversa de teste');
+      opts.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === (f.test_chat_id || ''); sel.append(o); });
+      sel.addEventListener('change', () => { f.test_chat_id = sel.value; });
+      const row = el('div', 'ed-add');
+      const go = fbtn('bbtn primary vb-test-go', f.saving ? 'Ligando…' : 'Ligar em teste', () => { if (!f.test_chat_id) { f.msg = 'Escolha a conversa de teste.'; f.err = true; vbRender(); return; } vbSave('test'); });
+      go.disabled = !!f.saving;
+      row.append(go, fbtn('bbtn', 'Cancelar', close));
+      m.append(sel, row);
+    } else if (f.modal.kind === 'on') {
+      const st = f.def.start;
+      const byLabel = st.type === 'etiqueta';
+      const n = byLabel && f.existing && f.existingKey === vbStartKey(st) ? f.existing.length : null;
+      const inc = byLabel && f.include;
+      m.append(el('div', 'vb-sh', `Ligar “${f.name}”?`));
+      if (byLabel && n == null && !String(st.label_id || '').startsWith(NEW_LABEL)) m.append(el('div', 'lt-none loading', 'Contando quem já está na etiqueta…'));
+      else if (inc) {
+        m.append(el('div', 'act-text', `Vale para quem se encaixar daqui pra frente e também para ${n === 1 ? 'quem já está' : `os ${n} que já estão`} na etiqueta:`));
+        const ul = el('ul', 'act-list');
+        (f.existing || []).slice(0, 50).forEach((c) => ul.append(el('li', null, [c.name, c.phone].filter(Boolean).join(' · ') || 'sem nome')));
+        m.append(ul);
+      } else m.append(el('div', 'act-text', `Vale para quem se encaixar daqui pra frente.${n ? ` ${n} já est${n === 1 ? 'á' : 'ão'} e não ${n === 1 ? 'vai' : 'vão'} receber.` : ''}`));
+      const row = el('div', 'ed-add');
+      const go = fbtn('bbtn primary vb-on-go', f.saving ? 'Ligando…' : inc && n ? `Ligar e incluir ${n}` : 'Ligar', () => vbSave(f.modal.mode));
+      go.disabled = !!f.saving || (byLabel && n == null && !String(st.label_id || '').startsWith(NEW_LABEL));
+      row.append(go, fbtn('bbtn', 'Cancelar', close));
+      m.append(row);
+    }
+    back.append(m);
+    return back;
+  }
+  // Salvar. mode: 'off' (desligada), 'keep' (como está), 'on' (ligar para todos), 'todos' (sair do teste), 'test'
+  async function vbSave(mode) {
+    const f = vb.f;
+    if (!f || f.saving) return;
+    if (!vbCheck(f)) { if (f.modal && f.modal.kind !== 'close') f.modal = null; vbRender(); return; }
+    let active = f.wasActive;
+    let testOn = f.testOn;
+    if (mode === 'off') active = false;
+    if (mode === 'on' || mode === 'todos') { active = true; testOn = false; }
+    if (mode === 'test') { active = true; testOn = true; }
+    const include = (mode === 'on' || mode === 'todos') && f.def.start.type === 'etiqueta' && !!f.include;
+    f.saving = true;
+    vbRender();
+    try {
+      const def = E.seqNormalize(f.def);
+      // etiquetas que ainda não existem ("new:Nome"): cria agora
+      const fake = [{ trigger_label_id: def.start.label_id || null, actions: [] }];
+      E.seqIndex(def).forEach(({ node: n }) => { if (n.type === 'etiqueta' && n.source !== 'whatsapp') fake[0].actions.push(n); });
+      (def.start.exclude || []).forEach((x) => { if (x.source !== 'whatsapp') fake[0].actions.push(x); });
+      await resolveNewLabels(fake);
+      if (def.start.label_id) def.start.label_id = fake[0].trigger_label_id;
+      E.seqIndex(def).forEach(({ node: n }) => { if (n.hint) delete n.hint; });
+      const base = active && !testOn ? await baselineWaLabel({ kind: 'sequencia', sequence: def }).catch(() => null) : null; // 2.12.5
+      const saved = await call('saveAutomation', { id: f.id || undefined, automation: { kind: 'sequencia', name: f.name.trim(), active, sequence: def, test_chat_id: testOn ? f.test_chat_id : null }, includeExisting: include });
+      if (mode === 'todos') await call('setAutomationActive', { id: (saved && saved.id) || f.id, active: true, includeExisting: include });
+      await motor.loadAutomations();
+      fl.statsAt = 0;
+      flash({
+        off: 'Automação salva (desligada).', test: 'Ligada EM TESTE: só a conversa escolhida recebe.',
+        on: include ? 'Automação ligada (incluindo quem já estava na etiqueta).' : `Automação ligada: vale para quem se encaixar daqui pra frente.${baselineText(base)}`,
+        todos: include ? 'Ligada para todos (incluindo quem já estava na etiqueta).' : `Ligada para todos: vale daqui pra frente.${baselineText(base)}`,
+        keep: active ? 'Automação salva (continua ligada).' : 'Automação salva.',
+      }[mode]);
+      vb.f = null;
+      if (vb.el) { vb.el.remove(); vb.el = null; }
+      backToList();
+      renderFootPause();
+      return;
+    } catch (e) {
+      f.msg = e.message;
+      f.err = true;
+    }
+    f.saving = false;
+    vbRender();
+  }
 
   // ── 2.11.0: "+ Nova automação": modelos com passo a passo (Quem → Quando → O quê) ──
   function renderTemplates() {
@@ -8385,6 +9151,7 @@
     const mark = (node, where) => { const m = bad(where); if (m) { node.classList.add('fw-invalid'); node.append(el('div', 'fw-errmsg', m)); } return node; };
     const sec = el('section', 'crmsec fw-editor');
     sec.append(el('div', 'wt-head', f.id ? 'EDITAR AUTOMAÇÃO' : `NOVA AUTOMAÇÃO${f.template ? ` · MODELO: ${f.template.toUpperCase()}` : ''}`));
+    if (f.legacyNote) sec.append(el('div', 'ed-note fw-legacy', `${f.legacyNote} Por isso ela abre aqui, e não no construtor visual.`)); // 2.13.0
     if (f.help) sec.append(el('div', 'crm-intro', f.help));
     const summaryBox = el('div', 'fw-test fw-summary');
     const updateSummary = () => {
