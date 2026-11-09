@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/resumoAnualCalc';
 import { startVisibleInterval } from '../lib/visibleInterval';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 // Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
 const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
@@ -439,6 +440,8 @@ export default function CorreiosTracking() {
       );
     }
   };
+
+  useErpRefresh(() => Promise.all([loadAndUpdate(), loadMetrics()])); // "Atualizar" do topo
 
   const loadAndUpdate = async () => {
     setLoading(true);

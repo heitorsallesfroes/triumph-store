@@ -799,6 +799,27 @@ guardada.
 
 ## O que mudou
 
+### ERP (09/11) — botão "Atualizar", F5 sem voltar ao Início e aviso de versão nova
+- **F5 volta para a mesma página**: a página e a sub-aba ficam no endereço (`?pagina=whatsapp&aba=rastreamento`;
+  os outros parâmetros e os links "Abrir no ERP" da extensão continuam valendo) e no navegador. Ao abrir (depois do
+  login): link da extensão → endereço → última página aberta → Início. Sub-abas lembradas: WhatsApp (Painel /
+  Rastreamento / Resultados), Controle de Estoque e Marketing. **Voltar/avançar** do navegador navegam entre as
+  páginas do ERP (trocar de sub-aba não cria entrada nova).
+- **Botão "Atualizar" (↻)** no topo de todas as páginas, ao lado do "Ao vivo": recarrega os dados da página aberta
+  sem recarregar o site (cada página chama a própria função de recarregar), mantendo página, sub-aba, período e
+  filtros. Gira enquanto carrega e depois mostra "Atualizado às HH:MM". Atalho: **tecla R** (quando não estiver
+  digitando num campo; Ctrl+R continua sendo o do navegador). Na **Nova Venda** com algo preenchido (e em
+  Configurações com mudança não salva) ele pergunta antes; na Nova Venda ele só recarrega as listas (produtos,
+  motoboys…) e o que foi digitado continua.
+- **Aviso de versão nova**: a cada 2 minutos (e ao voltar para a aba) confere se o `index.html` publicado na Vercel
+  aponta para arquivos `/assets/…` diferentes dos carregados. Se mudou, aparece a faixa "Nova versão do sistema
+  disponível · Atualizar" no topo. Nunca recarrega sozinho; clicar recarrega e volta para a mesma página.
+- Nada muda nas regras das páginas. Arquivos: `src/lib/erpRoute.ts`, `src/lib/erpRefresh.ts`, `src/lib/erpVersion.ts`.
+- Testes: `scripts/tests/erpRoute.test.ts` (endereço, guardado, link da extensão, histórico, "Atualizar", tecla R,
+  versão nova) e o novo Chrome real do ERP inteiro `scripts/tests/erpChrome.test.ts` (F5 volta para WhatsApp →
+  Rastreamento, voltar/avançar, "Atualizar" e tecla R mantêm 30 dias + Meta Ads, Nova Venda pergunta antes, faixa de
+  versão nova sem recarregar sozinho e o "Atualizar" dela volta para a mesma página).
+
 ### ERP (09/11) — aba WhatsApp: 3 abas sem repetição (Painel · Rastreamento · Resultados)
 Cada aba responde uma pergunta; nenhum gráfico aparece em duas. Tudo agregado sem o limite de 1000 linhas,
 claro/escuro, com esqueleto ao carregar.

@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows, chunk } from '../lib/resumoAnualCalc';
+import { useErpRefresh } from '../lib/erpRefresh';
+import { initialTab, writeTab } from '../lib/erpRoute';
 
 // Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
 const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
@@ -48,7 +50,9 @@ export default function Marketing() {
   const [fbError, setFbError] = useState<string | null>(null);
   const [fbSyncedCount, setFbSyncedCount] = useState<number | null>(null);
   const [totalSwCount, setTotalSwCount] = useState(0);
-  const [activeTab, setActiveTab] = useState<'overview' | 'facebook' | 'detail'>('overview');
+  // sub-aba no endereço (?aba=facebook): o F5 volta para ela
+  const [activeTab, setActiveTab] = useState<'overview' | 'facebook' | 'detail'>(() => initialTab('marketing', ['overview', 'facebook', 'detail'] as const, 'overview'));
+  useEffect(() => { writeTab('marketing', activeTab); }, [activeTab]);
 
   useEffect(() => {
     loadData();
@@ -56,6 +60,7 @@ export default function Marketing() {
   }, []);
 
   useEffect(() => { loadData(); }, [timeFilter, customStartDate, customEndDate]);
+  useErpRefresh(() => Promise.all([loadData(), ...(activeTab === 'facebook' ? [loadFacebookData()] : [])])); // "Atualizar" do topo
 
   const getDateRange = () => {
     if (timeFilter === 'today') { const t = getTodayInBrazil(); return { start: t, end: t }; }

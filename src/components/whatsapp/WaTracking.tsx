@@ -14,6 +14,7 @@ import {
 } from '../../lib/waTracking';
 import { loadTracking, type TrackLoad } from '../../lib/waTrackingDb';
 import { startVisibleInterval } from '../../lib/visibleInterval';
+import { useErpRefresh } from '../../lib/erpRefresh';
 import { btn, input, ORANGE } from './shared';
 import WaConversions from './WaConversions';
 import { EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoTip, panel, Skeleton, SkeletonStyle, SLATE } from './ui';
@@ -88,6 +89,9 @@ export default function WaTracking() {
     }, LIVE_MS);
     return () => { alive = false; stop(); };
   }, [key, live]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Atualizar" do topo: como o "Ao vivo" (período, origem, página e filtros da tabela continuam)
+  useErpRefresh(() => loadTracking(r).then((load) => setData((cur) => (cur && cur.key === key ? { load, key, at: Date.now() } : { load, key, at: Date.now() }))));
 
   const loading = !data || data.key !== key;
   const bh = useMemo(() => businessHoursOf(data ? data.load.settings : null), [data]);

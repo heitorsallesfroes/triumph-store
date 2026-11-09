@@ -5,6 +5,7 @@ import { Plus, Pencil, Trash2, X, Bike, TrendingUp, Trophy, DollarSign, Calendar
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { ptBR } from 'date-fns/locale';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 type TimePeriod = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'total' | 'custom';
 
@@ -57,6 +58,7 @@ export default function Motoboys() {
   useEffect(() => {
     if (selectedPeriod === 'custom' && startDate) loadCustomStats();
   }, [startDate, endDate, selectedPeriod]);
+  useErpRefresh(() => Promise.all([loadData(), ...(selectedPeriod === 'custom' && startDate ? [loadCustomStats()] : [])])); // "Atualizar" do topo
 
   const toDateStr = (date: Date) => date.toISOString().split('T')[0];
 

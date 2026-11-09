@@ -15,6 +15,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown,
 } from 'lucide-react';
 import { fetchAllRows, monthOfText, monthOfBRT, yearOfBRT } from '../lib/resumoAnualCalc';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -192,6 +193,7 @@ export default function ResumoMensal() {
   const [dailyData, setDailyData] = useState<{ day: number; revenue: number; adSpend: number; profit: number }[]>([]);
 
   useEffect(() => { loadDailyData(); }, [selected]);
+  useErpRefresh(() => Promise.all([loadData(), loadDailyData()])); // "Atualizar" do topo
 
   const loadDailyData = async () => {
     try {

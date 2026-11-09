@@ -33,6 +33,19 @@ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: numb
   lt(c: string, v: unknown) { return this.add(`${c}=lt.${v}`, (r) => r[c] != null && cmp(r[c], v) < 0); }
   in(c: string, v: unknown) { const set = new Set(parseList(v).map(String)); return this.add(`${c}=in.${[...set].join(',')}`, (r) => set.has(String(r[c]))); }
   is(c: string, v: unknown) { return this.add(`${c}=is.${v}`, (r) => (v === null ? r[c] == null : r[c] === v)); }
+  ilike(c: string, v: unknown) { const re = new RegExp(`^${String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i'); return this.add(`${c}=ilike.${v}`, (r) => re.test(String(r[c] ?? ''))); }
+  like(c: string, v: unknown) { return this.ilike(c, v); }
+  // (o resto do PostgREST que outras páginas usam: aceita e não filtra — o teste não depende deles)
+  or(d: string) { this.desc.push(`or=${d}`); return this; }
+  not(c: string) { this.desc.push(`not.${c}`); return this; }
+  filter(c: string) { this.desc.push(`filter.${c}`); return this; }
+  match() { return this; }
+  contains() { return this; }
+  single() { this.single = true; return this; }
+  insert() { return this; }
+  update() { return this; }
+  upsert() { return this; }
+  delete() { return this; }
   order(c: string, o?: { ascending?: boolean }) { this.orders.push([c, !o || o.ascending !== false]); return this; }
   range(a: number, b: number) { this.rng = [a, b]; return this; }
   limit(n: number) { this.lim = n; return this; }
@@ -59,6 +72,10 @@ export const supabase = {
   from: (table: string) => new Query(table),
   channel: () => ({ on() { return this; }, subscribe() { return this; } }),
   removeChannel: () => {},
+  auth: { signOut: async () => ({ error: null }), getSession: async () => ({ data: { session: null } }), onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
+  storage: { from: () => ({ upload: async () => ({ data: null, error: null }), getPublicUrl: () => ({ data: { publicUrl: '' } }), remove: async () => ({ data: null, error: null }) }) },
+  rpc: async () => ({ data: null, error: null }),
+  functions: { invoke: async () => ({ data: null, error: { message: 'sem rede no teste' } }) },
 };
 export type Product = Record<string, unknown>;
 export type Accessory = Record<string, unknown>;

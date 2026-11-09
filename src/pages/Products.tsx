@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase, Product } from '../lib/supabase';
 import { Plus, Pencil, Trash2, X, RefreshCw, Watch, ShoppingBag, Search } from 'lucide-react';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -29,6 +30,7 @@ export default function Products() {
   useEffect(() => {
     loadProducts();
   }, []);
+  useErpRefresh(() => loadProducts()); // "Atualizar" do topo
 
   const loadProducts = async () => {
     try {

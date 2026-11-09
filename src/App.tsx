@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import Products from './pages/Products';
@@ -19,25 +19,52 @@ import SmallSales from './pages/SmallSales';
 import CorreiosTracking from './pages/CorreiosTracking';
 import { loadSystemConfig } from './lib/systemConfig';
 import { takeErpLink } from './lib/erpLink';
+import { initialRoute, parseRoute, readStored, writeRoute } from './lib/erpRoute';
 
 function App() {
-  // Link da extensão (?pagina=historico&venda=<id> ou ?pagina=nova-venda&nome=...&telefone=...): lido uma vez,
-  // depois do login (o App só monta dentro do AuthGate). Sem parâmetros, abre como sempre.
-  const [erpLink] = useState(() => takeErpLink());
-  const [currentPage, setPage] = useState<string>(erpLink ? erpLink.page : 'home');
+  // Página ao abrir (depois do login, o App só monta dentro do AuthGate): o link da extensão
+  // (?pagina=historico&venda=<id> ou ?pagina=nova-venda&nome=...&telefone=..., lido uma vez) vale primeiro; depois a
+  // página e a sub-aba do endereço (?pagina=whatsapp&aba=rastreamento, o F5 volta para elas); depois a última aberta
+  // neste navegador; senão o Início. A rota do endereço é lida ANTES do link (que tira os parâmetros dele).
+  const [boot] = useState(() => {
+    const fromUrl = parseRoute(window.location.search);
+    const link = takeErpLink();
+    const route = initialRoute(link ? link.page : null, fromUrl, readStored());
+    writeRoute(route);
+    return { link, route };
+  });
+  const erpLink = boot.link;
+  const [currentPage, setPage] = useState<string>(boot.route.page);
   const [focusSaleId, setFocusSaleId] = useState<string | null>(erpLink?.saleId ?? null);
   const [salePrefill, setSalePrefill] = useState<{ name: string; phone: string } | null>(erpLink?.prefill ?? null);
-  // Trocar de tela pelo menu esquece o link (voltar à tela não repete o destaque nem o preenchimento)
+  // Trocar de tela pelo menu esquece o link (voltar à tela não repete o destaque nem o preenchimento) e entra no
+  // histórico do navegador (voltar/avançar navegam entre as páginas do ERP)
   const setCurrentPage = (page: string) => {
     setFocusSaleId(null);
     setSalePrefill(null);
+    writeRoute({ page, tab: null }, { push: true });
     setPage(page);
   };
   const [triggerFastSale, setTriggerFastSale] = useState(0);
   const [configReady, setConfigReady] = useState(false);
+  // "Atualizar" sem nenhuma página registrada: remonta a página com uma chave nova
+  const [remountKey, setRemountKey] = useState(0);
 
   useEffect(() => {
     loadSystemConfig().finally(() => setConfigReady(true));
+  }, []);
+
+  // voltar/avançar do navegador
+  useEffect(() => {
+    const onPop = () => {
+      const r = parseRoute(window.location.search) || { page: 'home', tab: null };
+      writeRoute(r);
+      setFocusSaleId(null);
+      setSalePrefill(null);
+      setPage(r.page);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
   }, []);
 
   useEffect(() => {
@@ -49,6 +76,7 @@ function App() {
         e.preventDefault();
         setFocusSaleId(null);
         setSalePrefill(null);
+        writeRoute({ page: 'sales', tab: null }, { push: true });
         setPage('sales');
         setTriggerFastSale(prev => prev + 1);
       }
@@ -108,8 +136,8 @@ function App() {
   }
 
   return (
-    <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
-      {renderPage()}
+    <Layout currentPage={currentPage} onNavigate={setCurrentPage} onRemount={() => setRemountKey((k) => k + 1)}>
+      <Fragment key={`${currentPage}:${remountKey}`}>{renderPage()}</Fragment>
     </Layout>
   );
 }

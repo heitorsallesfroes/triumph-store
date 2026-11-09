@@ -5,6 +5,7 @@ import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil } from '../lib/dateUtils';
 import { ShoppingBag, Plus, Trash2, Bike, Truck, ShoppingCart, Pencil, X } from 'lucide-react';
 import AutocompleteInput from '../components/AutocompleteInput';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 interface PaymentEntry {
   method: string;
@@ -113,6 +114,7 @@ export default function SmallSales() {
     loadSales();
     loadMotoboys();
   }, [filter]);
+  useErpRefresh(() => Promise.all([loadSales(), loadMotoboys()])); // "Atualizar" do topo
 
   const getDateRange = () => {
     const now = new Date();

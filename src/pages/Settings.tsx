@@ -8,6 +8,7 @@ import {
 import extensionManifestRaw from '../../extension/manifest.json?raw';
 
 import { getConfigDefaults, refreshSystemConfig } from '../lib/systemConfig';
+import { useErpDirty, useErpRefresh } from '../lib/erpRefresh';
 
 const INSTALLMENTS = Array.from({ length: 12 }, (_, i) => i + 1);
 
@@ -63,6 +64,13 @@ export default function Settings() {
   const [linkStartDate, setLinkStartDate] = useState('2099-01-01');
 
   useEffect(() => { loadConfig(); }, []);
+
+  // "Atualizar" do topo: relê a configuração; se algo foi mudado e não salvo, o botão pergunta antes
+  const formNow = JSON.stringify([storeForm, feeForm, packagingCost, adTaxPercent, linkStartDate]);
+  const [savedForm, setSavedForm] = useState<string | null>(null);
+  useEffect(() => { if (!loadingConfig) setSavedForm(formNow); }, [loadingConfig, savedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  useErpDirty(savedForm !== null && formNow !== savedForm);
+  useErpRefresh(() => loadConfig());
 
   const loadConfig = async () => {
     setLoadingConfig(true);

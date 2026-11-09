@@ -11,6 +11,7 @@ import { calculateCardFee } from '../lib/cardFees';
 import { getAdSpendBreakdown, toAdSpendReal } from '../lib/adTax';
 import { getConfigNumber } from '../lib/systemConfig';
 import { loadYearMonths } from '../lib/resumoAnualCalc';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 interface MonthData {
   month: number;
@@ -79,6 +80,7 @@ export default function ResumoAnual() {
   }, []);
 
   useEffect(() => { loadYear(year); }, [year, loadYear]);
+  useErpRefresh(() => loadYear(year)); // "Atualizar" do topo
 
   // Derived stats (only months with data)
   const activeRows = rows.filter(r => r.hasData);

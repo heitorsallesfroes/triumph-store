@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase, Product } from '../lib/supabase';
 import { fetchAllRows, chunk } from '../lib/resumoAnualCalc';
+import { useErpRefresh } from '../lib/erpRefresh';
+import { initialTab, writeTab } from '../lib/erpRoute';
 
 // Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
 const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
@@ -52,7 +54,9 @@ const [showStockSummary, setShowStockSummary] = useState(false);
   const [stockOrders, setStockOrders] = useState<any[]>([]);
   const [allStockOrders, setAllStockOrders] = useState<any[]>([]);
   const [allOrdersLoading, setAllOrdersLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'produtos' | 'encomendas' | 'fornecedores'>('produtos');
+  // sub-aba no endereço (?aba=encomendas): o F5 volta para ela
+  const [activeTab, setActiveTab] = useState<'produtos' | 'encomendas' | 'fornecedores'>(() => initialTab('stock', ['produtos', 'encomendas', 'fornecedores'] as const, 'produtos'));
+  useEffect(() => { writeTab('stock', activeTab); }, [activeTab]);
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'pending' | 'received'>('all');
   const [showOrderForm, setShowOrderForm] = useState(false);
   const [orderQty, setOrderQty] = useState('');
@@ -94,6 +98,8 @@ const [showStockSummary, setShowStockSummary] = useState(false);
   useEffect(() => {
     if (activeTab === 'fornecedores') loadSupplierOrders(); // eslint-disable-line @typescript-eslint/no-floating-promises
   }, [supplierPeriod, supplierCustomStart, supplierCustomEnd]); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Atualizar" do topo: o que a aba aberta mostra
+  useErpRefresh(() => Promise.all([loadProducts(), loadStockOrders(), ...(activeTab === 'encomendas' ? [loadAllStockOrders()] : []), ...(activeTab === 'fornecedores' ? [loadSuppliers(), loadSupplierOrders()] : [])]));
 
   useEffect(() => {
     if (confirmReceiveGroup !== null) {

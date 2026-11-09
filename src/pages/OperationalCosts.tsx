@@ -4,6 +4,7 @@ import { Plus, Trash2, X, DollarSign, Calendar, ChevronLeft, ChevronRight, Penci
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { ptBR } from 'date-fns/locale';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 interface Cost {
   id: string;
@@ -67,6 +68,7 @@ export default function OperationalCosts() {
   const [avulsoForm, setAvulsoForm] = useState({ description: '', amount: '', date: new Date() });
 
   useEffect(() => { loadData(); }, [selectedMonth]);
+  useErpRefresh(() => loadData()); // "Atualizar" do topo
 
   const loadData = async () => {
     setLoading(true);

@@ -6,6 +6,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/resumoAnualCalc';
 import { startVisibleInterval, AUTO_REFRESH_5_MIN } from '../lib/visibleInterval';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 // Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
 const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
@@ -632,6 +633,7 @@ export default function Home({ onNavigate }: { onNavigate: (page: string) => voi
     // Desempenho: a cada 5 min e só com a aba visível (antes: a cada 1 min)
     return startVisibleInterval(() => loadChartData(chartPeriod), AUTO_REFRESH_5_MIN);
   }, [chartPeriod, loadChartData]);
+  useErpRefresh(() => Promise.all([load(), loadChartData(chartPeriod)])); // "Atualizar" do topo
 
   if (loading) {
     return (

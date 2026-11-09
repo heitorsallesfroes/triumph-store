@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { fetchAllRows } from '../../lib/resumoAnualCalc';
 import { pageInfo } from '../../lib/waTracking';
+import { useErpRefresh } from '../../lib/erpRefresh';
 import {
   conversionContact, conversionTotals, eventKind, hasAd, linkedSaleLabel, periodBounds, type ContactSources, type ConversionRow, type ConversionTotals, type LinkedSale,
 } from '../../lib/waConversions';
@@ -64,21 +65,26 @@ export default function WaConversions({ title = 'Conversões enviadas ao Faceboo
   const [contacts, setContacts] = useState<ContactSources>({ leadPhone: {}, attribution: {}, chatName: {}, sales: {} });
   const [error, setError] = useState('');
 
-  // período: carrega todos os eventos dele (mais novos primeiro) e volta para a página 1
+  // todos os eventos do período (mais novos primeiro)
+  const fetchPeriod = async () => {
+    const { from, to } = periodBounds(start, end);
+    const cols = await selectCols();
+    const rows = await fetchAllRows((f, t) => supabase.from('wa_conversion_events').select(cols)
+      .gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false }).order('event_id').range(f, t));
+    return rows as unknown as ConversionRow[];
+  };
+  const errText = (e: unknown) => { const m = String((e as Error)?.message || ''); return /wa_conversion_events/.test(m) ? 'Atualize o banco para usar este recurso.' : m || 'Erro ao carregar'; };
+  // período: carrega e volta para a página 1
   useEffect(() => {
     let alive = true;
     setAll(null);
     setPage(0);
     setError('');
-    (async () => {
-      const { from, to } = periodBounds(start, end);
-      const cols = await selectCols();
-      const rows = await fetchAllRows((f, t) => supabase.from('wa_conversion_events').select(cols)
-        .gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false }).order('event_id').range(f, t));
-      if (alive) setAll(rows as unknown as ConversionRow[]);
-    })().catch((e) => { if (alive) setError(/wa_conversion_events/.test(String(e && e.message)) ? 'Atualize o banco para usar este recurso.' : (e && e.message) || 'Erro ao carregar'); });
+    fetchPeriod().then((rows) => { if (alive) setAll(rows); }).catch((e) => { if (alive) setError(errText(e)); });
     return () => { alive = false; };
-  }, [start, end]);
+  }, [start, end]); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Atualizar" do topo: recarrega sem voltar para a página 1 (a página só é ajustada se a lista diminuir)
+  useErpRefresh(() => fetchPeriod().then((rows) => { setAll(rows); setError(''); }).catch((e) => setError(errText(e))));
 
   const totals: ConversionTotals | null = useMemo(() => (all ? conversionTotals(all) : null), [all]);
   const filtered = useMemo(() => (all ? filterKind(all, kind) : null), [all, kind]);

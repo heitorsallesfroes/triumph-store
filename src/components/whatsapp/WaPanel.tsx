@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { computePanel, delta, periodRanges, AWAITING_DAYS, type AdRow, type PeriodPreset, type Summary } from '../../lib/waPanel';
 import { loadPanel, type PanelLoad } from '../../lib/waPanelDb';
+import { useErpRefresh } from '../../lib/erpRefresh';
 import { input, ORANGE } from './shared';
 import {
   EmptyState, fmtInt, fmtMoney, fmtPct, GREEN, InfoTip, panel, SectionHeader, Skeleton, SkeletonStyle, SLATE, SortTable, StatCard,
@@ -51,6 +52,9 @@ export default function WaPanel() {
       .catch((e) => { if (alive) setError((e && e.message) || 'Erro ao carregar'); });
     return () => { alive = false; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Atualizar" do topo: recarrega o período escolhido sem esqueleto
+  useErpRefresh(() => loadPanel(ranges).then((load) => setData({ load, result: computePanel(load.input, ranges), key })));
 
   const loading = !data || data.key !== key;
   const r = data && !loading ? data.result : null;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows, chunk } from '../lib/resumoAnualCalc';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 // Todas as linhas em páginas de 1000; em erro devolve { data: null } (como a consulta direta fazia)
 const allRows = <T = any>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>) =>
@@ -108,6 +109,7 @@ export default function ResumoVendas() {
   useEffect(() => {
     if (period !== 'custom') loadData();
   }, [period]);
+  useErpRefresh(() => loadData()); // "Atualizar" do topo (o período escolhido continua)
 
   const getDateRange = (): { start: string; end: string } => {
     const today = getTodayInBrazil();

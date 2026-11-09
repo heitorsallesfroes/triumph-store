@@ -2,6 +2,7 @@
 import { supabase } from '../lib/supabase';
 import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard, X } from 'lucide-react';
 import { getTodayInBrazil, formatDateDisplay } from '../lib/dateUtils';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 interface Sale {
   id: string;
@@ -48,6 +49,8 @@ export default function Logistics() {
 
     return () => clearInterval(checkDateChange);
   }, [currentDate]);
+
+  useErpRefresh(() => loadSales()); // "Atualizar" do topo
 
   const loadSales = async () => {
     try {

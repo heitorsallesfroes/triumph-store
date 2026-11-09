@@ -17,6 +17,7 @@ import {
 } from '../lib/dateUtils';
 import { toAdSpendReal } from '../lib/adTax';
 import AdTaxBreakdown from '../components/AdTaxBreakdown';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -390,6 +391,9 @@ export default function AdManager() {
       headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+
+  // "Atualizar" do topo: o nível e a campanha/conjunto abertos continuam
+  useErpRefresh(() => load(level, breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1].id : null));
 
   const load = async (lvl: Level, parentId: string | null) => {
     const dateRange = getDateRange();

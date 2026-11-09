@@ -9,6 +9,7 @@ import { validateAddressForDeliveryType } from '../lib/addressValidation';
 import { fetchAddressByCep } from '../lib/viaCep';
 import { formatCpf, cleanCpf, validateCpf } from '../lib/cpfValidation';
 import { getTodayInBrazil } from '../lib/dateUtils';
+import { useErpDirty, useErpRefresh } from '../lib/erpRefresh';
 
 interface City {
   id: string;
@@ -140,6 +141,12 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
   useEffect(() => {
     loadData();
   }, []);
+  // "Atualizar" do topo: recarrega só as listas (produtos, motoboys…); o que está digitado continua, mas o botão
+  // pergunta antes quando a venda tem algo preenchido
+  useErpRefresh(() => loadData());
+  useErpDirty(saleProducts.length > 0 || saleAccessories.length > 0 || manualItems.length > 0
+    || (['customer_name', 'customer_phone', 'customer_cpf', 'address_street', 'address_number', 'address_complement', 'city', 'neighborhood', 'zip_code', 'delivery_notes'] as const)
+      .some((k) => String(formData[k] || '').trim() !== ''));
 
   useEffect(() => {
     if (triggerFastSale && triggerFastSale > 0) {

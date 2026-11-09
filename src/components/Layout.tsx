@@ -1,4 +1,6 @@
-import { ReactNode, useState, useEffect } from 'react';
+import { ReactNode, useState, useEffect, useRef } from 'react';
+import { hasRefreshHandlers, isPageDirty, isRefreshKey, runRefresh } from '../lib/erpRefresh';
+import { VERSION_CHECK_MS, watchNewVersion } from '../lib/erpVersion';
 import {
   Home,
   Package,
@@ -21,6 +23,7 @@ import {
   Moon,
   MessageCircle,
   LogOut,
+  RefreshCw,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
@@ -28,6 +31,7 @@ interface LayoutProps {
   children: ReactNode;
   currentPage: string;
   onNavigate: (page: string) => void;
+  onRemount?: () => void; // "Atualizar" numa página que não registrou como recarregar
 }
 
 const menuGroups = [
@@ -78,7 +82,40 @@ const menuGroups = [
 const ORANGE     = '#f97316';
 const ORANGE_DIM = 'rgba(249, 115, 22, 0.12)';
 
-export default function Layout({ children, currentPage, onNavigate }: LayoutProps) {
+export default function Layout({ children, currentPage, onNavigate, onRemount }: LayoutProps) {
+  // ── "Atualizar": recarrega os dados da página aberta sem recarregar o site (src/lib/erpRefresh.ts) ──
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const busy = useRef(false);
+  const doRefresh = async (force = false) => {
+    if (busy.current) return;
+    if (!force && isPageDirty()) { setConfirmDiscard(true); return; }
+    busy.current = true;
+    setRefreshing(true);
+    try {
+      if (hasRefreshHandlers()) await runRefresh();
+      else if (onRemount) onRemount();
+    } finally {
+      busy.current = false;
+      setRefreshing(false);
+      setRefreshedAt(Date.now());
+    }
+  };
+  const refreshRef = useRef(doRefresh);
+  refreshRef.current = doRefresh;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (isRefreshKey(e) && !e.repeat) { e.preventDefault(); refreshRef.current(); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  // trocou de página: o "Atualizado às" era da outra
+  useEffect(() => { setRefreshedAt(null); setConfirmDiscard(false); }, [currentPage]);
+
+  // ── versão nova publicada (src/lib/erpVersion.ts): a cada 2 min e ao voltar para a aba ──
+  const [newVersion, setNewVersion] = useState(false);
+  useEffect(() => watchNewVersion(() => setNewVersion(true), { every: Number((globalThis as { __TSP_VERSION_MS?: number }).__TSP_VERSION_MS) || VERSION_CHECK_MS }), []);
+
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('theme') as 'dark' | 'light') || 'dark';
   });
@@ -237,9 +274,45 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
 
       {/* ── Conteúdo ── */}
       <main className="flex-1 overflow-auto" style={{ background: 'var(--bg-base)' }}>
+        {/* Versão nova publicada: só avisa (nunca recarrega sozinho); "Atualizar" recarrega e volta para esta página */}
+        {newVersion && (
+          <div role="status" data-testid="erp-new-version" className="px-8 py-2 flex items-center justify-center gap-3 text-sm"
+            style={{ background: ORANGE_DIM, borderBottom: `1px solid ${ORANGE}`, color: 'var(--text-primary)' }}>
+            <span>Nova versão do sistema disponível</span>
+            <span style={{ color: 'var(--text-muted)' }}>·</span>
+            <button type="button" onClick={() => window.location.reload()} data-testid="erp-new-version-reload"
+              style={{ background: 'transparent', border: 'none', color: ORANGE, fontWeight: 700, cursor: 'pointer', padding: 0 }}>Atualizar</button>
+          </div>
+        )}
         {/* Topbar */}
-        <div className="px-8 py-3 flex items-center justify-end"
+        <div className="px-8 py-3 flex items-center justify-end gap-2"
           style={{ borderBottom: '1px solid var(--border-main)', background: 'var(--bg-topbar)' }}>
+          {refreshedAt && !refreshing && (
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }} data-testid="erp-refreshed-at">
+              Atualizado às {new Date(refreshedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+          <div className="relative">
+            <button type="button" onClick={() => doRefresh()} disabled={refreshing} data-testid="erp-refresh"
+              title="Recarregar os dados desta página (tecla R)" aria-label="Atualizar os dados desta página"
+              className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full"
+              style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', cursor: refreshing ? 'wait' : 'pointer' }}>
+              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} style={{ color: ORANGE }} />
+              {refreshing ? 'Atualizando…' : 'Atualizar'}
+            </button>
+            {confirmDiscard && (
+              <div role="dialog" aria-label="Confirmar atualização" data-testid="erp-refresh-confirm" className="absolute right-0 mt-2 p-3 rounded-lg text-sm z-50"
+                style={{ width: 280, background: 'var(--bg-card)', border: '1px solid var(--border-main)', boxShadow: '0 8px 24px rgba(0,0,0,0.25)', color: 'var(--text-primary)' }}>
+                <p className="mb-3">Tem coisa digitada nesta página que ainda não foi salva. Atualizar os dados mesmo assim?</p>
+                <div className="flex gap-2 justify-end">
+                  <button type="button" onClick={() => setConfirmDiscard(false)} className="px-3 py-1 rounded"
+                    style={{ border: '1px solid var(--border-main)', background: 'transparent', color: 'var(--text-secondary)' }}>Cancelar</button>
+                  <button type="button" onClick={() => { setConfirmDiscard(false); doRefresh(true); }} data-testid="erp-refresh-confirm-go" className="px-3 py-1 rounded"
+                    style={{ background: ORANGE, color: '#fff', border: 'none' }}>Atualizar mesmo assim</button>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full"
             style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)' }}>
             <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />

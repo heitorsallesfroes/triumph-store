@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { periodRanges, type PeriodPreset } from '../../lib/waPanel';
 import { loadPanel, type PanelLoad } from '../../lib/waPanelDb';
+import { useErpRefresh } from '../../lib/erpRefresh';
 import { computeResults, type FollowMessageCard, type PathFunnel, type StageStats } from '../../lib/waResults';
 import { ORANGE } from './shared';
 import { EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoTip, panel, SectionHeader, Skeleton, SkeletonStyle, SLATE, BLUE } from './ui';
@@ -38,6 +39,7 @@ export default function WaResults() {
     loadPanel(ranges).then((load) => { if (alive) setData({ load, key }); }).catch((e) => { if (alive) setError((e && e.message) || 'Erro ao carregar'); });
     return () => { alive = false; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useErpRefresh(() => loadPanel(ranges).then((load) => setData({ load, key }))); // "Atualizar" do topo
   const loading = !data || data.key !== key;
   const res = useMemo(() => (data && !loading ? computeResults(data.load.input, r) : null), [data, loading, r]);
 

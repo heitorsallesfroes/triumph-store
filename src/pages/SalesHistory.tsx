@@ -8,6 +8,7 @@ import Sales from './Sales';
 import { generateShippingLabel } from '../lib/superfrete';
 import { calculateCardFee } from '../lib/cardFees';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
+import { useErpRefresh } from '../lib/erpRefresh';
 
 type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'max' | 'custom';
 
@@ -151,6 +152,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
   const [focusNotice, setFocusNotice] = useState('');
 
   useEffect(() => { loadSales(); }, []);
+  useErpRefresh(() => loadSales()); // "Atualizar" do topo (os filtros continuam)
   useEffect(() => { setVisibleCount(PAGE_SIZE); setSelectedIds(new Set()); }, [filteredSales]);
 
   // Venda do link: na lista filtrada → mostra, rola e realça. Fora (filtro de data, paginação) → busca pelo id e

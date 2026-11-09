@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { initialTab, writeTab } from '../lib/erpRoute';
 import { MessageCircle } from 'lucide-react';
 import WaPanel from '../components/whatsapp/WaPanel';
 import WaTracking from '../components/whatsapp/WaTracking';
@@ -14,7 +15,9 @@ type PageTab = 'painel' | 'rastreamento' | 'resultados';
 const PAGE_TABS: [PageTab, string][] = [['painel', 'Painel'], ['rastreamento', 'Rastreamento'], ['resultados', 'Resultados']];
 
 export default function WhatsApp() {
-  const [pageTab, setPageTab] = useState<PageTab>('painel');
+  // sub-aba no endereço (?aba=rastreamento): o F5 volta para ela
+  const [pageTab, setPageTab] = useState<PageTab>(() => initialTab('whatsapp', PAGE_TABS.map(([id]) => id), 'painel'));
+  useEffect(() => { writeTab('whatsapp', pageTab); }, [pageTab]);
   return (
     <div>
       <div style={{ padding: '28px 32px 0', maxWidth: 1200, margin: '0 auto' }}>
