@@ -1132,19 +1132,26 @@
     if (typeof chatId !== 'string' || !/^[0-9]+@(c\.us|lid)$/.test(chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida', 'before-send');
     const phone = await pnOfChat(chatId);
     let name = null;
+    // 2.15.1: separados, para o nome completo do 💰: o salvo na agenda e o do perfil (pushname)
+    let contactName = null;
+    let pushname = null;
     const chat = safe(() => wpp.chat.get(chatId), null);
     // 2.6.3: nome DESTA conversa: título salvo; senão o nome/pushname do contato desta conversa
     if (chat) {
-      name = realName(safe(() => chat.formattedTitle, null)) || realName(safe(() => chat.name, null)) || realName(safe(() => chat.contact.name, null))
-        || realName(safe(() => chat.contact.pushname, null)) || realName(safe(() => chat.contact.verifiedName, null));
+      contactName = realName(safe(() => chat.contact.name, null));
+      pushname = realName(safe(() => chat.contact.pushname, null));
+      name = realName(safe(() => chat.formattedTitle, null)) || realName(safe(() => chat.name, null)) || contactName
+        || pushname || realName(safe(() => chat.contact.verifiedName, null));
     }
-    if (!name && /@lid$/.test(chatId) && wpp.contact && typeof wpp.contact.getPnLidEntry === 'function') {
+    if ((!name || (!contactName && !pushname)) && /@lid$/.test(chatId) && wpp.contact && typeof wpp.contact.getPnLidEntry === 'function') {
       try {
         const e = await withTimeout(wpp.contact.getPnLidEntry(chatId), 2000);
-        name = realName(safe(() => e.contact.name, null)) || realName(safe(() => e.contact.pushname, null)) || realName(safe(() => e.contact.verifiedName, null));
+        contactName = contactName || realName(safe(() => e.contact.name, null));
+        pushname = pushname || realName(safe(() => e.contact.pushname, null));
+        name = name || contactName || pushname || realName(safe(() => e.contact.verifiedName, null));
       } catch { /* sem nome */ }
     }
-    return { phone, name, via: /@c\.us$/.test(chatId) ? 'numero' : phone ? 'lid' : null };
+    return { phone, name, contactName, pushname, via: /@c\.us$/.test(chatId) ? 'numero' : phone ? 'lid' : null };
   }
 
   // ── 2.6.3: trava do telefone (antes de enviar Compra/Contato e de lançar a venda) ──

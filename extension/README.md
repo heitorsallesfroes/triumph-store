@@ -799,6 +799,25 @@ guardada.
 
 ## O que mudou
 
+### 2.15.1 — nome completo do cliente na venda (💰)
+- O campo **"Nome do cliente"** do 💰 agora vem com o nome completo, nesta ordem:
+  1. o nome da **última venda do ERP com o mesmo telefone** (cliente que já comprou). O telefone é procurado nos
+     formatos comuns do ERP ("21987654321", "5521987654321", "(21) 98765-4321", "+55 21 98765-4321"…); se nenhum bater,
+     vale a última venda desta conversa;
+  2. o nome **salvo na sua agenda** do WhatsApp ou o **nome do perfil** (pushname), limpo: sem "~", emojis, números,
+     "Cliente", modelos de relógio (Apple Watch, IWO, Series, Pro…) e o que vem depois de "/", "|" ou " - ". Só é usado
+     com **2+ palavras** e se a **primeira palavra for o nome aprendido** da conversa (ou se não houver nome aprendido);
+  3. o nome aprendido/definido da conversa (só o primeiro nome, como antes).
+- Formato com iniciais maiúsculas: "ANA MARIA OLIVEIRA" → "Ana Maria Oliveira" ("da", "de", "do", "das", "dos", "e"
+  minúsculos).
+- Abaixo do campo aparecem os nomes encontrados como botões pequenos (ex.: **Ana · Ana Maria Oliveira**): um clique
+  troca o nome. Só aparece quando há 2 ou mais opções.
+- O **{nome}** das mensagens não muda: continua só o primeiro nome.
+- Código: `sale-calc.js` (`titleCaseName`, `cleanProfileName`, `customerNameChoice`), `supabase-api.js`
+  (`lastSaleCustomerName`), a ponte (`chatPhone` devolve também o nome da agenda e o pushname, separados).
+- Testes: `tests/fullname.test.cjs` (perfil com emoji e "~", perfil que não combina com o nome aprendido, cliente que já
+  comprou com telefone formatado no ERP, iniciais maiúsculas, botões).
+
 ### 2.15.0 — ver mensagens apagadas e editadas
 - A extensão guarda **só neste computador** (IndexedDB `tsp-deleted-msgs` do navegador; **nunca** no Supabase nem em
   outro servidor) uma cópia de cada mensagem **recebida do cliente** em conversa individual: o texto e, para mídia, a

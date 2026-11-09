@@ -154,6 +154,7 @@ const HANDLERS = {
   linkSaleToPurchase:     (m) => WaApi.linkSaleToPurchase({ eventId: m.eventId, saleId: m.saleId, phone: m.phone, fillPhone: m.fillPhone }),
   unlinkSaleFromPurchase: (m) => WaApi.unlinkSaleFromPurchase({ eventId: m.eventId }),
   lastChatSaleValue:     (m) => WaApi.lastChatSaleValue({ chatId: m.chatId, phone: m.phone }),
+  lastSaleCustomerName:  (m) => WaApi.lastSaleCustomerName({ chatId: m.chatId, phone: m.phone }), // 2.15.1
   // 2.6.0: "Contato" automático (lead novo de anúncio) e nome/telefone do CRM da conversa
   sendContactEvent:      (m) => WaApi.sendContactEvent({ event: m.event }),
   metaContactConfig:     ()  => WaApi.metaContactConfig(),

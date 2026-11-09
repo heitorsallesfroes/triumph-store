@@ -1723,6 +1723,9 @@
       .next-chat:hover { border-color: var(--accent); color: var(--accent-text); }
       .next-chat[hidden] { display: none; }
       .chip.cz-more { border-style: dashed; color: var(--muted); }
+      .vd-name-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: -2px 0 8px; }
+      .vd-name-opts .chip { padding: 1px 8px; font-size: var(--fs-1); }
+      .vd-name-sep { color: var(--muted); font-size: var(--fs-1); }
       .cz { position: absolute; top: 52px; right: var(--s-2); left: var(--s-2); z-index: 20; max-height: calc(100vh - 70px); overflow-y: auto; padding: var(--s-3); border-radius: var(--r-lg); background: var(--card); border: 1px solid var(--border); box-shadow: var(--sh-3); display: flex; flex-direction: column; gap: var(--s-3); animation: fadeIn .12s ease both; }
       .cz-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); font-weight: 700; font-size: var(--fs-3); }
       .cz-grp { display: flex; flex-direction: column; gap: var(--s-1); }
@@ -11045,8 +11048,15 @@
       const [pn, learned] = await Promise.all([chatPhoneName(chatId), loadChatName(chatId).catch(() => null)]);
       if (vs.form === f) {
         if (!f.customer_phone && pn.phone) f.customer_phone = pn.phone;
-        if (!f.customer_name) f.customer_name = (learned && learned.name) || pn.name || '';
-        f.phoneChecked = true;
+        // 2.15.1: nome completo: o da última venda com o mesmo telefone → agenda/perfil limpo → o aprendido
+        let saleName = null;
+        try { const r = await call('lastSaleCustomerName', { chatId, phone: f.customer_phone }); saleName = r && r.name; } catch { saleName = null; }
+        if (vs.form === f) {
+          const pick = TS.customerNameChoice({ saleName, contactName: pn.contactName, pushname: pn.pushname, learned: learned && learned.name, fallback: pn.name });
+          f.nameOptions = pick.options;
+          if (!f.customer_name) f.customer_name = pick.value;
+          f.phoneChecked = true;
+        }
       }
       renderVendas();
     }
@@ -11066,7 +11076,7 @@
       try { crm = await call('chatContactInfo', { chatId }); } catch { crm = null; }
       if (crm && crm.name && samePhone(crm.phone, phone)) name = crm.name;
     }
-    return { phone, name };
+    return { phone, name, contactName: (wa && wa.contactName) || '', pushname: (wa && wa.pushname) || '' };
   }
 
   // 2.6.3: trava antes de enviar/lançar: o telefone tem que ser desta conversa (e a conversa ainda a aberta)
@@ -11316,6 +11326,21 @@
       cpf.append(cpfErr);
       g.append(cpf);
       body.append(g);
+      // 2.15.1: os nomes encontrados (conversa, agenda/perfil, venda anterior): troca com um clique
+      if (Array.isArray(f.nameOptions) && f.nameOptions.length > 1) {
+        const SRC = { conversa: 'nome da conversa', agenda: 'nome salvo na agenda', perfil: 'nome do perfil do WhatsApp', venda: 'nome da última venda', whatsapp: 'nome do WhatsApp' };
+        const opts = el('div', 'vd-name-opts');
+        opts.setAttribute('aria-label', 'Outros nomes encontrados');
+        f.nameOptions.forEach((o, ix) => {
+          if (ix) opts.append(el('span', 'vd-name-sep', '·'));
+          const b = el('button', `chip vd-name-opt${o.name === f.customer_name ? ' active' : ''}`, o.name);
+          b.type = 'button';
+          b.title = `Usar o ${SRC[o.source] || 'nome'}`;
+          b.addEventListener('click', () => { f.customer_name = o.name; renderVendas(); });
+          opts.append(b);
+        });
+        body.append(opts);
+      }
       // "📋 Colar formulário" (mesma leitura do ERP) e o endereço da conversa
       const tools = el('div', 'ed-add');
       tools.append(fbtn('ed-mini vd-paste-btn', '📋 Colar formulário', () => { f.pasteOpen = !f.pasteOpen; renderVendas(); if (f.pasteOpen) { const t = vtabEl.querySelector('.vd-paste'); if (t) t.focus(); } }),

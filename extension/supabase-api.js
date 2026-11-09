@@ -3741,7 +3741,37 @@
     return rows.length ? { value: Number(rows[0].total_sale_price) || null } : { value: null };
   }
 
+  // 2.15.1: nome da última venda do ERP com o mesmo telefone, para o nome completo do 💰. O telefone pode estar
+  // gravado de vários jeitos ("5521987654321", "21987654321", "(21) 98765-4321", "+55 21 98765-4321"…).
+  function salePhoneVariants(phone) {
+    const d = String(phone == null ? '' : phone).replace(/\D/g, '').slice(0, 15);
+    if (d.length < 10) return [];
+    const local = /^55\d{10,11}$/.test(d) ? d.slice(2) : d;
+    const out = [d, local, `55${local}`, `+55${local}`];
+    if (/^\d{10,11}$/.test(local)) {
+      const dd = local.slice(0, 2);
+      const n = local.slice(2);
+      const nf = `${n.slice(0, n.length - 4)}-${n.slice(-4)}`;
+      out.push(`(${dd}) ${nf}`, `(${dd})${nf}`, `${dd} ${nf}`, `${dd}${nf}`, `${dd} ${n}`, `(${dd}) ${n}`, `+55 ${dd} ${nf}`, `+55 (${dd}) ${nf}`, `55 ${dd} ${nf}`);
+    }
+    return [...new Set(out)];
+  }
+  async function lastSaleCustomerName({ chatId, phone }) {
+    const pick = (rows) => (rows.length ? String(rows[0].customer_name || '').replace(/\s+/g, ' ').trim().slice(0, 100) : '');
+    const variants = salePhoneVariants(phone);
+    let name = '';
+    if (variants.length) {
+      const list = variants.map((v) => `"${v}"`).join(',');
+      name = pick(await rest(`sales?select=customer_name&customer_phone=in.(${encodeURIComponent(list)})&customer_name=not.is.null&order=created_at.desc&limit=1`));
+    }
+    if (!name && typeof chatId === 'string' && SCHED_CHAT_RE.test(chatId) && (await salesOrigin())) {
+      name = pick(await rest(`sales?select=customer_name&wa_chat_id=eq.${encodeURIComponent(chatId)}&customer_name=not.is.null&order=created_at.desc&limit=1`));
+    }
+    return { name: name || null };
+  }
+
   root.WaApi = {
+    lastSaleCustomerName, salePhoneVariants,
     engineActivity, clearReadCache, automationExisting, chatConversions, purchasedChats, pendingContactLeads, conversionStats,
     nativeLabelEvents, nativeLabelSweep, nativeLabelBaseline, nativeLabelIgnored, nativeLabelCandidates, activeEnrollments, enrollmentCandidates, enrollContact,
     leaveAutomation, chatAutomationState,

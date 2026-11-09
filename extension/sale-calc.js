@@ -305,12 +305,66 @@
     return lines.join('\n');
   }
 
+  // 2.15.1: nome completo do cliente no 💰. Ordem: (a) nome da última venda do ERP com o mesmo telefone;
+  // (b) nome salvo na agenda do WhatsApp ou o do perfil (pushname), limpo, com 2+ palavras e a 1ª palavra igual
+  // ao nome aprendido (ou sem nome aprendido); (c) o nome aprendido/definido da conversa (só o primeiro nome).
+  const NAME_PARTICLES = new Set(['da', 'de', 'do', 'das', 'dos', 'e', 'di', 'du', 'del']);
+  const NAME_JUNK = new Set(['cliente', 'cli', 'clt', 'sr', 'sra', 'dr', 'dra', 'watch', 'smartwatch', 'smart', 'relogio', 'relogios',
+    'apple', 'iwo', 'series', 'serie', 'ultra', 'pro', 'max', 'mini', 'plus', 'lite', 'galaxy', 'amazfit', 'xiaomi', 'samsung', 'huawei',
+    'band', 'miband', 'gtr', 'gts', 'loja', 'store', 'vendas', 'oficial', 'iphone', 'ipad', 'airpods']);
+  const nameKey = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  // "ANA MARIA DA SILVA" → "Ana Maria da Silva" (da/de/do/dos/das/e minúsculos, menos no começo)
+  function titleCaseName(s) {
+    const words = String(s == null ? '' : s).normalize('NFC').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+    return words.map((w, i) => {
+      const low = w.toLocaleLowerCase('pt-BR');
+      if (i > 0 && NAME_PARTICLES.has(low)) return low;
+      return low.replace(/(^|[-'])(\p{L})/gu, (m, a, b) => a + b.toLocaleUpperCase('pt-BR'));
+    }).join(' ').slice(0, 100);
+  }
+  // nome do perfil/agenda limpo: sem "~", emojis, números, "Cliente", modelos de relógio; corta em "/", "|", " - "…
+  function cleanProfileName(raw) {
+    const parts = String(raw == null ? '' : raw).normalize('NFC').replace(/^[\s~]+/, '').split(/\s*(?:[/|•·,;:()[\]{}]|\s[-–—]\s|[–—])\s*/);
+    for (const part of parts) {
+      const words = part.split(/\s+/).filter((t) => t && !/\d/.test(t))
+        .map((t) => t.replace(/[^\p{L}'-]+/gu, '').replace(/^[-']+|[-']+$/g, ''))
+        .filter((w) => w && !NAME_JUNK.has(nameKey(w)) && (w.length > 1 || nameKey(w) === 'e'));
+      while (words.length && NAME_PARTICLES.has(nameKey(words[0]))) words.shift();
+      while (words.length && NAME_PARTICLES.has(nameKey(words[words.length - 1]))) words.pop();
+      if (words.length) return titleCaseName(words.slice(0, 6).join(' '));
+    }
+    return '';
+  }
+  const realWords = (s) => String(s || '').split(' ').filter((w) => w && !NAME_PARTICLES.has(nameKey(w)));
+  // { saleName, contactName, pushname, learned, fallback } → { value, options: [{ name, source }] }
+  function customerNameChoice({ saleName, contactName, pushname, learned, fallback } = {}) {
+    const learnedName = titleCaseName(String(learned || '').trim().split(/\s+/)[0] || '');
+    const sale = titleCaseName(saleName);
+    let profile = '';
+    for (const [raw, source] of [[contactName, 'agenda'], [pushname, 'perfil']]) {
+      const c = cleanProfileName(raw);
+      const w = realWords(c);
+      if (w.length < 2) continue;
+      if (learnedName && nameKey(w[0]) !== nameKey(learnedName)) continue;
+      profile = { name: c, source };
+      break;
+    }
+    const opts = [];
+    const add = (name, source) => { if (name && !opts.some((o) => nameKey(o.name) === nameKey(name))) opts.push({ name, source }); };
+    add(learnedName, 'conversa');
+    if (profile) add(profile.name, profile.source);
+    add(sale, 'venda');
+    const value = sale || (profile && profile.name) || learnedName || cleanProfileName(fallback) || '';
+    if (value) add(value, 'whatsapp');
+    return { value, options: opts.length > 1 ? opts : [] };
+  }
+
   const mapUrl = (lat, lng) => (Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? `https://www.google.com/maps?q=${Number(lat)},${Number(lng)}` : null);
 
   root.TspSale = {
     FEE_DEFAULTS, PAYMENT_METHODS, CARD_BRANDS, DELIVERY_TYPES, DEFAULT_DELIVERY_FEE, CORREIOS_DEFAULT_COST, INITIAL_STATUS, CARD_METHODS, INSTALLMENT_METHODS,
     initialPayment, newPaymentEntry, configNumber, cardFeeRate, feeLabel, paymentFee, computeTotals, allocation, updatePayment, deliveryChange,
     volumesOf, smartwatchItems, isMultiSupplier, todayInBrazil, saleDateOf, validateAddress, cleanCpf, formatCpf, validateCpf, parseForm, applyCep,
-    validateSale, buildSale, courierMessage, mapUrl, money,
+    validateSale, buildSale, courierMessage, mapUrl, money, titleCaseName, cleanProfileName, customerNameChoice,
   };
 })(globalThis);
