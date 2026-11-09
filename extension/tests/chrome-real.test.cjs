@@ -1460,6 +1460,103 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console ao criar etiquetas', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 18. disparos (2.14.0): público por etiqueta do WhatsApp (TODAS as conversas, inclusive uma NÃO carregada e
+    // @lid com telefone; "Não enviar" do WhatsApp fora), "+ Variação" alternando, {Oi|Olá}, velocidade
+    // personalizada (aviso amarelo, dias e horário próprios), previsão, confirmação, e o motor de verdade enviando
+    // com a etiqueta do WhatsApp depois de enviar e a variação no log
+    fake.on = true;
+    fake.generic = true;
+    (fake.db.wa_automations || []).forEach((a) => { a.active = false; });
+    fake.db.wa_schedules = [];
+    fake.db.wa_campaigns = [];
+    fake.db.wa_campaign_targets = [];
+    (fake.db.wa_settings || []).forEach((w) => Object.assign(w, { paused_all: false, runner_id: null, lease_until: null, min_interval_s: 1, max_interval_s: 2, max_per_hour: 30, max_per_day: 150 }));
+    const DA = '5521944440001@c.us'; const DB_LID = '777000111222333@lid'; const DB = '5521944440002@c.us'; const DC = '5521944440003@c.us';
+    fake.db.wa_chat_names = [...(fake.db.wa_chat_names || []), { chat_id: DA, name: 'Ana', source: 'manual', updated_at: new Date().toISOString() }]; // {nome}: o nome para mensagens da conversa (Beto não tem: fica sem)
+    await pg(`window.__dpSent = []; window.__dpNew = []; window.__waSets = []; window.__fakeBridge = {
+      status: { ready: true, version: 'teste' },
+      labels: [{ id: '7', name: 'PROMO', hexColor: '#22c55e', count: 3 }, { id: '5', name: 'COMPROU', hexColor: '#3b82f6', count: 0 }, { id: '3', name: 'Não enviar', hexColor: '#ef4444', count: 1 }],
+      labelColors: { available: true, reason: null, colors: ['#ff9dff'] },
+      labelAllChats: (p) => p.labelId === '7' ? { count: 3, source: 'associacoes', chats: [{ id: '${DA}', name: 'Ana Teste' }, { id: '${DB_LID}', name: 'Beto', phone: '5521944440002' }, { id: '${DC}', name: 'Caio' }] }
+        : p.labelId === '3' ? { count: 1, source: 'associacoes', chats: [{ id: '${DC}', name: 'Caio' }] } : { count: 0, chats: [] },
+      chatsInfo: (p) => ({ chats: Object.fromEntries((p.chatIds || []).filter((c) => c === '${DA}').map((c) => [c, { loaded: true, last: null, lastIn: null, labels: ['7'] }])) }),
+      sendText: (p) => { window.__dpSent.push(p); return { sent: true }; },
+      campaignSend: (p) => { window.__dpNew.push(p); return { sent: true }; },
+      chatLabels: { labelIds: ['7'] },
+      setChatLabels: (p) => { window.__waSets.push(p); return { labelIds: [], confirmed: true }; },
+      labelEvents: { events: [] }, convEvents: { events: [], scanned: false }, activityScan: { scanned: false, items: [], leads: [] },
+    }; return true;`);
+    await q(`sh.querySelector('[data-sec="disparos"]').click(); await wait(500); return true;`);
+    await waitFor(`return !!sh.querySelector('.dtab .fw-new');`, 15000);
+    await q(`sh.querySelector('.dtab .fw-new').click(); await wait(300); return true;`);
+    const dpSet = (sel, v, ev = 'input') => q(`const i = sh.querySelector('.dtab ' + ${JSON.stringify(sel)}); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event(${JSON.stringify(ev)}, { bubbles: true })); await wait(250); return true;`);
+    await dpSet('input.ed-title', 'Promo do WhatsApp');
+    await dpSet('select[aria-label="Público: tipo de etiqueta"]', 'whatsapp', 'change');
+    await waitFor(`const s = sh.querySelector('.dtab select[aria-label="Etiqueta do WhatsApp do disparo"]'); return !!s && [...s.options].some((o) => o.value === '7');`, 15000);
+    await dpSet('select[aria-label="Etiqueta do WhatsApp do disparo"]', '7', 'change');
+    const waCnt = await waitFor(`return /^3 contatos nesta etiqueta/.test((sh.querySelector('.dtab .dp-wacount') || {}).textContent || '');`, 10000);
+    await dpSet('textarea[aria-label="Texto da parte 1"]', '{Oi|Olá} {nome}! Promo de hoje');
+    await q(`sh.querySelector('.dtab .dp-var-add').click(); await wait(250); return true;`);
+    await dpSet('textarea[aria-label="Texto da variação 2"]', 'Variação B para {nome}');
+    // prévia: "Ver outra variação"
+    const pv1 = await q(`return sh.querySelector('.dtab .dp-preview').textContent;`);
+    await q(`sh.querySelector('.dtab .dp-pv-next').click(); await wait(200); return true;`);
+    const pv2 = await q(`return sh.querySelector('.dtab .dp-preview').textContent;`);
+    check('disparo: público por etiqueta do WhatsApp mostra "3 contatos nesta etiqueta" (todas, inclusive não carregadas); "+ Variação" e "Ver outra variação" na prévia ({Oi|Olá} sorteado)',
+      waCnt && /variação 1 de 2/.test(pv1) && /(Oi|Olá) Maria! Promo de hoje/.test(pv1) && !/\{Oi/.test(pv1) && /variação 2 de 2/.test(pv2) && /Variação B para Maria/.test(pv2), JSON.stringify({ waCnt, pv1, pv2, cntTxt: await q(`return (sh.querySelector('.dtab .dp-wacount') || {}).textContent || 'sem';`) }));
+    // depois de enviar: colocar etiqueta do WhatsApp COMPROU
+    await q(`[...sh.querySelectorAll('.dtab button')].find((b) => b.textContent === '+ Ação depois de enviar').click(); await wait(200); return true;`);
+    await dpSet('select[aria-label="Depois de enviar 1"]', 'adicionar_etiqueta_wa', 'change');
+    await dpSet('select[aria-label="Etiqueta depois de enviar 1"]', '5', 'change');
+    // velocidade: personalizado 20–21 s, todos os dias 00:00–23:59 (roda a qualquer hora do teste)
+    await q(`sh.querySelector('.dtab .dp-presets input[value="personalizado"]').click(); await wait(200); return true;`);
+    await dpSet('input[aria-label="Intervalo mínimo (s)"]', '20', 'change');
+    await dpSet('input[aria-label="Intervalo máximo (s)"]', '21', 'change');
+    await q(`sh.querySelector('.dtab input[name="dp-sched"][value="personalizado"]').click(); await wait(200);
+      for (const c of sh.querySelectorAll('.dtab .vb-day input')) if (!c.checked) { c.click(); await wait(80); } return true;`);
+    await dpSet('input[aria-label="Disparo, faixa 1: início"]', '00:00', 'change');
+    await dpSet('input[aria-label="Disparo, faixa 1: fim"]', '23:59', 'change');
+    const speedUi = await q(`return { risk: !!sh.querySelector('.dtab .dp-risk'), text: sh.querySelector('.dtab .dp-speed-text').textContent, fc: (sh.querySelector('.dtab .dp-forecast') || {}).textContent || '', adv: !!sh.querySelector('.dtab details.dp-adv:not([open])'), recent: sh.querySelector('.dtab .dp-recent-on').checked };`);
+    check('Velocidade e segurança: personalizado mais rápido que o Normal = aviso amarelo; previsão "3 contatos · termina em cerca de…"; "Excluir quem recebeu…" desligado e em Opções avançadas',
+      speedUi.risk && /Personalizado: 20–21 s entre envios/.test(speedUi.text) && /^3 contatos · termina em cerca de .+ \((hoje|amanhã) às \d\d:\d\d\)$/.test(speedUi.fc) && speedUi.adv && speedUi.recent === false, JSON.stringify(speedUi));
+    await q(`[...sh.querySelectorAll('.dtab .bbtn')].find((b) => b.textContent === 'Salvar e revisar').click(); return true;`);
+    const dpConf = await waitFor(`return /CONFIRMAR/.test((sh.querySelector('.dtab .wt-head') || {}).textContent || '') && !/Calculando/.test(sh.querySelector('.dtab').textContent);`, 20000);
+    const dpConfTxt = await q(`return sh.querySelector('.dtab .fw-test').textContent;`);
+    const saved18 = (fake.db.wa_campaigns || [])[0] || {};
+    check('Salvar e revisar: grava público do WhatsApp, velocidade e variações no disparo; a confirmação mostra 3 na etiqueta, 2 vão receber (1 não carregada), 1 "Não enviar", variações e a previsão',
+      dpConf && JSON.stringify(saved18.audience) === '{"source":"whatsapp","wa_label_id":"7"}' && saved18.speed && saved18.speed.preset === 'personalizado' && saved18.speed.min_s === 20 && saved18.speed.schedule.days.length === 7
+      && JSON.stringify(saved18.variants) === '{"mode":"alternada","list":[{"text":"Variação B para {nome}"}]}' && saved18.skip_recent_days === 0
+      && /Na etiqueta do WhatsApp PROMO: 3 contatos/.test(dpConfTxt) && /Vão receber: 2 \(1 em conversa que não está carregada agora\)/.test(dpConfTxt) && /Pulados: 1 \(Não enviar: 1\)/.test(dpConfTxt)
+      && /Variações: 2 \(alternadas\)/.test(dpConfTxt) && /Previsão: 2 contatos · termina em cerca de/.test(dpConfTxt),
+      JSON.stringify({ dpConf, dpConfTxt, saved18, msg: await q(`return (sh.querySelector('.dtab .dp-msg') || {}).textContent || '';`) }));
+    await q(`[...sh.querySelectorAll('.dtab .bbtn')].find((b) => b.textContent === 'Iniciar disparo').click(); return true;`);
+    const started = await waitFor(`return /Disparo iniciado/.test(sh.querySelector('.dtab').textContent);`, 20000);
+    const tg = (fake.db.wa_campaign_targets || []).map((t) => [t.name, t.chat_id, t.status, t.reason || null]);
+    check('Iniciar: a foto tem Ana (carregada), Beto (@lid NÃO carregado, pelo telefone) e Caio pulado ("Não enviar" do WhatsApp)',
+      started && JSON.stringify(tg) === JSON.stringify([['Ana Teste', DA, 'pendente', null], ['Beto', DB, 'pendente', null], ['Caio', DC, 'pulado', 'Não enviar']]), JSON.stringify({ started, tg }));
+    // o motor envia (um por vez, com o intervalo do disparo)
+    const sentAll = await waitFor(`return true;`, 10).then(async () => {
+      for (const stop = Date.now() + 150000; Date.now() < stop;) {
+        if ((fake.db.wa_campaign_targets || []).filter((t) => t.status === 'enviado').length === 2) return true;
+        await sleep(1000);
+      }
+      return false;
+    });
+    const sent = await pg('return { a: window.__dpSent, n: window.__dpNew, l: window.__waSets };');
+    const logs = (fake.db.wa_send_log || []).filter((x) => x.source === 'disparo' && x.status === 'enviado').map((x) => [x.chat_id, x.variant]);
+    const tA = (fake.db.wa_campaign_targets || []).find((t) => t.chat_id === DA) || {};
+    const tB = (fake.db.wa_campaign_targets || []).find((t) => t.chat_id === DB) || {};
+    const gapS = tA.sent_at && tB.sent_at ? (Date.parse(tB.sent_at) - Date.parse(tA.sent_at)) / 1000 : null;
+    check('motor: envia para a carregada (variação 1, {Oi|Olá} sorteado) e para a NÃO carregada da etiqueta (variação 2), com ≥ 20 s entre os dois; a variação vai para o log',
+      sentAll && sent.a.length === 1 && sent.a[0].chatId === DA && /^(Oi|Olá) Ana! Promo de hoje$/.test(sent.a[0].text) && sent.n.length === 1 && sent.n[0].chatId === DB && sent.n[0].text === 'Variação B para'
+      && gapS >= 20 && JSON.stringify(logs) === JSON.stringify([[DA, 0], [DB, 1]]), JSON.stringify({ sentAll, sent, logs, gapS }));
+    check('depois de enviar: etiqueta do WhatsApp COMPROU colocada nos dois que receberam (e em mais ninguém)',
+      JSON.stringify(sent.l.filter((x) => (x.add || []).includes('5')).map((x) => x.chatId).sort()) === JSON.stringify([DA, DB].sort()) && !sent.l.some((x) => x.chatId === DC), JSON.stringify(sent.l));
+    await pg('window.__fakeBridge = null; return true;');
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console nos disparos', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

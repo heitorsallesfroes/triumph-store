@@ -1203,7 +1203,7 @@
     if (!rows.length) return { available: false };
     const campaigns = await campaignsTables();
     return {
-      available: true, settings: rows[0], campaigns, campaignsV2: campaigns && (await campaignsV2()), automations: await automationTables(),
+      available: true, settings: rows[0], campaigns, campaignsV2: campaigns && (await campaignsV2()), campaignsV214: campaigns && (await campaignsV214()), automations: await automationTables(),
       salesOrigin: await salesOrigin(),
       automationsV25: await automationsV25(),
       sequences: await automationsV212(), // 2.12.0
@@ -1297,7 +1297,7 @@
   };
   const cleanReason = (v) => (typeof v === 'string' && v.trim() ? v.trim().replace(/\s+/g, ' ').slice(0, REASON_MAX) : null);
 
-  async function logSend({ source, source_id, contact_id, chat_id, item_id, status, reason }) {
+  async function logSend({ source, source_id, contact_id, chat_id, item_id, status, reason, variant }) {
     if (!SEND_SOURCES.includes(source)) throw new Error('Origem inválida');
     if (!SEND_STATUS.includes(status)) throw new Error('Status inválido');
     const chat = chat_id == null ? null : (typeof chat_id === 'string' && SCHED_CHAT_RE.test(chat_id) ? chat_id : null);
@@ -1307,6 +1307,7 @@
       source, source_id: optUuid(source_id, 'Origem inválida'), contact_id: optUuid(contact_id, 'Contato inválido'),
       chat_id: chat, item_id: item, status, reason: cleanReason(reason),
       ...(panel ? { origin: ORIGIN_OF[source], follow_step: await followStepOf(item) } : {}),
+      ...(source === 'disparo' && variant != null && (await sendVariantCol()) ? { variant: intIn(Number(variant), 0, 5, 'Variação') } : {}), // 2.14.0
     }));
     return { id: rows[0].id };
   }
@@ -1689,10 +1690,66 @@
   const TARGET_STATUS = ['pendente', 'enviando', 'enviado', 'falhou', 'pulado'];
   // 2.2.0 (migration 20261103160000): mensagem exclusiva, ações depois de enviar e filtros do público
   const CAMPAIGN_V2_COLUMNS = 'parts,after_actions,filters';
-  const AFTER_ACTIONS = ['adicionar_etiqueta', 'remover_etiqueta', 'mover'];
+  const AFTER_ACTIONS = ['adicionar_etiqueta', 'remover_etiqueta', 'mover', 'adicionar_etiqueta_wa', 'remover_etiqueta_wa'];
   const CAMPAIGN_FILTERS = ['tem_etiqueta', 'nao_tem_etiqueta', 'respondeu_recente'];
   const campaignsV2 = () => probe('wa_campaigns.v2', () => hasColumn('wa_campaigns', 'after_actions'));
-  const campCols = async () => ((await campaignsV2()) ? `${CAMPAIGN_COLUMNS},${CAMPAIGN_V2_COLUMNS}` : CAMPAIGN_COLUMNS);
+  // 2.14.0 (migration 20261111120000): público por etiqueta do WhatsApp, velocidade e variações; variação no log
+  const CAMPAIGN_V214_COLUMNS = 'audience,speed,variants';
+  const campaignsV214 = () => probe('wa_campaigns.v214', () => hasColumn('wa_campaigns', 'speed'), 30 * 60 * 1000);
+  const sendVariantCol = () => probe('wa_send_log.variant', () => hasColumn('wa_send_log', 'variant'), 30 * 60 * 1000);
+  const campCols = async () => {
+    let cols = CAMPAIGN_COLUMNS;
+    if (await campaignsV2()) cols += `,${CAMPAIGN_V2_COLUMNS}`;
+    if (await campaignsV214()) cols += `,${CAMPAIGN_V214_COLUMNS}`;
+    return cols;
+  };
+  const ALL_LABELS = '__todas__'; // "Todas menos a que vou colocar" ("Não enviar" nunca sai)
+  const CAMP_HARD = { min_s: 20, per_hour: 60, per_day: 400 };
+  function checkCampaignSpeed(sp) {
+    if (sp == null) return null;
+    if (typeof sp !== 'object' || !['seguro', 'normal', 'personalizado'].includes(sp.preset)) throw new Error('Velocidade: escolha o modelo');
+    if (sp.preset !== 'personalizado') return { preset: sp.preset };
+    const num = (v, what) => { const n = Number(v); if (v === '' || v == null || !Number.isFinite(n)) throw new Error(`Velocidade: ${what}`); return Math.floor(n); };
+    const min_s = num(sp.min_s, 'intervalo mínimo (s)');
+    if (min_s < CAMP_HARD.min_s) throw new Error(`Velocidade: intervalo mínimo de pelo menos ${CAMP_HARD.min_s} s (limite de segurança)`);
+    if (min_s > 3600) throw new Error('Velocidade: intervalo mínimo de até 3600 s');
+    const max_s = num(sp.max_s, 'intervalo máximo (s)');
+    if (max_s < min_s || max_s > 3600) throw new Error('Velocidade: o intervalo máximo precisa ser maior ou igual ao mínimo (até 3600 s)');
+    const per_hour = num(sp.per_hour, 'máximo por hora');
+    if (per_hour < 1 || per_hour > CAMP_HARD.per_hour) throw new Error(`Velocidade: no máximo ${CAMP_HARD.per_hour} por hora (limite de segurança)`);
+    const per_day = num(sp.per_day, 'máximo por dia');
+    if (per_day < 1 || per_day > CAMP_HARD.per_day) throw new Error(`Velocidade: no máximo ${CAMP_HARD.per_day} por dia (limite de segurança)`);
+    const pause_every = sp.pause_every === '' || sp.pause_every == null ? 0 : intIn(Number(sp.pause_every), 0, 500, 'Velocidade: pausar a cada N envios');
+    const pause_min = pause_every ? intIn(Number(sp.pause_min), 1, 240, 'Velocidade: minutos de pausa') : 0;
+    const out = { preset: 'personalizado', min_s, max_s, per_hour, per_day, pause_every, pause_min };
+    const sc = sp.schedule && typeof sp.schedule === 'object' ? sp.schedule : null;
+    if (sc && sc.mode === 'personalizado') {
+      const days = [...new Set((Array.isArray(sc.days) ? sc.days : []).map(Number))].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort();
+      if (!days.length) throw new Error('Horário do disparo: escolha pelo menos um dia');
+      const windows = Array.isArray(sc.windows) ? sc.windows : [];
+      if (!windows.length || windows.length > 6) throw new Error('Horário do disparo: de 1 a 6 faixas de horário');
+      out.schedule = { mode: 'personalizado', days, windows: windows.map((x, i) => checkWindow(x, `Horário do disparo, faixa ${i + 1}`)) };
+    }
+    return out;
+  }
+  function checkCampaignVariants(v) {
+    if (v == null || !Array.isArray(v.list) || !v.list.length) return null;
+    if (v.list.length > 5) throw new Error('No máximo 5 variações');
+    const list = v.list.map((x, i) => {
+      const t = String((x && x.text) || '').trim();
+      if (!t || t.length > 4096) throw new Error(`Variação ${i + 2}: escreva o texto (até 4096 caracteres)`);
+      return { text: t };
+    });
+    const mode = ['alternada', 'aleatoria', 'porcentagem'].includes(v.mode) ? v.mode : 'alternada';
+    const out = { mode, list };
+    if (mode === 'porcentagem') {
+      const w = Array.isArray(v.weights) ? v.weights : [];
+      if (w.length !== list.length + 1) throw new Error('Variações: escolha a porcentagem de cada uma');
+      out.weights = w.map((x, i) => intIn(Number(x), 0, 100, `Variação ${i + 1}: porcentagem`));
+      if (!out.weights.reduce((a, b) => a + b, 0)) throw new Error('Variações: a soma das porcentagens precisa ser maior que zero');
+    }
+    return out;
+  }
 
   async function campRestAll(path) {
     try {
@@ -1712,9 +1769,12 @@
     }
   }
 
-  function checkCampaignInput(c, v2 = false) {
+  function checkCampaignInput(c, v2 = false, v214 = false) {
     const p = c || {};
-    const label_id = checkUuid(p.label_id, 'Escolha a etiqueta CRM');
+    // 2.14.0: público por etiqueta do WhatsApp (sem etiqueta CRM principal)
+    const audience = p.audience && p.audience.source === 'whatsapp' ? { source: 'whatsapp', wa_label_id: checkWaLabel(p.audience.wa_label_id, 'Escolha a etiqueta do WhatsApp') } : null;
+    const label_id = audience ? null : checkUuid(p.label_id, 'Escolha a etiqueta CRM');
+    let usesWa = !!audience;
     // Mensagem: exclusiva do disparo (partes, como wa_item_parts) ou uma mensagem salva
     let parts = null;
     if (p.parts != null) {
@@ -1727,6 +1787,13 @@
     if (after.length > 10) throw new Error('No máximo 10 ações depois de enviar');
     const after_actions = after.map((a, i) => {
       if (!a || !AFTER_ACTIONS.includes(a.type)) throw new Error(`Depois de enviar, ação ${i + 1}: tipo inválido`);
+      if (a.type === 'adicionar_etiqueta_wa' || a.type === 'remover_etiqueta_wa') {
+        usesWa = true;
+        if (a.type === 'remover_etiqueta_wa' && a.wa_label_id === ALL_LABELS) return { type: a.type, wa_label_id: ALL_LABELS };
+        return { type: a.type, wa_label_id: checkWaLabel(a.wa_label_id, `Depois de enviar, ação ${i + 1}: escolha a etiqueta do WhatsApp`) };
+      }
+      if (a.type === 'remover_etiqueta' && a.label_id === ALL_LABELS) return { type: a.type, label_id: ALL_LABELS };
+      if (a.type === 'mover' && audience) throw new Error(`Depois de enviar, ação ${i + 1}: "mover" só com público por etiqueta CRM (use colocar e tirar)`);
       const l = checkUuid(a.label_id, `Depois de enviar, ação ${i + 1}: escolha a etiqueta`);
       if (a.type === 'mover' && l === label_id) throw new Error(`Depois de enviar, ação ${i + 1}: mover para uma etiqueta diferente da do disparo`);
       return { type: a.type, label_id: l };
@@ -1736,19 +1803,29 @@
     const filters = fl.map((f, i) => {
       if (!f || !CAMPAIGN_FILTERS.includes(f.type)) throw new Error(`Filtro ${i + 1}: tipo inválido`);
       if (f.type === 'respondeu_recente') return { type: f.type, days: intIn(f.days, 1, 365, `Filtro ${i + 1}: dias`) };
+      if (f.source === 'whatsapp') {
+        usesWa = true;
+        const w = checkWaLabel(f.wa_label_id, `Filtro ${i + 1}: escolha a etiqueta do WhatsApp`);
+        if (audience && w === audience.wa_label_id) throw new Error(`Filtro ${i + 1}: escolha uma etiqueta diferente da principal`);
+        return { type: f.type, source: 'whatsapp', wa_label_id: w };
+      }
       const l = checkUuid(f.label_id, `Filtro ${i + 1}: escolha a etiqueta`);
       if (l === label_id) throw new Error(`Filtro ${i + 1}: escolha uma etiqueta diferente da principal`);
       return { type: f.type, label_id: l };
     });
     if (!v2 && (parts || after_actions.length || filters.length)) throw new Error(ENGINE_MISSING);
+    const speed = checkCampaignSpeed(p.speed);
+    const variants = checkCampaignVariants(p.variants);
+    if (!v214 && (usesWa || speed || variants)) throw new Error(ENGINE_MISSING);
     const out = {
       name: cleanText(p.name, 60, 'Nome do disparo'),
       label_id,
       item_id,
       allow_new_chats: p.allow_new_chats === true,
-      skip_recent_days: intIn(p.skip_recent_days ?? 7, 0, 90, 'Pular quem recebeu nos últimos (dias)'),
+      skip_recent_days: intIn(p.skip_recent_days ?? 0, 0, 90, 'Pular quem recebeu nos últimos (dias)'), // 2.14.0: desligado por padrão
       start_at: null,
       ...(v2 ? { parts, after_actions, filters } : {}),
+      ...(v214 ? { audience, speed, variants } : {}),
     };
     if (p.start_at !== undefined && p.start_at !== null && p.start_at !== '') {
       const t = Date.parse(p.start_at);
@@ -1771,7 +1848,7 @@
   }
 
   async function saveCampaign({ id, campaign }) {
-    const row = checkCampaignInput(campaign, await campaignsV2());
+    const row = checkCampaignInput(campaign, await campaignsV2(), await campaignsV214());
     if (id !== undefined && id !== null) {
       checkUuid(id, 'Disparo inválido');
       const rows = await campRest(`wa_campaigns?id=eq.${id}&status=eq.rascunho`, json('PATCH', 'return=representation', row));
@@ -1797,12 +1874,43 @@
   }
 
   // Foto da etiqueta: quem vai e quem é pulado (e por quê). Não grava nada.
-  async function campaignSnapshot(c) {
-    if (!c.label_id) throw new Error('A etiqueta CRM do disparo foi excluída');
+  // 2.14.0: wa = o que o painel leu do WhatsApp (só ele vê as etiquetas do WhatsApp): { audience: [{ id, name,
+  // phone }] (TODAS as conversas da etiqueta, inclusive não carregadas e arquivadas), sets: { waLabelId: [chatIds] }
+  // (filtros), noSend: [chatIds] (etiqueta "Não enviar" do WhatsApp), names: { waLabelId: nome } }
+  async function campaignSnapshot(c, wa) {
+    const aud = c.audience && c.audience.source === 'whatsapp' ? c.audience : null;
+    const w = wa && typeof wa === 'object' ? wa : null;
+    const needWa = !!aud || (c.filters || []).some((f) => f.source === 'whatsapp');
+    if (needWa && !w) throw new Error('Abra o WhatsApp Web para ler as etiquetas do WhatsApp deste disparo');
+    if (!aud && !c.label_id) throw new Error('A etiqueta CRM do disparo foi excluída');
     const allLabels = await rest('wa_labels?select=id,name');
     const noSend = allLabels.find((l) => noSendKey(l.name) === noSendKey(NO_SEND));
     const labelNameOf = (id) => { const l = allLabels.find((x) => x.id === id); return l ? l.name : 'excluída'; };
-    const contacts = await flowCandidates({ labelIds: [c.label_id] });
+    const waSets = new Map();
+    const waSet = (id) => { if (!waSets.has(id)) waSets.set(id, new Set((((w && w.sets) || {})[id] || []).map(String))); return waSets.get(id); };
+    const waNoSend = new Set(((w && w.noSend) || []).map(String));
+    const waNameOf = (id) => String(((w && w.names) || {})[id] || 'do WhatsApp').slice(0, 30);
+    let contacts;
+    if (aud) {
+      const seen = new Set();
+      const rows = [];
+      (Array.isArray(w.audience) ? w.audience : []).slice(0, 5000).forEach((x) => {
+        if (!x || typeof x.id !== 'string' || !SCHED_CHAT_RE.test(x.id)) return;
+        const phone = typeof x.phone === 'string' && /^\d{8,15}$/.test(x.phone) ? x.phone : null;
+        const chat = /@c\.us$/.test(x.id) ? x.id : phone ? `${phone}@c.us` : null; // @lid com telefone: manda pelo número
+        const key = chat || x.id;
+        if (seen.has(key)) return;
+        seen.add(key);
+        rows.push({ waKey: x.id, chat, name: x.name ? String(x.name).slice(0, 100) : phone });
+      });
+      const byChat = await contactsByChats(rows.map((r) => r.chat).filter(Boolean));
+      const map = new Map([...new Set(Object.values(byChat).map((x) => x.id))].map((id) => [id, { id, labelIds: [], links: [] }]));
+      await addContactLinks(map);
+      contacts = rows.map((r) => {
+        const ct = r.chat ? byChat[r.chat] : null;
+        return { id: ct ? ct.id : null, name: r.name || (ct && ct.name) || null, phone: r.chat ? phoneOfChat(r.chat) : null, chat_id: r.chat, waKey: r.waKey, labelIds: ct && map.get(ct.id) ? map.get(ct.id).labelIds : [] };
+      });
+    } else contacts = await flowCandidates({ labelIds: [c.label_id] });
     const recent = new Set();
     if (c.skip_recent_days > 0 && contacts.length) {
       const since = new Date(Date.now() - c.skip_recent_days * 24 * 3600 * 1000).toISOString();
@@ -1812,9 +1920,17 @@
     const targets = contacts.map((ct) => {
       const chat = ct.chat_id && SCHED_CHAT_RE.test(ct.chat_id) ? ct.chat_id : (ct.phone && /^\d{8,15}$/.test(ct.phone) ? `${ct.phone}@c.us` : null);
       const base = { contact_id: ct.id, chat_id: chat, name: ct.name ? String(ct.name).slice(0, 100) : (ct.phone || null) };
+      const keys = [chat, ct.waKey, ct.chat_id].filter(Boolean);
       if (noSend && ct.labelIds.includes(noSend.id)) return { ...base, status: 'pulado', reason: 'Não enviar' };
+      if (keys.some((k) => waNoSend.has(k))) return { ...base, status: 'pulado', reason: 'Não enviar' };
       if (!chat) return { ...base, status: 'pulado', reason: 'sem telefone' };
       for (const f of c.filters || []) {
+        if (f.source === 'whatsapp') {
+          const has = keys.some((k) => waSet(f.wa_label_id).has(k));
+          if (f.type === 'tem_etiqueta' && !has) return { ...base, status: 'pulado', reason: `não tem a etiqueta ${waNameOf(f.wa_label_id)}`.slice(0, 60) };
+          if (f.type === 'nao_tem_etiqueta' && has) return { ...base, status: 'pulado', reason: `tem a etiqueta ${waNameOf(f.wa_label_id)}`.slice(0, 60) };
+          continue;
+        }
         if (f.type === 'tem_etiqueta' && !ct.labelIds.includes(f.label_id)) return { ...base, status: 'pulado', reason: `não tem a etiqueta ${labelNameOf(f.label_id)}`.slice(0, 60) };
         if (f.type === 'nao_tem_etiqueta' && ct.labelIds.includes(f.label_id)) return { ...base, status: 'pulado', reason: `tem a etiqueta ${labelNameOf(f.label_id)}`.slice(0, 60) };
       }
@@ -1834,16 +1950,16 @@
     targets: snap.targets.slice(0, 2000).map((t) => ({ name: t.name, chat_id: t.chat_id, contact_id: t.contact_id, status: t.status, reason: t.reason })),
   });
 
-  async function previewCampaign({ id }) {
+  async function previewCampaign({ id, wa }) {
     const c = await campaignById(id);
     if (c.status !== 'rascunho') throw new Error('Este disparo já foi iniciado');
-    return previewOf(c, await campaignSnapshot(c));
+    return previewOf(c, await campaignSnapshot(c, wa));
   }
 
   // Simular no editor, antes de salvar: valida o formulário e tira a "foto" sem gravar nada
-  async function simulateCampaign({ campaign }) {
-    const c = checkCampaignInput(campaign, await campaignsV2());
-    return previewOf(c, await campaignSnapshot(c));
+  async function simulateCampaign({ campaign, wa }) {
+    const c = checkCampaignInput(campaign, await campaignsV2(), await campaignsV214());
+    return previewOf(c, await campaignSnapshot(c, wa));
   }
 
   // Duplicar: rascunho igual (mensagem, ações, filtros), sem alvos
@@ -1853,13 +1969,14 @@
       name: `${c.name} (cópia)`.slice(0, 60), label_id: c.label_id, item_id: c.item_id, status: 'rascunho', start_at: null,
       allow_new_chats: !!c.allow_new_chats, skip_recent_days: c.skip_recent_days,
       ...('after_actions' in c ? { parts: c.parts || null, after_actions: c.after_actions || [], filters: c.filters || [] } : {}),
+      ...('speed' in c ? { audience: c.audience || null, speed: c.speed || null, variants: c.variants || null } : {}),
     };
     const rows = await campRest('wa_campaigns', json('POST', 'return=representation', row));
     return { id: rows[0].id };
   }
 
   // Iniciar (só a pedido do usuário, na confirmação): reserva o rascunho, grava a foto e libera
-  async function startCampaign({ id }) {
+  async function startCampaign({ id, wa }) {
     const c = await campaignById(id);
     if (c.status !== 'rascunho') throw new Error('Este disparo já foi iniciado');
     if (!c.item_id && !(Array.isArray(c.parts) && c.parts.length)) throw new Error('O disparo está sem mensagem');
@@ -1867,7 +1984,7 @@
     if (!held.length) throw new Error('Este disparo já foi iniciado');
     let snap;
     try {
-      snap = await campaignSnapshot(c);
+      snap = await campaignSnapshot(c, wa);
       for (let i = 0; i < snap.targets.length; i += 500) {
         await campRest('wa_campaign_targets', json('POST', 'return=minimal', snap.targets.slice(i, i + 500).map((t) => ({ ...t, campaign_id: id }))));
       }
@@ -1908,16 +2025,59 @@
     const now = new Date().toISOString();
     await campRest(`wa_campaigns?status=eq.agendada&start_at=lte.${encodeURIComponent(now)}`, json('PATCH', 'return=minimal', { status: 'rodando' }));
     const running = await campRest(`wa_campaigns?select=${await campCols()}&status=eq.rodando&order=created_at.asc&limit=10`);
+    const all = []; // 2.14.0: cada disparo rodando com o próximo alvo, quantos já foram e quando foi o último
     for (const c of running) {
       const next = await campRest(`wa_campaign_targets?select=id,campaign_id,contact_id,chat_id,name,status&campaign_id=eq.${c.id}&status=eq.pendente&order=id.asc&limit=1`);
-      if (next.length) return { campaign: c, target: next[0] };
+      if (next.length) {
+        const [sent, last] = await Promise.all([
+          countRows(`wa_campaign_targets?campaign_id=eq.${c.id}&status=eq.enviado`).catch(() => 0),
+          campRest(`wa_campaign_targets?select=sent_at&campaign_id=eq.${c.id}&status=eq.enviado&order=sent_at.desc.nullslast&limit=1`).catch(() => []),
+        ]);
+        all.push({ campaign: c, target: next[0], sent: Number(sent) || 0, lastSentAt: last.length && last[0].sent_at ? Date.parse(last[0].sent_at) : null });
+        continue;
+      }
       const busy = await campRest(`wa_campaign_targets?select=id&campaign_id=eq.${c.id}&status=eq.enviando&limit=1`);
       if (busy.length) {
         await campRest(`wa_campaign_targets?campaign_id=eq.${c.id}&status=eq.enviando`, json('PATCH', 'return=minimal', { status: 'falhou', reason: 'envio não confirmado' }));
       }
       await campRest(`wa_campaigns?id=eq.${c.id}&status=eq.rodando`, json('PATCH', 'return=minimal', { status: 'concluida' }));
     }
-    return null;
+    return all.length ? { campaign: all[0].campaign, target: all[0].target, all } : null;
+  }
+
+  // 2.14.0: resultado por variação (enviadas, responderam, vendas pela conversa em até 7 dias depois do envio)
+  async function campaignVariantStats({ id }) {
+    checkUuid(id, 'Disparo inválido');
+    if (!(await sendVariantCol())) return { available: false, rows: [] };
+    const logs = await restAll(`wa_send_log?select=id,chat_id,created_at,variant&source=eq.disparo&source_id=eq.${id}&status=eq.enviado&order=id.asc`);
+    const replied = new Set();
+    for (let i = 0; i < logs.length; i += 100) {
+      try { (await rest(`wa_replies?select=send_log_id&send_log_id=in.${inList(logs.slice(i, i + 100).map((l) => l.id))}`)).forEach((r) => replied.add(r.send_log_id)); } catch { break; }
+    }
+    const sales = [];
+    const chats = [...new Set(logs.map((l) => l.chat_id).filter(Boolean))];
+    if (chats.length && (await salesOrigin())) {
+      for (let i = 0; i < chats.length; i += 100) {
+        try { sales.push(...(await rest(`sales?select=id,wa_chat_id,created_at,total_sale_price&wa_chat_id=in.${inList(chats.slice(i, i + 100))}&status=neq.cancelado&status=neq.reembolsado`))); } catch { break; }
+      }
+    }
+    const by = new Map();
+    logs.forEach((l) => {
+      const v = Number(l.variant) || 0;
+      const g = by.get(v) || { variant: v, sent: 0, replied: 0, sales: new Map() };
+      g.sent++;
+      if (replied.has(l.id)) g.replied++;
+      const t = Date.parse(l.created_at);
+      sales.filter((x) => x.wa_chat_id === l.chat_id && Date.parse(x.created_at) >= t && Date.parse(x.created_at) <= t + 7 * 86400000).forEach((x) => g.sales.set(x.id, x));
+      by.set(v, g);
+    });
+    return {
+      available: true,
+      rows: [...by.values()].sort((a, b) => a.variant - b.variant).map((g) => ({
+        variant: g.variant, sent: g.sent, replied: g.replied, repliedPct: g.sent ? g.replied / g.sent : null,
+        sales: g.sales.size, revenue: [...g.sales.values()].reduce((a, x) => a + (Number(x.total_sale_price) || 0), 0),
+      })),
+    };
   }
 
   // Reserva do alvo: só sai de 'pendente' para 'enviando' uma vez
@@ -2116,18 +2276,21 @@
     const cols = automations ? await autoCols() : '';
     const [sch, camp, auto] = await Promise.all([
       rest(`wa_schedules?select=id&status=eq.pendente&send_at=lte.${soon}&limit=1`).catch(none),
-      campaigns ? rest('wa_campaigns?select=id,status,start_at&status=in.(agendada,rodando)&order=created_at.asc&limit=20').catch(none) : [],
+      campaigns ? (async () => rest(`wa_campaigns?select=id,status,start_at${(await campaignsV214()) ? ',speed' : ''}&status=in.(agendada,rodando)&order=created_at.asc&limit=20`))().catch(none) : [],
       automations
         ? autoRest(`wa_automations?select=${cols}&active=eq.true&order=position.asc,created_at.asc`)
         : rest('wa_flows?select=id&active=eq.true&limit=1').catch(none),
     ]);
-    const campaignOn = camp.some((c) => c.status === 'rodando' || (c.start_at && Date.parse(c.start_at) <= nowMs + 2 * 60 * 1000));
+    const due = (c) => c.status === 'rodando' || (c.start_at && Date.parse(c.start_at) <= nowMs + 2 * 60 * 1000);
+    const campaignOn = camp.some(due);
+    // 2.14.0: disparo com dias e horário próprios (pode rodar fora do horário geral)
+    const campaignsCustom = camp.some((c) => due(c) && c.speed && c.speed.preset === 'personalizado' && c.speed.schedule && c.speed.schedule.mode === 'personalizado');
     // 2.5.0: inscrições manuais ativas nas automações ativas (1 leitura, só se houver automação ativa)
     let enrollments = [];
     if (automations && auto.length && (await automationsV25())) enrollments = await activeEnrollments({ automationIds: auto.map((a) => a.id) }).catch(none);
     return automations
-      ? { schedules: sch.length > 0, campaigns: campaignOn, automations: auto, flows: false, enrollments }
-      : { schedules: sch.length > 0, campaigns: campaignOn, automations: null, flows: auto.length > 0 };
+      ? { schedules: sch.length > 0, campaigns: campaignOn, campaignsCustom, automations: auto, flows: false, enrollments }
+      : { schedules: sch.length > 0, campaigns: campaignOn, campaignsCustom, automations: null, flows: auto.length > 0 };
   }
 
   const cleanKeyword = (v, what) => {
@@ -3553,7 +3716,7 @@
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
     seqRuns, seqCreateRuns, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqRunAction, seqStats, automationSentToday,
     automationUnreserve, applySendLabels, getContactName,
-    fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
+    campaignVariantStats, fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,
     saveLeads, logQuickSend, logManualSends, recordReplies, touchLeads, saveChatActivity,

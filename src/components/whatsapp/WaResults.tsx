@@ -17,7 +17,7 @@ const INFO = {
   followed: 'Seguiu = recebeu a etapa seguinte. O tempo é a mediana entre as duas etapas.',
   accumulated: 'Follow-ups enviados fora de uma régua: mensagens rápidas marcadas como follow-up (etapa 1, 2, 3…) mandadas à mão. Agrupados pela etapa marcada, com as mesmas regras.',
   messages: 'Cada mensagem marcada como follow-up ou enviada por uma automação: quantas conversas receberam no período, quantas responderam (antes do próximo follow) e quantas compraram até 7 dias depois.',
-  campaigns: 'Por disparo: mensagens enviadas no período, quantas foram respondidas e as vendas pelo WhatsApp da conversa em até 7 dias depois do envio.',
+  campaigns: 'Por disparo: mensagens enviadas no período, quantas foram respondidas e as vendas pelo WhatsApp da conversa em até 7 dias depois do envio. Com variações da mensagem, o mesmo para cada variação.',
   footer: 'Vendas pelo WhatsApp do período (data da venda). "Depois de um follow": até 7 dias depois do último follow recebido. "Vieram de anúncio": conversa de anúncio ou venda com origem anúncio.',
 };
 
@@ -77,6 +77,13 @@ export default function WaResults() {
                 <span>{fmtInt(c.sent)} enviadas</span>
                 <span>💬 {fmtPct(c.repliedPct)} responderam</span>
                 <span>💰 {fmtInt(c.sales)} venda{c.sales === 1 ? '' : 's'} · <b style={{ color: GREEN }}>{fmtMoney(c.revenue)}</b></span>
+                {c.variants.length > 0 && (
+                  <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 12, color: 'var(--text-secondary)' }} data-testid="res-camp-variants">
+                    {c.variants.map((v) => (
+                      <span key={v.id}>{v.name}: {fmtInt(v.sent)} enviadas · 💬 {fmtPct(v.repliedPct)} responderam · 💰 {fmtInt(v.sales)} venda{v.sales === 1 ? '' : 's'} · {fmtMoney(v.revenue)}</span>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

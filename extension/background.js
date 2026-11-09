@@ -49,7 +49,7 @@ const HANDLERS = {
   claimLease:           (m) => WaApi.claimLease({ runnerId: m.runnerId, ttlS: m.ttlS }),
   sendCounts:           (m) => WaApi.sendCounts({ hourSince: m.hourSince, daySince: m.daySince }),
   lastSendAt:           ()  => WaApi.lastSendAt(),
-  logSend:              (m) => WaApi.logSend({ source: m.source, source_id: m.source_id, contact_id: m.contact_id, chat_id: m.chat_id, item_id: m.item_id, status: m.status, reason: m.reason }),
+  logSend:              (m) => WaApi.logSend({ source: m.source, source_id: m.source_id, contact_id: m.contact_id, chat_id: m.chat_id, item_id: m.item_id, status: m.status, reason: m.reason, variant: m.variant }),
   finishSendLog:        (m) => WaApi.finishSendLog({ id: m.id, status: m.status, reason: m.reason }),
   // 2.10.0: painel de resultados (leads, respostas, envios manuais e de mensagem rápida)
   saveLeads:            (m) => WaApi.saveLeads({ items: m.items }),
@@ -74,15 +74,16 @@ const HANDLERS = {
   fetchCampaigns:       ()  => WaApi.fetchCampaigns(),
   saveCampaign:         (m) => WaApi.saveCampaign({ id: m.id, campaign: m.campaign }),
   deleteCampaign:       (m) => WaApi.deleteCampaign({ id: m.id }),
-  previewCampaign:      (m) => WaApi.previewCampaign({ id: m.id }),
-  startCampaign:        (m) => WaApi.startCampaign({ id: m.id }),
+  previewCampaign:      (m) => WaApi.previewCampaign({ id: m.id, wa: m.wa }),
+  campaignVariantStats: (m) => WaApi.campaignVariantStats({ id: m.id }),
+  startCampaign:        (m) => WaApi.startCampaign({ id: m.id, wa: m.wa }),
   campaignAction:       (m) => WaApi.campaignAction({ id: m.id, action: m.action }),
   nextCampaignTarget:   ()  => WaApi.nextCampaignTarget(),
   claimTarget:          (m) => WaApi.claimTarget({ id: m.id }),
   finishTarget:         (m) => WaApi.finishTarget({ id: m.id, status: m.status, reason: m.reason }),
   campaignTargets:      (m) => WaApi.campaignTargets({ id: m.id, offset: m.offset, limit: m.limit }),
   // Disparos 2.2.0: Simular no editor (não grava nada) e Duplicar (rascunho sem alvos)
-  simulateCampaign:     (m) => WaApi.simulateCampaign({ campaign: m.campaign }),
+  simulateCampaign:     (m) => WaApi.simulateCampaign({ campaign: m.campaign, wa: m.wa }),
   duplicateCampaign:    (m) => WaApi.duplicateCampaign({ id: m.id }),
   // Automações e mensagem que etiqueta (2.1.0): cada uma valida a entrada em supabase-api.js
   fetchAutomations:     ()  => WaApi.fetchAutomations(),

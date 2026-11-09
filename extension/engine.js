@@ -1180,6 +1180,171 @@
     return out;
   }
 
+  // ── 2.14.0: disparos — velocidade e segurança, previsão, variações e {a|b} ──
+  // Limite duro: nenhum disparo passa disso, qualquer que seja o modelo (o servidor confere de novo).
+  const CAMP_HARD = { min_s: 20, per_hour: 60, per_day: 400 };
+  const CAMP_PRESETS = {
+    seguro: { min_s: 90, max_s: 180, per_hour: 20, per_day: 100, pause_every: 15, pause_min: 10 },
+    normal: { min_s: 45, max_s: 120, per_hour: 30, per_day: 150, pause_every: 20, pause_min: 5 },
+  };
+  const CAMP_PRESET_LABEL = { seguro: 'Bem seguro', normal: 'Normal', personalizado: 'Personalizado' };
+  // Velocidade efetiva (sem "speed" = Normal). Personalizado: os números escolhidos, presos ao limite duro.
+  function campaignSpeed(speed) {
+    const s = speed && typeof speed === 'object' ? speed : {};
+    const preset = s.preset === 'personalizado' || CAMP_PRESETS[s.preset] ? s.preset : 'normal';
+    const base = preset === 'personalizado' ? { ...CAMP_PRESETS.normal, ...s } : CAMP_PRESETS[preset];
+    const int = (v, d) => (v !== '' && v != null && Number.isFinite(Number(v)) ? Math.floor(Number(v)) : d);
+    const min_s = Math.max(CAMP_HARD.min_s, Math.min(3600, int(base.min_s, 45)));
+    const max_s = Math.max(min_s, Math.min(3600, int(base.max_s, 120)));
+    const per_hour = Math.min(CAMP_HARD.per_hour, Math.max(1, int(base.per_hour, 30)));
+    const per_day = Math.min(CAMP_HARD.per_day, Math.max(1, int(base.per_day, 150)));
+    const pause_every = Math.max(0, Math.min(500, int(base.pause_every, 0)));
+    const pause_min = pause_every ? Math.max(1, Math.min(240, int(base.pause_min, 5))) : 0;
+    const schedule = preset === 'personalizado' && s.schedule && s.schedule.mode === 'personalizado' ? s.schedule : null;
+    return { preset, min_s, max_s, per_hour, per_day, pause_every, pause_min, schedule };
+  }
+  // Mais rápido que o "Normal": aviso amarelo de risco de bloqueio
+  function campaignSpeedRisk(speed) {
+    const sp = campaignSpeed(speed);
+    const n = CAMP_PRESETS.normal;
+    return sp.min_s < n.min_s || sp.max_s < n.max_s || sp.per_hour > n.per_hour || sp.per_day > n.per_day;
+  }
+  // O que o personalizado pediu e o limite duro cortou (para a tela dizer)
+  function campaignSpeedClamped(speed) {
+    const s = speed && typeof speed === 'object' ? speed : {};
+    if (s.preset !== 'personalizado') return [];
+    const out = [];
+    if (Number(s.min_s) < CAMP_HARD.min_s) out.push(`intervalo mínimo de ${CAMP_HARD.min_s} s`);
+    if (Number(s.per_hour) > CAMP_HARD.per_hour) out.push(`no máximo ${CAMP_HARD.per_hour} por hora`);
+    if (Number(s.per_day) > CAMP_HARD.per_day) out.push(`no máximo ${CAMP_HARD.per_day} por dia`);
+    return out;
+  }
+  function campaignSpeedText(speed, settings) {
+    const sp = campaignSpeed(speed);
+    const pause = sp.pause_every ? `; pausa de ${sp.pause_min} min a cada ${sp.pause_every} envios` : '';
+    const when = sp.schedule ? scheduleSentence({ schedule: sp.schedule }, settings).replace(/^Envia /, '') : `no horário geral (${scheduleText(settings)})`;
+    return `${CAMP_PRESET_LABEL[sp.preset]}: ${sp.min_s}–${sp.max_s} s entre envios, até ${sp.per_hour}/hora e ${sp.per_day}/dia${pause}; ${when}`;
+  }
+  function campaignGapMs(speed, rnd = Math.random) {
+    const sp = campaignSpeed(speed);
+    const r = Math.min(1, Math.max(0, Number(rnd()) || 0));
+    return Math.round((sp.min_s + r * (sp.max_s - sp.min_s)) * 1000);
+  }
+  // Pode mandar o próximo deste disparo agora? counts = TODOS os envios automáticos da última hora/de hoje
+  // (disparo + automações + agendados): os dois juntos não passam do limite do disparo nem do geral.
+  // sent = quantos este disparo já enviou; lastSentAt = o último; nextAt = último + intervalo sorteado.
+  function campaignGate({ speed, sent = 0, lastSentAt = null, nextAt = null, counts = { hour: 0, day: 0 }, now, settings }) {
+    const sp = campaignSpeed(speed);
+    const at = nextSendTime(now, sp.schedule ? { schedule: sp.schedule } : {}, null, settings);
+    if (at == null) return { ok: false, reason: 'sem horário para enviar', until: null };
+    if (at > now) return { ok: false, reason: 'fora do horário do disparo', until: at };
+    const g = ns(settings);
+    if ((counts.hour || 0) >= Math.min(sp.per_hour, g.maxHour)) return { ok: false, reason: 'limite por hora (disparo + automações)', until: null };
+    if ((counts.day || 0) >= Math.min(sp.per_day, g.maxDay)) return { ok: false, reason: 'limite do dia (disparo + automações)', until: null };
+    const last = Number(lastSentAt) || 0;
+    if (sp.pause_every && sent > 0 && sent % sp.pause_every === 0 && last && now - last < sp.pause_min * 60000) {
+      return { ok: false, reason: `pausa de ${sp.pause_min} min a cada ${sp.pause_every} envios`, until: last + sp.pause_min * 60000 };
+    }
+    if (nextAt && now < nextAt) return { ok: false, reason: 'intervalo do disparo', until: nextAt };
+    return { ok: true, reason: '', until: null };
+  }
+  // Previsão: quando o último sai (intervalo médio do disparo ou o geral, o maior; limites por hora/dia; pausas;
+  // horário do disparo ou o geral). Sem contar as automações (que só podem atrasar).
+  function campaignForecast(count, speed, settings, startAt) {
+    const sp = campaignSpeed(speed);
+    const g = ns(settings);
+    const n = Math.max(0, Math.floor(Number(count) || 0));
+    if (!n) return { endAt: startAt, ms: 0 };
+    const gap = Math.round(Math.max((sp.min_s + sp.max_s) / 2, (g.minGapS + g.maxGapS) / 2) * 1000);
+    const hourCap = Math.min(sp.per_hour, g.maxHour);
+    const dayCap = Math.min(sp.per_day, g.maxDay);
+    const def = sp.schedule ? { schedule: sp.schedule } : {};
+    let t = startAt;
+    let hour = [];
+    let dayKey = null;
+    let dayN = 0;
+    let last = startAt;
+    for (let i = 0; i < n; i++) {
+      for (let guard = 0; guard < 2000; guard++) {
+        const at = nextSendTime(t, def, null, settings);
+        if (at == null) return null;
+        t = at;
+        hour = hour.filter((x) => x > t - 3600000);
+        if (hour.length >= hourCap) { t = hour[0] + 3600000; continue; }
+        if (midnightOf(t) !== dayKey) { dayKey = midnightOf(t); dayN = 0; }
+        if (dayN >= dayCap) { t = nextMidnight(t); continue; }
+        break;
+      }
+      hour.push(t);
+      dayN++;
+      last = t;
+      t += gap;
+      if (sp.pause_every && (i + 1) % sp.pause_every === 0) t += sp.pause_min * 60000;
+    }
+    return { endAt: last, ms: last - startAt };
+  }
+  const hm2 = (ms) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  function forecastText(count, fc, now) {
+    const n = Math.max(0, Math.floor(Number(count) || 0));
+    const who = `${n} contato${n === 1 ? '' : 's'}`;
+    if (!n) return `${who} · nada para enviar`;
+    if (!fc) return `${who} · sem horário para enviar`;
+    const h = fc.ms / 3600000;
+    const dur = h < 1 ? `${Math.max(1, Math.round(fc.ms / 60000))} min` : h < 48 ? `${Math.max(1, Math.round(h))} h` : `${Math.round(h / 24)} dias`;
+    const dd = Math.round((midnightOf(fc.endAt) - midnightOf(now)) / 86400000);
+    const d = new Date(fc.endAt);
+    const day = dd <= 0 ? 'hoje' : dd === 1 ? 'amanhã' : `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return `${who} · termina em cerca de ${dur} (${day} às ${hm2(fc.endAt)})`;
+  }
+  // Sorteio de palavras: {Oi|Olá|Oiii} vira uma delas a cada envio ({nome} e {, nome} ficam: não têm "|")
+  const SPIN_RE = /\{([^{}|]*(?:\|[^{}|]*)+)\}/g;
+  function spinText(text, rnd = Math.random) {
+    return String(text == null ? '' : text).replace(SPIN_RE, (m, inner) => {
+      const opts = inner.split('|');
+      return opts[Math.min(opts.length - 1, Math.floor((Number(rnd()) || 0) * opts.length))];
+    });
+  }
+  const hasSpin = (text) => { SPIN_RE.lastIndex = 0; const r = SPIN_RE.test(String(text || '')); SPIN_RE.lastIndex = 0; return r; };
+  // Variações: a mensagem do disparo é a 1ª; cada "+ Variação" troca o TEXTO (a 1ª parte de texto; sem texto,
+  // entra um texto antes). variants = { mode: 'alternada'|'aleatoria'|'porcentagem', list: [{ text }], weights: [..] }
+  const VARIANT_MODES = ['alternada', 'aleatoria', 'porcentagem'];
+  const variantCount = (variants) => 1 + (variants && Array.isArray(variants.list) ? variants.list.length : 0);
+  // n-ésimo envio (0, 1, 2…) → qual variação (0 = a mensagem; 1.. = as variações). Porcentagem: distribui
+  // exatamente na proporção e intercalado (rodízio com peso).
+  function pickVariant(index, variants, rnd = Math.random) {
+    const k = variantCount(variants);
+    if (k <= 1) return 0;
+    const mode = VARIANT_MODES.includes(variants.mode) ? variants.mode : 'alternada';
+    if (mode === 'aleatoria') return Math.min(k - 1, Math.floor((Number(rnd()) || 0) * k));
+    if (mode === 'alternada') return ((index % k) + k) % k;
+    const w = Array.from({ length: k }, (_, i) => Math.max(0, Number((variants.weights || [])[i]) || 0));
+    const total = w.reduce((a, b) => a + b, 0);
+    if (!total) return ((index % k) + k) % k;
+    const credit = new Array(k).fill(0);
+    let pick = 0;
+    for (let s = 0; s <= index; s++) {
+      for (let i = 0; i < k; i++) credit[i] += w[i];
+      pick = 0;
+      for (let i = 1; i < k; i++) if (credit[i] > credit[pick]) pick = i;
+      credit[pick] -= total;
+    }
+    return pick;
+  }
+  function variantParts(parts, variants, v) {
+    const list = (parts || []).map((p) => ({ ...p }));
+    if (!v || !variants || !Array.isArray(variants.list) || !variants.list[v - 1]) return list;
+    const text = String(variants.list[v - 1].text || '');
+    const i = list.findIndex((p) => p.type === 'texto');
+    if (i >= 0) list[i].body = text;
+    else list.unshift({ type: 'texto', body: text, wait_seconds: 0, typing_seconds: 0 });
+    return list;
+  }
+  const spinParts = (parts, rnd = Math.random) => (parts || []).map((p) => (p.body ? { ...p, body: spinText(p.body, rnd) } : { ...p }));
+  // "Todas menos a que vou colocar" (ids) — "Não enviar" nunca sai
+  function removeAllExcept(current, keep, isNoSend) {
+    return (current || []).map(String).filter((id) => !(keep || []).map(String).includes(id) && !isNoSend(id));
+  }
+
   // ── 2.13.1: excluir mensagem rápida ──
   // Onde ela está em uso (agendamentos pendentes, automações/réguas, réguas antigas, disparos) em frases para a tela.
   // usage = { schedules: [{ chatId, chatName, sendAt }], automations: [{ name, kind }], flows: [{ name }], campaigns: [{ name, status }] }
@@ -1706,7 +1871,8 @@
       st.available = true;
       st.settings = s.settings;
       st.campaignsAvailable = s.campaigns === true;
-      st.campaignsV2 = s.campaignsV2 === true; // 2.2.0: mensagem exclusiva, filtros e ações depois de enviar
+      st.campaignsV2 = s.campaignsV2 === true; // 2.2.0: mensagem exclusiva, filtros e ações depois de enviar 
+      st.campaignsV214 = s.campaignsV214 === true; // 2.14.0: público do WhatsApp, velocidade e variações
       st.automationsAvailable = s.automations === true;
       st.salesOrigin = s.salesOrigin === true; // 2.3.0: colunas de origem da venda + gatilho "venda registrada"
       st.automationsV25 = s.automationsV25 === true; // 2.5.0: etiqueta do WhatsApp no gatilho + inscrição manual
@@ -1771,7 +1937,7 @@
       if (JSON.stringify(list) !== JSON.stringify(st.activeAutomations) || JSON.stringify(enr) !== JSON.stringify(st.activeEnrollments)) st.lastEvalAt = 0;
       st.activeAutomations = list;
       st.activeEnrollments = enr;
-      st.active = { schedules: !!a.schedules, campaigns: !!a.campaigns, automations: list.length > 0, flows: !!a.flows };
+      st.active = { schedules: !!a.schedules, campaigns: !!a.campaigns, campaignsCustom: !!a.campaignsCustom, automations: list.length > 0, flows: !!a.flows };
       return st.active;
     }
     const anyActive = () => !!(st.active && (st.active.schedules || st.active.campaigns || st.active.automations || st.active.flows));
@@ -2468,8 +2634,9 @@
       const outside = !isBusinessTime(now(), st.settings);
       const customSeq = () => st.sequencesAvailable && seqActive().some((a) => a.sequence.schedule && a.sequence.schedule.mode === 'personalizado');
       // (fora do horário: confere o que está ligado no máximo a cada 2 min, para saber se alguma régua tem horário próprio)
-      if (outside && st.sequencesAvailable && (!st.active || now() - st.activityAt >= ACTIVITY_MS)) await refreshActivity();
-      if (outside && !customSeq()) { st.waiting = 'fora do horário'; return; }
+      if (outside && (st.sequencesAvailable || st.campaignsAvailable) && (!st.active || now() - st.activityAt >= ACTIVITY_MS)) await refreshActivity();
+      const customCamp = () => !!(st.active && st.active.campaignsCustom); // 2.14.0: disparo com horário próprio
+      if (outside && !customSeq() && !customCamp()) { st.waiting = 'fora do horário'; return; }
       // Tem algo ativo? (1 verificação leve a cada 2 min; sem nada ativo, não faz mais nada)
       if (!st.active || now() - st.activityAt >= ACTIVITY_MS) await refreshActivity();
       if (!anyActive()) { st.waiting = 'nada ativo'; return; }
@@ -2485,7 +2652,8 @@
       // Ordem: agendados (hora marcada) → disparos → follows. Só procura o que está ativo.
       // (fora do horário geral: só as réguas com horário personalizado; disparos e agendados usam o geral)
       let job = !outside && st.active.schedules ? await scheduleJob() : null;
-      if (!job && !outside && st.campaignsAvailable && st.active.campaigns && deps.campaignJob) job = await deps.campaignJob(api);
+      // 2.14.0: o disparo confere o horário, a velocidade e os limites dele (somados com as automações)
+      if (!job && (!outside || customCamp()) && st.campaignsAvailable && st.active.campaigns && deps.campaignJob) job = await deps.campaignJob(api, { counts: st.counts, settings: st.settings, now: now(), outside });
       if (!job && !outside) {
         if (st.automationsAvailable) job = st.active.automations ? await automationJob() : null;
         else job = st.active.flows ? await followJob() : null;
@@ -2635,6 +2803,8 @@
     seqNormalize, seqInsert, seqRemove, seqExcluded, seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
     itemUsageLines, itemInUse, friendlyDeleteError, // 2.13.1
     scheduleSpec, nextSendTime, pausaUntil, scheduleDailyLimit, scheduleOutsideCommon, scheduleSentence, scheduleProblems, untilText, windowText, daysText, // 2.13.2
+    CAMP_HARD, CAMP_PRESETS, CAMP_PRESET_LABEL, campaignSpeed, campaignSpeedRisk, campaignSpeedClamped, campaignSpeedText, campaignGapMs, campaignGate, campaignForecast, forecastText,
+    spinText, hasSpin, VARIANT_MODES, variantCount, pickVariant, variantParts, spinParts, removeAllExcept, // 2.14.0
     limitCheck, randomGapMs, estimateDuration, estimateText,
     createMotor,
   };

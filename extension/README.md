@@ -799,6 +799,60 @@ guardada.
 
 ## O que mudou
 
+### 2.14.0 — disparos mais completos e mais seguros
+- **Público por etiqueta do WhatsApp**: em "Para quem", escolha CRM ou WhatsApp e a etiqueta (com "+ Nova etiqueta…").
+  - A extensão lê pela WA-JS **todas** as conversas da etiqueta do WhatsApp, inclusive as não carregadas e as
+    arquivadas, e mostra "N contatos nesta etiqueta" antes de começar.
+  - Conversa `@lid` com telefone recebe pelo número. Conversa da etiqueta que não está carregada também recebe, porque
+    ela existe e só não está na lista.
+  - Os filtros "também tem a etiqueta" e "NÃO tem a etiqueta" aceitam CRM e WhatsApp.
+- **Depois de enviar**: colocar e tirar etiqueta CRM ou do WhatsApp, inclusive "Todas menos a que vou colocar".
+  "Não enviar" nunca sai. Com público do WhatsApp sem contato no CRM, o contato é criado pelo telefone para receber a
+  etiqueta CRM.
+- **"Excluir quem recebeu qualquer envio automático nos últimos X dias"**: agora fica desligado por padrão, em
+  "Opções avançadas", com a explicação de que serve para não somar follow-up e disparo no mesmo dia. Quem tem "Não
+  enviar" (CRM ou WhatsApp) continua sempre fora.
+- **Velocidade e segurança**:
+
+  | Modelo | Intervalo | Por hora | Por dia | Pausa |
+  | --- | --- | --- | --- | --- |
+  | Bem seguro | 90–180 s | 20 | 100 | 10 min a cada 15 envios |
+  | Normal | 45–120 s | 30 | 150 | 5 min a cada 20 envios |
+
+  - **Personalizado**: intervalo mínimo e máximo, por hora, por dia, "pausar X min a cada N envios", e dias e horário
+    próprios (ou o horário geral). Um disparo com horário próprio pode rodar fora do horário geral.
+  - **Limite duro**, que nenhum disparo passa: intervalo mínimo de 20 s, 60 por hora e 400 por dia. A tela e o
+    servidor recusam valores acima disso.
+  - Velocidade acima do "Normal" mostra o aviso amarelo de risco de bloqueio.
+  - **Previsão**: "N contatos · termina em cerca de X h (hoje/amanhã às HH:MM)", no formulário, no Simular e na
+    confirmação.
+  - O limite por hora e por dia do disparo conta o disparo **somado** com as automações e os agendados. Os limites
+    gerais e o intervalo geral também valem.
+- **Variações da mensagem**:
+  - "+ Variação" cria até 5 versões alternativas do texto; fotos, áudios e as outras partes ficam iguais.
+  - A distribuição pode ser alternada (1ª, 2ª, 1ª…), aleatória ou por porcentagem (exata e intercalada).
+  - `{Oi|Olá|Oiii}` sorteia uma palavra a cada envio. `{nome}` e `{, nome}` continuam como antes.
+  - Na prévia, o botão "Ver outra variação" mostra as outras versões.
+  - O resultado por variação (enviadas, responderam %, vendas) aparece nos alvos do disparo e na aba **Resultados** do
+    ERP.
+- Continuam como antes: prévia, "Salvar e revisar", Simular, pausar/retomar, e o disparo só começa com a confirmação.
+- **Migration `supabase/migrations/20261111120000_wa_campaigns_v214.sql`** (você aplica). Ela cria:
+  - em `wa_campaigns`: as colunas `audience`, `speed` e `variants`, e `skip_recent_days` com 0 como padrão;
+  - em `wa_send_log`: a coluna `variant`.
+
+  Sem ela, o disparo funciona como antes (CRM, velocidade geral, sem variações).
+- Correções na tela de disparo:
+  - as etiquetas do WhatsApp são relidas ao abrir o formulário (antes a lista podia ficar velha ou em "Carregando…");
+  - a tela dos alvos mostra por que o disparo está esperando (intervalo, pausa, limite somado, fora do horário).
+- Testes:
+  - `tests/campaign.test.cjs`: modelos, limite duro, pausa a cada N, soma com automações, horário próprio, previsão,
+    variações, `{a|b}` e o servidor (público do WhatsApp com conversa não carregada, filtros, ações, resultado por
+    variação, sem a migration);
+  - Chrome real, seção 18: o disparo inteiro com o motor de verdade enviando para uma conversa carregada e para uma
+    não carregada, com as variações alternando, `{Oi|Olá}`, pelo menos 20 s entre envios, a etiqueta do WhatsApp depois
+    de enviar e a variação no log;
+  - ERP: `scripts/tests/waResults.test.ts`, resultado por variação.
+
 ### 2.13.4 — criar etiqueta na hora, em qualquer lista
 - Toda lista de etiquetas tem **"+ Nova etiqueta…"** como primeira opção. Isso vale para o editor de mensagem rápida
   ("Ao enviar, colocar/tirar"), a venda 💰, os disparos e seus filtros, as automações antigas (gatilho, condições,

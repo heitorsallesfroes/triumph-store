@@ -77,6 +77,20 @@ test('rodapé: vendas pelo WhatsApp, depois de um follow e de anúncio', () => {
   const f = computeResults(scenario(), R).footer;
   assert.deepEqual([f.sales, f.revenue, f.afterFollow], [3, 350, 3]);
 });
+test('2.14.0: disparo com variações mostra por variação (enviadas · responderam % · vendas); sem variação, nada a mais', () => {
+  const sc = scenario();
+  assert.deepEqual(computeResults(sc, R).campaigns[0].variants, []);
+  const I = chat(8); const J = chat(9); const K = chat(10);
+  const v0 = send(I, '2026-11-03T08:00:00', { source: 'disparo', origin: 'disparo', source_id: CAMP, item_id: D1, variant: 0 });
+  const v1a = send(J, '2026-11-03T08:05:00', { source: 'disparo', origin: 'disparo', source_id: CAMP, item_id: D1, variant: 1 });
+  const v1b = send(K, '2026-11-03T08:10:00', { source: 'disparo', origin: 'disparo', source_id: CAMP, item_id: D1, variant: 1 });
+  sc.sends.push(v0, v1a, v1b);
+  sc.replies.push(reply(J, '2026-11-03T09:00:00', v1a.id, 55));
+  sc.sales.push(sale('v9', K, '2026-11-04T10:00:00', 80));
+  const c = computeResults(sc, R).campaigns[0];
+  assert.deepEqual([c.sent, c.replied], [5, 2]);
+  assert.deepEqual(plain(c.variants.map((v) => [v.name, v.sent, v.replied, v.repliedPct, v.sales, v.revenue])), [['Variação 1', 1, 0, 0, 0, 0], ['Variação 2', 2, 1, 0.5, 1, 80]]);
+});
 test('fora do período / sem dados: nada quebra', () => {
   const r = computeResults(scenario(), periodRanges('hoje', NOW).cur);
   assert.deepEqual([r.paths.length, r.accumulated.length, r.messages.length, r.campaigns.length], [0, 0, 0, 0]);

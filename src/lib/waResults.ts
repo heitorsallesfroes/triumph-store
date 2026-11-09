@@ -9,7 +9,7 @@
 // para a conversa (das conversas que ENTRARAM no período). Acumulados: follow-ups fora de uma régua (mensagem rápida
 // marcada como follow-up, envio manual), agrupados pela etapa marcada (follow_step).
 import {
-  buildIndex, originOf, stepOfSend, summaryFor, pct, median, DAY_MS, FOLLOW_WINDOW_DAYS, automationTable,
+  buildIndex, originOf, stepOfSend, summaryFor, pct, median, DAY_MS, FOLLOW_WINDOW_DAYS, automationTable, campaignVariantTable,
   type Index, type PanelInput, type Range, type SendGroupRow, type SendRow, type WaSale,
 } from './waPanel.ts';
 
@@ -167,8 +167,15 @@ export function followMessageCards(input: PanelInput, idx: Index, r: Range, item
   }).sort((a, b) => (a.step ?? 99) - (b.step ?? 99) || b.received - a.received);
 }
 
-// Disparos: por disparo (enviadas · responderam % · vendas · R$)
-export const campaignRows = (input: PanelInput, idx: Index, r: Range): SendGroupRow[] => automationTable(input, idx, r).filter((x) => x.kind === 'disparo');
+// Disparos: por disparo (enviadas · responderam % · vendas · R$) e, com 2+ variações (2.14.0), por variação
+export type CampaignRow = SendGroupRow & { variants: SendGroupRow[] };
+export function campaignRows(input: PanelInput, idx: Index, r: Range): CampaignRow[] {
+  const vars = campaignVariantTable(input, idx, r);
+  return automationTable(input, idx, r).filter((x) => x.kind === 'disparo').map((c) => {
+    const v = vars.filter((x) => x.id.startsWith(`${c.id}#`)).sort((a, b) => Number(a.id.split('#')[1]) - Number(b.id.split('#')[1]));
+    return { ...c, variants: v.length > 1 ? v : [] };
+  });
+}
 
 // Tudo da aba de uma vez
 export function computeResults(input: PanelInput, r: Range) {

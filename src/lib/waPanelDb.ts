@@ -24,11 +24,11 @@ async function orEmpty<T>(label: string, missing: string[], run: () => Promise<T
 export async function loadPanel(ranges: PeriodRanges): Promise<PanelLoad> {
   const w = loadWindow(ranges);
   const missing: string[] = [];
-  const [originCol, saleCols, stepCol] = await Promise.all([
-    hasColumn('wa_send_log', 'origin'), hasColumn('sales', 'wa_chat_id'), hasColumn('wa_items', 'follow_step'),
+  const [originCol, saleCols, stepCol, variantCol] = await Promise.all([
+    hasColumn('wa_send_log', 'origin'), hasColumn('sales', 'wa_chat_id'), hasColumn('wa_items', 'follow_step'), hasColumn('wa_send_log', 'variant'),
   ]);
   if (!originCol) missing.push('origem dos envios');
-  const sendCols = `id, chat_id, created_at, source, source_id, item_id, status${originCol ? ', origin, follow_step' : ''}`;
+  const sendCols = `id, chat_id, created_at, source, source_id, item_id, status${originCol ? ', origin, follow_step' : ''}${variantCol ? ', variant' : ''}`; // 2.14.0: variação do disparo
   const salesCols = `id, sale_date, created_at, total_sale_price, customer_phone${saleCols ? ', wa_chat_id, origin' : ''}`;
 
   const [leads, replies, sends, sales, attributions, items, conv] = await Promise.all([

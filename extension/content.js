@@ -1571,6 +1571,14 @@
       .vb-days { display: flex; flex-wrap: wrap; gap: 4px; }
       .vb-day { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: var(--r-pill); background: #eef2f5; font-size: var(--fs-2); cursor: pointer; }
       .vb-dlimit { width: 140px !important; }
+      /* 2.14.0: disparos */
+      .dp-speed { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+      .dp-speed-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px; }
+      .dp-var { display: flex; gap: 6px; align-items: flex-start; flex-wrap: wrap; }
+      .dp-var .dp-var-text { flex: 1 1 220px; }
+      .dp-pv-text { white-space: pre-wrap; font-size: var(--fs-2); padding: 6px 0; }
+      .dp-adv summary { cursor: pointer; }
+      .dp-vrow { font-size: var(--fs-2); }
       /* 2.13.4: "+ Nova etiqueta…" ali mesmo */
       .lc-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; margin-top: 4px; padding: 8px; border: 1px dashed var(--line, #cbd5e1); border-radius: var(--r-md); background: #f8fafc; }
       .lc-form .lc-name { flex: 1 1 160px; min-width: 120px; }
@@ -6584,23 +6592,81 @@
     nameFor: (chatId, fallback) => nameForChat(chatId, fallback),
     onLabelsChanged: () => { syncLabels().catch(() => {}); },
     stopRunning: () => { if (seq && AUTO_LABELS.includes(seq.label)) stopSequence(); },
-    campaignJob: (api) => campaignJob(api),
+    campaignJob: (api, ctx) => campaignJob(api, ctx),
     runCampaignJob: (job, helpers) => runCampaignJob(job, helpers),
     leaseWork: async () => { await adAttributionTick(); await contactAutoTick(); await panelTick().catch(() => {}); },
   });
 
   // ── Disparos (2.0.0-D2): o motor só pega alvos de disparos que o usuário iniciou ──
 
-  async function campaignJob(api) {
+  // 2.14.0: entre os disparos rodando, o primeiro que pode mandar agora: horário do disparo (ou o geral),
+  // intervalo sorteado dele, pausa a cada N envios e o limite por hora/dia dele somado com as automações
+  const campNext = new Map(); // campaignId → { last, nextAt } (intervalo sorteado uma vez por envio)
+  const campWait = new Map(); // campaignId → motivo de estar esperando (para a lista)
+  async function campaignJob(api, ctx = {}) {
     let r = null;
     try { r = await api('nextCampaignTarget'); } catch { r = null; }
-    return r && r.target ? { kind: 'disparo', campaign: r.campaign, target: r.target } : null;
+    if (!r || !r.target) return null;
+    const list = Array.isArray(r.all) && r.all.length ? r.all : [{ campaign: r.campaign, target: r.target, sent: 0, lastSentAt: null }];
+    const now = ctx.now || Date.now();
+    for (const x of list) {
+      const c = x.campaign;
+      const last = Number(x.lastSentAt) || 0;
+      let n = campNext.get(c.id);
+      if (!n || n.last !== last) { n = { last, nextAt: last ? last + E.campaignGapMs(c.speed) : 0 }; campNext.set(c.id, n); }
+      // fora do horário geral só segue o disparo com horário próprio (os outros esperam o geral)
+      const sp = E.campaignSpeed(c.speed);
+      if (ctx.outside && !sp.schedule) { campWait.set(c.id, 'fora do horário'); continue; }
+      const g = E.campaignGate({ speed: c.speed, sent: x.sent, lastSentAt: last, nextAt: n.nextAt, counts: ctx.counts || { hour: 0, day: 0 }, now, settings: ctx.settings || motor.state.settings });
+      if (!g.ok) { campWait.set(c.id, g.reason); continue; }
+      campWait.delete(c.id);
+      return { kind: 'disparo', campaign: c, target: x.target, sent: x.sent };
+    }
+    return null;
   }
 
   const finishTarget = (id, status, reason) => call('finishTarget', { id, status, reason }).catch(() => null);
+  const isWaAudience = (c) => !!(c && c.audience && c.audience.source === 'whatsapp');
 
-  async function runCampaignJob({ campaign, target }, h) {
-    const entry = { source: 'disparo', source_id: campaign.id, contact_id: target.contact_id || null, chat_id: target.chat_id || null, item_id: campaign.item_id || null };
+  // 2.14.0: etiquetas do WhatsApp depois de enviar ("Todas menos a que vou colocar"; "Não enviar" nunca sai)
+  async function campaignWaAfter(chatId, actions) {
+    const adds = actions.filter((a) => a.type === 'adicionar_etiqueta_wa').map((a) => String(a.wa_label_id));
+    const removes = actions.filter((a) => a.type === 'remover_etiqueta_wa');
+    if (!adds.length && !removes.length) return;
+    if (!Array.isArray(state.waLabels)) await refreshBar().catch(() => {});
+    const noSendWa = (id) => isNoSendWa(waLabelById(id));
+    let cur = null;
+    if (removes.some((a) => a.wa_label_id === E.SALE_WA_ALL || a.wa_label_id === '__todas__')) {
+      const r = await waRequest('chatLabels', { chatId }, { timeout: 5000 }).catch(() => null);
+      cur = (r && r.labelIds) || [];
+      for (const id of E.removeAllExcept(cur, adds, noSendWa)) await motor.setWaLabel(chatId, { remove: id });
+    }
+    for (const a of removes) if (a.wa_label_id !== '__todas__' && !noSendWa(a.wa_label_id)) await motor.setWaLabel(chatId, { remove: String(a.wa_label_id) });
+    for (const id of adds) await motor.setWaLabel(chatId, { add: id });
+    refreshBar().catch(() => {});
+  }
+  async function campaignCrmAfter(campaign, contactId, noSendId) {
+    const acts = campaign.after_actions || [];
+    const adds = acts.filter((a) => a.type === 'adicionar_etiqueta' || a.type === 'mover').map((a) => a.label_id);
+    for (const a of acts) {
+      try {
+        if (a.type === 'adicionar_etiqueta') await call('followAdd', { contactId, labelId: a.label_id });
+        else if (a.type === 'remover_etiqueta' && a.label_id === '__todas__') {
+          const ids = await call('contactLabelIds', { contactId });
+          for (const id of E.removeAllExcept(ids, adds, (x) => x === noSendId)) await call('followReserve', { contactId, labelId: id });
+        } else if (a.type === 'remover_etiqueta') { if (a.label_id !== noSendId) await call('followReserve', { contactId, labelId: a.label_id }); }
+        else if (a.type === 'mover') {
+          if (campaign.label_id) await call('followReserve', { contactId, labelId: campaign.label_id });
+          await call('followAdd', { contactId, labelId: a.label_id });
+        }
+      } catch { /* a próxima ação segue */ }
+    }
+  }
+
+  async function runCampaignJob({ campaign, target, sent = 0 }, h) {
+    // 2.14.0: qual variação sai neste envio (alternada / aleatória / porcentagem, pela ordem dos envios)
+    const variant = E.pickVariant(sent, campaign.variants);
+    const entry = { source: 'disparo', source_id: campaign.id, contact_id: target.contact_id || null, chat_id: target.chat_id || null, item_id: campaign.item_id || null, ...(E.variantCount(campaign.variants) > 1 ? { variant } : {}) };
     const skip = async (reason) => { await finishTarget(target.id, 'pulado', reason); await h.logSkip(entry, reason); return { attempted: false }; };
     // "Não enviar" de novo (a etiqueta pode ter sido marcada depois da foto)
     if (h.noSendLabelId && target.contact_id) {
@@ -6620,13 +6686,16 @@
     let info = null;
     try { info = await waRequest('chatsInfo', { chatIds: [target.chat_id], keywords: [] }, { timeout: 8000 }); } catch { info = null; }
     const loaded = !!(info && info.chats && info.chats[target.chat_id]);
+    // 2.14.0: "Não enviar" do WhatsApp de novo (conversa carregada)
+    if (loaded && (info.chats[target.chat_id].labels || []).some((id) => isNoSendWa(waLabelById(String(id))))) return skip('Não enviar');
     const replied = (campaign.filters || []).find((x) => x.type === 'respondeu_recente');
     const lastIn = loaded ? info.chats[target.chat_id].lastIn : null;
     if (replied && lastIn && Date.now() - lastIn * 1000 <= replied.days * 86400000) return skip(`respondeu nos últimos ${replied.days} dias`);
     let newChat = false;
     if (!loaded) {
-      // Conversa nova só com a opção ligada e só para número (@c.us); a ponte confere com queryExists
-      if (!campaign.allow_new_chats || !/^\d{8,15}@c\.us$/.test(target.chat_id)) return skip('conversa não carregada');
+      // Conversa não carregada: com público do WhatsApp ela EXISTE (está na etiqueta), só não está na lista; nos
+      // outros, só com "Permitir conversas novas". Sempre só número (@c.us); a ponte confere com queryExists.
+      if (!(isWaAudience(campaign) || campaign.allow_new_chats) || !/^\d{8,15}@c\.us$/.test(target.chat_id)) return skip('conversa não carregada');
       newChat = true;
     }
     const claimed = await call('claimTarget', { id: target.id }).catch(() => null);
@@ -6634,7 +6703,9 @@
     const logId = await h.logStart(entry);
     let res;
     try {
-      res = await runSequence({ parts: exclusive || partsOf(item), chatId: target.chat_id, firstName: await nameForChat(target.chat_id, E.firstNameOf(target.name)), label: 'Disparo', newChat });
+      const base = exclusive || partsOf(item);
+      const parts = E.spinParts(E.variantParts(base, campaign.variants, variant)); // variação + {Oi|Olá}
+      res = await runSequence({ parts, chatId: target.chat_id, firstName: await nameForChat(target.chat_id, E.firstNameOf(target.name)), label: 'Disparo', newChat });
     } catch {
       res = { status: 'failed', stage: 'sending', sent: 0 };
     }
@@ -6648,20 +6719,16 @@
     await h.logFinish(logId, out.status, out.reason);
     if (out.status === 'enviado') {
       if (item) { registerUse(item); applyItemLabels(item, { contactId: target.contact_id || undefined, chatId: target.chat_id }); }
-      // Depois de enviar (2.2.0): só para quem recebeu com sucesso
-      if (target.contact_id) {
-        for (const a of campaign.after_actions || []) {
-          try {
-            if (a.type === 'adicionar_etiqueta') await call('followAdd', { contactId: target.contact_id, labelId: a.label_id });
-            else if (a.type === 'remover_etiqueta') await call('followReserve', { contactId: target.contact_id, labelId: a.label_id });
-            else if (a.type === 'mover') {
-              if (campaign.label_id) await call('followReserve', { contactId: target.contact_id, labelId: campaign.label_id });
-              await call('followAdd', { contactId: target.contact_id, labelId: a.label_id });
-            }
-          } catch { /* a próxima ação segue */ }
-        }
-        if ((campaign.after_actions || []).length) afterLabelChange();
+      // Depois de enviar (2.2.0; 2.14.0: CRM e WhatsApp, "todas menos a que vou colocar"): só para quem recebeu
+      const acts = campaign.after_actions || [];
+      let contactId = target.contact_id;
+      const crmActs = acts.filter((x) => !String(x.type).endsWith('_wa'));
+      if (!contactId && crmActs.length) {
+        // público do WhatsApp sem contato no CRM: cria/acha pelo telefone para poder etiquetar
+        try { contactId = (await call('saleContactLabels', { chatId: target.chat_id, name: target.name || '', phone: null, addLabelId: null, removeLabelIds: [] })).contactId; } catch { contactId = null; }
       }
+      if (contactId && crmActs.length) { await campaignCrmAfter({ ...campaign, after_actions: crmActs }, contactId, h.noSendLabelId); afterLabelChange(); }
+      try { await campaignWaAfter(target.chat_id, acts); } catch { /* etiquetas do WhatsApp: a próxima segue */ }
     }
     if (dp.open) refreshDisparos({ quiet: true });
     return { attempted: out.status !== 'pulado' };
@@ -6812,25 +6879,46 @@
   // ── Formulário do disparo (2.2.0: mensagem exclusiva, filtros, depois de enviar, simular) ──
 
   const v2Ready = () => motor.state.campaignsV2 === true;
-  const AFTER_LABEL = { adicionar_etiqueta: 'Adicionar etiqueta CRM', remover_etiqueta: 'Remover etiqueta CRM', mover: 'Mover (tira a do disparo e põe outra)' };
+  const v214Ready = () => motor.state.campaignsV214 === true; // 2.14.0
+  const AFTER_LABEL = {
+    adicionar_etiqueta: 'Colocar etiqueta CRM', remover_etiqueta: 'Tirar etiqueta CRM', mover: 'Mover (tira a do disparo e põe outra)',
+    adicionar_etiqueta_wa: 'Colocar etiqueta do WhatsApp', remover_etiqueta_wa: 'Tirar etiqueta do WhatsApp',
+  };
   const FILTER_LABEL = { tem_etiqueta: 'também tem a etiqueta', nao_tem_etiqueta: 'NÃO tem a etiqueta', respondeu_recente: 'excluir quem respondeu nos últimos (dias)' };
+  const DP_ALL = '__todas__';
+  const DP_DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
   function openCampaignForm(c) {
     const start = c && c.start_at ? new Date(c.start_at) : null;
     const hasParts = !!(c && Array.isArray(c.parts) && c.parts.length);
+    const sp = c && c.speed ? { ...E.CAMP_PRESETS.normal, ...c.speed } : { preset: 'normal', ...E.CAMP_PRESETS.normal };
+    if (!sp.schedule) sp.schedule = { mode: 'geral' };
+    const vr = c && c.variants && Array.isArray(c.variants.list) ? c.variants : null;
     dp.form = {
       id: c ? c.id : null, name: c ? c.name : '', label_id: c ? c.label_id || '' : '', item_id: c ? c.item_id || '' : '',
+      audience: c && c.audience && c.audience.source === 'whatsapp' ? 'whatsapp' : 'crm',
+      wa_label_id: c && c.audience && c.audience.wa_label_id ? String(c.audience.wa_label_id) : '',
+      waCount: null, waCountFor: null,
       mode: !v2Ready() ? 'salva' : hasParts ? 'exclusiva' : c && c.item_id ? 'salva' : 'exclusiva',
       parts: hasParts ? c.parts.map(edPart) : [edPart({ type: 'texto' })],
-      after_actions: c && Array.isArray(c.after_actions) ? c.after_actions.map((a) => ({ ...a })) : [],
-      filters: c && Array.isArray(c.filters) ? c.filters.map((f) => ({ ...f })) : [],
+      after_actions: c && Array.isArray(c.after_actions) ? c.after_actions.map((x) => ({ ...x })) : [],
+      filters: c && Array.isArray(c.filters) ? c.filters.map((x) => ({ source: x.source === 'whatsapp' ? 'whatsapp' : 'crm', ...x })) : [],
       when: start ? 'data' : 'agora', date: start ? dateInput(start) : '', time: start ? timeInput(start) : '',
-      allow_new_chats: c ? !!c.allow_new_chats : false, skip_recent_days: c ? c.skip_recent_days : 7,
+      allow_new_chats: c ? !!c.allow_new_chats : false, skip_recent_days: c ? Number(c.skip_recent_days) || 0 : 0,
+      advanced: !!(c && Number(c.skip_recent_days) > 0),
+      speed: sp,
+      variants: { mode: vr && vr.mode ? vr.mode : 'alternada', list: vr ? vr.list.map((x) => ({ text: x.text })) : [], weights: vr && Array.isArray(vr.weights) ? vr.weights.slice() : [] },
+      pv: { v: 0, seed: 1 },
       quick: { category_id: state.categories.length ? state.categories[0].id : '', title: '', saving: false },
       msg: '', err: false, saving: false,
     };
     dp.view = 'new';
     renderDisparos();
+    // 2.14.0: etiquetas do WhatsApp frescas para as listas (redesenha só se mudaram)
+    const form = dp.form;
+    const before = JSON.stringify(state.waLabels);
+    bar.lastAt = 0;
+    refreshBar().catch(() => {}).then(() => { if (dp.form === form && dp.view === 'new' && JSON.stringify(state.waLabels) !== before) renderDisparos(); });
   }
 
   function dpMsg(text, err = false) {
@@ -6848,8 +6936,57 @@
     return labelPicker(value, onChange, { empty: 'Escolha a etiqueta CRM…', aria, rerender: renderDisparos, onError: (m) => dpMsg(m, true) });
   }
 
+  // 2.14.0: "N contatos nesta etiqueta" (TODAS as conversas da etiqueta do WhatsApp, inclusive não carregadas)
+  async function dpWaCount(f) {
+    const id = f.wa_label_id;
+    if (!id || f.waCountFor === id) return;
+    f.waCountFor = id;
+    f.waCount = 'lendo';
+    renderDisparos();
+    let n = null;
+    try { const r = await waRequest('labelAllChats', { labelId: id }, { timeout: 20000 }); n = ((r && r.chats) || []).length; } catch { n = 'erro'; }
+    if (dp.form !== f || f.wa_label_id !== id) return;
+    f.waCount = n;
+    renderDisparos();
+  }
+
+  // Lista de etiqueta CRM ou WhatsApp (com "+ Nova etiqueta…") e, se pedir, "Todas menos a que vou colocar"
+  function dpTypedLabel(src, value, onChange, aria, { all = false } = {}) {
+    const sel = src === 'whatsapp' ? waLabelSelect(value || '', aria, 'Escolha a etiqueta do WhatsApp…') : labelSelect(value || '', { empty: 'Escolha a etiqueta CRM…', aria });
+    if (all) {
+      const o = el('option', null, 'Todas menos a que vou colocar (nunca "Não enviar")');
+      o.value = DP_ALL;
+      o.selected = value === DP_ALL;
+      const firstReal = [...sel.options].find((x) => !x.classList.contains('lc-opt'));
+      sel.insertBefore(o, firstReal ? firstReal.nextSibling : null);
+    }
+    sel.addEventListener('change', () => onChange(sel.value));
+    return sel;
+  }
+  const dpSrcSelect = (value, aria, onChange) => {
+    const s0 = el('select', 'ed-cat');
+    s0.setAttribute('aria-label', aria);
+    [['crm', 'CRM'], ['whatsapp', 'WhatsApp']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = value === v; o.disabled = v === 'whatsapp' && !v214Ready(); s0.append(o); });
+    s0.addEventListener('change', () => onChange(s0.value));
+    return s0;
+  };
+
+  // Partes que a prévia/o envio usam (mensagem exclusiva ou a salva)
+  const dpBaseParts = (f) => (f.mode === 'exclusiva' ? f.parts.map((p) => ({ type: p.type, body: p.body })) : (() => { const it = state.items.find((i) => i.id === f.item_id); return it ? partsOf(it) : []; })());
+
   function renderCampaignForm() {
     const f = dp.form;
+    // 2.14.0: as listas do WhatsApp precisam das etiquetas: pede uma vez e redesenha quando chegarem
+    if (!Array.isArray(state.waLabels) && !f.waAsked) {
+      f.waAsked = true;
+      (async () => {
+        for (let k = 0; k < 12 && !Array.isArray(state.waLabels) && dp.form === f; k++) {
+          await refreshBar().catch(() => {});
+          if (!Array.isArray(state.waLabels)) await new Promise((r) => setTimeout(r, 1500));
+        }
+        if (dp.form === f && dp.view === 'new' && Array.isArray(state.waLabels)) renderDisparos();
+      })();
+    }
     const sec = el('section', 'crmsec');
     sec.append(el('div', 'wt-head', f.id ? 'EDITAR DISPARO' : 'NOVO DISPARO'));
     const name = el('input', 'ed-title');
@@ -6858,9 +6995,23 @@
     name.placeholder = 'Ex.: Black Friday clientes';
     name.addEventListener('input', () => { f.name = name.value; });
     sec.append(schedField('Nome', name));
-    const lab = labelSelect(f.label_id, { empty: 'Escolha a etiqueta CRM…', aria: 'Etiqueta CRM do disparo' });
-    lab.addEventListener('change', () => { f.label_id = lab.value; });
-    sec.append(schedField('Para quem (etiqueta CRM)', lab));
+
+    // Para quem: etiqueta CRM ou do WhatsApp (2.14.0)
+    const who = el('div', 'sc-row dp-who');
+    who.append(dpSrcSelect(f.audience, 'Público: tipo de etiqueta', (v) => { f.audience = v; f.waCountFor = null; renderDisparos(); }));
+    if (f.audience === 'whatsapp') {
+      who.append(dpTypedLabel('whatsapp', f.wa_label_id, (v) => { f.wa_label_id = v; f.waCountFor = null; dpWaCount(f); }, 'Etiqueta do WhatsApp do disparo'));
+    } else {
+      const lab = labelSelect(f.label_id, { empty: 'Escolha a etiqueta CRM…', aria: 'Etiqueta CRM do disparo' });
+      lab.addEventListener('change', () => { f.label_id = lab.value; });
+      who.append(lab);
+    }
+    sec.append(schedField('Para quem', who));
+    if (f.audience === 'whatsapp') {
+      if (f.wa_label_id && f.waCountFor !== f.wa_label_id) setTimeout(() => dpWaCount(f), 0);
+      const cnt = f.waCount === 'lendo' ? 'Contando as conversas da etiqueta…' : f.waCount === 'erro' ? 'Não consegui ler a etiqueta no WhatsApp agora.' : typeof f.waCount === 'number' ? `${f.waCount} contato${f.waCount === 1 ? '' : 's'} nesta etiqueta` : '';
+      sec.append(el('div', 'crm-intro dp-wacount', cnt ? `${cnt} (todas as conversas com a etiqueta, inclusive as não carregadas e as arquivadas).` : 'Todas as conversas com a etiqueta, inclusive as não carregadas e as arquivadas.'));
+    }
 
     // Mensagem
     sec.append(el('div', 'crm-sub', 'Mensagem'));
@@ -6879,17 +7030,16 @@
     sec.append(modeRow);
     if (!v2Ready()) sec.append(el('div', 'ed-note', 'Mensagem exclusiva, filtros e "depois de enviar": atualize o banco para usar este recurso.'));
     if (f.mode === 'exclusiva') {
-      sec.append(el('div', 'crm-intro', 'Não cria nada em Mensagens. {nome} vira o primeiro nome; Olá{, nome}! some sem nome.'));
+      sec.append(el('div', 'crm-intro', 'Não cria nada em Mensagens. {nome} vira o primeiro nome; Olá{, nome}! some sem nome. {Oi|Olá|Oiii} sorteia uma palavra a cada envio.'));
       f.parts.forEach((p, i) => sec.append(edPartEl(p, i, dpCtx())));
       const add = el('div', 'ed-add');
       add.append(el('span', null, '+ Adicionar:'));
       edTypes().forEach(([v, t]) => {
-        const b = fbtn('ed-mini', t, () => { f.parts.push(v === 'album' ? { ...edPart({ type: 'imagem' }), type: 'album', files: [] } : edPart({ type: v })); renderDisparos(); });
-        b.disabled = f.saving || f.parts.length >= ED_MAX_PARTS;
-        add.append(b);
+        const b0 = fbtn('ed-mini', t, () => { f.parts.push(v === 'album' ? { ...edPart({ type: 'imagem' }), type: 'album', files: [] } : edPart({ type: v })); renderDisparos(); });
+        b0.disabled = f.saving || f.parts.length >= ED_MAX_PARTS;
+        add.append(b0);
       });
       sec.append(add);
-      // Salvar também como mensagem rápida
       const qr = el('div', 'sc-row');
       const cat = el('select', 'ed-cat');
       cat.setAttribute('aria-label', 'Categoria da mensagem rápida');
@@ -6907,9 +7057,79 @@
       sec.append(qr);
     } else {
       const it = itemSelect(f.item_id, { aria: 'Mensagem do disparo' });
-      it.addEventListener('change', () => { f.item_id = it.value; });
+      it.addEventListener('change', () => { f.item_id = it.value; renderDisparos(); });
       sec.append(it);
     }
+
+    // Variações (2.14.0): versões alternativas do TEXTO
+    sec.append(el('div', 'crm-sub', 'Variações da mensagem'));
+    const V = f.variants;
+    if (!v214Ready()) sec.append(el('div', 'ed-note', 'Variações: atualize o banco para usar este recurso.'));
+    else {
+      sec.append(el('div', 'crm-intro', 'A mensagem acima é a variação 1. Cada "+ Variação" troca só o texto (as fotos, áudios e o resto continuam iguais).'));
+      V.list.forEach((x, i) => {
+        const row = el('div', 'fw-variant dp-var');
+        row.append(el('div', 'crm-sub', `Variação ${i + 2}`));
+        const ta = el('textarea', 'ed-body dp-var-text');
+        ta.rows = 3;
+        ta.maxLength = 4096;
+        ta.value = x.text;
+        ta.placeholder = 'Outro jeito de dizer a mesma coisa. Pode usar {nome} e {Oi|Olá}.';
+        ta.setAttribute('aria-label', `Texto da variação ${i + 2}`);
+        ta.addEventListener('input', () => { x.text = ta.value; });
+        const rm = fbtn('ed-mini', '✕', () => { V.list.splice(i, 1); V.weights.splice(i + 1, 1); renderDisparos(); });
+        rm.setAttribute('aria-label', `Tirar a variação ${i + 2}`);
+        row.append(ta, rm);
+        sec.append(row);
+      });
+      const addV = fbtn('ed-mini dp-var-add', '+ Variação', () => {
+        const base = dpBaseParts(f).find((p) => p.type === 'texto');
+        V.list.push({ text: base ? String(base.body || '') : '' });
+        renderDisparos();
+      });
+      addV.disabled = V.list.length >= 5;
+      sec.append(addV);
+      if (V.list.length) {
+        const mr = el('div', 'sc-row dp-var-mode');
+        [['alternada', 'Alternada (1ª, 2ª, 1ª…)'], ['aleatoria', 'Aleatória'], ['porcentagem', 'Por porcentagem']].forEach(([m, t]) => {
+          const l = el('label', 'sc-radio');
+          const r = el('input');
+          r.type = 'radio';
+          r.name = 'dp-varmode';
+          r.value = m;
+          r.checked = V.mode === m;
+          r.addEventListener('change', () => {
+            V.mode = m;
+            if (m === 'porcentagem' && V.weights.length !== V.list.length + 1) { const k = V.list.length + 1; V.weights = Array.from({ length: k }, (_, j) => Math.floor(100 / k) + (j < 100 % k ? 1 : 0)); }
+            renderDisparos();
+          });
+          l.append(r, ` ${t}`);
+          mr.append(l);
+        });
+        sec.append(mr);
+        if (V.mode === 'porcentagem') {
+          const wr = el('div', 'sc-row');
+          for (let j = 0; j <= V.list.length; j++) {
+            const n = numberInput(V.weights[j] ?? 0, 0, 100, `Porcentagem da variação ${j + 1}`);
+            n.addEventListener('input', () => { V.weights[j] = Math.floor(Number(n.value) || 0); });
+            wr.append(el('span', null, `${j + 1}ª`), n, el('span', null, '%'));
+          }
+          sec.append(wr);
+        }
+      }
+    }
+    // Prévia com "Ver outra variação" (e um novo sorteio das {a|b})
+    const k = E.variantCount(V.list.length ? V : null);
+    const pvBox = el('div', 'fw-test dp-preview');
+    const seed = f.pv.seed;
+    let x0 = seed;
+    const rnd = () => { x0 = (x0 * 9301 + 49297) % 233280; return x0 / 233280; };
+    const pvParts = E.spinParts(E.variantParts(dpBaseParts(f), V.list.length ? V : null, Math.min(f.pv.v, k - 1)), rnd);
+    const txt = pvParts.filter((p) => p.type === 'texto').map((p) => fillVars(p.body || '', 'Maria')).join('\n\n') || '(sem texto)';
+    pvBox.append(el('div', 'crm-sub', `Prévia${k > 1 ? ` · variação ${Math.min(f.pv.v, k - 1) + 1} de ${k}` : ''} (para “Maria”)`), el('div', 'dp-pv-text', txt));
+    const other = fbtn('ed-mini dp-pv-next', 'Ver outra variação', () => { f.pv.v = (f.pv.v + 1) % k; f.pv.seed = (f.pv.seed * 7 + 13) % 233280 || 1; renderDisparos(); });
+    pvBox.append(other);
+    sec.append(pvBox);
 
     // Quando
     const whenRow = el('div', 'sc-row');
@@ -6940,7 +7160,7 @@
       sec.append(r);
     }
 
-    // Público
+    // Público (filtros: CRM ou WhatsApp)
     sec.append(el('div', 'crm-sub', 'Público (além da etiqueta principal)'));
     f.filters.forEach((flt, i) => {
       const row = el('div', 'fw-variant');
@@ -6949,7 +7169,13 @@
         const n = numberInput(flt.days || 7, 1, 365, `Dias do filtro ${i + 1}`);
         n.addEventListener('input', () => { flt.days = Math.floor(Number(n.value) || 0); });
         row.append(n);
-      } else row.append(dpLabelPicker(flt.label_id, (v) => { flt.label_id = v; }, `Etiqueta do filtro ${i + 1}`));
+      } else {
+        const r2 = el('div', 'sc-row');
+        r2.append(dpSrcSelect(flt.source || 'crm', `Filtro ${i + 1}: tipo de etiqueta`, (v) => { flt.source = v; flt.label_id = ''; flt.wa_label_id = ''; renderDisparos(); }));
+        if (flt.source === 'whatsapp') r2.append(dpTypedLabel('whatsapp', flt.wa_label_id, (v) => { flt.wa_label_id = v; }, `Etiqueta do filtro ${i + 1}`));
+        else r2.append(dpLabelPicker(flt.label_id, (v) => { flt.label_id = v; }, `Etiqueta do filtro ${i + 1}`));
+        row.append(r2);
+      }
       const rm = fbtn('ed-mini', '✕', () => { f.filters.splice(i, 1); renderDisparos(); });
       rm.setAttribute('aria-label', 'Remover filtro');
       row.append(rm);
@@ -6957,31 +7183,41 @@
     });
     const addF = el('div', 'ed-add');
     [['tem_etiqueta', '+ também tem a etiqueta'], ['nao_tem_etiqueta', '+ NÃO tem a etiqueta'], ['respondeu_recente', '+ excluir quem respondeu nos últimos X dias']].forEach(([t, label]) => {
-      const b = fbtn('ed-mini', label, () => { f.filters.push(t === 'respondeu_recente' ? { type: t, days: 7 } : { type: t, label_id: '' }); renderDisparos(); });
-      b.disabled = !v2Ready() || f.filters.length >= 10;
-      addF.append(b);
+      const b0 = fbtn('ed-mini', label, () => { f.filters.push(t === 'respondeu_recente' ? { type: t, days: 7 } : { type: t, source: 'crm', label_id: '' }); renderDisparos(); });
+      b0.disabled = !v2Ready() || f.filters.length >= 10;
+      addF.append(b0);
     });
-    sec.append(addF);
-    const recent = numberInput(f.skip_recent_days, 0, 90, 'Pular quem recebeu envio automático nos últimos (dias)');
-    recent.addEventListener('input', () => { f.skip_recent_days = Math.floor(Number(recent.value) || 0); });
-    sec.append(schedField('Excluir quem recebeu qualquer envio automático nos últimos (dias)', recent));
-    const nl = el('label', 'sc-radio');
-    const nc = el('input');
-    nc.type = 'checkbox';
-    nc.checked = f.allow_new_chats;
-    nc.addEventListener('change', () => { f.allow_new_chats = nc.checked; });
-    nl.append(nc, 'Permitir conversas novas');
-    sec.append(nl, el('div', 'crm-intro', 'Desligado (recomendado): só conversas já carregadas no WhatsApp Web; as outras ficam "pulado". Ligado: manda também para números que nunca falaram com você, depois de conferir que o número tem WhatsApp.'));
+    sec.append(addF, el('div', 'crm-intro', 'Quem tem a etiqueta "Não enviar" (CRM ou WhatsApp) nunca recebe.'));
+    if (f.audience !== 'whatsapp') {
+      const nl = el('label', 'sc-radio');
+      const nc = el('input');
+      nc.type = 'checkbox';
+      nc.checked = f.allow_new_chats;
+      nc.addEventListener('change', () => { f.allow_new_chats = nc.checked; });
+      nl.append(nc, 'Permitir conversas novas');
+      sec.append(nl, el('div', 'crm-intro', 'Desligado (recomendado): só conversas já carregadas no WhatsApp Web; as outras ficam "pulado". Ligado: manda também para números que nunca falaram com você, depois de conferir que o número tem WhatsApp.'));
+    }
 
-    // Depois de enviar
+    // Depois de enviar (CRM e WhatsApp)
     sec.append(el('div', 'crm-sub', 'Depois de enviar (só para quem recebeu com sucesso)'));
-    f.after_actions.forEach((a, i) => {
+    f.after_actions.forEach((x, i) => {
       const row = el('div', 'fw-variant');
       const type = el('select', 'ed-cat');
       type.setAttribute('aria-label', `Depois de enviar ${i + 1}`);
-      Object.entries(AFTER_LABEL).forEach(([k, t]) => { const o = el('option', null, `${i + 1}. ${t}`); o.value = k; o.selected = a.type === k; type.append(o); });
-      type.addEventListener('change', () => { a.type = type.value; renderDisparos(); });
-      row.append(type, dpLabelPicker(a.label_id, (v) => { a.label_id = v; }, `Etiqueta depois de enviar ${i + 1}`));
+      Object.entries(AFTER_LABEL).forEach(([kk, t]) => {
+        const o = el('option', null, `${i + 1}. ${t}`);
+        o.value = kk;
+        o.selected = x.type === kk;
+        o.disabled = (kk.endsWith('_wa') && !v214Ready()) || (kk === 'mover' && f.audience === 'whatsapp');
+        type.append(o);
+      });
+      type.addEventListener('change', () => { x.type = type.value; x.label_id = ''; x.wa_label_id = ''; renderDisparos(); });
+      row.append(type);
+      const isWa = x.type.endsWith('_wa');
+      const isRemove = x.type === 'remover_etiqueta' || x.type === 'remover_etiqueta_wa';
+      if (isWa) row.append(dpTypedLabel('whatsapp', x.wa_label_id, (v) => { x.wa_label_id = v; }, `Etiqueta depois de enviar ${i + 1}`, { all: isRemove }));
+      else if (isRemove) row.append(dpTypedLabel('crm', x.label_id, (v) => { x.label_id = v; }, `Etiqueta depois de enviar ${i + 1}`, { all: true }));
+      else row.append(dpLabelPicker(x.label_id, (v) => { x.label_id = v; }, `Etiqueta depois de enviar ${i + 1}`));
       const ctl = el('div', 'ed-add');
       const up = fbtn('ed-mini', '↑', () => { f.after_actions.splice(i - 1, 0, f.after_actions.splice(i, 1)[0]); renderDisparos(); });
       up.disabled = i === 0;
@@ -6994,7 +7230,31 @@
     });
     const addA = fbtn('ed-mini', '+ Ação depois de enviar', () => { f.after_actions.push({ type: 'adicionar_etiqueta', label_id: '' }); renderDisparos(); });
     addA.disabled = !v2Ready() || f.after_actions.length >= 10;
-    sec.append(addA);
+    sec.append(addA, el('div', 'crm-intro', '"Não enviar" nunca é tirada.'));
+
+    // Velocidade e segurança (2.14.0)
+    sec.append(dpSpeedSection(f));
+
+    // Opções avançadas: "excluir quem recebeu qualquer envio automático nos últimos X dias" (desligado por padrão)
+    const adv = el('details', 'dp-adv');
+    adv.open = f.advanced;
+    adv.addEventListener('toggle', () => { f.advanced = adv.open; });
+    adv.append(el('summary', 'crm-sub', 'Opções avançadas'));
+    const rl = el('label', 'sc-radio');
+    const rc = el('input');
+    rc.type = 'checkbox';
+    rc.className = 'dp-recent-on';
+    rc.checked = f.skip_recent_days > 0;
+    rc.addEventListener('change', () => { f.skip_recent_days = rc.checked ? 7 : 0; renderDisparos(); });
+    rl.append(rc, ' Excluir quem recebeu qualquer envio automático nos últimos…');
+    adv.append(rl);
+    if (f.skip_recent_days > 0) {
+      const recent = numberInput(f.skip_recent_days, 1, 90, 'Excluir quem recebeu envio automático nos últimos (dias)');
+      recent.addEventListener('input', () => { f.skip_recent_days = Math.max(1, Math.floor(Number(recent.value) || 0)); });
+      adv.append(el('div', 'sc-row'), recent, el('span', null, ' dias'));
+    }
+    adv.append(el('div', 'crm-intro', 'Serve para não somar follow-up + disparo para a mesma pessoa no mesmo dia. Desligado, quem recebeu um follow-up também recebe o disparo. "Não enviar" continua sempre fora.'));
+    sec.append(adv);
 
     const actions = el('div', 'ed-add');
     const save = fbtn('bbtn primary', f.saving ? 'Salvando…' : 'Salvar e revisar', () => saveCampaignForm());
@@ -7002,6 +7262,100 @@
     actions.append(save, fbtn('bbtn', 'Simular', () => simulateCampaignForm()), fbtn('bbtn', 'Cancelar', () => { dp.view = 'list'; renderDisparos(); }));
     sec.append(actions, el('div', `ed-msg dp-msg${f.err ? ' err' : ''}`, f.msg));
     dtabEl.append(sec);
+  }
+
+  // "Velocidade e segurança": Bem seguro / Normal / Personalizado, limite duro, aviso amarelo e a previsão
+  function dpSpeedSection(f) {
+    const box = el('div', 'dp-speed');
+    box.append(el('div', 'crm-sub', 'Velocidade e segurança'));
+    const sp = f.speed;
+    if (!v214Ready()) { box.append(el('div', 'ed-note', 'Velocidade própria do disparo: atualize o banco. Até lá valem o horário geral e os limites gerais.')); return box; }
+    const r0 = el('div', 'sc-row dp-presets');
+    [['seguro', 'Bem seguro'], ['normal', 'Normal'], ['personalizado', 'Personalizado']].forEach(([p, t]) => {
+      const l = el('label', 'sc-radio');
+      const r = el('input');
+      r.type = 'radio';
+      r.name = 'dp-speed';
+      r.value = p;
+      r.checked = sp.preset === p;
+      r.addEventListener('change', () => { if (p !== 'personalizado') Object.assign(sp, E.CAMP_PRESETS[p]); sp.preset = p; renderDisparos(); });
+      l.append(r, ` ${t}`);
+      r0.append(l);
+    });
+    box.append(r0);
+    if (sp.preset === 'personalizado') {
+      const g = el('div', 'dp-speed-grid');
+      const field = (key, label, min, max) => {
+        const n = numberInput(sp[key], min, max, label);
+        n.addEventListener('change', () => { sp[key] = n.value === '' ? '' : Math.floor(Number(n.value)); renderDisparos(); });
+        g.append(schedField(label, n));
+      };
+      field('min_s', 'Intervalo mínimo (s)', 1, 3600);
+      field('max_s', 'Intervalo máximo (s)', 1, 3600);
+      field('per_hour', 'Máximo por hora', 1, 1000);
+      field('per_day', 'Máximo por dia', 1, 5000);
+      field('pause_min', 'Pausar (minutos)', 0, 240);
+      field('pause_every', 'a cada N envios', 0, 500);
+      box.append(g);
+      // dias e horário próprios (ou o geral)
+      const sc = sp.schedule || (sp.schedule = { mode: 'geral' });
+      const hr = el('div', 'sc-row');
+      [['geral', `Horário geral (${E.scheduleText(motor.state.settings)})`], ['personalizado', 'Dias e horário próprios']].forEach(([m, t]) => {
+        const l = el('label', 'sc-radio');
+        const r = el('input');
+        r.type = 'radio';
+        r.name = 'dp-sched';
+        r.value = m;
+        r.checked = (sc.mode || 'geral') === m;
+        r.addEventListener('change', () => {
+          if (m === 'geral') sp.schedule = { mode: 'geral' };
+          else { const gs = motor.state.settings || {}; sp.schedule = { mode: 'personalizado', days: [...(gs.business_days || [1, 2, 3, 4, 5])], windows: [{ start: String(gs.business_start || '09:00').slice(0, 5), end: String(gs.business_end || '18:00').slice(0, 5) }] }; }
+          renderDisparos();
+        });
+        l.append(r, ` ${t}`);
+        hr.append(l);
+      });
+      box.append(hr);
+      if (sc.mode === 'personalizado') {
+        const days = el('div', 'vb-days');
+        DP_DAYS.forEach((nm, d) => {
+          const l = el('label', 'vb-day');
+          const c = el('input');
+          c.type = 'checkbox';
+          c.checked = (sc.days || []).includes(d);
+          c.setAttribute('aria-label', `Disparo: ${nm}`);
+          c.addEventListener('change', () => { sc.days = c.checked ? [...new Set([...(sc.days || []), d])].sort() : (sc.days || []).filter((x) => x !== d); renderDisparos(); });
+          l.append(c, nm);
+          days.append(l);
+        });
+        box.append(days);
+        (sc.windows || []).forEach((w, i) => {
+          const r = el('div', 'sc-row');
+          const t1 = el('input', 'ed-title vb-time');
+          t1.type = 'time';
+          t1.value = w.start;
+          t1.setAttribute('aria-label', `Disparo, faixa ${i + 1}: início`);
+          t1.addEventListener('change', () => { w.start = t1.value; renderDisparos(); });
+          const t2 = el('input', 'ed-title vb-time');
+          t2.type = 'time';
+          t2.value = w.end;
+          t2.setAttribute('aria-label', `Disparo, faixa ${i + 1}: fim`);
+          t2.addEventListener('change', () => { w.end = t2.value; renderDisparos(); });
+          r.append(el('span', null, 'das'), t1, el('span', null, 'às'), t2);
+          if (sc.windows.length > 1) r.append(fbtn('ed-mini', '✕', () => { sc.windows.splice(i, 1); renderDisparos(); }));
+          box.append(r);
+        });
+        if ((sc.windows || []).length < 6) box.append(fbtn('ed-mini', '+ outra faixa', () => { sc.windows.push({ start: '14:00', end: '18:00' }); renderDisparos(); }));
+      }
+    }
+    const cut = E.campaignSpeedClamped(sp);
+    box.append(el('div', 'crm-intro dp-speed-text', `${E.campaignSpeedText(sp, motor.state.settings)}.`));
+    box.append(el('div', 'crm-intro', `Limite de segurança, que nenhum disparo passa: intervalo mínimo de ${E.CAMP_HARD.min_s} s, ${E.CAMP_HARD.per_hour} por hora e ${E.CAMP_HARD.per_day} por dia. Os limites por hora/dia contam o disparo SOMADO com as automações e agendados (o maior risco é a soma), e os limites gerais também valem.`));
+    if (cut.length) box.append(el('div', 'vb-warn dp-cut', `⚠ Acima do limite de segurança: vai valer ${cut.join(', ')}.`));
+    if (E.campaignSpeedRisk(sp)) box.append(el('div', 'vb-warn dp-risk', '⚠ Mais rápido que o "Normal": aumenta o risco de o WhatsApp bloquear o número.'));
+    const n = f.audience === 'whatsapp' && typeof f.waCount === 'number' ? f.waCount : null;
+    if (n != null) box.append(el('div', 'fw-count dp-forecast', E.forecastText(n, E.campaignForecast(n, sp, motor.state.settings, Date.now()), Date.now())));
+    return box;
   }
 
   // Sobe os arquivos novos das partes e devolve as partes prontas para gravar
@@ -7029,7 +7383,7 @@
   }
 
   async function campaignPayload(f, { upload = true } = {}) {
-    if (f.label_id && String(JSON.stringify([f.after_actions, f.filters])).includes('"new:')) throw new Error('Crie as etiquetas que faltam (botão "Criar agora").');
+    if (String(JSON.stringify([f.after_actions, f.filters])).includes('"new:')) throw new Error('Crie as etiquetas que faltam (botão "Criar agora").');
     let start_at = null;
     if (f.when === 'data') {
       if (!f.date || !f.time) throw new Error('Escolha a data e a hora do início.');
@@ -7043,11 +7397,51 @@
       parts = upload ? await partsForSave(f.parts, dpMsg) : f.parts.map((p, i) => (Rich.isRich(p.type) ? richPartForSave(p, i) : { type: p.type, body: p.type === 'audio' ? null : p.body, file_url: p.file_url || (p.file ? 'pendente' : null), file_name: p.file_name, file_size: p.file_size, wait_seconds: p.wait_seconds, typing_seconds: p.typing_seconds }));
     }
     const v2 = v2Ready();
+    const v214 = v214Ready();
+    const wa = v214 && f.audience === 'whatsapp';
+    if (wa && !f.wa_label_id) throw new Error('Escolha a etiqueta do WhatsApp.');
+    const sp = f.speed;
+    const speed = !v214 ? undefined : sp.preset === 'personalizado'
+      ? { preset: 'personalizado', min_s: sp.min_s, max_s: sp.max_s, per_hour: sp.per_hour, per_day: sp.per_day, pause_every: sp.pause_every || 0, pause_min: sp.pause_every ? sp.pause_min : 0, ...(sp.schedule && sp.schedule.mode === 'personalizado' ? { schedule: sp.schedule } : {}) }
+      : { preset: sp.preset };
+    const V = f.variants;
+    const variants = v214 && V.list.length ? { mode: V.mode, list: V.list.map((x) => ({ text: x.text })), ...(V.mode === 'porcentagem' ? { weights: V.weights.slice(0, V.list.length + 1) } : {}) } : null;
     return {
-      name: f.name, label_id: f.label_id || null, item_id: exclusive ? null : f.item_id || null, start_at, allow_new_chats: f.allow_new_chats,
+      name: f.name, label_id: wa ? null : f.label_id || null, item_id: exclusive ? null : f.item_id || null, start_at, allow_new_chats: wa ? false : f.allow_new_chats,
       skip_recent_days: f.skip_recent_days,
-      ...(v2 ? { parts, after_actions: f.after_actions.map((a) => ({ type: a.type, label_id: a.label_id || null })), filters: f.filters.map((x) => ({ ...x })) } : {}),
+      ...(v2 ? {
+        parts,
+        after_actions: f.after_actions.map((x) => (x.type.endsWith('_wa') ? { type: x.type, wa_label_id: x.wa_label_id || null } : { type: x.type, label_id: x.label_id || null })),
+        filters: f.filters.map((x) => (x.type === 'respondeu_recente' ? { type: x.type, days: x.days } : x.source === 'whatsapp' ? { type: x.type, source: 'whatsapp', wa_label_id: x.wa_label_id || null } : { type: x.type, label_id: x.label_id || null })),
+      } : {}),
+      ...(v214 ? { audience: wa ? { source: 'whatsapp', wa_label_id: f.wa_label_id } : null, speed, variants } : {}),
     };
+  }
+
+  // 2.14.0: o que só o WhatsApp sabe (o servidor não vê as etiquetas do WhatsApp): TODAS as conversas da
+  // etiqueta do público e dos filtros (inclusive não carregadas e arquivadas) e quem está em "Não enviar"
+  async function campaignWaCtx(c) {
+    const needs = isWaAudience(c) || (c.filters || []).some((x) => x.source === 'whatsapp');
+    if (!Array.isArray(state.waLabels)) await refreshBar().catch(() => {});
+    const labels = Array.isArray(state.waLabels) ? state.waLabels : null;
+    if (!labels) { if (needs) throw new Error('o WhatsApp ainda não respondeu (etiquetas do WhatsApp indisponíveis)'); return null; }
+    const read = async (id) => { const r = await waRequest('labelAllChats', { labelId: String(id) }, { timeout: 20000 }); return (r && r.chats) || []; };
+    const keysOf = (list) => list.flatMap((x) => [x.id, x.phone ? `${x.phone}@c.us` : null]).filter(Boolean);
+    const out = { sets: {}, noSend: [], names: {} };
+    try {
+      if (isWaAudience(c)) out.audience = (await read(c.audience.wa_label_id)).map((x) => ({ id: x.id, name: x.name || null, phone: x.phone || null }));
+      for (const x of c.filters || []) {
+        if (x.source !== 'whatsapp' || out.sets[x.wa_label_id]) continue;
+        out.sets[x.wa_label_id] = keysOf(await read(x.wa_label_id));
+        out.names[x.wa_label_id] = (waLabelById(String(x.wa_label_id)) || {}).name || 'do WhatsApp';
+      }
+      const no = labels.find(isNoSendWa);
+      if (no) out.noSend = keysOf(await read(no.id));
+    } catch (e) {
+      if (needs) throw new Error(`não consegui ler as etiquetas do WhatsApp (${e.message})`);
+      return null;
+    }
+    return out;
   }
 
   async function saveCampaignForm() {
@@ -7122,7 +7516,7 @@
       if (t.status !== 'pendente') return { ...t, send: false };
       const info = loaded[t.chat_id];
       if (!info) {
-        if (!campaign.allow_new_chats || !/^\d{8,15}@c\.us$/.test(t.chat_id || '')) return { ...t, send: false, reason: 'conversa não carregada' };
+        if (!(isWaAudience(campaign) || campaign.allow_new_chats) || !/^\d{8,15}@c\.us$/.test(t.chat_id || '')) return { ...t, send: false, reason: 'conversa não carregada' };
       }
       if (replied && info && info.lastIn && Date.now() - info.lastIn * 1000 <= replied.days * 86400000) return { ...t, send: false, reason: `respondeu nos últimos ${replied.days} dias` };
       return { ...t, send: true, preview: firstPartPreview(campaign, E.firstNameOf(t.name)), newChat: !info };
@@ -7135,7 +7529,7 @@
     dpMsg('Simulando…');
     try {
       const campaign = await campaignPayload(f, { upload: false });
-      const pv = await call('simulateCampaign', { campaign: { ...campaign, parts: campaign.parts && campaign.parts.map((p) => (p.file_url === 'pendente' ? { ...p, file_url: null, type: 'texto', body: p.body || `[${p.type}]` } : p)) } });
+      const pv = await call('simulateCampaign', { campaign: { ...campaign, parts: campaign.parts && campaign.parts.map((p) => (p.file_url === 'pendente' ? { ...p, file_url: null, type: 'texto', body: p.body || `[${p.type}]` } : p)) }, wa: await campaignWaCtx(campaign) });
       dp.sim = { from: 'new', campaign, ...(await runSimulation(campaign, pv)) };
       dp.view = 'simulate';
       renderDisparos();
@@ -7146,7 +7540,7 @@
 
   async function simulateSaved(c) {
     try {
-      const pv = await call('previewCampaign', { id: c.id });
+      const pv = await call('previewCampaign', { id: c.id, wa: await campaignWaCtx(c) });
       dp.sim = { from: 'confirm', campaign: c, ...(await runSimulation(c, pv)) };
       dp.view = 'simulate';
     } catch (e) {
@@ -7164,7 +7558,7 @@
     const skip = sim.rows.filter((r) => !r.send);
     const box = el('div', 'fw-test');
     box.append(el('div', null, `Total na etiqueta: ${sim.total} · vão receber: ${sim.sending} · pulados: ${skip.length}`));
-    box.append(el('div', null, `Tempo estimado pelos limites: ${E.estimateText(sim.sending, motor.state.settings)}`));
+    box.append(el('div', 'dp-forecast', E.forecastText(sim.sending, E.campaignForecast(sim.sending, sim.campaign.speed, motor.state.settings, Date.now()), Date.now())));
     sec.append(box);
     sim.rows.slice(0, 200).forEach((r) => {
       const line = el('div', `sc-item fw-sim ${r.send ? 'ok' : 'skip'}`);
@@ -7185,7 +7579,8 @@
     dp.confirm = { campaign: c, loading: true };
     renderDisparos();
     try {
-      const pv = await call('previewCampaign', { id: c.id });
+      const wa = await campaignWaCtx(c);
+      const pv = await call('previewCampaign', { id: c.id, wa });
       const chatIds = pv.chatIds || [];
       const loaded = new Set();
       for (let i = 0; i < chatIds.length; i += 500) {
@@ -7195,9 +7590,9 @@
         } catch { /* sem WhatsApp pronto: conta como não carregada */ }
       }
       const notLoaded = chatIds.filter((id) => !loaded.has(id));
-      const newOk = c.allow_new_chats ? notLoaded.filter((id) => /@c\.us$/.test(id)).length : 0;
+      const newOk = c.allow_new_chats || isWaAudience(c) ? notLoaded.filter((id) => /@c\.us$/.test(id)).length : 0;
       const notLoadedSkip = notLoaded.length - newOk;
-      dp.confirm = { campaign: c, loading: false, pv, loaded: loaded.size, newOk, notLoadedSkip, sending: loaded.size + newOk };
+      dp.confirm = { campaign: c, loading: false, pv, wa, loaded: loaded.size, newOk, notLoadedSkip, sending: loaded.size + newOk };
     } catch (e) {
       dp.confirm = { campaign: c, loading: false, error: e.message };
     }
@@ -7216,34 +7611,41 @@
       return;
     }
     const pv = cf.pv;
+    const audName = isWaAudience(c) ? `do WhatsApp ${(waLabelById(String(c.audience.wa_label_id)) || {}).name || ''}`.trim() : labelName(c.label_id);
     const lines = [
-      `Na etiqueta ${labelName(c.label_id)}: ${pv.total} contato${pv.total === 1 ? '' : 's'}`,
-      `Vão receber: ${cf.sending}${cf.newOk ? ` (${cf.newOk} em conversa nova, se o número tiver WhatsApp)` : ''}`,
+      `Na etiqueta ${audName}: ${pv.total} contato${pv.total === 1 ? '' : 's'}`,
+      `Vão receber: ${cf.sending}${cf.newOk ? (isWaAudience(c) ? ` (${cf.newOk} em conversa que não está carregada agora)` : ` (${cf.newOk} em conversa nova, se o número tiver WhatsApp)`) : ''}`,
     ];
     const skips = Object.entries(pv.skipped || {});
     if (cf.notLoadedSkip) skips.push(['conversa não carregada no WhatsApp Web', cf.notLoadedSkip]);
     const skipTotal = skips.reduce((a, [, n]) => a + n, 0);
     lines.push(`Pulados: ${skipTotal}${skips.length ? ` (${skips.map(([r, n]) => `${r}: ${n}`).join('; ')})` : ''}`);
     lines.push(`Mensagem: ${Array.isArray(c.parts) && c.parts.length ? `exclusiva deste disparo (${c.parts.length} parte${c.parts.length === 1 ? '' : 's'})` : itemTitle(c.item_id)}`);
-    lines.push(`Tempo estimado pelos limites: ${E.estimateText(cf.sending, motor.state.settings)}`);
+    if (E.variantCount(c.variants) > 1) lines.push(`Variações: ${E.variantCount(c.variants)} (${{ alternada: 'alternadas', aleatoria: 'aleatórias', porcentagem: `por porcentagem: ${(c.variants.weights || []).map((w) => `${w}%`).join(' / ')}` }[c.variants.mode] || 'alternadas'})`);
+    lines.push(`Velocidade: ${E.campaignSpeedText(c.speed, motor.state.settings)}`);
+    lines.push(`Previsão: ${E.forecastText(cf.sending, E.campaignForecast(cf.sending, c.speed, motor.state.settings, c.start_at && Date.parse(c.start_at) > Date.now() ? Date.parse(c.start_at) : Date.now()), Date.now())}`);
     lines.push(c.start_at && Date.parse(c.start_at) > Date.now() ? `Começa em ${schedWhen(c.start_at)} (no horário comercial)` : 'Começa agora (no horário comercial)');
     const box = el('div', 'fw-test');
     lines.forEach((l) => box.append(el('div', null, l)));
-    sec.append(box, el('div', 'ed-note', MASS_WARNING));
+    sec.append(box);
+    if (E.campaignSpeedRisk(c.speed)) sec.append(el('div', 'vb-warn dp-risk', '⚠ Mais rápido que o "Normal": aumenta o risco de o WhatsApp bloquear o número.'));
+    sec.append(el('div', 'ed-note', MASS_WARNING));
     const actions = el('div', 'ed-add');
-    const go = fbtn('bbtn primary', dp.busy ? 'Iniciando…' : 'Iniciar disparo', () => startCampaignNow(c));
+    const go = fbtn('bbtn primary', dp.busy ? 'Iniciando…' : 'Iniciar disparo', () => startCampaignNow(c, cf.wa));
     go.disabled = dp.busy || !cf.sending;
     actions.append(go, fbtn('bbtn', 'Simular', () => simulateSaved(c)), fbtn('bbtn', 'Voltar', () => { dp.view = 'list'; refreshDisparos(); }));
     sec.append(actions);
     dtabEl.append(sec);
   }
 
-  async function startCampaignNow(c) {
+  async function startCampaignNow(c, waRead) {
     if (dp.busy) return;
     dp.busy = true;
     renderDisparos();
     try {
-      const r = await call('startCampaign', { id: c.id });
+      // a foto é tirada agora: lê o WhatsApp de novo (a etiqueta pode ter mudado desde a confirmação)
+      const wa = await campaignWaCtx(c).catch((e) => { if (waRead === undefined) throw e; return waRead; });
+      const r = await call('startCampaign', { id: c.id, wa });
       dp.msg = r.status === 'agendada' ? `Disparo agendado: ${r.willSend} para enviar.` : `Disparo iniciado: ${r.willSend} para enviar, um por vez.`;
       dp.msgErr = false;
     } catch (e) {
@@ -7261,8 +7663,11 @@
     dp.detail = { campaign: c, loading: true, targets: prev, hasMore: false };
     renderDisparos();
     try {
-      const r = await call('campaignTargets', { id: c.id, offset: prev.length, limit: 200 });
-      dp.detail = { campaign: c, loading: false, targets: [...prev, ...r.targets], hasMore: r.hasMore };
+      const [r, vs] = await Promise.all([
+        call('campaignTargets', { id: c.id, offset: prev.length, limit: 200 }),
+        more || E.variantCount(c.variants) <= 1 ? Promise.resolve(null) : call('campaignVariantStats', { id: c.id }).catch(() => null),
+      ]);
+      dp.detail = { campaign: c, loading: false, targets: [...prev, ...r.targets], hasMore: r.hasMore, variants: more && dp.detail ? dp.detail.variants : vs };
     } catch (e) {
       dp.detail = { campaign: c, loading: false, targets: prev, error: e.message };
     }
@@ -7274,6 +7679,15 @@
     const sec = el('section', 'crmsec');
     sec.append(el('div', 'wt-head', `ALVOS: ${d.campaign.name.toUpperCase()}`));
     sec.append(el('div', 'fw-count', campaignProgress(dp.list.find((x) => x.id === d.campaign.id) || d.campaign)));
+    const waitWhy = campWait.get(d.campaign.id);
+    if (waitWhy && d.campaign.status === 'rodando') sec.append(el('div', 'crm-intro dp-wait', `Esperando: ${waitWhy}.`));
+    // 2.14.0: resultado por variação
+    if (d.variants && d.variants.available && d.variants.rows.length) {
+      const vt = el('div', 'fw-test dp-vstats');
+      vt.append(el('div', 'crm-sub', 'Por variação'));
+      d.variants.rows.forEach((v) => vt.append(el('div', 'dp-vrow', `Variação ${v.variant + 1}: ${v.sent} enviada${v.sent === 1 ? '' : 's'} · ${v.repliedPct == null ? '—' : `${Math.round(v.repliedPct * 100)}%`} responderam · ${v.sales} venda${v.sales === 1 ? '' : 's'}${v.revenue ? ` (R$ ${v.revenue.toFixed(2).replace('.', ',')})` : ''}`)));
+      sec.append(vt);
+    }
     if (d.error) sec.append(el('div', 'ed-msg err', d.error));
     if (!d.loading && !d.targets.length) sec.append(el('div', 'lt-none', 'Nenhum alvo.'));
     d.targets.forEach((t) => {

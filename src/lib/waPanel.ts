@@ -62,6 +62,7 @@ export interface ReplyRow { chat_id: string; replied_at: string; send_log_id: st
 export interface SendRow {
   id: string; chat_id: string | null; created_at: string; source: string; source_id: string | null; item_id: string | null;
   status: string; origin?: string | null; follow_step?: number | null;
+  variant?: number | null; // 2.14.0: variação do disparo (0 = a mensagem; 1.. = as variações)
 }
 export interface SaleRowP { id: string; sale_date: string; created_at?: string | null; total_sale_price: number | string | null; customer_phone: string | null; wa_chat_id?: string | null; origin?: string | null }
 export interface AttributionRow { chat_id: string; phone: string | null; ad_id: string | null; ad_title: string | null; first_message_at: string | null }
@@ -381,6 +382,11 @@ function groupSends(input: PanelInput, idx: Index, r: Range, keyOf: (s: SendRow)
     id: g.id, kind: g.kind, name: nameOf(g.id, g.kind), sent: g.sent, replied: g.replied, repliedPct: pct(g.replied, g.sent),
     medianMinutes: median(g.minutes), sales: g.sales.size, revenue: sumSales([...g.sales.values()]),
   })).sort((a, b) => b.sent - a.sent || b.revenue - a.revenue);
+}
+
+// 2.14.0: disparos por variação (id = "<disparo>#<variação>")
+export function campaignVariantTable(input: PanelInput, idx: Index, r: Range): SendGroupRow[] {
+  return groupSends(input, idx, r, (s) => (originOf(s) === 'disparo' && s.variant != null ? { id: `${s.source_id || '(sem id)'}#${Number(s.variant) || 0}`, kind: 'variacao' } : null), (id) => `Variação ${Number(id.split('#')[1]) + 1}`);
 }
 
 export function quickMessageTable(input: PanelInput, idx: Index, r: Range): SendGroupRow[] {
