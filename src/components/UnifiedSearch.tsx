@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { Search, Plus } from 'lucide-react';
 import { Product, Accessory } from '../lib/supabase';
+import { searchItems, highlightParts, SearchHit } from '../lib/productSearch';
 
 interface UnifiedSearchItem {
   type: 'product' | 'accessory';
   id: string;
-  displayName: string;
+  label: string;
+  createdAt?: string | null;
   secondaryInfo: string;
   data: Product | Accessory;
 }
@@ -28,7 +30,7 @@ export default function UnifiedSearch({
   isHighlighted = false,
 }: UnifiedSearchProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [filteredItems, setFilteredItems] = useState<UnifiedSearchItem[]>([]);
+  const [filteredItems, setFilteredItems] = useState<SearchHit<UnifiedSearchItem>[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -39,37 +41,28 @@ export default function UnifiedSearch({
       return;
     }
 
-    const term = searchTerm.toLowerCase();
-    const items: UnifiedSearchItem[] = [];
+    // Busca por pedaços de palavras (src/lib/productSearch.ts, a mesma do 💰 da extensão): "pul ros go 38" acha
+    // "Pulseira Aço Milanese Rose Gold 38/41mm"; produto pelo "modelo cor", acessório pelo nome
+    const candidates: UnifiedSearchItem[] = [
+      ...products.map((product): UnifiedSearchItem => ({
+        type: 'product',
+        id: product.id,
+        label: `${product.model} ${product.color || ''}`.trim(),
+        createdAt: product.created_at,
+        secondaryInfo: `Estoque: ${product.current_stock} | Custo: R$ ${product.cost.toFixed(2)}`,
+        data: product,
+      })),
+      ...accessories.map((accessory): UnifiedSearchItem => ({
+        type: 'accessory',
+        id: accessory.id,
+        label: accessory.name,
+        createdAt: accessory.created_at,
+        secondaryInfo: `Custo: R$ ${accessory.cost.toFixed(2)}`,
+        data: accessory,
+      })),
+    ];
 
-    products.forEach((product) => {
-      const matchesModel = product.model.toLowerCase().includes(term);
-      const matchesColor = product.color.toLowerCase().includes(term);
-
-      if (matchesModel || matchesColor) {
-        items.push({
-          type: 'product',
-          id: product.id,
-          displayName: `${product.model} ${product.color}`,
-          secondaryInfo: `Estoque: ${product.current_stock} | Custo: R$ ${product.cost.toFixed(2)}`,
-          data: product,
-        });
-      }
-    });
-
-    accessories.forEach((accessory) => {
-      if (accessory.name.toLowerCase().includes(term)) {
-        items.push({
-          type: 'accessory',
-          id: accessory.id,
-          displayName: accessory.name,
-          secondaryInfo: `Custo: R$ ${accessory.cost.toFixed(2)}`,
-          data: accessory,
-        });
-      }
-    });
-
-    setFilteredItems(items);
+    setFilteredItems(searchItems(candidates, searchTerm));
     setSelectedIndex(0);
   }, [searchTerm, products, accessories]);
 
@@ -90,7 +83,7 @@ export default function UnifiedSearch({
       if (hasManualOption) {
         handleAddManualItem();
       } else if (filteredItems[selectedIndex]) {
-        handleAddItem(filteredItems[selectedIndex]);
+        handleAddItem(filteredItems[selectedIndex].item);
       }
     }
   };
@@ -146,7 +139,7 @@ export default function UnifiedSearch({
 
       {(filteredItems.length > 0 || (onAddManualItem && searchTerm.trim())) && (
         <div className="mt-3 bg-gray-700 rounded-lg border border-gray-600 max-h-96 overflow-y-auto">
-          {filteredItems.map((item, index) => (
+          {filteredItems.map(({ item, ranges }, index) => (
             <button
               key={`${item.type}-${item.id}`}
               type="button"
@@ -158,7 +151,15 @@ export default function UnifiedSearch({
               <div className="flex justify-between items-center">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-white font-medium">{item.displayName}</span>
+                    <span className="text-white">
+                      {highlightParts(item.label, ranges).map((part, i) =>
+                        part.bold ? (
+                          <strong key={i} className="font-bold text-orange-300">{part.text}</strong>
+                        ) : (
+                          <span key={i}>{part.text}</span>
+                        )
+                      )}
+                    </span>
                     <span
                       className={`text-xs px-2 py-0.5 rounded ${
                         item.type === 'product'

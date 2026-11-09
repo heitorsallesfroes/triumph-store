@@ -847,6 +847,8 @@
       .vd-results { display: flex; flex-direction: column; gap: 4px ; }
       .vd-prod { text-align: left; padding: 4px 8px ; border-radius: var(--r-sm) ; border: 1px solid var(--border); background: var(--card); font-size: var(--fs-2); }
       .vd-prod:hover { border-color: var(--accent); }
+      .vd-prod.vd-sel { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+      .vd-hit { font-weight: 700; }
       .vd-total { font-size: var(--fs-3); }
       /* 2.12.3: formulário igual à Nova Venda do ERP, compacto, com seções recolhíveis */
       .vd-form { gap: 6px ; }
@@ -9334,39 +9336,68 @@
       search.placeholder = 'Digite modelo, cor ou nome do acessório...';
       search.setAttribute('aria-label', 'Buscar produto, acessório ou item manual');
       const results = el('div', 'vd-results');
-      const norm = (v) => globalThis.TspEngine.stripAccents(String(v || '')).toLowerCase();
+      // 2.12.7: busca por pedaços de palavras (product-search.js, a mesma da Nova Venda do ERP): "pul ros go 38" acha
+      // "Pulseira Aço Milanese - Rose Gold 38/41mm"; produto pelo "modelo - cor", acessório pelo nome. Enter adiciona
+      // o marcado (o 1º; ↑↓ trocam), limpa a busca e o cursor volta para ela.
+      const added = () => { f.search = ''; f.searchFocus = true; renderVendas(); };
+      let sel = 0;
+      const mark = () => [...results.querySelectorAll('button')].forEach((b, i) => { b.classList.toggle('vd-sel', i === sel); b.setAttribute('aria-selected', i === sel ? 'true' : 'false'); });
+      const labelled = (cls, prefix, label, ranges, suffix, onClick) => {
+        const b = fbtn(cls, prefix, onClick);
+        globalThis.TspSearch.highlightParts(label, ranges).forEach((part) => b.append(part.bold ? el('b', 'vd-hit', part.text) : document.createTextNode(part.text)));
+        if (suffix) b.append(document.createTextNode(suffix));
+        return b;
+      };
       const showResults = () => {
         results.textContent = '';
-        const q = norm(f.search).trim();
-        if (!q) return;
-        const prods = (cat.products || []).filter((p) => norm(p.model).includes(q) || norm(p.color).includes(q)).slice(0, 8);
-        const accs = (cat.accessories || []).filter((a) => norm(a.name).includes(q)).slice(0, 5);
-        prods.forEach((p) => results.append(fbtn('vd-prod', `${productLabelErp(p)} · estoque ${p.current_stock} · ${TS.money(p.price)}`, () => {
-          const ex = f.items.find((x) => x.product_id === p.id);
-          if (ex) ex.quantity += 1;
-          // 2.10.5: 1º produto com o valor da compra do 📈
-          else f.items.push({ product_id: p.id, quantity: 1, unit_price: f.targetValue && !f.items.length ? f.targetValue : Number(p.price) || 0, unit_cost: Number(p.cost) || 0 });
-          f.search = '';
-          renderVendas();
-        })));
-        accs.forEach((a) => results.append(fbtn('vd-prod vd-acc', `Acessório: ${a.name} · custo ${TS.money(a.cost)}`, () => {
-          const ex = f.accessories.find((x) => x.accessory_id === a.id);
-          if (ex) ex.quantity += 1; else f.accessories.push({ accessory_id: a.id, quantity: 1, cost: Number(a.cost) || 0 });
-          f.search = '';
-          renderVendas();
-        })));
-        if (!prods.length && !accs.length) {
+        sel = 0;
+        if (!f.search.trim()) return;
+        const cands = [
+          ...(cat.products || []).map((p) => ({ kind: 'p', label: productLabelErp(p), createdAt: p.created_at, row: p })),
+          ...(cat.accessories || []).map((a) => ({ kind: 'a', label: String(a.name || ''), createdAt: a.created_at, row: a })),
+        ];
+        const hits = globalThis.TspSearch ? globalThis.TspSearch.searchItems(cands, f.search, { limit: 12 }) : [];
+        hits.forEach(({ item, ranges }) => {
+          if (item.kind === 'p') {
+            const p = item.row;
+            results.append(labelled('vd-prod', '', item.label, ranges, ` · estoque ${p.current_stock} · ${TS.money(p.price)}`, () => {
+              const ex = f.items.find((x) => x.product_id === p.id);
+              if (ex) ex.quantity += 1;
+              // 2.10.5: 1º produto com o valor da compra do 📈
+              else f.items.push({ product_id: p.id, quantity: 1, unit_price: f.targetValue && !f.items.length ? f.targetValue : Number(p.price) || 0, unit_cost: Number(p.cost) || 0 });
+              added();
+            }));
+          } else {
+            const a = item.row;
+            results.append(labelled('vd-prod vd-acc', 'Acessório: ', item.label, ranges, ` · custo ${TS.money(a.cost)}`, () => {
+              const ex = f.accessories.find((x) => x.accessory_id === a.id);
+              if (ex) ex.quantity += 1; else f.accessories.push({ accessory_id: a.id, quantity: 1, cost: Number(a.cost) || 0 });
+              added();
+            }));
+          }
+        });
+        if (!hits.length) {
           results.append(fbtn('vd-prod vd-manual', `Adicionar manualmente: "${f.search.trim()}"`, () => {
             f.manual.push({ name: f.search.trim().slice(0, 100), price: 0, cost: 0, quantity: 1 });
-            f.search = '';
-            renderVendas();
+            added();
           }));
         }
+        mark();
       };
       search.addEventListener('input', () => { f.search = search.value; showResults(); });
-      search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const b = results.querySelector('button'); if (b) b.click(); } });
+      search.addEventListener('keydown', (e) => {
+        const btns = [...results.querySelectorAll('button')];
+        if (!btns.length) return;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + btns.length) % btns.length;
+          mark();
+          btns[sel].scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'Enter') { e.preventDefault(); (btns[sel] || btns[0]).click(); }
+      });
       body.append(search, results);
       showResults();
+      if (f.searchFocus) { f.searchFocus = false; setTimeout(() => { if (search.isConnected) search.focus(); }, 0); }
 
       const subtotal = (n) => el('div', 'vd-sub', TS.money(n));
       // Produtos selecionados: Qtd · Custo (R$) · Preço venda (R$) · subtotal

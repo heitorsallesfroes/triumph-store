@@ -2730,8 +2730,8 @@
   // cidades, bairros, taxas)
   async function erpCatalog() {
     const [products, accessories, motoboys, suppliers, cities, neighborhoods, fees, originAvailable] = await Promise.all([
-      rest('products?select=id,model,color,category,price,cost,current_stock&order=model.asc&limit=5000'),
-      rest('accessories?select=id,name,cost&order=name.asc&limit=2000'),
+      rest('products?select=id,model,color,category,price,cost,current_stock,created_at&order=model.asc&limit=5000'),
+      rest('accessories?select=id,name,cost,created_at&order=name.asc&limit=2000'),
       rest('motoboys?select=id,name&order=name.asc'),
       rest('suppliers?select=id,name&order=name.asc&limit=2000').catch(() => []), // 2.12.3
       rest('cities?select=id,name&order=name.asc&limit=5000'),

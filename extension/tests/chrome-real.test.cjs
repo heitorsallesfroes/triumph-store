@@ -843,11 +843,12 @@ async function main() {
     fake.sales = [];
     fake.cep = [];
     const CH = '5521987654321@c.us';
-    const PA = uuid(); const PB = uuid(); const AC = uuid(); const SUPP = uuid();
+    const PA = uuid(); const PB = uuid(); const PC = uuid(); const AC = uuid(); const SUPP = uuid();
     Object.assign(fake.db, {
       products: [
         { id: PA, model: 'Smartwatch Ultra', color: 'Preto', category: 'smartwatch', price: 499.9, cost: 210, current_stock: 4, tiny_id: null },
         { id: PB, model: 'Pulseira Milanese', color: 'Prata', category: 'pulseira', price: 59.9, cost: 12.5, current_stock: 9, tiny_id: null },
+        { id: PC, model: 'Pulseira Aço Milanese', color: 'Rose Gold 38/41mm', category: 'pulseira', price: 69.9, cost: 14, current_stock: 5, tiny_id: null }, // 2.12.7
       ],
       accessories: [{ id: AC, name: 'Caixa presente', cost: 3.2 }], motoboys: [{ id: uuid(), name: 'João Moto' }], suppliers: [{ id: SUPP, name: 'Fornecedor SP' }],
       cities: [{ id: uuid(), name: 'Niterói' }], neighborhoods: [], system_config: [{ key: 'fee_ea_credit_6', value: '0.0726' }],
@@ -886,6 +887,26 @@ async function main() {
     const setVal = (sel, v, ev = 'input') => q(`const i = sh.querySelector('.vd-form ' + ${JSON.stringify(sel)}); if (!i) return false; i.value = ${JSON.stringify(String(v))}; i.dispatchEvent(new Event(${JSON.stringify(ev)}, { bubbles: true })); await wait(120); return true;`);
     const pick = async (term, text) => { await setVal('.vd-search', term); return q(`const b = [...sh.querySelectorAll('.vd-form .vd-results button')].find((x) => x.textContent.includes(${JSON.stringify(text)})); if (!b) return false; b.click(); await wait(200); return true;`); };
     const added = [await pick('ultra', 'Smartwatch Ultra - Preto'), await pick('milanese', 'Pulseira Milanese - Prata')];
+    // 2.12.7: busca por pedaços ("pul ros go 38") com o achado em negrito; ↑↓ escolhem; Enter adiciona o marcado,
+    // limpa a busca e o cursor volta para ela
+    await setVal('.vd-search', 'pul ros go 38');
+    const srch = await q(`const bs = [...sh.querySelectorAll('.vd-form .vd-results button')];
+      return { texts: bs.map((b) => b.textContent), bold: [...(bs[0] ? bs[0].querySelectorAll('.vd-hit') : [])].map((x) => x.textContent), sel: bs.map((b) => b.classList.contains('vd-sel')) };`);
+    await setVal('.vd-search', 'milanese');
+    const order = await q(`return [...sh.querySelectorAll('.vd-form .vd-results button')].map((b) => b.textContent.split(' · ')[0]);`);
+    const key = (k) => q(`sh.querySelector('.vd-form .vd-search').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true })); await wait(150);
+      return [...sh.querySelectorAll('.vd-form .vd-results button')].findIndex((b) => b.classList.contains('vd-sel'));`);
+    const arrows = [await key('ArrowDown'), await key('ArrowDown'), await key('ArrowUp'), await key('ArrowUp')];
+    await key('Enter');
+    const afterEnter = await q(`const i = sh.querySelector('.vd-form .vd-search');
+      return { value: i.value, focused: sh.activeElement === i, results: sh.querySelectorAll('.vd-form .vd-results button').length, items: [...sh.querySelectorAll('.vd-form .vd-item .sc-who')].map((x) => x.textContent) };`);
+    check('💰 busca por pedaços: "pul ros go 38" acha a Milanese Rose Gold 38/41 com o achado em negrito; ↑↓ escolhem; Enter adiciona o marcado, limpa a busca e o cursor volta para ela',
+      srch.texts.length === 1 && srch.texts[0].startsWith('Pulseira Aço Milanese - Rose Gold 38/41mm · estoque 5') && JSON.stringify(srch.bold) === '["Pul","Ros","Go","38"]' && srch.sel[0] === true
+      && JSON.stringify(order) === '["Pulseira Aço Milanese - Rose Gold 38/41mm","Pulseira Milanese - Prata"]' && JSON.stringify(arrows) === '[1,0,1,0]'
+      && afterEnter.value === '' && afterEnter.focused && afterEnter.results === 0 && afterEnter.items.length === 3 && afterEnter.items[2] === order[0],
+      JSON.stringify({ srch, order, arrows, afterEnter }));
+    // tira o item extra para o resto do teste seguir igual
+    await q(`const r = sh.querySelector('.vd-form .vd-item[data-vd-item="2"]'); if (!r) return false; [...r.querySelectorAll('button')].find((b) => b.textContent === '✕').click(); await wait(200); return true;`);
     const costPre = await q(`return sh.querySelector('.vd-form input[aria-label="Custo do produto 1"]').value;`);
     await setVal('input[aria-label="Custo do produto 1"]', '199.5');
     await setVal('input[aria-label="Qtd do produto 2"]', '2');
@@ -979,7 +1000,7 @@ async function main() {
       && row.payment_status === 'a_cobrar' && row.delivery_notes === 'Deixar na portaria' && row.wa_chat_id === CH && row.origin === 'anuncio' && row.ad_title === 'Relógio Promo' && !('wa_warranty_months' in row)
       && JSON.stringify(items) === JSON.stringify([['A', 1, 499.9, 199.5, 499.9], ['B', 2, 59.9, 12.5, 119.8]]) && /pagina=historico/.test(openErp || ''),
       JSON.stringify({ saved, row, items, openErp, msg: await q(`return (sh.querySelector('.vd-msg') || {}).textContent || '';`) }));
-    const prods = fake.db.products.map((p) => [p.current_stock, p.cost]);
+    const prods = fake.db.products.filter((p) => p.id !== PC).map((p) => [p.current_stock, p.cost]);
     check('💰 estoque baixado e o custo editado gravado no produto (como o ERP)', JSON.stringify(prods) === JSON.stringify([[3, 199.5], [7, 12.5]]), JSON.stringify(prods));
     // 2.12.4: depois da venda gravada, parte por parte
     await waitFor(`return sh.querySelectorAll('.vtab .vd-after-line').length >= 3;`, 15000);

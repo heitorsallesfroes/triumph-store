@@ -799,6 +799,18 @@ guardada.
 
 ## O que mudou
 
+### 2.12.7 — busca de produtos por pedaços de palavras (💰 e Nova Venda do ERP)
+- A busca "Digite modelo, cor ou nome do acessório..." do 💰 e da **Nova Venda** do ERP agora acha por pedaços:
+  "pul ros go 38" acha "Pulseira Aço Milanese Rose Gold 38/41mm". Cada pedaço (separado por espaço) tem que
+  aparecer em "modelo + cor" (produto) ou no nome (acessório), em qualquer ordem.
+- Sem diferença de maiúsculas e acentos (aço = aco); "/", "-" e "." não contam (38/41 acha com "38" ou "3841").
+- Ordem: primeiro os que têm os pedaços no começo das palavras; empate pelo mais recente (data de cadastro), senão
+  alfabético. O pedaço achado aparece **em negrito**.
+- **Enter** adiciona o primeiro da lista (**↑ ↓** escolhem outro), limpa a busca e o cursor volta para ela.
+- A busca é uma função só: `src/lib/productSearch.ts` no ERP e a cópia `product-search.js` na extensão.
+- Testes: `tests/search.test.cjs`, `scripts/tests/productSearch.test.ts` (as duas cópias são iguais e dão o mesmo
+  resultado; "pul ros go 38", "s11 rose", "aco mil", ordem dos pedaços) e o Chrome real (negrito, ↑↓, Enter).
+
 ### 2.12.6 — ligar/desligar as automações mais simples
 - O editor da automação não tem mais a caixa **"Ativa"** nem o quadro **"Segurança"** no meio. Perto dos botões fica
   só a linha: "Só vale para quem entrar depois de ligar. Nunca envia para 'Não enviar'."
