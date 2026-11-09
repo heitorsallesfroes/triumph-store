@@ -724,9 +724,38 @@
     return { id: itemId };
   }
 
+  // 2.13.1: onde a mensagem rápida está em uso e impede a exclusão: agendamentos PENDENTES, automações/réguas
+  // (ações, variantes e caixas ✉ do construtor), réguas de follow antigas (wa_flows) e disparos não terminados.
+  // Tabela/coluna que não existir é pulada (sem ela, não tem como estar em uso ali).
+  const CAMPAIGN_OPEN = ['rascunho', 'agendada', 'rodando', 'pausada'];
+  async function itemUsage({ id }) {
+    checkUuid(id, 'Item inválido');
+    const safe = async (fn) => { try { return await fn(); } catch { return []; } };
+    const uses = (v) => JSON.stringify(v || null).includes(`"${id}"`);
+    const [schedules, autos, flows, variants, campaigns] = await Promise.all([
+      safe(() => rest(`wa_schedules?select=id,chat_id,chat_name,send_at&item_id=eq.${id}&status=eq.pendente&order=send_at.asc&limit=50`)),
+      safe(() => restAll('wa_automations?select=id,name,active,kind,actions,sequence&order=id.asc')),
+      safe(() => rest(`wa_flows?select=id,name,active&item_id=eq.${id}&limit=50`)),
+      safe(() => rest(`wa_flow_variants?select=flow_id&item_id=eq.${id}&limit=200`)),
+      safe(() => rest(`wa_campaigns?select=id,name,status&item_id=eq.${id}&status=in.(${CAMPAIGN_OPEN.join(',')})&limit=50`)),
+    ]);
+    const flowIds = [...new Set([...flows.map((f) => f.id), ...variants.map((v) => v.flow_id)])];
+    const flowRows = flowIds.length ? await safe(() => rest(`wa_flows?select=id,name,active&id=in.${inList(flowIds)}`)) : [];
+    return {
+      schedules: schedules.map((s) => ({ id: s.id, chatId: s.chat_id, chatName: s.chat_name || null, sendAt: s.send_at })),
+      automations: autos.filter((a) => uses(a.actions) || uses(a.sequence)).map((a) => ({ id: a.id, name: a.name, active: !!a.active, kind: a.kind === 'sequencia' ? 'sequencia' : 'automacao' })),
+      flows: flowRows.map((f) => ({ id: f.id, name: f.name, active: !!f.active })),
+      campaigns: campaigns.map((c) => ({ id: c.id, name: c.name, status: c.status })),
+    };
+  }
+  const usageCount = (u) => u.schedules.length + u.automations.length + u.flows.length + u.campaigns.length;
+
   // Apaga o item; as partes vão junto (on delete cascade). Arquivos no Storage ficam.
+  // 2.13.1: em uso (agendamento pendente, automação, régua, disparo) → não apaga e diz onde (err.usage)
   async function deleteItem({ id }) {
     checkUuid(id, 'Item inválido');
+    const usage = await itemUsage({ id });
+    if (usageCount(usage)) throw Object.assign(new Error('Mensagem em uso'), { code: 'em_uso', usage });
     await rest(`wa_items?id=eq.${id}`, { method: 'DELETE' });
     return true;
   }
@@ -3478,7 +3507,7 @@
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,
-    saveItem, deleteItem, createCategory, renameCategory, deleteCategory, reorderCategories, moveItems,
+    saveItem, deleteItem, itemUsage, createCategory, renameCategory, deleteCategory, reorderCategories, moveItems,
     getChatName, setChatName, getGreetings, setGreetings, uploadFile, partsTableExists,
     fetchMediaLibrary, createMediaFolder, renameMediaFolder, deleteMediaFolder, reorderMediaFolders, uploadMedia, updateMedia,
     incrementMediaUsage, mediaUsage, deleteMedia, importMediaFromItems,

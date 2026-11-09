@@ -666,6 +666,15 @@
       .imenu button.danger { color: var(--err); }
       .imenu button.danger:hover:not(:disabled) { border-color: var(--err); color: var(--err); }
       .imenu .q { flex-basis: 100%; line-height: 1.4; }
+      /* 2.13.1: excluir mensagem em uso / erro do banco */
+      .imenu .del-inuse { color: var(--fg); }
+      .imenu .del-head { font-weight: 700; margin-top: 4px; }
+      .imenu .del-list { margin: 2px 0 4px; padding-left: 18px; font-size: var(--fs-2); }
+      .imenu .del-hint { color: var(--warn); font-weight: 700; }
+      .imenu .del-err { flex-basis: 100%; color: var(--err); font-weight: 600; }
+      .imenu .del-det { font-weight: 400; color: var(--muted); }
+      .imenu .del-det summary { cursor: pointer; }
+      .imenu .del-raw { font-size: var(--fs-1); word-break: break-all; }
       .imenu input { flex: 1; min-width: 120px; height: 28px; padding: 0 8px ; border-radius: var(--r-sm) ; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; font-size: var(--fs-2); outline: none; }
       .imenu input:focus { border-color: var(--accent); }
       .seqbar { display: flex; align-items: center; gap: 8px ; margin: 0 12px 8px ; padding: 8px 12px ; border-radius: var(--r-md) ; background: var(--accent-soft); color: var(--fg); font-size: var(--fs-2); font-weight: 600; }
@@ -4943,8 +4952,35 @@
       return b;
     };
     if (itemMenu.mode === 'delete') {
-      box.append(el('div', 'q', `Excluir "${item.title}"? ${isMultiPart(item) ? 'As partes somem junto. ' : ''}Os arquivos continuam guardados.`),
-        btn('Excluir', () => deleteLibraryItem(item), 'danger'), btn('Cancelar', () => { itemMenu = null; renderList(); }));
+      // 2.13.1: antes, confere onde a mensagem está em uso (agendamento pendente, automação/régua, disparo)
+      const lines = globalThis.TspEngine.itemUsageLines(itemMenu.usage);
+      if (itemMenu.checking) {
+        box.append(el('div', 'q loading del-check', 'Conferindo onde esta mensagem é usada…'), btn('Cancelar', () => { itemMenu = null; renderList(); }));
+        return box;
+      }
+      if (lines.length) {
+        const why = el('div', 'q del-inuse');
+        lines.forEach((l) => {
+          why.append(el('div', 'del-head', l.head));
+          const ul = el('ul', 'del-list');
+          l.items.slice(0, 10).forEach((t) => ul.append(el('li', null, t)));
+          if (l.items.length > 10) ul.append(el('li', null, `e mais ${l.items.length - 10}…`));
+          why.append(ul);
+        });
+        why.append(el('div', 'del-hint', 'Cancele ou troque antes de excluir.'));
+        box.append(why, btn('Fechar', () => { itemMenu = null; renderList(); }));
+        return box;
+      }
+      box.append(el('div', 'q', `Excluir "${item.title}"? ${isMultiPart(item) ? 'As partes somem junto. ' : ''}Os arquivos continuam guardados.`));
+      if (itemMenu.error) {
+        const er = el('div', 'del-err');
+        er.append(el('div', null, itemMenu.error.text));
+        const det = el('details', 'del-det');
+        det.append(el('summary', null, 'Detalhes'), el('div', 'del-raw', itemMenu.error.detail));
+        er.append(det);
+        box.append(er);
+      }
+      box.append(btn('Excluir', () => deleteLibraryItem(item), 'danger'), btn('Cancelar', () => { itemMenu = null; renderList(); }));
       return box;
     }
     const open = state.previewId === item.id;
@@ -4960,8 +4996,19 @@
     box.append(btn('Duplicar', () => { itemMenu = null; openEditor(item, { duplicate: true }); }));
     if (!isMultiPart(item) && item.type === 'texto') box.append(btn('Colocar na caixa', () => { itemMenu = null; renderList(); sendItem(item, card, send); }));
     box.append(btn('Agendar nesta conversa', () => { itemMenu = null; renderList(); scheduleItem(item); }));
-    box.append(btn('Excluir', () => { itemMenu = { id: item.id, mode: 'delete' }; renderList(); }, 'danger'));
+    box.append(btn('Excluir', () => askDeleteItem(item), 'danger'));
     return box;
+  }
+
+  // 2.13.1: "Excluir": primeiro confere onde a mensagem está em uso (se não der para conferir, deixa tentar: o banco
+  // confere de novo antes de apagar)
+  async function askDeleteItem(item) {
+    const menu = { id: item.id, mode: 'delete', checking: true, usage: null, error: null };
+    itemMenu = menu;
+    renderList();
+    try { menu.usage = await call('itemUsage', { id: item.id }); } catch (e) { menu.error = { text: globalThis.TspEngine.friendlyDeleteError(e.message), detail: e.message }; }
+    menu.checking = false;
+    if (itemMenu === menu) renderList();
   }
 
   async function reloadLibrary() {
@@ -4984,7 +5031,12 @@
       if (wasLast && state.categories.some((c) => c.id === item.category_id)) emptyAsk = { id: item.category_id };
       await reloadLibrary();
     } catch (e) {
-      toast(`Não consegui excluir: ${e.message}`, 'error', 6000);
+      // 2.13.1: em uso (alguém agendou/usou agora) → mostra onde; outro erro → frase clara + "Detalhes" com o técnico
+      const menu = itemMenu && itemMenu.id === item.id ? itemMenu : (itemMenu = { id: item.id, mode: 'delete' });
+      if (/Mensagem em uso/.test(e.message)) {
+        try { menu.usage = await call('itemUsage', { id: item.id }); } catch { /* fica a frase */ }
+      }
+      if (!globalThis.TspEngine.itemInUse(menu.usage)) menu.error = { text: globalThis.TspEngine.friendlyDeleteError(e.message), detail: e.message };
     } finally {
       libBusy = false;
       renderList();

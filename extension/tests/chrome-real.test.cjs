@@ -184,6 +184,8 @@ async function main() {
       if (!url.pathname.startsWith('/rest/v1/')) return null;
       const table = url.pathname.slice('/rest/v1/'.length);
       if (fake.fail && fake.fail[table] > 0) { fake.fail[table]--; fake.failed = (fake.failed || 0) + 1; return [503, { message: 'Service Unavailable' }]; } // 2.12.1
+      // 2.13.1: um erro do banco de verdade, uma vez (ex.: 23514 ao apagar)
+      if (fake.failOnce && fake.failOnce.table === table && fake.failOnce.method === method) { const f = fake.failOnce; fake.failOnce = null; return [f.status, f.body]; }
       const q = url.searchParams;
       const sel = q.get('select') || '';
       const eq = (k) => { const v = q.get(k); return v && v.startsWith('eq.') ? v.slice(3) : null; };
@@ -1293,6 +1295,55 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console no construtor visual', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 15. excluir mensagem rápida (2.13.1): em uso num agendamento pendente e numa régua → mostra onde e não exclui;
+    // erro do banco (23514) → frase clara e o técnico em "Detalhes"; livre → exclui
+    fake.on = true;
+    fake.generic = true;
+    const OFERTA = (fake.db.wa_items || []).find((i) => i.title === 'Oferta especial');
+    const VELHA = { ...mkItem('Mensagem velha', 'Oi, tudo bem?'), id: uuid() };
+    fake.db.wa_items.push(VELHA);
+    const SCH = uuid();
+    fake.db.wa_schedules = [...(fake.db.wa_schedules || []),
+      { id: SCH, chat_id: '5521988887777@c.us', chat_name: 'Joana', item_id: OFERTA.id, body: null, send_at: '2026-12-01T13:00:00.000Z', status: 'pendente', created_at: new Date().toISOString() },
+      { id: uuid(), chat_id: '5521988886666@c.us', chat_name: 'Pedro', item_id: VELHA.id, body: null, send_at: '2026-11-01T13:00:00.000Z', status: 'enviada', created_at: new Date().toISOString() }];
+    await s('Page.reload', { ignoreCache: true });
+    await sleep(1500);
+    for (const stop = Date.now() + TIMEOUT_MS; Date.now() < stop;) {
+      const opened = await evalPage(`(() => { const sh = document.getElementById('tsp-wa-host')?.shadowRoot; const t = sh && sh.querySelector('.toggle'); if (t && !sh.querySelector('.root.open')) t.click(); return !!(sh && sh.querySelector('.root.open')); })()`);
+      if (opened) break;
+      await sleep(300);
+    }
+    await q(`sh.querySelector('[data-sec="mensagens"]').click(); await wait(300); return true;`);
+    const cardOf = (id) => `sh.querySelector('.card[data-id="${id}"]')`;
+    await waitFor(`return !!${cardOf(OFERTA.id)} && !!${cardOf(VELHA.id)};`, 15000);
+    // (a lista é redesenhada ao abrir o menu: procura o cartão de novo antes de clicar em "Excluir")
+    const openDelete = (id) => q(`${cardOf(id)}.querySelector('.iopts').click(); await wait(250); [...${cardOf(id)}.querySelectorAll('.imenu button')].find((b) => b.textContent === 'Excluir').click(); return true;`);
+    await openDelete(OFERTA.id);
+    await waitFor(`const c = ${cardOf(OFERTA.id)}; return !!(c && c.querySelector('.imenu .del-inuse'));`, 10000);
+    const inUse = await q(`const m = ${cardOf(OFERTA.id)}.querySelector('.imenu'); return { txt: m.textContent, del: [...m.querySelectorAll('button')].map((b) => b.textContent) };`);
+    const stillThere = (fake.db.wa_items || []).some((i) => i.id === OFERTA.id);
+    check('excluir mensagem em uso: "Esta mensagem está em 1 agendamento pendente" (conversa e data) e na régua; "Cancele ou troque antes de excluir."; não exclui',
+      /Esta mensagem está em 1 agendamento pendente:/.test(inUse.txt) && /Joana · 01\/12/.test(inUse.txt) && /automaç(ão|ões)\/régua:.*Régua de follow-up \(ligada\)/.test(inUse.txt)
+      && /Cancele ou troque antes de excluir\./.test(inUse.txt) && JSON.stringify(inUse.del) === '["Fechar"]' && stillThere, JSON.stringify({ inUse, stillThere }));
+    await q(`[...${cardOf(OFERTA.id)}.querySelectorAll('.imenu button')].find((b) => b.textContent === 'Fechar').click(); await wait(200); return true;`);
+    // livre (o agendamento dela já foi enviado): o banco recusa uma vez com 23514 → frase clara + "Detalhes"
+    fake.failOnce = { table: 'wa_items', method: 'DELETE', status: 400, body: { code: '23514', message: 'new row for relation "wa_schedules" violates check constraint "wa_schedules_check"', details: 'Failing row contains (…)' } };
+    await openDelete(VELHA.id);
+    await waitFor(`const c = ${cardOf(VELHA.id)}; return !!(c && c.querySelector('.imenu') && !c.querySelector('.imenu .del-check') && [...c.querySelectorAll('.imenu button')].some((b) => b.textContent === 'Excluir'));`, 10000);
+    const ask = await q(`return ${cardOf(VELHA.id)}.querySelector('.imenu .q').textContent;`);
+    await q(`[...${cardOf(VELHA.id)}.querySelectorAll('.imenu button')].find((b) => b.textContent === 'Excluir').click(); return true;`);
+    await waitFor(`const c = ${cardOf(VELHA.id)}; return !!(c && c.querySelector('.imenu .del-err'));`, 10000);
+    const err = await q(`const e = ${cardOf(VELHA.id)}.querySelector('.imenu .del-err'); return { text: e.firstElementChild.textContent, summary: e.querySelector('details summary').textContent, raw: e.querySelector('.del-raw').textContent, open: e.querySelector('details').open };`);
+    check('erro do banco ao excluir: frase clara (sem o texto técnico) e o técnico em "Detalhes" (fechado)',
+      /^Excluir "Mensagem velha"\?/.test(ask) && /^O banco recusou excluir: um agendamento antigo ainda aponta para esta mensagem/.test(err.text) && !/23514/.test(err.text)
+      && err.summary === 'Detalhes' && /23514/.test(err.raw) && err.open === false, JSON.stringify({ ask, err }));
+    await q(`[...${cardOf(VELHA.id)}.querySelectorAll('.imenu button')].find((b) => b.textContent === 'Excluir').click(); return true;`);
+    const gone = await waitFor(`return !${cardOf(VELHA.id)};`, 10000);
+    check('mensagem livre (o agendamento dela já foi enviado): exclui', gone && !(fake.db.wa_items || []).some((i) => i.id === VELHA.id), JSON.stringify({ gone }));
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console ao excluir mensagens', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

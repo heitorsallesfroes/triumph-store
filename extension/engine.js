@@ -1053,6 +1053,38 @@
     return out;
   }
 
+  // ── 2.13.1: excluir mensagem rápida ──
+  // Onde ela está em uso (agendamentos pendentes, automações/réguas, réguas antigas, disparos) em frases para a tela.
+  // usage = { schedules: [{ chatId, chatName, sendAt }], automations: [{ name, kind }], flows: [{ name }], campaigns: [{ name, status }] }
+  function itemUsageLines(usage, { when = (iso) => new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) } = {}) {
+    const u = usage || {};
+    const out = [];
+    const sch = u.schedules || [];
+    if (sch.length) {
+      out.push({ kind: 'agendamento', head: `Esta mensagem está em ${sch.length} agendamento${sch.length === 1 ? '' : 's'} pendente${sch.length === 1 ? '' : 's'}:`,
+        items: sch.map((s) => `${s.chatName || String(s.chatId || '').split('@')[0] || 'conversa'} · ${s.sendAt ? when(s.sendAt) : 'sem data'}`) });
+    }
+    const autos = u.automations || [];
+    if (autos.length) out.push({ kind: 'automacao', head: `Está em ${autos.length} automaç${autos.length === 1 ? 'ão' : 'ões'}/régua${autos.length === 1 ? '' : 's'}:`, items: autos.map((a) => `${a.name}${a.active ? ' (ligada)' : ''}`) });
+    const flows = u.flows || [];
+    if (flows.length) out.push({ kind: 'regua', head: `Está em ${flows.length} régua${flows.length === 1 ? '' : 's'} de follow antiga${flows.length === 1 ? '' : 's'}:`, items: flows.map((f) => f.name) });
+    const camps = u.campaigns || [];
+    const ST = { rascunho: 'rascunho', agendada: 'agendado', rodando: 'rodando', pausada: 'pausado' };
+    if (camps.length) out.push({ kind: 'disparo', head: `Está em ${camps.length} disparo${camps.length === 1 ? '' : 's'} não terminado${camps.length === 1 ? '' : 's'}:`, items: camps.map((c) => `${c.name} (${ST[c.status] || c.status})`) });
+    return out;
+  }
+  const itemInUse = (usage) => itemUsageLines(usage).length > 0;
+  // erro do banco ao excluir → frase clara (o texto técnico fica em "Detalhes")
+  function friendlyDeleteError(message) {
+    const m = String(message || '');
+    if (/Mensagem em uso/.test(m)) return 'Esta mensagem ainda está em uso. Cancele ou troque onde ela aparece antes de excluir.';
+    if (/23514|violates check constraint|Failing row contains/i.test(m)) return 'O banco recusou excluir: um agendamento antigo ainda aponta para esta mensagem. Aplique a migration 20261110120000 (regra nova de wa_schedules) ou fale com quem cuida do sistema.';
+    if (/23503|foreign key/i.test(m)) return 'O banco recusou excluir: esta mensagem ainda é usada em outro lugar do sistema.';
+    if (/Supabase (401|403)|JWT|permission denied|row-level security/i.test(m)) return 'Sem permissão para excluir. Entre de novo na extensão (ou peça acesso a quem cuida do sistema).';
+    if (/Failed to fetch|NetworkError|network|Sem conexão|timeout|A biblioteca não respondeu/i.test(m)) return 'Sem conexão com o banco agora. Confira a internet e tente de novo.';
+    return 'Não consegui excluir a mensagem. Tente de novo; se continuar, copie os detalhes para quem cuida do sistema.';
+  }
+
   // ── 2.13.0: construtor visual (em cascata) ──
   // ⏳ ESPERAR = { id, type: 'pausa', amount, unit } (só o tempo). start.exclude = [{ source, label_id | wa_label_id }]:
   // quem tem uma dessas etiquetas sai (como o "Não enviar", que vale sempre).
@@ -2418,6 +2450,7 @@
     WIZARDS, wizardToAutomations, wizardSentence, wizardMinutes, businessMinutesPerDay, validateAutomationDraft,
     seqIndex, seqStep, seqValidate, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
     seqNormalize, seqInsert, seqRemove, seqExcluded, seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
+    itemUsageLines, itemInUse, friendlyDeleteError, // 2.13.1
     limitCheck, randomGapMs, estimateDuration, estimateText,
     createMotor,
   };

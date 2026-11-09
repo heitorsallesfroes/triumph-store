@@ -799,6 +799,20 @@ guardada.
 
 ## O que mudou
 
+### 2.13.1 — excluir mensagem rápida que está em uso
+- O erro "Supabase 400 … 23514 Failing row contains …" vinha da regra de `wa_schedules` (mensagem ou texto
+  obrigatório): ao excluir a mensagem, o agendamento antigo já enviado ficava sem as duas. A regra nova (já aplicada
+  no banco) só exige isso de agendamento **pendente**: `wa_schedules_item_or_body_check`. Registrada em
+  `supabase/migrations/20261110120000_wa_schedules_item_or_body.sql` (pode rodar de novo sem erro).
+- **Antes de excluir**, a extensão confere onde a mensagem está em uso e, se estiver, não exclui e mostra onde:
+  "Esta mensagem está em N agendamento(s) pendente(s)" (conversa e data), automações/réguas (inclusive as caixas ✉ do
+  construtor e as variantes), réguas de follow antigas e disparos não terminados — "Cancele ou troque antes de excluir."
+  O banco confere de novo na hora de apagar (se alguém usar a mensagem no meio, aparece a lista).
+- **Erro do banco ao excluir** vira uma frase clara (ex.: "O banco recusou excluir: um agendamento antigo ainda aponta
+  para esta mensagem…"); o texto técnico fica em "Detalhes".
+- Testes: `tests/itemdelete.test.cjs` e o Chrome real (em uso num agendamento pendente e numa régua; erro 23514 com
+  "Detalhes"; mensagem livre exclui).
+
 ### ERP (09/11) — botão "Atualizar", F5 sem voltar ao Início e aviso de versão nova
 - **F5 volta para a mesma página**: a página e a sub-aba ficam no endereço (`?pagina=whatsapp&aba=rastreamento`;
   os outros parâmetros e os links "Abrir no ERP" da extensão continuam valendo) e no navegador. Ao abrir (depois do

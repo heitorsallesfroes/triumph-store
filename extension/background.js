@@ -25,6 +25,7 @@ const HANDLERS = {
   // Editor de mensagens (1.9.0): cada uma valida a entrada em supabase-api.js
   saveItem:        (m) => WaApi.saveItem({ id: m.id, category_id: m.category_id, title: m.title, parts: m.parts, on_send_add_label_id: m.on_send_add_label_id, on_send_remove_label_id: m.on_send_remove_label_id, on_send_add_wa_label_id: m.on_send_add_wa_label_id, on_send_remove_wa_label_id: m.on_send_remove_wa_label_id, on_send_remove_all_crm: m.on_send_remove_all_crm, on_send_remove_all_wa: m.on_send_remove_all_wa, follow_step: m.follow_step }),
   deleteItem:      (m) => WaApi.deleteItem({ id: m.id }),
+  itemUsage:       (m) => WaApi.itemUsage({ id: m.id }), // 2.13.1: onde a mensagem está em uso (antes de excluir)
   createCategory:  (m) => WaApi.createCategory({ name: m.name }),
   renameCategory:  (m) => WaApi.renameCategory({ id: m.id, name: m.name }),
   deleteCategory:  (m) => WaApi.deleteCategory({ id: m.id, withItems: m.withItems === true }),
