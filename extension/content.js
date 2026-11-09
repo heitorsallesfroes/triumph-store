@@ -1571,6 +1571,16 @@
       .vb-days { display: flex; flex-wrap: wrap; gap: 4px; }
       .vb-day { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: var(--r-pill); background: #eef2f5; font-size: var(--fs-2); cursor: pointer; }
       .vb-dlimit { width: 140px !important; }
+      /* 2.14.3: horário por dia da semana */
+      .wk { display: flex; flex-direction: column; gap: 4px; }
+      .wk-head { display: flex; justify-content: flex-end; }
+      .wk-row { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; border-top: 1px solid #eef2f5; }
+      .wk-day { flex: 0 0 64px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; font-size: var(--fs-2); padding-top: 6px; cursor: pointer; }
+      .wk-cells { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .wk-win { display: inline-flex; align-items: center; gap: 4px; }
+      .wk-closed { color: var(--muted); font-size: var(--fs-2); padding-top: 6px; }
+      .wk-off .wk-day { color: var(--muted); }
+      .wk-warn { padding: 2px 6px; }
       /* 2.14.1: "⋯" Mais opções */
       .more-wrap { position: relative; display: inline-flex; }
       .more-btn { min-width: 34px; padding-left: 8px; padding-right: 8px; font-weight: 700; letter-spacing: 1px; }
@@ -9239,6 +9249,72 @@
     else ex.append(fbtn('ed-mini vb-ex-add', '+ outra etiqueta', () => { st.exclude = [...(st.exclude || []), { source: 'crm', label_id: '' }]; vbChange(); vbRender(); }));
     side.append(ex);
   }
+  // 2.14.3: tabela da semana (Seg…Dom, um embaixo do outro): liga/desliga ("fechado"), início e fim, "+ faixa" para
+  // mais de uma faixa no mesmo dia, "Copiar para os dias úteis" (segunda → terça a sexta) e o aviso amarelo por linha
+  function weekTable(week, onChange, { prefix = '' } = {}) {
+    const box = el('div', 'wk');
+    const clone = () => week.map((ws) => (ws || []).map((x) => ({ ...x })));
+    const head = el('div', 'wk-head');
+    const copy = fbtn('ed-mini wk-copy', 'Copiar para os dias úteis', () => onChange(E.copyToWeekdays(clone())));
+    copy.title = 'Copia a linha de segunda para terça, quarta, quinta e sexta';
+    head.append(copy);
+    box.append(head);
+    E.WEEK_ORDER.forEach((d) => {
+      const ws = week[d] || [];
+      const name = E.DAY_CAP[d];
+      const row = el('div', `wk-row${ws.length ? '' : ' wk-off'}`);
+      row.dataset.day = String(d);
+      const l = el('label', 'wk-day');
+      const c = el('input');
+      c.type = 'checkbox';
+      c.checked = ws.length > 0;
+      c.setAttribute('aria-label', `${prefix}${name}: aberto`);
+      c.addEventListener('change', () => {
+        const w = clone();
+        // ligando: as faixas do dia aberto mais perto (ou 09:00–18:00)
+        const near = E.WEEK_ORDER.map((x) => w[x]).find((x) => x && x.length);
+        w[d] = c.checked ? (near ? near.map((x) => ({ ...x })) : [{ start: '09:00', end: '18:00' }]) : [];
+        onChange(w);
+      });
+      l.append(c, ` ${name}`);
+      row.append(l);
+      const cells = el('div', 'wk-cells');
+      if (!ws.length) cells.append(el('span', 'wk-closed', 'fechado'));
+      ws.forEach((x, i) => {
+        const r = el('div', 'wk-win');
+        const t1 = el('input', 'ed-title vb-time');
+        t1.type = 'time';
+        t1.value = x.start;
+        t1.setAttribute('aria-label', `${prefix}${name}, faixa ${i + 1}: início`);
+        t1.addEventListener('change', () => { const w = clone(); w[d][i].start = t1.value; onChange(w); });
+        const t2 = el('input', 'ed-title vb-time');
+        t2.type = 'time';
+        t2.value = x.end;
+        t2.setAttribute('aria-label', `${prefix}${name}, faixa ${i + 1}: fim`);
+        t2.addEventListener('change', () => { const w = clone(); w[d][i].end = t2.value; onChange(w); });
+        r.append(t1, el('span', null, '–'), t2);
+        if (ws.length > 1) { const xb = fbtn('ed-mini wk-del', '✕', () => { const w = clone(); w[d].splice(i, 1); onChange(w); }); xb.setAttribute('aria-label', `${prefix}${name}: tirar a faixa ${i + 1}`); r.append(xb); }
+        cells.append(r);
+      });
+      if (ws.length && ws.length < 6) {
+        const add = fbtn('ed-mini wk-add', '+ faixa', () => {
+          const w = clone();
+          const last = w[d][w[d].length - 1];
+          const lm = last && /^\d\d:\d\d$/.test(last.end) ? Number(last.end.slice(0, 2)) : 12;
+          const st = Math.min(22, lm + 2);
+          w[d].push({ start: `${String(st).padStart(2, '0')}:00`, end: `${String(Math.min(23, st + 4)).padStart(2, '0')}:00` });
+          onChange(w);
+        });
+        add.setAttribute('aria-label', `${prefix}${name}: + faixa`);
+        cells.append(add);
+      }
+      if (E.rowOutsideCommon(ws)) cells.append(el('span', 'vb-warn wk-warn', '⚠ fora do horário comum (08:00–21:00): pode incomodar'));
+      row.append(cells);
+      box.append(row);
+    });
+    return box;
+  }
+
   // 2.13.2: "Horário de envio" da automação: o geral (padrão) ou personalizado (dias + faixas) e o limite por dia
   const VB_DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   function vbScheduleField(f) {
@@ -9255,43 +9331,17 @@
       r.value = v;
       r.checked = (custom ? 'personalizado' : 'geral') === v;
       r.addEventListener('change', () => {
-        if (v === 'geral') setSc({ mode: 'geral', days: undefined, windows: undefined });
-        else { const g = motor.state.settings || {}; setSc({ mode: 'personalizado', days: sc.days && sc.days.length ? sc.days : [...(g.business_days || [1, 2, 3, 4, 5])], windows: sc.windows && sc.windows.length ? sc.windows : [{ start: String(g.business_start || '09:00').slice(0, 5), end: String(g.business_end || '18:00').slice(0, 5) }] }); }
+        if (v === 'geral') setSc({ mode: 'geral', days: undefined, windows: undefined, week: undefined });
+        // 2.14.3: começa com o horário geral, dia por dia
+        else setSc({ mode: 'personalizado', days: undefined, windows: undefined, week: Array.isArray(sc.week) ? sc.week : E.weekToJson(E.normSettings(motor.state.settings).week) });
       });
       l.append(r, ` ${txt}`);
       box.append(l);
     });
     if (custom) {
-      const days = el('div', 'vb-days');
-      VB_DAYS.forEach((name, d) => {
-        const l = el('label', 'vb-day');
-        const c = el('input');
-        c.type = 'checkbox';
-        c.checked = (sc.days || []).includes(d);
-        c.setAttribute('aria-label', name);
-        c.addEventListener('change', () => setSc({ days: c.checked ? [...new Set([...(sc.days || []), d])].sort() : (sc.days || []).filter((x) => x !== d) }));
-        l.append(c, name);
-        days.append(l);
-      });
-      box.append(days);
-      (sc.windows || []).forEach((w, i) => {
-        const r = el('div', 'sc-row vb-swin');
-        const t1 = el('input', 'ed-title vb-time');
-        t1.type = 'time';
-        t1.value = w.start;
-        t1.setAttribute('aria-label', `Faixa ${i + 1}: início`);
-        t1.addEventListener('change', () => { const ws = sc.windows.map((x) => ({ ...x })); ws[i].start = t1.value; setSc({ windows: ws }); });
-        const t2 = el('input', 'ed-title vb-time');
-        t2.type = 'time';
-        t2.value = w.end;
-        t2.setAttribute('aria-label', `Faixa ${i + 1}: fim`);
-        t2.addEventListener('change', () => { const ws = sc.windows.map((x) => ({ ...x })); ws[i].end = t2.value; setSc({ windows: ws }); });
-        r.append(el('span', null, 'das'), t1, el('span', null, 'às'), t2);
-        if (sc.windows.length > 1) { const x = fbtn('ed-mini', '✕', () => setSc({ windows: sc.windows.filter((_, k) => k !== i) })); x.setAttribute('aria-label', `Tirar a faixa ${i + 1}`); r.append(x); }
-        box.append(r);
-      });
-      if ((sc.windows || []).length < 6) box.append(fbtn('ed-mini vb-swin-add', '+ outra faixa', () => setSc({ windows: [...(sc.windows || []), { start: '14:00', end: '18:00' }] })));
-      if (E.scheduleOutsideCommon({ schedule: sc, steps: [] })) box.append(el('div', 'vb-warn', '⚠ Faixa fora do horário comum (08:00–21:00): mensagem fora do horário pode incomodar.'));
+      // horário salvo no formato antigo (dias marcados + as mesmas faixas): vira a tabela, com o mesmo resultado
+      if (!Array.isArray(sc.week)) { f.def.schedule = E.scheduleWeekJson(sc); return vbScheduleField(f); }
+      box.append(weekTable(sc.week, (w) => setSc({ week: w }), { prefix: 'Automação, ' }));
     }
     const lr = el('div', 'sc-row');
     const lim = el('input', 'ed-title vb-dlimit');
@@ -10332,8 +10382,7 @@
     const s = motor.state.settings || E.DEFAULT_SETTINGS;
     fl.settingsForm = {
       max_per_hour: s.max_per_hour, max_per_day: s.max_per_day, min_interval_s: s.min_interval_s, max_interval_s: s.max_interval_s,
-      business_start: String(s.business_start).slice(0, 5), business_end: String(s.business_end).slice(0, 5),
-      business_days: [...(s.business_days || [])], msg: '', err: false,
+      business_week: E.weekToJson(E.normSettings(s).week), msg: '', err: false, // 2.14.3: por dia da semana
     };
     fl.view = 'settings';
     renderFollows();
@@ -10353,29 +10402,14 @@
     r1.append(num('max_per_hour', 'Máx. por hora', 1, 200), num('max_per_day', 'Máx. por dia', 1, 2000));
     const r2 = el('div', 'sc-row');
     r2.append(num('min_interval_s', 'Intervalo mín. (s)', 10, 3600), num('max_interval_s', 'Intervalo máx. (s)', 10, 3600));
-    const time = (key, label) => {
-      const i = el('input', 'ed-title');
-      i.type = 'time';
-      i.value = f[key];
-      i.setAttribute('aria-label', label);
-      i.addEventListener('input', () => { f[key] = i.value; });
-      return schedField(label, i);
+    const wkBox = el('div', 'wk-general');
+    const drawWeek = () => {
+      wkBox.textContent = '';
+      wkBox.append(el('div', 'crm-intro wk-sum', E.weekSummary(E.weekFromJson(f.business_week) || [[], [], [], [], [], [], []])),
+        weekTable(f.business_week, (w) => { f.business_week = w; drawWeek(); }, { prefix: 'Geral, ' }));
     };
-    const r3 = el('div', 'sc-row');
-    r3.append(time('business_start', 'Início do expediente'), time('business_end', 'Fim do expediente'));
-    const days = el('div', 'ed-add');
-    E.DAY_NAMES.forEach((name, d) => {
-      const l = el('label', 'sc-radio');
-      const c = el('input');
-      c.type = 'checkbox';
-      c.checked = f.business_days.includes(d);
-      c.addEventListener('change', () => {
-        f.business_days = c.checked ? [...new Set([...f.business_days, d])] : f.business_days.filter((x) => x !== d);
-      });
-      l.append(c, name);
-      days.append(l);
-    });
-    sec.append(r1, r2, r3, el('div', 'crm-sub', 'Dias'), days);
+    drawWeek();
+    sec.append(r1, r2, el('div', 'crm-sub', 'Horário de envio (por dia da semana)'), wkBox);
     const actions = el('div', 'ed-add');
     actions.append(fbtn('bbtn primary', 'Salvar', async () => {
       const patch = { ...f };

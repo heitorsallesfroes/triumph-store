@@ -64,8 +64,8 @@ test('❓ esperar resposta com "enviar só entre": o prazo conta normal; o envio
   assert.deepStrictEqual([yes.send.itemId, plain(yes.window)], [F1, { start: '14:00', end: '18:00' }]);
 });
 test('frases, aviso fora de 08:00–21:00 e validação', () => {
-  assert.strictEqual(E.scheduleSentence({ schedule: CUSTOM }, GERAL), 'Envia entre 09:00 e 12:00 e entre 14:00 e 18:00, seg–sex');
-  assert.strictEqual(E.scheduleSentence({ schedule: { mode: 'personalizado', days: [1, 3, 5], windows: [{ start: '14:00', end: '18:00' }], daily_limit: 20 } }, GERAL), 'Envia entre 14:00 e 18:00, seg, qua, sex; no máximo 20 por dia');
+  assert.strictEqual(E.scheduleSentence({ schedule: CUSTOM }, GERAL), 'Seg–Sex 09:00–12:00 e 14:00–18:00');
+  assert.strictEqual(E.scheduleSentence({ schedule: { mode: 'personalizado', days: [1, 3, 5], windows: [{ start: '14:00', end: '18:00' }], daily_limit: 20 } }, GERAL), 'Seg 14:00–18:00 · Qua 14:00–18:00 · Sex 14:00–18:00; no máximo 20 por dia');
   assert.match(E.scheduleSentence({}, GERAL), /^Envia no horário geral \(/);
   assert.strictEqual(E.scheduleOutsideCommon({ schedule: CUSTOM, steps: [] }), false);
   assert.strictEqual(E.scheduleOutsideCommon({ schedule: { mode: 'personalizado', days: [1], windows: [{ start: '20:00', end: '22:00' }] }, steps: [] }), true);
@@ -92,6 +92,52 @@ test('Simular com data e hora: cada envio cai no horário da automação e na fa
   assert.deepStrictEqual(sends, [['Recebe “Oi”', 'Mon Nov 16 2026 09:00'], ['Recebe “Oferta”', 'Mon Nov 16 2026 14:00']]);
   // sem startAt: como antes (tempo relativo)
   assert.ok(plain(E.seqSimulate(def, 'nunca', {})).every((e) => e.when === undefined));
+});
+
+// ── 2.14.3: horário por dia da semana ──
+const W = (a, b) => ({ start: a, end: b });
+// Seg–Sex 09:00–12:00 e 14:00–18:00 (duas faixas), Sáb 10:00–14:00 (diferente), Dom fechado
+const WEEK = [[], [W('09:00', '12:00'), W('14:00', '18:00')], [W('09:00', '12:00'), W('14:00', '18:00')], [W('09:00', '12:00'), W('14:00', '18:00')], [W('09:00', '12:00'), W('14:00', '18:00')], [W('09:00', '12:00'), W('14:00', '18:00')], [W('10:00', '14:00')]];
+const SAT = '2026-11-14';
+test('horário por dia: sábado com horário diferente, domingo fechado, duas faixas no mesmo dia (automação personalizada)', () => {
+  const def = { schedule: { mode: 'personalizado', week: WEEK }, steps: [] };
+  assert.strictEqual(E.nextSendTime(at(`${SAT}T11:00`), def, null, GERAL), at(`${SAT}T11:00`)); // sábado 10–14
+  assert.strictEqual(E.nextSendTime(at(`${SAT}T15:00`), def, null, GERAL), at('2026-11-16T09:00')); // passou o sábado; domingo fechado → segunda
+  assert.strictEqual(E.nextSendTime(at('2026-11-15T10:00'), def, null, GERAL), at('2026-11-16T09:00')); // domingo fechado
+  assert.strictEqual(E.nextSendTime(at(`${MON}T12:30`), def, null, GERAL), at(`${MON}T14:00`)); // entre as duas faixas
+  assert.strictEqual(E.nextSendTime(at(`${MON}T18:30`), def, null, GERAL), at('2026-11-10T09:00'));
+  assert.strictEqual(E.scheduleSentence(def, GERAL), 'Seg–Sex 09:00–12:00 e 14:00–18:00 · Sáb 10:00–14:00');
+  assert.deepStrictEqual(plain(E.scheduleProblems({ schedule: { mode: 'personalizado', week: [[], [], [], [], [], [], []] }, steps: [] })).map((x) => x.msg), ['Horário personalizado: deixe pelo menos um dia aberto.']);
+  assert.deepStrictEqual(plain(E.scheduleProblems({ schedule: { mode: 'personalizado', week: [[], [W('18:00', '14:00')], [], [], [], [], []] }, steps: [] })).map((x) => x.msg), ['Horário personalizado: cada faixa precisa de início antes do fim.']);
+});
+test('horário GERAL por dia (business_week): o motor, "está no horário?", a previsão do disparo e o resumo usam a linha de cada dia', () => {
+  const G = { ...GERAL, business_week: WEEK };
+  assert.strictEqual(E.isBusinessTime(at(`${SAT}T13:00`), G), true);
+  assert.strictEqual(E.isBusinessTime(at(`${SAT}T15:00`), G), false); // antes (geral antigo: até 19:00) seria true
+  assert.strictEqual(E.isBusinessTime(at(`${MON}T13:00`), G), false); // intervalo entre as faixas
+  assert.strictEqual(E.isBusinessTime(at('2026-11-15T10:00'), G), false);
+  assert.strictEqual(E.scheduleText(G), 'Seg–Sex 09:00–12:00 e 14:00–18:00 · Sáb 10:00–14:00');
+  assert.strictEqual(E.scheduleText(GERAL), 'Seg–Sáb 09:00–19:00'); // sem a semana: o formato antigo, igual
+  // disparo sem horário próprio usa o geral por dia: sábado 15:00 → espera segunda 09:00
+  const g = plain(E.campaignGate({ speed: { preset: 'normal' }, now: at(`${SAT}T15:00`), settings: G }));
+  assert.deepStrictEqual([g.ok, g.until], [false, at('2026-11-16T09:00')]);
+  const fc = E.campaignForecast(5, { preset: 'normal' }, G, at(`${SAT}T13:55`));
+  assert.ok(fc.endAt >= at('2026-11-16T09:00'), new Date(fc.endAt).toString()); // sábado fecha às 14:00
+});
+test('conversão: horário salvo no formato antigo (dias marcados + faixas) vira a semana com o MESMO resultado', () => {
+  const old = { mode: 'personalizado', days: [1, 2, 3, 4, 5], windows: [W('14:00', '18:00'), W('09:00', '12:00')], daily_limit: 7 };
+  const conv = plain(E.scheduleWeekJson(old));
+  assert.deepStrictEqual(conv, { mode: 'personalizado', week: [[], [W('09:00', '12:00'), W('14:00', '18:00')], [W('09:00', '12:00'), W('14:00', '18:00')], [W('09:00', '12:00'), W('14:00', '18:00')], [W('09:00', '12:00'), W('14:00', '18:00')], [W('09:00', '12:00'), W('14:00', '18:00')], []], daily_limit: 7 });
+  for (let h = 0; h < 24 * 8; h += 1) {
+    const t = at(`${MON}T00:30`) + h * 3600000;
+    assert.strictEqual(E.nextSendTime(t, { schedule: conv }, null, GERAL), E.nextSendTime(t, { schedule: old }, null, GERAL), new Date(t).toString());
+  }
+  assert.strictEqual(E.scheduleSentence({ schedule: old }, GERAL), E.scheduleSentence({ schedule: conv }, GERAL));
+  // "Copiar para os dias úteis": segunda → terça a sexta; aviso amarelo por linha
+  const cp = plain(E.copyToWeekdays([[], [W('19:00', '22:00')], [], [W('08:00', '09:00')], [], [], [W('10:00', '14:00')]]));
+  assert.deepStrictEqual(cp.map((x) => x.map((w) => `${w.start}-${w.end}`).join()), ['', '19:00-22:00', '19:00-22:00', '19:00-22:00', '19:00-22:00', '19:00-22:00', '10:00-14:00']);
+  assert.strictEqual(E.weekSummary(E.weekFromJson(cp)), 'Seg–Sex 19:00–22:00 · Sáb 10:00–14:00');
+  assert.deepStrictEqual(cp.map((x) => E.rowOutsideCommon(x)), [false, true, true, true, true, true, false]);
 });
 
 // ── motor de verdade (tick) ──
@@ -182,7 +228,9 @@ test('servidor: horário personalizado, limite por dia, "até o próximo dia às
     { id: 'w', type: 'esperar', amount: 1, unit: 'dias', send_window: { start: '09:00', end: '12:00' }, yes: [], no: [] }] };
   await a.saveAutomation({ automation: { kind: 'sequencia', name: 'Horários', sequence: seq } });
   const post = calls.find((x) => x.method === 'POST' && x.path === 'wa_automations').body.sequence;
-  assert.deepStrictEqual(post.schedule, { mode: 'personalizado', days: [1, 2, 3, 4, 5], windows: [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '18:00' }], daily_limit: 20 });
+  // 2.14.3: o formato antigo (dias + faixas) é gravado como a semana, com o mesmo resultado
+  const W = [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '18:00' }];
+  assert.deepStrictEqual(plain(post.schedule), { mode: 'personalizado', week: [[], W, W, W, W, W, []], daily_limit: 20 });
   assert.deepStrictEqual(post.steps[0], { id: 'p', type: 'pausa', mode: 'ate', until_day: 'qualquer', until_time: '10:00', send_window: { start: '14:00', end: '18:00' } });
   assert.deepStrictEqual(post.steps[2].send_window, { start: '09:00', end: '12:00' });
   await assert.rejects(a.saveAutomation({ automation: { kind: 'sequencia', name: 'x', sequence: { ...seq, schedule: { mode: 'personalizado', days: [1], windows: [{ start: '18:00', end: '14:00' }] } } } }), /início precisa ser antes do fim/);
@@ -190,6 +238,29 @@ test('servidor: horário personalizado, limite por dia, "até o próximo dia às
   // sem horário personalizado: nada novo no jsonb (igual a antes)
   await a.saveAutomation({ automation: { kind: 'sequencia', name: 'Geral', sequence: { start: { type: 'lead' }, schedule: { mode: 'geral' }, steps: [{ id: 'm', type: 'enviar', item_id: F1 }] } } });
   assert.strictEqual('schedule' in calls.filter((x) => x.method === 'POST' && x.path === 'wa_automations').pop().body.sequence, false);
+});
+test('servidor: horário GERAL por dia vai para o system_config (sem migration), com o resumo nos campos antigos; e volta junto das configurações', async () => {
+  const stored = {};
+  const settingsRow = { id: 1, paused_all: false, max_per_hour: 30, max_per_day: 150, min_interval_s: 45, max_interval_s: 120, business_start: '09:00', business_end: '19:00', business_days: [1, 2, 3, 4, 5, 6] };
+  const res = (status, body) => ({ ok: status < 300, status, text: async () => (body == null ? '' : JSON.stringify(body)), headers: { get: () => '*/0' } });
+  const fetch = async (url, init = {}) => {
+    const u = new URL(url);
+    const table = u.pathname.replace('/rest/v1/', '');
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    if (table === 'wa_settings') { if (init.method === 'PATCH') Object.assign(settingsRow, body); return res(200, [{ ...settingsRow }]); }
+    if (table === 'system_config') { if (init.method === 'POST') { stored[body.key] = body.value; return res(201, null); } const k = (u.searchParams.get('key') || '').replace('eq.', ''); return res(200, stored[k] ? [{ key: k, value: stored[k] }] : []); }
+    return res(200, []);
+  };
+  const c = vm.createContext({ console, setTimeout, clearTimeout, Intl, URL, Promise, fetch, WA_CONFIG: { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_ANON_KEY: 'k' } });
+  vm.runInContext(src('rich-parts.js'), c);
+  vm.runInContext(src('supabase-api.js'), c);
+  const r = await c.WaApi.updateEngineSettings({ business_week: WEEK, max_per_hour: 30 });
+  assert.strictEqual(stored.wa_business_week, JSON.stringify(WEEK));
+  assert.deepStrictEqual([plain(settingsRow.business_days), settingsRow.business_start, settingsRow.business_end], [[1, 2, 3, 4, 5, 6], '09:00', '18:00']);
+  assert.deepStrictEqual(plain(r.settings.business_week), WEEK);
+  assert.strictEqual(E.scheduleText(r.settings), 'Seg–Sex 09:00–12:00 e 14:00–18:00 · Sáb 10:00–14:00');
+  await assert.rejects(c.WaApi.updateEngineSettings({ business_week: [[], [], [], [], [], [], []] }), /deixe pelo menos um dia aberto/);
+  await assert.rejects(c.WaApi.updateEngineSettings({ business_week: [[], [W('18:00', '09:00')], [], [], [], [], []] }), /início precisa ser antes do fim/);
 });
 
 (async () => {

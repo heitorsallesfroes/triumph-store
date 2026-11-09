@@ -1188,6 +1188,16 @@
     await rest(`wa_contacts?id=eq.${contact.id}`, json('PATCH', 'return=minimal', { chat_id: chatId }));
   }
 
+  // 2.14.3: horário geral por dia da semana (system_config, chave wa_business_week; sem migration)
+  const WEEK_KEY = 'wa_business_week';
+  async function businessWeek() {
+    try {
+      const rows = await rest(`system_config?select=key,value&key=eq.${WEEK_KEY}`);
+      const v = rows.length ? JSON.parse(rows[0].value) : null;
+      return Array.isArray(v) && v.length === 7 ? checkWeek(v, 'Horário geral') : null;
+    } catch { return null; }
+  }
+  const withWeek = async (row) => { if (!row) return row; const w = await businessWeek(); return w ? { ...row, business_week: w } : row; };
   async function getEngineSettings() {
     let rows;
     try {
@@ -1203,7 +1213,7 @@
     if (!rows.length) return { available: false };
     const campaigns = await campaignsTables();
     return {
-      available: true, settings: rows[0], campaigns, campaignsV2: campaigns && (await campaignsV2()), campaignsV214: campaigns && (await campaignsV214()), automations: await automationTables(),
+      available: true, settings: await withWeek(rows[0]), campaigns, campaignsV2: campaigns && (await campaignsV2()), campaignsV214: campaigns && (await campaignsV214()), automations: await automationTables(),
       salesOrigin: await salesOrigin(),
       automationsV25: await automationsV25(),
       sequences: await automationsV212(), // 2.12.0
@@ -1223,15 +1233,24 @@
     if (p.max_per_day !== undefined) out.max_per_day = intIn(p.max_per_day, 1, 2000, 'Envios por dia');
     if (p.min_interval_s !== undefined) out.min_interval_s = intIn(p.min_interval_s, 10, 3600, 'Intervalo mínimo (s)');
     if (p.max_interval_s !== undefined) out.max_interval_s = intIn(p.max_interval_s, 10, 3600, 'Intervalo máximo (s)');
-    if (p.business_start !== undefined) {
+    if (p.business_start !== undefined && p.business_week === undefined) {
       if (!HM_RE.test(p.business_start)) throw new Error('Início do expediente inválido');
       out.business_start = p.business_start;
     }
-    if (p.business_end !== undefined) {
+    if (p.business_end !== undefined && p.business_week === undefined) {
       if (!HM_RE.test(p.business_end)) throw new Error('Fim do expediente inválido');
       out.business_end = p.business_end;
     }
-    if (p.business_days !== undefined) {
+    let week = null;
+    if (p.business_week !== undefined) {
+      week = checkWeek(p.business_week, 'Horário geral');
+      // resumo nos campos antigos (quem lê só eles continua vendo algo certo): dias abertos, primeiro início, último fim
+      const flat = week.flat();
+      out.business_days = week.map((ws, d) => (ws.length ? d : null)).filter((d) => d != null);
+      out.business_start = flat.map((x) => x.start).sort()[0];
+      out.business_end = flat.map((x) => x.end).sort().pop();
+    }
+    if (p.business_days !== undefined && !week) {
       const days = Array.isArray(p.business_days) ? [...new Set(p.business_days)] : null;
       if (!days || !days.length || days.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) throw new Error('Escolha pelo menos um dia');
       out.business_days = days.sort((a, b) => a - b);
@@ -1244,7 +1263,8 @@
     if (hmOf(merged.business_start) >= hmOf(merged.business_end)) throw new Error('O expediente precisa terminar depois de começar');
     const rows = await engineRest(`wa_settings?id=eq.1&select=${SETTINGS_COLUMNS}`,
       json('PATCH', 'return=representation', { ...out, updated_at: new Date().toISOString() }));
-    return { settings: rows[0] };
+    if (week) await rest('system_config?on_conflict=key', json('POST', 'resolution=merge-duplicates,return=minimal', { key: WEEK_KEY, value: JSON.stringify(week), updated_at: new Date().toISOString() }));
+    return { settings: await withWeek(rows[0]) };
   }
 
   // Trava: só assume se ninguém tem, se venceu, ou se já é nossa
@@ -1259,7 +1279,7 @@
     // trava, não faz a segunda leitura
     const rows = await engineRest(`wa_settings?id=eq.1&or=${cond}&select=${SETTINGS_COLUMNS}`,
       json('PATCH', 'return=representation', { runner_id: runnerId, lease_until: until }));
-    if (rows.length && rows[0].runner_id === runnerId) return { held: true, lease_until: rows[0].lease_until, settings: rows[0] };
+    if (rows.length && rows[0].runner_id === runnerId) return { held: true, lease_until: rows[0].lease_until, settings: await withWeek(rows[0]) };
     return { held: false, lease_until: null };
   }
 
@@ -2208,17 +2228,31 @@
     let schedule;
     if (sc && (sc.mode === 'personalizado' || (sc.daily_limit != null && sc.daily_limit !== ''))) {
       schedule = { mode: sc.mode === 'personalizado' ? 'personalizado' : 'geral' };
-      if (schedule.mode === 'personalizado') {
-        const days = [...new Set((Array.isArray(sc.days) ? sc.days : []).map(Number))].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort();
-        if (!days.length) throw new Error('Horário personalizado: escolha pelo menos um dia');
-        const windows = Array.isArray(sc.windows) ? sc.windows : [];
-        if (!windows.length || windows.length > 6) throw new Error('Horário personalizado: de 1 a 6 faixas de horário');
-        schedule.days = days;
-        schedule.windows = windows.map((x, i) => checkWindow(x, `Horário personalizado, faixa ${i + 1}`));
-      }
+      if (schedule.mode === 'personalizado') schedule.week = checkWeek(Array.isArray(sc.week) ? sc.week : weekFromOld(sc), 'Horário personalizado'); // 2.14.3
       if (sc.daily_limit != null && sc.daily_limit !== '') schedule.daily_limit = intIn(Number(sc.daily_limit), 1, 2000, 'Limite desta automação por dia');
     }
     return { start, business: false, ...(schedule ? { schedule } : {}), steps }; // 2.14.2: esperas sempre em tempo corrido
+  }
+  // 2.14.3: horário por dia da semana: 7 linhas (dom=0…sáb=6), cada uma com 0 a 6 faixas; linha vazia = fechado
+  const WEEK_DAY = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+  function checkWeek(w, what) {
+    if (!Array.isArray(w) || w.length !== 7) throw new Error(`${what}: horário da semana inválido`);
+    const out = w.map((ws, d) => {
+      const list = Array.isArray(ws) ? ws : [];
+      if (list.length > 6) throw new Error(`${what}, ${WEEK_DAY[d]}: no máximo 6 faixas`);
+      return list.map((x, i) => checkWindow(x, `${what}, ${WEEK_DAY[d]}${list.length > 1 ? ` (faixa ${i + 1})` : ''}`)).sort((a, b) => (a.start < b.start ? -1 : 1));
+    });
+    if (!out.some((ws) => ws.length)) throw new Error(`${what}: deixe pelo menos um dia aberto`);
+    return out;
+  }
+  // formato antigo (dias marcados + as mesmas faixas) → semana, sem mudar o resultado
+  function weekFromOld(sc) {
+    const days = new Set((Array.isArray(sc && sc.days) ? sc.days : []).map(Number));
+    if (!days.size) throw new Error('Horário personalizado: escolha pelo menos um dia');
+    const windows = Array.isArray(sc && sc.windows) ? sc.windows : [];
+    if (!windows.length || windows.length > 6) throw new Error('Horário personalizado: de 1 a 6 faixas de horário');
+    const ws = windows.map((x, i) => checkWindow(x, `Horário personalizado, faixa ${i + 1}`));
+    return [0, 1, 2, 3, 4, 5, 6].map((d) => (days.has(d) ? ws.map((x) => ({ ...x })) : []));
   }
   const HM2_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const checkHM = (v, what) => { if (typeof v !== 'string' || !HM2_RE.test(v)) throw new Error(what); return v; };

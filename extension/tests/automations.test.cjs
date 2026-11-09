@@ -38,16 +38,16 @@ test('Pós-venda: venda registrada → 7 dias depois (corridos) → manda; opcio
   assert.strictEqual(E.wizardSentence('posvenda', { trigger: { source: 'crm', id: '' }, amount: 7, unit: 'dias', itemId: I1, moveTo: LX }, names),
     'Quando uma venda for registrada pela conversa, 7 dias depois manda “Msg 1” e coloca em “Cliente”.');
 });
-test('Follow-up em 3 etapas: uma automação por etapa, sem resposta em 1 dia útil, move para a próxima; a última sai da etiqueta', () => {
+test('Follow-up em 3 etapas: uma automação por etapa, sem resposta em 1 dia (tempo corrido desde a 2.14.2), move para a próxima; a última sai da etiqueta', () => {
   const w = { name: 'Follow', trigger: { source: 'crm', id: L1 }, amount: 1, unit: 'dias', stages: [{ itemId: I1, labelId: L1 }, { itemId: I2, labelId: L2 }, { itemId: I3, labelId: L3 }] };
   const list = plain(E.wizardToAutomations('followup', w, { settings: SETTINGS }));
   assert.deepStrictEqual(list.map((a) => [a.name, a.trigger_type, a.trigger_label_id, a.wait_minutes]), [
-    ['Follow · etapa 1', 'sem_resposta', L1, 600], ['Follow · etapa 2', 'sem_resposta', L2, 600], ['Follow · etapa 3', 'sem_resposta', L3, 600]]);
+    ['Follow · etapa 1', 'sem_resposta', L1, 1440], ['Follow · etapa 2', 'sem_resposta', L2, 1440], ['Follow · etapa 3', 'sem_resposta', L3, 1440]]);
   assert.deepStrictEqual(list.map((a) => a.actions), [
     [{ type: 'enviar', item_id: I1, variants: [] }, { type: 'mover', label_id: L2 }],
     [{ type: 'enviar', item_id: I2, variants: [] }, { type: 'mover', label_id: L3 }],
     [{ type: 'enviar', item_id: I3, variants: [] }, { type: 'remover_etiqueta', label_id: L3 }]]);
-  assert.match(E.wizardSentence('followup', w, names), /^Quem está em “Follow Up 1” e não responde em 1 dia útil recebe “Msg 1” e vai para “Follow Up 2”; .* recebe “Msg 3” e sai do follow-up\. Se o cliente responder, para\.$/);
+  assert.match(E.wizardSentence('followup', w, names), /^Quem está em “Follow Up 1” e não responde em 1 dia recebe “Msg 1” e vai para “Follow Up 2”; .* recebe “Msg 3” e sai do follow-up\. Se o cliente responder, para\.$/);
 });
 test('Follow-up: no fim, mover para a etiqueta escolhida; no máximo 4 etapas', () => {
   const st = (k) => ({ itemId: I1, labelId: `${k}`.padStart(8, '0') + '-0000-4000-8000-000000000000' });
@@ -62,9 +62,9 @@ test('Lead novo sem resposta: etiqueta do WhatsApp, 3 horas sem responder → ma
   assert.deepStrictEqual(a.actions, [{ type: 'enviar', item_id: I1, variants: [] }]);
   assert.match(E.wizardSentence('lead', { trigger: { source: 'whatsapp', id: '7' }, amount: 3, unit: 'horas', itemId: I1 }, names), /^Lead em “Novo cliente” \(etiqueta do WhatsApp\) que não respondeu à sua mensagem em 3 horas recebe “Msg 1”/);
 });
-test('Cliente sumido: 15 dias úteis sem responder, com etiqueta → manda e move; não ignora a conversa antes do tempo', () => {
+test('Cliente sumido: 15 dias (corridos) sem responder, com etiqueta → manda e move; não ignora a conversa antes do tempo', () => {
   const [a] = plain(E.wizardToAutomations('sumido', { trigger: { source: 'crm', id: LX }, amount: 15, unit: 'dias', itemId: I1, moveTo: L2 }, { settings: SETTINGS }));
-  assert.deepStrictEqual([a.trigger_type, a.trigger_label_id, a.wait_minutes], ['sem_resposta', LX, 15 * 600]);
+  assert.deepStrictEqual([a.trigger_type, a.trigger_label_id, a.wait_minutes], ['sem_resposta', LX, 15 * 1440]);
   assert.ok(a.ignore_older_days > 15, `ignore_older_days ${a.ignore_older_days}`);
   assert.deepStrictEqual(a.actions, [{ type: 'enviar', item_id: I1, variants: [] }, { type: 'mover', label_id: L2 }]);
 });

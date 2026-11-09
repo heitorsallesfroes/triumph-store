@@ -46,7 +46,14 @@
     let min = Number(src.min_interval_s) || 45;
     let max = Number(src.max_interval_s) || 120;
     if (min > max) [min, max] = [max, min];
+    // 2.14.3: horário por dia da semana (7 linhas, dom=0…sáb=6; linha vazia = fechado). Sem ele: dias + uma faixa.
+    let week = weekFromJson(src.business_week);
+    if (!week || !week.some((w) => w.length)) week = [0, 1, 2, 3, 4, 5, 6].map((d) => (days.includes(d) && end > start ? [[start, end]] : []));
+    const open = week.map((w, d) => (w.length ? d : null)).filter((d) => d != null);
+    const flat = week.flat();
+    if (flat.length) { start = Math.min(...flat.map((w) => w[0])); end = Math.max(...flat.map((w) => w[1])); }
     return {
+      week,
       paused: src.paused_all === true,
       maxHour: Math.max(1, Number(src.max_per_hour) || 30),
       maxDay: Math.max(1, Number(src.max_per_day) || 150),
@@ -54,7 +61,7 @@
       maxGapS: max,
       startMin: start,
       endMin: end,
-      days: new Set(days),
+      days: new Set(open),
       raw: src,
     };
   }
@@ -62,12 +69,17 @@
   const ns = (s) => (s && s.days instanceof Set ? s : normSettings(s));
   const atMinute = (y, m, d, minutes) => new Date(y, m, d, Math.floor(minutes / 60), minutes % 60, 0, 0).getTime();
 
-  // Janela de trabalho do dia que contém ms: [início, fim] em ms (null se o dia não é permitido)
-  function windowOfDay(ms, s) {
+  // 7 linhas de faixas em JSON ([{ start, end }]) → minutos [[ini, fim]], ordenadas (null se não for uma semana)
+  function weekFromJson(w) {
+    if (!Array.isArray(w) || w.length !== 7) return null;
+    return w.map((ws) => (Array.isArray(ws) ? ws : []).map((x) => [parseHM(x && x.start), parseHM(x && x.end)])
+      .filter(([a, b]) => a != null && b != null && b > a).sort((x, y) => x[0] - y[0]));
+  }
+  // Faixas do dia que contém ms, em ms (2.14.3: um dia pode ter mais de uma; vazio = fechado)
+  function windowsOfDay(ms, s) {
     const d = new Date(ms);
-    if (!s.days.has(d.getDay()) || s.endMin <= s.startMin) return null;
     const y = d.getFullYear(); const mo = d.getMonth(); const da = d.getDate();
-    return [atMinute(y, mo, da, s.startMin), atMinute(y, mo, da, s.endMin)];
+    return (s.week[d.getDay()] || []).map(([a, b]) => [atMinute(y, mo, da, a), atMinute(y, mo, da, b)]);
   }
   const nextMidnight = (ms) => { const d = new Date(ms); return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime(); };
   const midnightOf = (ms) => { const d = new Date(ms); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
@@ -79,16 +91,14 @@
     let total = 0;
     let day = midnightOf(from);
     for (let i = 0; day < to && i < MAX_DAYS_SCAN; i++) {
-      const w = windowOfDay(day, s);
-      if (w) total += Math.max(0, Math.min(w[1], to) - Math.max(w[0], from));
+      for (const w of windowsOfDay(day, s)) total += Math.max(0, Math.min(w[1], to) - Math.max(w[0], from));
       day = nextMidnight(day);
     }
     return total;
   }
 
   function isBusinessTime(ms, settings) {
-    const w = windowOfDay(ms, ns(settings));
-    return !!w && ms >= w[0] && ms < w[1];
+    return windowsOfDay(ms, ns(settings)).some((w) => ms >= w[0] && ms < w[1]);
   }
 
   // Momento em que se completam needMs de horário comercial a partir de from (null se nunca)
@@ -97,8 +107,7 @@
     let left = Math.max(0, needMs);
     let day = midnightOf(from);
     for (let i = 0; i < MAX_DAYS_SCAN; i++) {
-      const w = windowOfDay(day, s);
-      if (w) {
+      for (const w of windowsOfDay(day, s)) {
         const a = Math.max(w[0], from);
         if (w[1] > a) {
           if (w[1] - a >= left) return a + left;
@@ -116,8 +125,7 @@
     if (isBusinessTime(ms, s)) return ms;
     let day = midnightOf(ms);
     for (let i = 0; i < MAX_DAYS_SCAN; i++) {
-      const w = windowOfDay(day, s);
-      if (w && w[0] >= ms) return w[0];
+      for (const w of windowsOfDay(day, s)) if (w[0] >= ms) return w[0];
       day = nextMidnight(day);
     }
     return null;
@@ -145,9 +153,24 @@
     return list.map((d) => DAY_NAMES[d]).join(', ');
   }
 
+  // 2.14.3: resumo curto da semana: dias seguidos com as mesmas faixas viram "Seg–Sex"; fechado não aparece
+  const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
+  const DAY_CAP = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+  function weekSummary(week) {
+    const key = (d) => (week[d] || []).map(([a, b]) => `${hm(a)}–${hm(b)}`).join(' e ');
+    const groups = [];
+    WEEK_ORDER.forEach((d) => {
+      const k = key(d);
+      const g = groups[groups.length - 1];
+      if (g && g.k === k) g.days.push(d); else groups.push({ k, days: [d] });
+    });
+    const open = groups.filter((g) => g.k);
+    if (!open.length) return 'nenhum dia';
+    if (open.length === 1 && open[0].days.length === 7) return `Todos os dias ${open[0].k}`;
+    return open.map((g) => `${g.days.length > 2 ? `${DAY_CAP[g.days[0]]}–${DAY_CAP[g.days[g.days.length - 1]]}` : g.days.map((d) => DAY_CAP[d]).join(', ')} ${g.k}`).join(' · ');
+  }
   function scheduleText(settings) {
-    const s = ns(settings);
-    return `só ${hm(s.startMin)}–${hm(s.endMin)}, ${formatDays([...s.days])}`;
+    return weekSummary(ns(settings).week);
   }
 
   function waitText(flow, settings) {
@@ -1069,35 +1092,48 @@
   const COMMON_START = 8 * 60;
   const COMMON_END = 21 * 60;
   // dias e faixas (em minutos) que valem para a automação
+  // 2.14.3: semana (minutos) de um horário personalizado: { week } novo, ou { days, windows } antigo convertido
+  // (mesmo resultado: cada dia marcado ganha as mesmas faixas)
+  function weekOf(sc) {
+    const nw = weekFromJson(sc && sc.week);
+    if (nw) return nw;
+    const days = new Set(((sc && sc.days) || []).map(Number));
+    const ws = ((sc && sc.windows) || []).map((w) => [minOf(w && w.start), minOf(w && w.end)]).filter(([a, b]) => a != null && b != null && b > a).sort((x, y) => x[0] - y[0]);
+    return [0, 1, 2, 3, 4, 5, 6].map((d) => (days.has(d) ? ws.map((w) => [...w]) : []));
+  }
+  const weekToJson = (week) => week.map((ws) => ws.map(([a, b]) => ({ start: hm(a), end: hm(b) })));
+  // o horário personalizado no formato novo (para a tela e para gravar): { mode, week, daily_limit? }
+  function scheduleWeekJson(sc) {
+    const out = { mode: 'personalizado', week: Array.isArray(sc && sc.week) && sc.week.length === 7 ? sc.week.map((ws) => (Array.isArray(ws) ? ws : []).map((w) => ({ start: String((w && w.start) || ''), end: String((w && w.end) || '') }))) : weekToJson(weekOf(sc)) };
+    if (sc && sc.daily_limit != null && sc.daily_limit !== '') out.daily_limit = sc.daily_limit;
+    return out;
+  }
+  // "Copiar para os dias úteis": a linha de segunda vai para terça–sexta
+  const copyToWeekdays = (weekJson) => weekJson.map((ws, d) => (d >= 2 && d <= 5 ? (weekJson[1] || []).map((w) => ({ ...w })) : ws.map((w) => ({ ...w }))));
+  // faixa de uma linha fora do horário comum (08:00–21:00): aviso amarelo por linha
+  const rowOutsideCommon = (ws) => (ws || []).some((w) => { const a = minOf(w && w.start); const b = minOf(w && w.end); return a != null && b != null && (a < COMMON_START || b > COMMON_END); });
   function scheduleSpec(def, settings) {
     const sc = def && def.schedule;
-    if (sc && sc.mode === 'personalizado') {
-      const days = new Set((sc.days || []).map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6));
-      const windows = (sc.windows || []).map((w) => [minOf(w && w.start), minOf(w && w.end)]).filter(([a, b]) => a != null && b != null && b > a);
-      return { custom: true, days, windows };
-    }
-    const s = ns(settings);
-    return { custom: false, days: s.days, windows: s.endMin > s.startMin ? [[s.startMin, s.endMin]] : [] };
+    if (sc && sc.mode === 'personalizado') return { custom: true, week: weekOf(sc) };
+    return { custom: false, week: ns(settings).week };
   }
   const minuteOfDay = (ms) => { const d = new Date(ms); return d.getHours() * 60 + d.getMinutes(); };
-  const inSpec = (ms, spec) => spec.days.has(new Date(ms).getDay()) && spec.windows.some(([a, b]) => minuteOfDay(ms) >= a && minuteOfDay(ms) < b);
+  const inSpec = (ms, spec) => (spec.week[new Date(ms).getDay()] || []).some(([a, b]) => minuteOfDay(ms) >= a && minuteOfDay(ms) < b);
   // próximo momento >= ms dentro do horário (null se não houver em 15 dias)
   function nextInSpec(ms, spec) {
     if (inSpec(ms, spec)) return ms;
     let day = midnightOf(ms);
     for (let i = 0; i < 15; i++) {
-      if (spec.days.has(new Date(day).getDay())) {
-        const d = new Date(day);
-        for (const [a] of [...spec.windows].sort((x, y) => x[0] - y[0])) {
-          const t = atMinute(d.getFullYear(), d.getMonth(), d.getDate(), a);
-          if (t >= ms) return t;
-        }
+      const d = new Date(day);
+      for (const [a] of spec.week[d.getDay()] || []) {
+        const t = atMinute(d.getFullYear(), d.getMonth(), d.getDate(), a);
+        if (t >= ms) return t;
       }
       day = nextMidnight(day);
     }
     return null;
   }
-  const winSpec = (w) => { const a = minOf(w && w.start); const b = minOf(w && w.end); return a != null && b != null && b > a ? { days: new Set([0, 1, 2, 3, 4, 5, 6]), windows: [[a, b]] } : null; };
+  const winSpec = (w) => { const a = minOf(w && w.start); const b = minOf(w && w.end); return a != null && b != null && b > a ? { week: [0, 1, 2, 3, 4, 5, 6].map(() => [[a, b]]) } : null; };
   // quando a etapa pode enviar: faixa da etapa e horário da automação ao mesmo tempo (null = nunca em 15 dias)
   function nextSendTime(ms, def, stepWindow, settings) {
     const spec = scheduleSpec(def, settings);
@@ -1129,7 +1165,7 @@
   // faixas fora do horário comum (08:00–21:00): aviso amarelo, mas deixa
   function scheduleOutsideCommon(def) {
     const sc = def && def.schedule;
-    const ws = [...(sc && sc.mode === 'personalizado' ? sc.windows || [] : [])];
+    const ws = sc && sc.mode === 'personalizado' ? weekToJson(weekOf(sc)).flat() : [];
     seqIndex(def).forEach(({ node: n }) => { if (n.send_window) ws.push(n.send_window); });
     return ws.some((w) => { const a = minOf(w && w.start); const b = minOf(w && w.end); return a != null && b != null && (a < COMMON_START || b > COMMON_END); });
   }
@@ -1148,8 +1184,8 @@
     const lim = scheduleDailyLimit(def);
     const limTxt = lim ? `; no máximo ${lim} por dia` : '';
     if (!sc || sc.mode !== 'personalizado') return `Envia no horário geral (${scheduleText(settings)})${limTxt}`;
-    const ws = (sc.windows || []).filter((w) => minOf(w.start) != null && minOf(w.end) != null);
-    return `Envia ${ws.map((w) => `entre ${w.start} e ${w.end}`).join(' e ') || '(escolha a faixa)'}, ${(sc.days || []).length ? daysText(sc.days) : '(escolha os dias)'}${limTxt}`;
+    const wk = weekOf(sc);
+    return `${wk.some((w) => w.length) ? weekSummary(wk) : '(escolha os dias e as faixas)'}${limTxt}`; // 2.14.3: "Seg–Sex 19:00–22:00 · Sáb 10:00–14:00"
   }
   const untilText = (n) => {
     const day = n.until_day === 'qualquer' || n.until_day == null || n.until_day === '' ? null : Number(n.until_day);
@@ -1161,10 +1197,17 @@
     const out = [];
     const sc = def && def.schedule;
     if (sc && sc.mode === 'personalizado') {
-      if (!(sc.days || []).length) out.push({ node: 'start', msg: 'Horário personalizado: escolha pelo menos um dia.' });
-      const ws = sc.windows || [];
-      if (!ws.length) out.push({ node: 'start', msg: 'Horário personalizado: adicione uma faixa de horário.' });
-      if (ws.some((w) => minOf(w && w.start) == null || minOf(w && w.end) == null || minOf(w.end) <= minOf(w.start))) out.push({ node: 'start', msg: 'Horário personalizado: cada faixa precisa de início antes do fim.' });
+      if (Array.isArray(sc.week)) {
+        // 2.14.3: por dia
+        const all = sc.week.flatMap((ws) => (Array.isArray(ws) ? ws : []));
+        if (!all.length) out.push({ node: 'start', msg: 'Horário personalizado: deixe pelo menos um dia aberto.' });
+        if (all.some((w) => minOf(w && w.start) == null || minOf(w && w.end) == null || minOf(w.end) <= minOf(w.start))) out.push({ node: 'start', msg: 'Horário personalizado: cada faixa precisa de início antes do fim.' });
+      } else {
+        if (!(sc.days || []).length) out.push({ node: 'start', msg: 'Horário personalizado: escolha pelo menos um dia.' });
+        const ws = sc.windows || [];
+        if (!ws.length) out.push({ node: 'start', msg: 'Horário personalizado: adicione uma faixa de horário.' });
+        if (ws.some((w) => minOf(w && w.start) == null || minOf(w && w.end) == null || minOf(w.end) <= minOf(w.start))) out.push({ node: 'start', msg: 'Horário personalizado: cada faixa precisa de início antes do fim.' });
+      }
     }
     if (sc && sc.daily_limit != null && sc.daily_limit !== '' && !(Number.isInteger(Number(sc.daily_limit)) && Number(sc.daily_limit) > 0)) out.push({ node: 'start', msg: 'Limite por dia: um número inteiro (ou vazio).' });
     seqIndex(def).forEach(({ node: n }) => {
@@ -1636,7 +1679,8 @@
   // minutos de expediente num dia (o "sem responder" conta só o horário comercial)
   function businessMinutesPerDay(settings) {
     const s = ns(settings);
-    return Math.max(60, s.endMin - s.startMin);
+    const openDays = s.week.filter((w) => w.length).length || 1;
+    return Math.max(60, Math.round(s.week.flat().reduce((x, [a, b]) => x + (b - a), 0) / openDays));
   }
   // "1 dia", "3 horas" → minutos. useful: dia = um dia de expediente (horário comercial)
   function wizardMinutes(amount, unit, { useful = false, settings } = {}) {
@@ -1663,7 +1707,7 @@
         trigger_label_id: trig.source === 'crm' && trig.id ? trig.id : null, wait_minutes: wizardMinutes(w.amount, w.unit),
         actions: [{ type: 'enviar', item_id: w.itemId || null, variants: [] }, ...(w.moveTo ? [{ type: 'adicionar_etiqueta', label_id: w.moveTo }] : [])] }];
     }
-    const wait = wizardMinutes(w.amount, w.unit, { useful: true, settings });
+    const wait = wizardMinutes(w.amount, w.unit, { useful: false, settings }); // 2.14.2: tempo corrido
     // conversas paradas há mais que isso não contam: a espera em dias corridos + 15
     const older = Math.min(365, Math.max(15, Math.ceil(wait / businessMinutesPerDay(settings)) * 2 + 15));
     if (kind === 'followup') {
@@ -1688,7 +1732,7 @@
     const lab = (id) => q(id ? labelName(id) : '?');
     const who = w.trigger && w.trigger.id ? (w.trigger.source === 'whatsapp' ? `${q(waLabelName(w.trigger.id))} (etiqueta do WhatsApp)` : lab(w.trigger.id)) : '?';
     const msg = (id) => (id ? q(itemTitle(id)) : 'a mensagem (escolha no passo 3)');
-    const when = wizardWhen({ ...w, useful: kind !== 'posvenda' });
+    const when = wizardWhen({ ...w, useful: false }); // 2.14.2: tempo corrido
     if (kind === 'posvenda') {
       return `Quando uma venda for registrada pela conversa${w.trigger && w.trigger.id ? ` (só quem está em ${lab(w.trigger.id)})` : ''}, ${when} depois manda ${msg(w.itemId)}${w.moveTo ? ` e coloca em ${lab(w.moveTo)}` : ''}.`;
     }
@@ -1772,7 +1816,8 @@
     const total = Math.max(0, Math.floor(n));
     const avgGap = (s.minGapS + s.maxGapS) / 2;
     const perHour = Math.max(1, Math.min(s.maxHour, Math.floor(3600 / avgGap)));
-    const dayHours = Math.max(0, (s.endMin - s.startMin) / 60);
+    const openDays = s.week.filter((w) => w.length).length || 1;
+    const dayHours = Math.max(0, s.week.flat().reduce((x, [a, b]) => x + (b - a), 0) / openDays / 60);
     const perDay = Math.max(1, Math.min(s.maxDay, Math.floor(perHour * dayHours)));
     const hours = total / perHour;
     const days = Math.ceil(total / perDay);
@@ -2796,6 +2841,7 @@
     seqNormalize, seqInsert, seqRemove, seqExcluded, seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
     itemUsageLines, itemInUse, friendlyDeleteError, // 2.13.1
     scheduleSpec, nextSendTime, pausaUntil, scheduleDailyLimit, scheduleOutsideCommon, scheduleSentence, scheduleProblems, untilText, windowText, daysText, // 2.13.2
+    weekFromJson, weekOf, weekToJson, weekSummary, scheduleWeekJson, copyToWeekdays, rowOutsideCommon, WEEK_ORDER, DAY_CAP, // 2.14.3
     CAMP_HARD, CAMP_PRESETS, CAMP_PRESET_LABEL, campaignSpeed, campaignSpeedRisk, campaignSpeedClamped, campaignSpeedText, campaignGapMs, campaignGate, campaignForecast, forecastText,
     spinText, hasSpin, VARIANT_MODES, variantCount, pickVariant, variantParts, spinParts, removeAllExcept, // 2.14.0
     limitCheck, randomGapMs, estimateDuration, estimateText,

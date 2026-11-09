@@ -1383,15 +1383,25 @@ async function main() {
     await waitFor(`return !!sh.querySelector('.vb .vb-box.vb-start');`, 10000);
     await q(`sh.querySelector('.vb .vb-box.vb-start').click(); await wait(200); sh.querySelector('.vb .vb-sched input[value="personalizado"]').click(); await wait(250); return true;`);
     const setIn = (sel, v) => q(`const i = sh.querySelector(${JSON.stringify(sel)}); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('change', { bubbles: true })); await wait(200); return true;`);
-    await setIn('.vb .vb-sched input[aria-label="Faixa 1: início"]', '07:00');
-    await setIn('.vb .vb-sched input[aria-label="Faixa 1: fim"]', '12:00');
-    await q(`sh.querySelector('.vb .vb-sched .vb-swin-add').click(); await wait(200); return true;`);
+    // 2.14.3: tabela por dia (vem do horário geral: Seg–Sáb 09:00–19:00, Dom fechado). Segunda 07:00–12:00 + "+ faixa"
+    // 14:00–18:00, "Copiar para os dias úteis", sábado 10:00–14:00, domingo fechado
+    const row0 = await q(`const t = sh.querySelector('.vb .vb-sched .wk'); return [...t.querySelectorAll('.wk-row')].map((r) => r.querySelector('.wk-day').textContent.trim() + ':' + (r.querySelector('.wk-closed') ? 'fechado' : [...r.querySelectorAll('.wk-win input')].map((i) => i.value).join('-')));`);
+    await setIn('.vb .vb-sched input[aria-label="Automação, Seg, faixa 1: início"]', '07:00');
+    await setIn('.vb .vb-sched input[aria-label="Automação, Seg, faixa 1: fim"]', '12:00');
+    await q(`sh.querySelector('.vb .vb-sched .wk-row[data-day="1"] .wk-add').click(); await wait(200); return true;`);
+    await setIn('.vb .vb-sched input[aria-label="Automação, Seg, faixa 2: início"]', '14:00');
+    await setIn('.vb .vb-sched input[aria-label="Automação, Seg, faixa 2: fim"]', '18:00');
+    await q(`sh.querySelector('.vb .vb-sched .wk-copy').click(); await wait(200); return true;`);
+    await setIn('.vb .vb-sched input[aria-label="Automação, Sáb, faixa 1: início"]', '10:00');
+    await setIn('.vb .vb-sched input[aria-label="Automação, Sáb, faixa 1: fim"]', '14:00');
     await setIn('.vb .vb-sched input[aria-label="Limite desta automação por dia"]', '25');
-    const sched = await q(`const v = sh.querySelector('.vb'); return { warn: (v.querySelector('.vb-sched .vb-warn') || {}).textContent || '', start: v.querySelector('.vb-box.vb-start').textContent,
-      days: [...v.querySelectorAll('.vb-sched .vb-day input')].map((c) => c.checked) };`);
-    check('COMEÇA → "Horário de envio" personalizado: dias (vêm do geral), faixas (07:00–12:00 e 14:00–18:00), limite por dia; faixa fora de 08:00–21:00 = aviso amarelo; a caixa mostra a frase',
-      /fora do horário comum \(08:00–21:00\)/.test(sched.warn) && /Envia entre 07:00 e 12:00 e entre 14:00 e 18:00, seg–sáb; no máximo 25 por dia/.test(sched.start)
-      && JSON.stringify(sched.days) === '[false,true,true,true,true,true,true]', JSON.stringify(sched));
+    const sched = await q(`const v = sh.querySelector('.vb'); const t = v.querySelector('.vb-sched .wk');
+      return { rows: [...t.querySelectorAll('.wk-row')].map((r) => r.querySelector('.wk-day').textContent.trim() + ':' + (r.querySelector('.wk-closed') ? 'fechado' : [...r.querySelectorAll('.wk-win input')].map((i) => i.value).join('-'))),
+        warns: [...t.querySelectorAll('.wk-row')].filter((r) => r.querySelector('.wk-warn')).map((r) => r.dataset.day), start: v.querySelector('.vb-box.vb-start').textContent };`);
+    check('COMEÇA → "Horário de envio" personalizado em tabela por dia (vem do geral; Dom fechado); duas faixas na segunda, "Copiar para os dias úteis", sábado diferente; aviso amarelo só nas linhas fora de 08:00–21:00; a caixa mostra o resumo curto',
+      JSON.stringify(row0) === JSON.stringify(['Seg:09:00-19:00', 'Ter:09:00-19:00', 'Qua:09:00-19:00', 'Qui:09:00-19:00', 'Sex:09:00-19:00', 'Sáb:09:00-19:00', 'Dom:fechado'])
+      && JSON.stringify(sched.rows) === JSON.stringify(['Seg:07:00-12:00-14:00-18:00', 'Ter:07:00-12:00-14:00-18:00', 'Qua:07:00-12:00-14:00-18:00', 'Qui:07:00-12:00-14:00-18:00', 'Sex:07:00-12:00-14:00-18:00', 'Sáb:10:00-14:00', 'Dom:fechado'])
+      && JSON.stringify(sched.warns) === '["1","2","3","4","5"]' && /Seg–Sex 07:00–12:00 e 14:00–18:00 · Sáb 10:00–14:00; no máximo 25 por dia/.test(sched.start), JSON.stringify({ row0, sched }));
     // ❓ 1ª espera de resposta: o envio seguinte só entre 14:00 e 18:00
     await q(`sh.querySelector('.vb .vb-box.vb-esperar').click(); await wait(200); sh.querySelector('.vb .vb-side .vb-win-on').click(); await wait(200); return true;`);
     await setIn('.vb .vb-side input[aria-label="Enviar a partir de"]', '14:00');
@@ -1412,14 +1422,27 @@ async function main() {
     const r16 = (fake.db.wa_automations || []).find((a) => a.name === 'Régua de follow-up') || {};
     const st16 = (r16.sequence || {}).steps || [];
     check('salvar guarda o horário no jsonb da automação (sem migration): personalizado, faixas, limite, ⏳ até e a faixa da etapa',
-      saved16 && JSON.stringify(r16.sequence.schedule) === JSON.stringify({ mode: 'personalizado', days: [1, 2, 3, 4, 5, 6], windows: [{ start: '07:00', end: '12:00' }, { start: '14:00', end: '18:00' }], daily_limit: 25 })
+      saved16 && JSON.stringify(r16.sequence.schedule) === JSON.stringify({ mode: 'personalizado', week: [[], ...[1, 2, 3, 4, 5].map(() => [{ start: '07:00', end: '12:00' }, { start: '14:00', end: '18:00' }]), [{ start: '10:00', end: '14:00' }]], daily_limit: 25 })
       && st16[0].type === 'pausa' && st16[0].mode === 'ate' && st16[0].until_time === '10:00' && JSON.stringify(st16[2].send_window) === '{"start":"14:00","end":"18:00"}',
       JSON.stringify({ saved16, schedule: r16.sequence && r16.sequence.schedule, s0: st16[0], s2: st16[2] && st16[2].send_window }));
     await q(`sh.querySelector('.fw-settings').click(); await wait(300); return true;`);
     const setTxt = await q(`return sh.querySelector('.ftab').textContent;`);
     check('a tela geral virou "Horário geral e limites de segurança" (padrão das automações; os limites valem sempre)',
       /HORÁRIO GERAL E LIMITES DE SEGURANÇA/.test(setTxt) && /padrão das automações/.test(setTxt) && /valem SEMPRE/.test(setTxt), setTxt.slice(0, 200));
-    await q(`const b = [...sh.querySelectorAll('.ftab .bbtn')].find((x) => x.textContent === 'Cancelar'); if (b) b.click(); await wait(200); return true;`);
+    // 2.14.3: horário geral por dia: sábado 10:00–14:00, domingo continua fechado
+    const setG = (sel, v) => setIn('.ftab ' + sel, v);
+    await setG('input[aria-label="Geral, Sáb, faixa 1: início"]', '10:00');
+    await setG('input[aria-label="Geral, Sáb, faixa 1: fim"]', '14:00');
+    const gSum = await q(`return sh.querySelector('.ftab .wk-sum').textContent;`);
+    await q(`const b = [...sh.querySelectorAll('.ftab .bbtn')].find((x) => x.textContent === 'Salvar'); b.click(); await wait(800); return true;`);
+    const cfgWeek = ((fake.db.system_config || []).find((r) => r.key === 'wa_business_week') || {}).value;
+    const ws16 = (fake.db.wa_settings || [])[0] || {};
+    check('tela geral por dia: Seg–Sex 09:00–19:00 · Sáb 10:00–14:00 (Dom fechado) grava a semana e o resumo nos campos antigos',
+      gSum === 'Seg–Sex 09:00–19:00 · Sáb 10:00–14:00' && cfgWeek === JSON.stringify([[], ...[1, 2, 3, 4, 5].map(() => [{ start: '09:00', end: '19:00' }]), [{ start: '10:00', end: '14:00' }]])
+      && JSON.stringify(ws16.business_days) === '[1,2,3,4,5,6]' && ws16.business_start === '09:00' && ws16.business_end === '19:00', JSON.stringify({ gSum, cfgWeek, days: ws16.business_days, st: ws16.business_start, en: ws16.business_end }));
+    // volta o geral (os outros testes contam com Seg–Sáb 09–19)
+    fake.db.system_config = (fake.db.system_config || []).filter((r) => r.key !== 'wa_business_week');
+    const b16 = await q(`const b = [...sh.querySelectorAll('.ftab .bbtn')].find((x) => x.textContent === 'Cancelar'); if (b) b.click(); await wait(200); return true;`);
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console nos horários', errors.length === 0, errors.slice(0, 8).join(' | '));
@@ -1554,7 +1577,7 @@ async function main() {
       JSON.stringify(cfBtns.vis) === JSON.stringify(['Iniciar disparo', 'Voltar']) && JSON.stringify(cfBtns.items) === JSON.stringify(['Simular']) && /^2 contatos · termina em cerca de .+ \((hoje|amanhã) às \d\d:\d\d\)$/.test(cfBtns.fc), JSON.stringify(cfBtns));
     await q(`sh.querySelector('.dtab .dp-start').click(); return true;`);
     const started = await waitFor(`return /Disparo iniciado/.test(sh.querySelector('.dtab').textContent);`, 20000);
-    const tg = (fake.db.wa_campaign_targets || []).map((t) => [t.name, t.chat_id, t.status, t.reason || null]);
+    const tg = (fake.db.wa_campaign_targets || []).map((t) => [t.name, t.chat_id, ['pendente', 'enviando', 'enviado'].includes(t.status) ? 'pendente' : t.status, t.reason || null]); // (o motor pode já ter começado a enviar)
     check('Iniciar: a foto tem Ana (carregada), Beto (@lid NÃO carregado, pelo telefone) e Caio pulado ("Não enviar" do WhatsApp)',
       started && JSON.stringify(tg) === JSON.stringify([['Ana Teste', DA, 'pendente', null], ['Beto', DB, 'pendente', null], ['Caio', DC, 'pulado', 'Não enviar']]), JSON.stringify({ started, tg }));
     // o motor envia (um por vez, com o intervalo do disparo)

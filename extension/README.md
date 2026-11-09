@@ -799,6 +799,31 @@ guardada.
 
 ## O que mudou
 
+### 2.14.3 — horário por dia da semana
+- Na caixa ▶ COMEÇA (Horário de envio → Personalizado) e na tela **"Horário geral e limites de segurança"**, o horário
+  virou uma **tabela com os 7 dias**, um embaixo do outro (Seg, Ter, Qua, Qui, Sex, Sáb, Dom). Em cada linha:
+  - caixinha liga/desliga ("fechado" quando desligada);
+  - início e fim da faixa;
+  - "+ faixa" para ter mais de uma faixa no mesmo dia (ex.: 09:00–12:00 e 14:00–18:00).
+- Atalho **"Copiar para os dias úteis"**: copia a linha de segunda para terça a sexta.
+- A frase da caixa virou um resumo curto: "Seg–Sex 19:00–22:00 · Sáb 10:00–14:00".
+- O aviso amarelo de "fora do horário comum (08:00–21:00)" passou a ser por linha.
+- **Conversão automática**: os horários já salvos (dias marcados + uma faixa para todos) viram a tabela com o mesmo
+  resultado, ao abrir a automação ou ao salvar.
+- Como fica gravado:
+  - automação: no jsonb (`sequence.schedule.week`), sem migration;
+  - horário geral: no `system_config` (chave `wa_business_week`), sem migration. Os campos antigos de `wa_settings`
+    (dias, início, fim) continuam preenchidos como resumo.
+- O motor, o Simular e a previsão dos disparos usam o horário de cada dia. As esperas continuam em tempo corrido
+  (2.14.2), então a regra "esperas só no horário comercial" não existe mais.
+- Correção da 2.14.2: no assistente de automações antigas, "sem resposta por X dias" ainda contava "dias úteis" de
+  expediente. Agora 1 dia = 24 h.
+- Testes:
+  - `tests/schedule.test.cjs`: sábado com horário diferente, dia fechado, duas faixas no mesmo dia, conversão do
+    formato antigo com o mesmo resultado hora a hora, "Copiar para os dias úteis", horário geral por dia no motor e
+    na previsão, servidor;
+  - Chrome real: a tabela na caixa COMEÇA e na tela geral.
+
 ### 2.14.2 — esperas sempre em tempo corrido
 - Saiu a opção "Esperas contam só no horário comercial", tanto da caixa ▶ COMEÇA quanto do editor antigo. Toda espera
   agora é em **tempo corrido**: 5 dias são 5 dias de calendário e 2 horas são 2 horas.
