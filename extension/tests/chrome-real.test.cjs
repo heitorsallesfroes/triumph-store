@@ -170,7 +170,10 @@ async function main() {
       if (method === 'GET') { let rows = tbl(table).filter(match); const lim = Number(q.get('limit')); if (lim) rows = rows.slice(0, lim); return [200, rows]; }
       if (method === 'POST') {
         const list = (Array.isArray(body) ? body : [body]).map((r) => ({ id: require('crypto').randomUUID(), created_at: new Date().toISOString(), ...r }));
-        tbl(table).push(...list);
+        // 2.13.3: upsert (on_conflict=coluna): troca a linha com a mesma chave
+        const oc = table === 'wa_chat_names' ? q.get('on_conflict') : null; // só aqui: as outras tabelas seguem como antes
+        if (oc) list.forEach((r) => { const old = tbl(table).find((x) => String(x[oc]) === String(r[oc])); if (old) { Object.assign(old, r); r.__dup = true; } });
+        tbl(table).push(...list.filter((r) => !r.__dup));
         if (table === 'wa_automations' && fake.onAutomationPost) list.forEach((r) => fake.onAutomationPost(r));
         return [201, list];
       }
@@ -1002,6 +1005,12 @@ async function main() {
       && row.payment_status === 'a_cobrar' && row.delivery_notes === 'Deixar na portaria' && row.wa_chat_id === CH && row.origin === 'anuncio' && row.ad_title === 'Relógio Promo' && !('wa_warranty_months' in row)
       && JSON.stringify(items) === JSON.stringify([['A', 1, 499.9, 199.5, 499.9], ['B', 2, 59.9, 12.5, 119.8]]) && /pagina=historico/.test(openErp || ''),
       JSON.stringify({ saved, row, items, openErp, msg: await q(`return (sh.querySelector('.vd-msg') || {}).textContent || '';`) }));
+    // 2.13.3: o nome da conversa vira o primeiro nome do cliente da venda ("Maria Souza" → "Maria"), origem "da venda"
+    const cnRows = (fake.db.wa_chat_names || []).filter((x) => x.chat_id === CH);
+    const cnPanel = await waitFor(`return (sh.querySelector('.cname .cname-src') || {}).textContent === 'da venda';`, 6000);
+    check('💰 depois de registrar, o nome da conversa vira o primeiro nome do cliente da venda (no lugar do aprendido) e o painel mostra "da venda"',
+      cnRows.length === 1 && cnRows[0].name === 'Maria' && cnRows[0].source === 'venda' && cnPanel && (await q(`return sh.querySelector('.cname .cname-v').textContent;`)) === 'Maria',
+      JSON.stringify({ cnRows, cnPanel }));
     const prods = fake.db.products.filter((p) => p.id !== PC).map((p) => [p.current_stock, p.cost]);
     check('💰 estoque baixado e o custo editado gravado no produto (como o ERP)', JSON.stringify(prods) === JSON.stringify([[3, 199.5], [7, 12.5]]), JSON.stringify(prods));
     // 2.12.4: depois da venda gravada, parte por parte

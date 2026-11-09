@@ -335,7 +335,7 @@
 
   // Nome salvo no CRM por conversa (só na memória; carregado com as etiquetas da conversa)
   const crmNames = new Map();
-  // 2.8.3: "Nome para mensagens" (wa_chat_names): definido à mão → aprendido da SUA mensagem → vazio.
+  // 2.8.3: "Nome para mensagens" (wa_chat_names): definido à mão → da venda (2.13.3) → aprendido da SUA mensagem → vazio.
   // available false = tabela ainda não criada: o {nome} funciona como antes (nome do contato).
   const chatNames = { available: null, map: new Map(), current: null, readErr: new Map() }; // 2.12.1: readErr = motivo da leitura que falhou
 
@@ -349,7 +349,7 @@
     const crmName = identity && identity.key && crmNames.has(identity.key) ? crmNames.get(identity.key) : null;
     return {
       conv, composer, contact, fullName, isNumber,
-      // 2.8.3: {nome} = nome para mensagens desta conversa (à mão → aprendido → vazio). Sem a tabela: como antes
+      // 2.8.3: {nome} = nome para mensagens desta conversa (à mão → da venda → aprendido → vazio). Sem a tabela: como antes
       // (2.1.0: CRM → WhatsApp, só nomes da lista de nomes comuns).
       firstName: chatNames.available === false
         ? globalThis.TspEngine.smartFirstName({ crmName, waName: isNumber ? '' : fullName })
@@ -2449,12 +2449,18 @@
     chatNames.map.set(chatId, v);
     return v;
   }
-  // nome do {nome} para um envio (agendado, disparo, automação): à mão → aprendido → vazio; sem a tabela, o de antes
+  // nome do {nome} para um envio (agendado, disparo, automação): à mão → da venda → aprendido → vazio; sem a tabela, o de antes
   async function nameForChat(chatId, fallback = '') {
     if (chatNames.available === false) return fallback || '';
     const v = await loadChatName(chatId);
     if (chatNames.available === false) return fallback || '';
     return (v && v.name) || '';
+  }
+  // 2.13.3: a venda gravou o nome "da venda" (o servidor nunca troca o definido à mão): mostra já
+  function chatNameFromSaleResult(chatId, r) {
+    if (!r || !r.name || !CHAT_ID_OK.test(chatId || '')) return;
+    chatNames.map.set(chatId, { name: r.name, source: r.source || 'venda' });
+    if (chatNames.current === chatId) { state.ctx = getContext(); renderNameRow(); refreshOpenBubble(); }
   }
   // 2.9.0: selo "💰 compra enviada" na conversa aberta (1 leitura ao trocar de conversa)
   async function loadChatBought(chatId) {
@@ -2569,7 +2575,7 @@
     edit.setAttribute('aria-label', 'Editar o nome para mensagens');
     edit.addEventListener('click', () => { cn.editing = true; renderNameRow(); });
     box.append(edit);
-    if (v.name) box.append(el('span', 'cname-src', v.source === 'manual' ? 'definido por você' : 'aprendido da sua mensagem'));
+    if (v.name) box.append(el('span', 'cname-src', v.source === 'manual' ? 'definido por você' : v.source === 'venda' ? 'da venda' : 'aprendido da sua mensagem'));
     // 2.12.1: o que deu errado, com o motivo e "Tentar de novo"
     const lerr = nameLearner.error(chatId);
     const rerr = !lerr && !chatNames.map.has(chatId) ? chatNames.readErr.get(chatId) : null;
@@ -10742,6 +10748,7 @@
         renderVendas();
         return;
       }
+      chatNameFromSaleResult(f.chatId, res && res.chatName); // 2.13.3
       if (f.linkEventId) call('linkSaleToPurchase', { eventId: f.linkEventId, saleId: res.id, fillPhone: false }).then(() => cv.links.delete(f.linkEventId)).catch(() => {}); // 2.10.5
       vs.done = { id: res.id, total: res.total, tinyFailed: res.tinyFailed, after: null };
       vs.view = 'done';
@@ -12031,6 +12038,7 @@
     linkSet(ev, { busy: true, msg: '' });
     try {
       const r = await call('linkSaleToPurchase', { eventId: ev.eventId, saleId: sale.id, phone: fillPhone ? globalThis.TspEngine.salePhoneOf(data.phone) : null, fillPhone });
+      chatNameFromSaleResult(data.chatId || chatNames.current, r && r.chatName); // 2.13.3
       linkSet(ev, { busy: false, loading: false, data: { ...data, linked: r.linked, byPhone: [], byValue: [] }, msg: auto ? 'Ligada sozinha: era a única venda com o telefone desta conversa.' : 'Ligada ✓', err: false });
     } catch (e) { linkSet(ev, { busy: false, loading: false, data, msg: e.message, err: true }); }
   }

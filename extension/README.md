@@ -799,6 +799,16 @@ guardada.
 
 ## O que mudou
 
+### 2.13.3 — nome da conversa a partir da venda
+- Ao registrar a venda pelo 💰, ou ao ligar uma venda do ERP à conversa (📈, inclusive a ligação automática pelo
+  telefone), o "Nome para mensagens" da conversa vira o **primeiro nome do cliente da venda** ("MARIA DA SILVA" →
+  "Maria"; sem "Cliente", sem números, primeira letra maiúscula), com a origem **"da venda"** no painel.
+- Ordem do {nome}: **definido à mão → da venda → aprendido da sua mensagem → vazio**. O definido à mão nunca é trocado;
+  o aprendido não troca o da venda; uma venda nova troca o nome "da venda".
+- **Migration `supabase/migrations/20261110130000_wa_chat_names_venda.sql`** (só amplia as origens permitidas; você
+  aplica). Sem ela, a venda e a ligação funcionam igual — o nome só não é gravado.
+- Testes: `tests/salename.test.cjs` e o Chrome real (💰 registrar troca o aprendido "Maria" pelo "da venda").
+
 ### 2.13.2 — horários por automação e por etapa
 - **Caixa ▶ COMEÇA → "Horário de envio"**: "Usar o horário geral" (padrão; mostra qual é) ou **Personalizado**: dias da
   semana + uma ou mais faixas (ex.: 09:00–12:00 e 14:00–18:00) e "Limite desta automação por dia" (vazio = sem limite

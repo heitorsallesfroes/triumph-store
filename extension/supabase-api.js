@@ -3058,7 +3058,8 @@
         } catch { tinyFailed++; }
       }
     }
-    return { id: saleId, total: row.total_sale_price, status: row.status, tinyFailed, origin: row.origin || null };
+    const chatName = extra.wa_chat_id ? await chatNameFromSale(extra.wa_chat_id, row.customer_name) : null; // 2.13.3
+    return { id: saleId, total: row.total_sale_price, status: row.status, tinyFailed, origin: row.origin || null, chatName };
   }
 
   // 2.12.3: fetchAddressByCep do ERP (src/lib/viaCep.ts): só o CEP (8 dígitos) sai; volta rua, bairro, cidade e UF
@@ -3240,9 +3241,23 @@
       throw err;
     }
   }
+  // 2.13.3: primeiro nome do cliente da venda ("MARIA DA SILVA" → "Maria"; sem "Cliente" e sem números)
+  function saleFirstName(full) {
+    const words = String(full == null ? '' : full).normalize('NFC').replace(/[^\p{L}' -]+/gu, ' ').split(/\s+/)
+      .map((w) => w.replace(/^[-']+|[-']+$/g, '')).filter((w) => w && !/^cliente$/i.test(w));
+    const w = (words[0] || '').slice(0, 40);
+    if (w.length < 2 || !CN_NAME_RE.test(w)) return null;
+    return w.toLocaleLowerCase('pt-BR').replace(/(^|[-'])(\p{L})/gu, (m, a, b) => a + b.toLocaleUpperCase('pt-BR'));
+  }
+  // grava o nome "da venda" (nunca passa por cima do definido à mão); nunca faz a venda falhar
+  async function chatNameFromSale(chatId, customerName) {
+    const nm = saleFirstName(customerName);
+    if (!nm || typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) return null;
+    try { return await setChatName({ chatId, name: nm, source: 'venda' }); } catch { return null; }
+  }
   async function setChatName({ chatId, name, source }) {
     if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
-    if (source !== 'manual' && source !== 'aprendido') throw new Error('Origem inválida');
+    if (source !== 'manual' && source !== 'aprendido' && source !== 'venda') throw new Error('Origem inválida');
     const clean = String(name == null ? '' : name).replace(/\s+/g, ' ').trim().slice(0, 40);
     if (clean && !CN_NAME_RE.test(clean)) throw new Error('Nome inválido');
     const cur = await getChatName({ chatId });
@@ -3253,8 +3268,9 @@
       return { name: null, source: null };
     }
     if (!clean) return { name: cur.name, source: cur.source, skipped: true };
-    // o aprendido nunca passa por cima do definido à mão
-    if (source === 'aprendido' && cur.source === 'manual') return { name: cur.name, source: cur.source, skipped: true };
+    // ordem: definido à mão → da venda (2.13.3) → aprendido da sua mensagem
+    if (source !== 'manual' && cur.source === 'manual') return { name: cur.name, source: cur.source, skipped: true };
+    if (source === 'aprendido' && cur.source === 'venda') return { name: cur.name, source: cur.source, skipped: true };
     if (cur.name === clean && cur.source === source) return { name: clean, source, skipped: true };
     await rest(`${CN_TABLE}?on_conflict=chat_id`, json('POST', 'resolution=merge-duplicates,return=minimal', { chat_id: chatId, name: clean, source, updated_at: new Date().toISOString() }));
     return { name: clean, source };
@@ -3500,7 +3516,8 @@
       setPhone = p;
     }
     await rest(`${CONV_TABLE}?event_id=eq.${ev.event_id}`, json('PATCH', 'return=minimal', { sale_id: saleId, sale_link_set_chat: setChat, sale_link_set_phone: setPhone }));
-    return { linked: saleSummary({ ...sale, wa_chat_id: ev.chat_id, customer_phone: setPhone || sale.customer_phone }) };
+    const chatName = await chatNameFromSale(ev.chat_id, sale.customer_name); // 2.13.3 (📈 ou ligada sozinha pelo telefone)
+    return { linked: saleSummary({ ...sale, wa_chat_id: ev.chat_id, customer_phone: setPhone || sale.customer_phone }), chatName };
   }
   // Desliga: tira o sale_id e desfaz só o que a ligação preencheu (wa_chat_id / telefone, se ainda forem os mesmos)
   async function unlinkSaleFromPurchase({ eventId }) {
@@ -3532,7 +3549,7 @@
     metaStatus, sendPurchaseEvent, fetchConversions, recentConversion, lastChatSaleValue,
     purchaseSaleLink, linkSaleToPurchase, unlinkSaleFromPurchase,
     sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
-    erpCatalog, createSaleFromChat, lookupCep, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
+    saleFirstName, erpCatalog, createSaleFromChat, lookupCep, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
     seqRuns, seqCreateRuns, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqRunAction, seqStats, automationSentToday,
     automationUnreserve, applySendLabels, getContactName,
