@@ -470,6 +470,44 @@ test('conversões: Cliente/Telefone vêm do evento, da conversa, do lead, do an�
   assert.deepEqual(conversionContact({ chat_id: null, contact_name: null, sale_id: null }, src), { name: '—', phone: '—' });
 });
 
+// ── ERP 09/11: bloco "Anúncio" do 👁 ──
+test('anúncio da conversa: título, origem, miniatura, Ver criativo e Gerenciador (conta 546602844126870)', () => {
+  const { conversationAd, adsManagerUrl, adBadgeTitle } = tracking;
+  const c = { ad: true, adId: '120200000000001', adTitle: 'Relógio Promo', chatIds: [A, L] };
+  const rows = [
+    { chat_id: B, phone: null, ad_id: 'X', ad_title: 'Outro', first_message_at: sp('2026-11-01T10:00:00'), source_url: 'https://www.instagram.com/p/OUTRO/' },
+    { chat_id: L, phone: null, ad_id: null, ad_title: null, first_message_at: null, thumbnail_url: 'https://scontent.xx.fbcdn.net/t.jpg' },
+    { chat_id: A, phone: null, ad_id: '120200000000001', ad_title: 'Relógio Promo', first_message_at: sp('2026-11-02T10:00:00'), source_app: 'instagram',
+      source_url: 'https://www.instagram.com/reel/XYZ/', media_type: 'VIDEO' },
+  ];
+  const ad = conversationAd(c, rows)!;
+  assert.equal(ad.title, 'Relógio Promo');
+  assert.equal(ad.platform, 'Instagram');
+  assert.equal(ad.creativeUrl, 'https://www.instagram.com/reel/XYZ/');
+  assert.equal(ad.thumbnailUrl, 'https://scontent.xx.fbcdn.net/t.jpg');
+  assert.equal(ad.mediaType, 'VIDEO');
+  assert.equal(ad.managerUrl, 'https://www.facebook.com/adsmanager/manage/ads?act=546602844126870&selected_ad_ids=120200000000001');
+  // conversa que não veio de anúncio: sem bloco
+  assert.equal(conversationAd({ ...c, ad: false }, rows), null);
+  // sem source_url: só o Gerenciador; Facebook pela origem
+  const noUrl = conversationAd({ ...c, chatIds: [A] }, [{ ...rows[2], source_url: null, source_app: 'facebook' }])!;
+  assert.deepEqual([noUrl.creativeUrl, noUrl.platform, !!noUrl.managerUrl], [null, 'Facebook', true]);
+  // sem ad_id: só o "Ver criativo"; título e id vêm do registro se a conversa não tiver
+  const noId = conversationAd({ ad: true, adId: null, adTitle: null, chatIds: [A] }, [{ ...rows[2], ad_id: null }])!;
+  assert.deepEqual([noId.title, noId.managerUrl, noId.creativeUrl], ['Relógio Promo', null, 'https://www.instagram.com/reel/XYZ/']);
+  // sem miniatura nem registro: só o título
+  const bare = conversationAd({ ad: true, adId: null, adTitle: 'Só título', chatIds: [A] }, [])!;
+  assert.deepEqual([bare.title, bare.thumbnailUrl, bare.creativeUrl, bare.managerUrl, bare.platform], ['Só título', null, null, null, null]);
+  // link que não é http(s) e id que não é número não viram botão
+  const bad = conversationAd({ ad: true, adId: 'AD1', adTitle: null, chatIds: [A] }, [{ ...rows[2], source_url: 'javascript:alert(1)', thumbnail_url: 'data:image/png;base64,AAA' }])!;
+  assert.deepEqual([bad.creativeUrl, bad.thumbnailUrl, bad.managerUrl], [null, null, null]);
+  assert.equal(adsManagerUrl(' 123 '), 'https://www.facebook.com/adsmanager/manage/ads?act=546602844126870&selected_ad_ids=123');
+  // passar o mouse na etiqueta Meta Ads
+  assert.equal(adBadgeTitle({ ad: true, adTitle: 'Relógio Promo' }), 'Anúncio: Relógio Promo');
+  assert.match(adBadgeTitle({ ad: true, adTitle: null }), /sem título/);
+  assert.equal(adBadgeTitle({ ad: false, adTitle: null }), '');
+});
+
 let ok = 0;
 for (const [name, fn] of tests) {
   try { fn(); ok++; console.log(`ok   ${name}`); } catch (e) { console.log(`FAIL ${name}\n     ${(e as Error).message.split('\n').slice(0, 8).join('\n     ')}`); process.exitCode = 1; }

@@ -799,6 +799,23 @@ guardada.
 
 ## O que mudou
 
+### 2.15.2 — criativo do anúncio no 👁 do Rastreamento (ERP)
+- A extensão agora guarda em `wa_ad_attribution`, além do link do post/reel (`source_url`, já guardado desde a 2.6.2),
+  a **miniatura do criativo** (`thumbnail_url`: o `thumbnailUrl` do ctwaContext; se não houver e o anúncio for imagem,
+  o `mediaUrl`; só https; a miniatura em base64 não é guardada) e o **tipo de mídia** (`media_type`: IMAGE / VIDEO).
+- Conversa que já estava na tabela: ganha o link do criativo, a miniatura e o tipo de mídia **só se estavam vazios**
+  (como o ctwa_clid). Nada que já foi gravado é trocado.
+- Banco: `supabase/migrations/20261112120000_wa_ad_attribution_creative.sql` (add column if not exists). Sem ela, a
+  extensão grava como antes (sem a miniatura) e o ERP mostra o bloco sem a miniatura.
+- ERP → WhatsApp → Rastreamento → 👁 de uma conversa de anúncio: bloco **"Anúncio"** com o título, a origem
+  (Instagram/Facebook), a miniatura (se guardada), **"Ver criativo"** (abre o `source_url` em nova aba) e
+  **"Abrir no Gerenciador de Anúncios"** (conta 546602844126870, com o anúncio selecionado). Sem `source_url`: só o
+  Gerenciador; sem id do anúncio: só o "Ver criativo". Na tabela, passar o mouse na etiqueta **Meta Ads** mostra o título.
+- Código: `wa-bridge.js` (`adSummary`), `supabase-api.js` (`saveAdAttributions`, `getAdAttribution`); no ERP,
+  `src/lib/waTracking.ts` (`conversationAd`, `adBadgeTitle`), `src/lib/waTrackingDb.ts` (`loadAdAttributions`) e
+  `WaTracking.tsx` (`AdBlock`).
+- Testes: `tests/adcreative.test.cjs` e `scripts/tests/waTracking.test.ts` (bloco "Anúncio").
+
 ### 2.15.1 — nome completo do cliente na venda (💰)
 - O campo **"Nome do cliente"** do 💰 agora vem com o nome completo, nesta ordem:
   1. o nome da **última venda do ERP com o mesmo telefone** (cliente que já comprou). O telefone é procurado nos

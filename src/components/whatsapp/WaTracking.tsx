@@ -5,14 +5,14 @@
 // Contas em src/lib/waTracking.ts; leitura em src/lib/waTrackingDb.ts. Só leitura.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Download, Eye, MessageCircle, Search, X } from 'lucide-react';
+import { Download, ExternalLink, Eye, MessageCircle, Search, X } from 'lucide-react';
 import { periodRanges, spDay, type PeriodPreset } from '../../lib/waPanel';
 import {
-  buildConversations, buyFunnel, conversationsCsv, conversationsIn, conversationTimeline, filterStage, originByDay, originMatches, pageInfo, salesByDay, salesCsv,
+  adBadgeTitle, buildConversations, buyFunnel, conversationAd, conversationsCsv, conversationsIn, conversationTimeline, filterStage, originByDay, originMatches, pageInfo, salesByDay, salesCsv,
   searchConversations, sortConversations, trackSummary, businessHoursLabel, businessHoursOf, saleLinksText, DEFAULT_SORT, STAGE_FILTERS, STAGE_LABEL,
-  type Conversation, type OriginFilter, type SalesDateMode, type SortKey, type Stage, type StageFilter, type TrackInput,
+  type Conversation, type ConversationAd, type OriginFilter, type SalesDateMode, type SortKey, type Stage, type StageFilter, type TrackInput,
 } from '../../lib/waTracking';
-import { loadTracking, type TrackLoad } from '../../lib/waTrackingDb';
+import { loadAdAttributions, loadTracking, type TrackLoad } from '../../lib/waTrackingDb';
 import { startVisibleInterval } from '../../lib/visibleInterval';
 import { useErpRefresh } from '../../lib/erpRefresh';
 import { btn, input, ORANGE } from './shared';
@@ -364,7 +364,7 @@ function OriginBadge({ c }: { c: Conversation }) {
   if (!c.ad) return <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(249,115,22,0.12)', color: UNTR, whiteSpace: 'nowrap' }}>Não rastreada</span>;
   return (
     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-      <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(37,99,235,0.12)', color: META, alignSelf: 'flex-start', whiteSpace: 'nowrap' }}>Meta Ads</span>
+      <span title={adBadgeTitle(c)} data-testid="track-meta-badge" style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(37,99,235,0.12)', color: META, alignSelf: 'flex-start', whiteSpace: 'nowrap', cursor: 'help' }}>Meta Ads</span>
       <span title={c.adTitle || ''} style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.adTitle || 'Via Campanha de Mensagem'}</span>
     </span>
   );
@@ -512,6 +512,19 @@ function ConversationsTable({ list, input: data, fileTag, resetKey, awaitingOnly
 const KIND_ICON: Record<string, string> = { contato: '👋', anuncio: '📣', loja: '🏪', follow: '🔁', disparo: '📢', resposta: '💬', venda: '💰', facebook: '📈' };
 function ConversationDrawer({ c, input: data, onClose }: { c: Conversation; input: TrackInput; onClose: () => void }) {
   const events = useMemo(() => conversationTimeline(c, data, fmtMoney), [c, data]);
+  // anúncio: o registro já carregado; se não veio na janela da aba, busca só os chats desta conversa
+  const [extraAttr, setExtraAttr] = useState<TrackInput['attributions']>([]);
+  const loadedAd = useMemo(() => conversationAd(c, data.attributions), [c, data]);
+  const needFetch = !!loadedAd && !data.attributions.some((a) => c.chatIds.includes(a.chat_id));
+  const chatKey = c.chatIds.join(','); // a lista atualiza a cada 30 s: busca de novo só se mudar de conversa
+  useEffect(() => {
+    setExtraAttr([]);
+    if (!needFetch) return;
+    let alive = true;
+    loadAdAttributions(chatKey.split(',')).then((rows) => { if (alive) setExtraAttr(rows); }).catch(() => {});
+    return () => { alive = false; };
+  }, [chatKey, needFetch]);
+  const ad = extraAttr.length ? conversationAd(c, [...data.attributions, ...extraAttr]) : loadedAd;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -530,6 +543,7 @@ function ConversationDrawer({ c, input: data, onClose }: { c: Conversation; inpu
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}><OriginBadge c={c} /><StageBadge c={c} /></div>
         {c.waLink && <a href={c.waLink} target="_blank" rel="noopener noreferrer" style={{ ...btn, textDecoration: 'none', color: GREEN, alignSelf: 'flex-start' }}><MessageCircle size={14} /> Abrir no WhatsApp</a>}
+        {ad && <AdBlock key={ad.thumbnailUrl || ''} ad={ad} />}
         <div style={{ ...eyebrow }}>Linha do tempo</div>
         <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 }} data-testid="track-timeline">
           {events.map((ev, i) => (
@@ -544,6 +558,33 @@ function ConversationDrawer({ c, input: data, onClose }: { c: Conversation; inpu
         </ol>
       </aside>
     </div>
+  );
+}
+
+// ERP 09/11: bloco "Anúncio" da lateral: título, origem, miniatura do criativo (se a extensão guardou) e os links
+function AdBlock({ ad }: { ad: ConversationAd }) {
+  const [thumbOk, setThumbOk] = useState(true);
+  const link = { ...btn, textDecoration: 'none', color: META, display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 } as const;
+  return (
+    <section data-testid="track-ad" style={{ border: '1px solid var(--border-main)', borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ ...eyebrow }}>Anúncio</div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        {ad.thumbnailUrl && thumbOk && (
+          <img src={ad.thumbnailUrl} alt="Miniatura do criativo" data-testid="track-ad-thumb" referrerPolicy="no-referrer" loading="lazy" onError={() => setThumbOk(false)}
+            style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, flexShrink: 0, background: 'var(--bg-inner)' }} />
+        )}
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span data-testid="track-ad-title" style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{ad.title || 'Via Campanha de Mensagem (sem título)'}</span>
+          {ad.platform && <span data-testid="track-ad-platform" style={{ fontSize: 11, color: 'var(--text-muted)' }}>{ad.platform}{ad.mediaType ? ` · ${ad.mediaType.toLowerCase()}` : ''}</span>}
+        </div>
+      </div>
+      {(ad.creativeUrl || ad.managerUrl) && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {ad.creativeUrl && <a href={ad.creativeUrl} target="_blank" rel="noopener noreferrer" style={link} data-testid="track-ad-creative"><ExternalLink size={13} /> Ver criativo</a>}
+          {ad.managerUrl && <a href={ad.managerUrl} target="_blank" rel="noopener noreferrer" style={link} data-testid="track-ad-manager"><ExternalLink size={13} /> Abrir no Gerenciador de Anúncios</a>}
+        </div>
+      )}
+    </section>
   );
 }
 

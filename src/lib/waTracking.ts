@@ -20,7 +20,11 @@ import { eventKind } from './waConversions.ts';
 
 // ── Linhas ────────────────────────────────────────────────────────────────
 export interface TrackLeadRow extends LeadRow { last_message_at?: string | null }
-export interface TrackAttributionRow extends AttributionRow { contact_name?: string | null }
+export interface TrackAttributionRow extends AttributionRow {
+  contact_name?: string | null;
+  // ERP 09/11 (bloco "Anúncio" do 👁): origem, link do post/reel e miniatura do criativo (extensão 2.15.2)
+  source_app?: string | null; source_url?: string | null; thumbnail_url?: string | null; media_type?: string | null;
+}
 export interface TrackSaleRow extends SaleRowP { customer_name?: string | null }
 export interface TrackConversionRow {
   chat_id: string | null; event_name?: string | null; error: string | null; value: number | string | null;
@@ -547,6 +551,57 @@ export function conversationTimeline(c: Conversation, input: Pick<TrackInput, 's
   });
   return out.sort((a, b) => a.t - b.t).slice(0, 200);
 }
+
+// ── ERP 09/11: bloco "Anúncio" da lateral (👁) ────────────────────────────
+// Conta de anúncios do Gerenciador (Meta Ads)
+export const ADS_ACCOUNT_ID = '546602844126870';
+export interface ConversationAd {
+  title: string | null; platform: 'Instagram' | 'Facebook' | null; adId: string | null;
+  thumbnailUrl: string | null; mediaType: string | null;
+  creativeUrl: string | null; // source_url (post/reel do anúncio)
+  managerUrl: string | null; // Gerenciador de Anúncios com o anúncio selecionado
+}
+const httpUrl = (v: string | null | undefined) => {
+  const s = String(v ?? '').trim();
+  return /^https?:\/\/\S{1,1000}$/i.test(s) ? s : null;
+};
+export function platformOf(app: string | null | undefined, url?: string | null): 'Instagram' | 'Facebook' | null {
+  const a = String(app ?? '').toLowerCase();
+  const u = String(url ?? '').toLowerCase();
+  if (/insta/.test(a) || /instagram\.com/.test(u)) return 'Instagram';
+  if (/face|fb/.test(a) || /facebook\.com|fb\.(me|com|watch)/.test(u)) return 'Facebook';
+  return null;
+}
+export const adsManagerUrl = (adId: string | null | undefined) => {
+  const id = String(adId ?? '').trim();
+  return /^\d{1,30}$/.test(id) ? `https://www.facebook.com/adsmanager/manage/ads?act=${ADS_ACCOUNT_ID}&selected_ad_ids=${id}` : null;
+};
+// Anúncio da conversa (só se ela veio de anúncio): o registro de wa_ad_attribution de um dos chats dela (o mais
+// antigo), completado pelo que a conversa já sabe (título/id do wa_leads). Sem link do criativo → só o Gerenciador;
+// sem id do anúncio → só o "Ver criativo".
+export function conversationAd(c: Pick<Conversation, 'ad' | 'adId' | 'adTitle' | 'chatIds'>, rows: TrackAttributionRow[]): ConversationAd | null {
+  if (!c.ad) return null;
+  const ids = new Set(c.chatIds);
+  const t0 = (r: TrackAttributionRow) => { const t = ts(r.first_message_at); return Number.isFinite(t) ? t : Infinity; };
+  const mine = rows.filter((r) => ids.has(r.chat_id)).sort((a, b) => t0(a) - t0(b));
+  const pick = (k: 'ad_id' | 'ad_title' | 'source_app' | 'source_url' | 'media_type') => {
+    const v = mine.map((r) => r[k]).find((x) => typeof x === 'string' && x.trim());
+    return v ? v.trim() : null;
+  };
+  const creativeUrl = httpUrl(pick('source_url'));
+  const adId = (c.adId || '').trim() || pick('ad_id');
+  return {
+    title: (c.adTitle || '').trim() || pick('ad_title'),
+    platform: platformOf(pick('source_app'), creativeUrl),
+    adId,
+    thumbnailUrl: mine.map((r) => httpUrl(r.thumbnail_url)).find(Boolean) || null,
+    mediaType: pick('media_type'),
+    creativeUrl,
+    managerUrl: adsManagerUrl(adId),
+  };
+}
+// Texto do "passar o mouse" na etiqueta Meta Ads
+export const adBadgeTitle = (c: Pick<Conversation, 'ad' | 'adTitle'>) => (c.ad ? (c.adTitle ? `Anúncio: ${c.adTitle}` : 'Anúncio sem título registrado (Via Campanha de Mensagem)') : '');
 
 // ── ERP 09/11: relatório de vendas (CSV) — as mesmas vendas do gráfico ────
 export function salesCsv(model: TrackModel, r: Range, f: OriginFilter, mode: SalesDateMode): string {

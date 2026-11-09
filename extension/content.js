@@ -13042,7 +13042,7 @@
       if (found && found.found) {
         ad = found;
         call('saveAdAttributions', { items: [{ chatId, t: found.firstMessageAt, phone: f.phone || null, name: f.name || null,
-          ad: { title: found.title, sourceId: found.sourceId, sourceApp: found.platform || found.sourceApp, sourceUrl: found.sourceUrl, conversionSource: found.conversionSource, ctwaClid: found.ctwaClid } }] }).catch(() => {});
+          ad: { title: found.title, sourceId: found.sourceId, sourceApp: found.platform || found.sourceApp, sourceUrl: found.sourceUrl, thumbnailUrl: found.thumbnailUrl, mediaType: found.mediaType, conversionSource: found.conversionSource, ctwaClid: found.ctwaClid } }] }).catch(() => {});
       } else f.adSearch = found && found.deep ? found.deep : null;
     }
     f.ad = ad;
@@ -13066,7 +13066,7 @@
     const clid = r.ctwa_clid || null;
     return {
       found: true, origin: 'salvo no banco', title: r.ad_title || null, description: null, sourceUrl: r.source_url || null, sourceId: r.ad_id || null,
-      sourceType: null, sourceApp: r.source_app || null, conversionSource: r.conversion_source || null, mediaType: null,
+      sourceType: null, sourceApp: r.source_app || null, conversionSource: r.conversion_source || null, mediaType: r.media_type || null, thumbnailUrl: r.thumbnail_url || null,
       platform: /insta/.test(app) ? 'Instagram' : /face|fb/.test(app) ? 'Facebook' : null, conversionData: null, ctwaClid: clid,
       clidInfo: clid ? { field: 'salvo no banco', path: '-', length: clid.length, mask: `${clid.slice(0, 6)}…${clid.slice(-4)}` } : null, clidCandidates: [], keys: [],
       firstMessageAt: r.first_message_at ? Math.floor(Date.parse(r.first_message_at) / 1000) : null,

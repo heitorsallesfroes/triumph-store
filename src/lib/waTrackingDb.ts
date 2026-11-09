@@ -13,6 +13,8 @@ export interface TrackLoad { input: TrackInput; missing: string[]; settings: Bus
 export interface BusinessSettings { business_days?: number[] | null; business_start?: string | null; business_end?: string | null }
 
 const iso = (ms: number) => new Date(ms).toISOString();
+// bloco "Anúncio" do 👁: source_app/source_url (desde 2.6.2); miniatura e tipo de mídia (migration 20261112120000 + extensão 2.15.2)
+const ATTR_COLS = 'chat_id, phone, contact_name, ad_id, ad_title, source_app, source_url, first_message_at';
 const ACTIVITY_LABEL = 'conversas ativas (migration 20261109120000_wa_chat_activity.sql + extensão 2.12.8)';
 
 async function hasColumn(table: string, column: string): Promise<boolean> {
@@ -26,21 +28,22 @@ async function orEmpty<T>(label: string, missing: string[], run: () => Promise<T
 export async function loadTracking(r: Range): Promise<TrackLoad> {
   const w = trackingWindow(r);
   const missing: string[] = [];
-  const [trackCols, saleCols, originCol, eventCol, saleIdCol] = await Promise.all([
+  const [trackCols, saleCols, originCol, eventCol, saleIdCol, thumbCol] = await Promise.all([
     hasColumn('wa_leads', 'last_message_at'), hasColumn('sales', 'wa_chat_id'), hasColumn('wa_send_log', 'origin'),
-    hasColumn('wa_conversion_events', 'event_name'), hasColumn('wa_conversion_events', 'sale_id'),
+    hasColumn('wa_conversion_events', 'event_name'), hasColumn('wa_conversion_events', 'sale_id'), hasColumn('wa_ad_attribution', 'thumbnail_url'),
   ]);
   if (!trackCols) missing.push('última mensagem dos leads (migration 20261107120000 + extensão 2.12.2)');
   const leadCols = `chat_id, phone, first_message_at, origin, ad_id, ad_title${trackCols ? ', last_message_at' : ''}`;
   const sendCols = `id, chat_id, created_at, source, source_id, item_id, status${originCol ? ', origin, follow_step' : ''}`;
   const salesCols = `id, sale_date, created_at, total_sale_price, customer_phone, customer_name${saleCols ? ', wa_chat_id, origin' : ''}`;
+  const attrCols = `${ATTR_COLS}${thumbCol ? ', thumbnail_url, media_type' : ''}`;
   const convCols = `chat_id, error, value, test, status, created_at, contact_name, ad_title${eventCol ? ', event_name' : ''}${saleIdCol ? ', sale_id, sale_link_set_chat' : ''}`;
 
   const [leads, attributions, sends, replies, sales, names, conversions, activity, activityDays] = await Promise.all([
     orEmpty<TrackLeadRow>('conversas novas (wa_leads)', missing, () => fetchAllRows<TrackLeadRow>((f, t) => supabase.from('wa_leads')
       .select(leadCols).gte('first_message_at', iso(w.knownFrom)).lte('first_message_at', iso(r.to)).order('id').range(f, t) as any)),
     orEmpty<TrackAttributionRow>('anúncios (wa_ad_attribution)', missing, () => fetchAllRows<TrackAttributionRow>((f, t) => supabase.from('wa_ad_attribution')
-      .select('chat_id, phone, contact_name, ad_id, ad_title, first_message_at').gte('first_message_at', iso(w.knownFrom)).lte('first_message_at', iso(r.to))
+      .select(attrCols).gte('first_message_at', iso(w.knownFrom)).lte('first_message_at', iso(r.to))
       .order('id').range(f, t) as any)),
     orEmpty<SendRow>('envios (wa_send_log)', missing, () => fetchAllRows<SendRow>((f, t) => supabase.from('wa_send_log')
       .select(sendCols).eq('status', 'enviado').gte('created_at', iso(w.from)).lte('created_at', iso(w.until)).order('id').range(f, t) as any)),
@@ -73,4 +76,16 @@ export async function loadTracking(r: Range): Promise<TrackLoad> {
     settings = (data as BusinessSettings | null) || null;
   } catch { settings = null; }
   return { input: { leads, attributions, sends, replies, sales, names, conversions, activity, activityDays, items }, missing: [...new Set(missing)], settings };
+}
+
+// ERP 09/11: anúncio de uma conversa pelo 👁 quando o registro não veio na janela da aba (1ª mensagem antiga ou sem data).
+// Sem a coluna da miniatura (migration não aplicada): só as colunas que existem. Erro → lista vazia.
+export async function loadAdAttributions(chatIds: string[]): Promise<TrackAttributionRow[]> {
+  const ids = [...new Set(chatIds.filter(Boolean))].slice(0, 20);
+  if (!ids.length) return [];
+  for (const cols of [`${ATTR_COLS}, thumbnail_url, media_type`, ATTR_COLS]) {
+    const { data, error } = await supabase.from('wa_ad_attribution').select(cols).in('chat_id', ids).limit(20);
+    if (!error) return (data as unknown as TrackAttributionRow[]) || [];
+  }
+  return [];
 }

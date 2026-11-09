@@ -1046,10 +1046,15 @@
   const msgT = (m) => Number(safe(() => m.t, 0)) || 0;
   const ctxOf = (m) => { const c = safe(() => m.ctwaContext, null); return c && typeof c === 'object' ? c : null; };
 
+  // 2.15.2: ctwaContext.mediaType pode vir como número (1 = imagem, 2 = vídeo) ou texto
+  const mediaTypeOf = (v) => (v == null ? null : v === '1' ? 'IMAGE' : v === '2' ? 'VIDEO' : /^[A-Za-z_]{1,40}$/.test(v) ? v.toUpperCase() : null);
   function adSummary(ctx) {
       const s = (k, max) => { const v = safe(() => ctx[k], null); return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : (typeof v === 'number' ? String(v) : null); };
       const app = (s('sourceApp', 40) || s('conversionSource', 40) || '').toLowerCase();
       const url = s('sourceUrl', 500);
+      // 2.15.2: miniatura do criativo (URL; o thumbnail em base64 não é guardado) e tipo de mídia
+      const mediaType = mediaTypeOf(s('mediaType', 40));
+      const thumb = s('thumbnailUrl', 1000) || (mediaType === 'IMAGE' ? s('mediaUrl', 1000) : null);
       return {
         found: true,
         title: s('title', 200),
@@ -1059,7 +1064,8 @@
         sourceType: s('sourceType', 40),
         sourceApp: s('sourceApp', 40),
         conversionSource: s('conversionSource', 40),
-        mediaType: s('mediaType', 40),
+        mediaType,
+        thumbnailUrl: thumb && /^https:\/\//.test(thumb) ? thumb : null,
         platform: /insta/.test(app) || /instagram\.com/.test(url || '') ? 'Instagram' : /face|fb/.test(app) || /facebook\.com|fb\.(me|com)/.test(url || '') ? 'Facebook' : null,
         conversionData: summarizeData(safe(() => ctx.conversionData, null)),
         ...clidFields(ctx),
@@ -1438,7 +1444,7 @@
     const a = adSummary(ctx);
     return {
       chatId, t, name: chat ? realName(chatCard(chat, false).name) : null,
-      ad: { title: a.title, sourceId: a.sourceId, sourceApp: a.platform || a.sourceApp, sourceUrl: a.sourceUrl, conversionSource: a.conversionSource, ctwaClid: a.ctwaClid },
+      ad: { title: a.title, sourceId: a.sourceId, sourceApp: a.platform || a.sourceApp, sourceUrl: a.sourceUrl, thumbnailUrl: a.thumbnailUrl, mediaType: a.mediaType, conversionSource: a.conversionSource, ctwaClid: a.ctwaClid },
     };
   }
   function queueAttribution(chatId, t, ctx, chat) {
