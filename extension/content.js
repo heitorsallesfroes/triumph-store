@@ -1566,6 +1566,12 @@
       .vb-tpls { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: var(--s-3); padding: var(--s-6); }
       .vb-h { margin: 0; font-size: 20px; }
       .vb-tgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--s-3); width: min(1000px, 100%); }
+      /* 2.13.2: horários */
+      .vb-time { width: 110px !important; }
+      .vb-days { display: flex; flex-wrap: wrap; gap: 4px; }
+      .vb-day { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: var(--r-pill); background: #eef2f5; font-size: var(--fs-2); cursor: pointer; }
+      .vb-dlimit { width: 140px !important; }
+      .vb-warn { padding: 6px 8px; border-radius: var(--r-md); background: #fef9c3; border: 1px solid #fde047; color: #854d0e; font-size: var(--fs-2); font-weight: 600; }
       .vb-tpl { display: flex; flex-direction: column; gap: 6px; padding: var(--s-4); border-radius: var(--r-lg); background: var(--bg); border: 1.5px solid var(--border-strong); text-align: left; color: var(--fg); }
       .vb-tpl:hover:not(:disabled) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
       .vb-tname { font-weight: 800; font-size: var(--fs-4); }
@@ -7428,7 +7434,7 @@
     const paused = !!s.paused_all;
     const p = fbtn(`bbtn${paused ? ' primary' : ''}`, paused ? '▶ Retomar' : '⏸ Pausar tudo', () => togglePauseAll());
     p.classList.add('fw-pause');
-    row.append(p, fbtn('bbtn', 'Limites e horário', () => { if (state.section !== 'follows') setSection('follows'); openSettings(); }));
+    row.append(p, fbtn('bbtn fw-settings', 'Horário geral e limites de segurança', () => { if (state.section !== 'follows') setSection('follows'); openSettings(); }));
     top.append(row);
     top.append(el('div', 'fw-count', `Envios na última hora: ${m.counts.hour}/${s.max_per_hour} · hoje: ${m.counts.day}/${s.max_per_day}`));
     top.append(el('div', 'crm-intro', `Motor: ${engineRoleText()}${m.waiting && m.role === 'este' && !paused ? ` · agora: ${m.waiting}` : ''}`));
@@ -7461,7 +7467,7 @@
     respondeu: 'O cliente respondeu', dia_hora: 'Num dia e hora fixos da semana', venda_registrada: 'Uma venda foi registrada pela conversa (💰)',
   };
   const TRIGGER_INFO = {
-    sem_resposta: 'Conta só o horário comercial (mude em "Limites e horário"), a partir da sua última mensagem. Se o cliente responder antes, não manda.',
+    sem_resposta: 'Conta só o horário comercial (mude em "Horário geral e limites"), a partir da sua última mensagem. Se o cliente responder antes, não manda.',
     entrou_etiqueta: 'Conta o tempo corrido (dia e noite) desde que o contato entrou na etiqueta, mesmo que vocês tenham conversado no meio.',
     respondeu: 'Roda quando a última mensagem da conversa é do cliente.',
     dia_hora: 'Nos dias e na hora escolhidos, uma vez por dia, para cada contato da etiqueta.',
@@ -8166,8 +8172,10 @@
   }
   function vbSentence(n) {
     if (n.type === 'enviar') return n.item_id ? `Envia “${itemTitle(n.item_id)}”` : n.hint ? `Escolha a mensagem (sugestão: ${n.hint})` : 'Escolha a mensagem';
-    if (n.type === 'pausa') return `Espera ${E.seqNodeLabel({ steps: [n] }, n.id).replace(/^Esperando /, '')}`;
-    if (n.type === 'esperar') return `Espera resposta por até ${E.seqNodeLabel({ steps: [n] }, n.id).replace(/^Esperando resposta \((.*)\)$/, '$1')}${n.after_mine ? ', contando da SUA última mensagem' : ''}`;
+    // 2.13.2: "· envia só entre 14:00 e 18:00" quando a etapa tem faixa
+    const wtxt = n.send_window ? ` · ${E.windowText(n.send_window)}` : '';
+    if (n.type === 'pausa') return `Espera ${E.seqNodeLabel({ steps: [n] }, n.id).replace(/^Esperando /, '')}${wtxt}`;
+    if (n.type === 'esperar') return `Espera resposta por até ${E.seqNodeLabel({ steps: [n] }, n.id).replace(/^Esperando resposta \((.*)\)$/, '$1')}${n.after_mine ? ', contando da SUA última mensagem' : ''}${wtxt}`;
     if (n.type === 'etiqueta') {
       const id = n.source === 'whatsapp' ? n.wa_label_id : n.label_id;
       if (!id) return 'Escolha a etiqueta';
@@ -8299,6 +8307,7 @@
     return vbCard(f, {
       id: 'start', kind: 'start', icon: '▶', title: 'COMEÇA', text: vbStartText(st), sel: f.sel === 'start',
       extra: [st.type === 'etiqueta' && f.include ? 'Quem entra: também quem já está na etiqueta' : 'Quem entra: só quem se encaixar daqui pra frente',
+        E.scheduleSentence(f.def, motor.state.settings), // 2.13.2
         ...(f.def.business !== false ? ['Esperas só no horário comercial'] : []), `Nunca para quem tem: Não enviar${ex.length ? `, ${ex.join(', ')}` : ''}`],
     });
   }
@@ -8383,16 +8392,77 @@
     if (bad.length) side.append(el('div', 'vb-sub vb-red', bad.join(' ')));
     if (n.type === 'enviar') vbSideSend(f, n, side);
     else if (n.type === 'pausa' || n.type === 'esperar') {
-      side.append(el('div', 'vb-sub', n.type === 'pausa' ? 'Espera esse tempo e segue para a próxima caixa (responda ou não).' : 'Espera até esse tempo. Se o cliente mandar qualquer mensagem, segue por ✅; se não, por ❌.'));
-      const r = el('div', 'sc-row');
-      const amount = numberInput(n.amount, 1, 8760, n.type === 'pausa' ? 'Quanto tempo esperar' : 'Esperar resposta por até');
-      amount.addEventListener('input', () => { n.amount = Math.floor(Number(amount.value) || 0); vbChange(); vbRefreshBox(f, n); });
-      const unit = el('select', 'ed-cat');
-      unit.setAttribute('aria-label', 'Unidade');
-      ['minutos', 'horas', 'dias'].forEach((u) => { const o = el('option', null, u); o.value = u; o.selected = n.unit === u; unit.append(o); });
-      unit.addEventListener('change', () => { n.unit = unit.value; vbChange(); vbRender(); });
-      r.append(amount, unit);
-      side.append(r);
+      side.append(el('div', 'vb-sub', n.type === 'pausa' ? 'Espera e segue para a próxima caixa (responda ou não).' : 'Espera até esse tempo. Se o cliente mandar qualquer mensagem, segue por ✅; se não, por ❌.'));
+      // 2.13.2: ⏳ "esperar X tempo" ou "esperar até o próximo [dia] às HH:MM"
+      if (n.type === 'pausa') {
+        const modes = el('div', 'vb-radios vb-pmode');
+        [['tempo', 'Esperar um tempo'], ['ate', 'Esperar até o próximo dia e hora']].forEach(([v, txt]) => {
+          const l = el('label', 'sc-radio');
+          const r0 = el('input');
+          r0.type = 'radio';
+          r0.name = `vb-pm-${n.id}`;
+          r0.value = v;
+          r0.checked = (n.mode || 'tempo') === v;
+          r0.addEventListener('change', () => {
+            if (v === 'ate') { n.mode = 'ate'; n.until_day = n.until_day ?? 'qualquer'; n.until_time = n.until_time || '10:00'; } else { delete n.mode; delete n.until_day; delete n.until_time; n.amount = n.amount || 1; n.unit = n.unit || 'dias'; }
+            vbChange(); vbRender();
+          });
+          l.append(r0, ` ${txt}`);
+          modes.append(l);
+        });
+        side.append(modes);
+      }
+      if (n.type === 'pausa' && n.mode === 'ate') {
+        const r = el('div', 'sc-row');
+        const day = el('select', 'ed-cat');
+        day.setAttribute('aria-label', 'Dia da semana');
+        [['qualquer', 'próximo dia'], ...['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'].map((d, i) => [String(i), `próximo(a) ${d}`])].forEach(([v, t]) => {
+          const o = el('option', null, t); o.value = v; o.selected = String(n.until_day ?? 'qualquer') === v; day.append(o);
+        });
+        day.addEventListener('change', () => { n.until_day = day.value === 'qualquer' ? 'qualquer' : Number(day.value); vbChange(); vbRender(); });
+        const tm = el('input', 'ed-title vb-time');
+        tm.type = 'time';
+        tm.value = n.until_time || '';
+        tm.setAttribute('aria-label', 'Hora');
+        tm.addEventListener('change', () => { n.until_time = tm.value; vbChange(); vbRender(); });
+        r.append(el('span', null, 'até o'), day, el('span', null, 'às'), tm);
+        side.append(r);
+      } else {
+        const r = el('div', 'sc-row');
+        const amount = numberInput(n.amount, 1, 8760, n.type === 'pausa' ? 'Quanto tempo esperar' : 'Esperar resposta por até');
+        amount.addEventListener('input', () => { n.amount = Math.floor(Number(amount.value) || 0); vbChange(); vbRefreshBox(f, n); });
+        const unit = el('select', 'ed-cat');
+        unit.setAttribute('aria-label', 'Unidade');
+        ['minutos', 'horas', 'dias'].forEach((u) => { const o = el('option', null, u); o.value = u; o.selected = n.unit === u; unit.append(o); });
+        unit.addEventListener('change', () => { n.unit = unit.value; vbChange(); vbRender(); });
+        r.append(amount, unit);
+        side.append(r);
+      }
+      // 2.13.2: "Depois da espera, enviar só entre HH:MM e HH:MM" (fora da faixa: espera a próxima)
+      const wl = el('label', 'sc-radio');
+      const wcb = el('input');
+      wcb.type = 'checkbox';
+      wcb.className = 'vb-win-on';
+      wcb.checked = !!n.send_window;
+      wcb.addEventListener('change', () => { if (wcb.checked) n.send_window = { start: '09:00', end: '18:00' }; else delete n.send_window; vbChange(); vbRender(); });
+      wl.append(wcb, n.type === 'pausa' ? ' Depois da espera, enviar só entre…' : ' O envio seguinte (✅ ou ❌) só entre…');
+      side.append(wl);
+      if (n.send_window) {
+        const r = el('div', 'sc-row vb-win');
+        const t1 = el('input', 'ed-title vb-time');
+        t1.type = 'time';
+        t1.value = n.send_window.start;
+        t1.setAttribute('aria-label', 'Enviar a partir de');
+        t1.addEventListener('change', () => { n.send_window.start = t1.value; vbChange(); vbRender(); });
+        const t2 = el('input', 'ed-title vb-time');
+        t2.type = 'time';
+        t2.value = n.send_window.end;
+        t2.setAttribute('aria-label', 'Enviar até');
+        t2.addEventListener('change', () => { n.send_window.end = t2.value; vbChange(); vbRender(); });
+        r.append(t1, el('span', null, 'e'), t2);
+        side.append(r, el('div', 'vb-sub', 'Se cair fora dessa faixa, espera a próxima (e o horário da automação também vale).'));
+        if (E.scheduleOutsideCommon({ steps: [n] })) side.append(el('div', 'vb-warn', '⚠ Mensagem fora do horário comum (08:00–21:00) pode incomodar.'));
+      }
       if (n.type === 'esperar') {
         const l = el('label', 'sc-radio');
         const cb = el('input');
@@ -8520,8 +8590,9 @@
     bcb.type = 'checkbox';
     bcb.checked = f.def.business !== false;
     bcb.addEventListener('change', () => { f.def.business = bcb.checked; vbChange(); vbRender(); });
-    biz.append(bcb, ` Só no horário comercial (as esperas contam ${E.scheduleText(motor.state.settings)}; os envios sempre respeitam o horário)`);
+    biz.append(bcb, ` Esperas contam só no horário comercial (${E.scheduleText(motor.state.settings)})`);
     side.append(biz);
+    side.append(vbScheduleField(f));
     const ex = el('div', 'vb-field');
     ex.append(el('div', 'vb-fl', 'Nunca para quem tem a etiqueta'));
     const chips = el('div', 'vb-chips');
@@ -8541,7 +8612,74 @@
     else ex.append(fbtn('ed-mini vb-ex-add', '+ outra etiqueta', () => { st.exclude = [...(st.exclude || []), { source: 'crm', label_id: '' }]; vbChange(); vbRender(); }));
     side.append(ex);
   }
-  const vbStartKey = (st) => `${st.type}|${st.source || ''}|${st.label_id || ''}|${st.wa_label_id || ''}`;
+  // 2.13.2: "Horário de envio" da automação: o geral (padrão) ou personalizado (dias + faixas) e o limite por dia
+  const VB_DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+  function vbScheduleField(f) {
+    const box = el('div', 'vb-field vb-sched');
+    box.append(el('div', 'vb-fl', 'Horário de envio'));
+    const sc = f.def.schedule || { mode: 'geral' };
+    const custom = sc.mode === 'personalizado';
+    const setSc = (patch) => { f.def.schedule = { ...(f.def.schedule || { mode: 'geral' }), ...patch }; vbChange(); vbRender(); };
+    [['geral', `Usar o horário geral (${E.scheduleText(motor.state.settings)})`], ['personalizado', 'Personalizado']].forEach(([v, txt]) => {
+      const l = el('label', 'sc-radio');
+      const r = el('input');
+      r.type = 'radio';
+      r.name = 'vb-sched';
+      r.value = v;
+      r.checked = (custom ? 'personalizado' : 'geral') === v;
+      r.addEventListener('change', () => {
+        if (v === 'geral') setSc({ mode: 'geral', days: undefined, windows: undefined });
+        else { const g = motor.state.settings || {}; setSc({ mode: 'personalizado', days: sc.days && sc.days.length ? sc.days : [...(g.business_days || [1, 2, 3, 4, 5])], windows: sc.windows && sc.windows.length ? sc.windows : [{ start: String(g.business_start || '09:00').slice(0, 5), end: String(g.business_end || '18:00').slice(0, 5) }] }); }
+      });
+      l.append(r, ` ${txt}`);
+      box.append(l);
+    });
+    if (custom) {
+      const days = el('div', 'vb-days');
+      VB_DAYS.forEach((name, d) => {
+        const l = el('label', 'vb-day');
+        const c = el('input');
+        c.type = 'checkbox';
+        c.checked = (sc.days || []).includes(d);
+        c.setAttribute('aria-label', name);
+        c.addEventListener('change', () => setSc({ days: c.checked ? [...new Set([...(sc.days || []), d])].sort() : (sc.days || []).filter((x) => x !== d) }));
+        l.append(c, name);
+        days.append(l);
+      });
+      box.append(days);
+      (sc.windows || []).forEach((w, i) => {
+        const r = el('div', 'sc-row vb-swin');
+        const t1 = el('input', 'ed-title vb-time');
+        t1.type = 'time';
+        t1.value = w.start;
+        t1.setAttribute('aria-label', `Faixa ${i + 1}: início`);
+        t1.addEventListener('change', () => { const ws = sc.windows.map((x) => ({ ...x })); ws[i].start = t1.value; setSc({ windows: ws }); });
+        const t2 = el('input', 'ed-title vb-time');
+        t2.type = 'time';
+        t2.value = w.end;
+        t2.setAttribute('aria-label', `Faixa ${i + 1}: fim`);
+        t2.addEventListener('change', () => { const ws = sc.windows.map((x) => ({ ...x })); ws[i].end = t2.value; setSc({ windows: ws }); });
+        r.append(el('span', null, 'das'), t1, el('span', null, 'às'), t2);
+        if (sc.windows.length > 1) { const x = fbtn('ed-mini', '✕', () => setSc({ windows: sc.windows.filter((_, k) => k !== i) })); x.setAttribute('aria-label', `Tirar a faixa ${i + 1}`); r.append(x); }
+        box.append(r);
+      });
+      if ((sc.windows || []).length < 6) box.append(fbtn('ed-mini vb-swin-add', '+ outra faixa', () => setSc({ windows: [...(sc.windows || []), { start: '14:00', end: '18:00' }] })));
+      if (E.scheduleOutsideCommon({ schedule: sc, steps: [] })) box.append(el('div', 'vb-warn', '⚠ Faixa fora do horário comum (08:00–21:00): mensagem fora do horário pode incomodar.'));
+    }
+    const lr = el('div', 'sc-row');
+    const lim = el('input', 'ed-title vb-dlimit');
+    lim.type = 'number';
+    lim.min = '1';
+    lim.max = '2000';
+    lim.placeholder = 'sem limite próprio';
+    lim.value = sc.daily_limit ? String(sc.daily_limit) : '';
+    lim.setAttribute('aria-label', 'Limite desta automação por dia');
+    lim.addEventListener('change', () => { const v = Math.floor(Number(lim.value)); setSc({ daily_limit: v > 0 ? v : undefined }); });
+    lr.append(el('span', null, 'Limite desta automação por dia'), lim);
+    box.append(lr, el('div', 'vb-sub', 'Os limites gerais por hora/dia e o intervalo entre envios valem sempre (protegem o número).'));
+    return box;
+  }
+  const vbStartKey = (st) =>`${st.type}|${st.source || ''}|${st.label_id || ''}|${st.wa_label_id || ''}`;
   async function vbLoadExisting(f) {
     const st = f.def.start;
     const key = vbStartKey(st);
@@ -8657,15 +8795,19 @@
       row.append(fbtn('bbtn primary vb-discard', 'Fechar sem salvar', () => vbClose(true)), fbtn('bbtn', 'Continuar editando', close));
       m.append(row);
     } else if (f.modal.kind === 'sim') {
-      m.append(el('div', 'vb-sh', 'Simular'), el('div', 'vb-sub', 'O que aconteceria com uma pessoa que entra agora. Tempo corrido; com "só no horário comercial" as esperas podem levar mais. Nada é enviado.'));
+      m.append(el('div', 'vb-sh', 'Simular'), el('div', 'vb-sub', `O que aconteceria com uma pessoa que entra agora, com a data e a hora previstas de cada envio (horário da automação, faixas das etapas e esperas). ${E.scheduleSentence(f.def, motor.state.settings)}. Os limites gerais podem atrasar um pouco. Nada é enviado.`));
       const cols = el('div', 'vb-simcols');
-      const opt = { itemTitle: (id) => (id ? itemTitle(id) : '(sem mensagem)'), labelName: (id, src) => (id ? vbLabelName(id, src) : '(sem etiqueta)') };
+      // 2.13.2: datas e horas de verdade (a partir de agora)
+      const opt = { itemTitle: (id) => (id ? itemTitle(id) : '(sem mensagem)'), labelName: (id, src) => (id ? vbLabelName(id, src) : '(sem etiqueta)'), startAt: Date.now(), settings: motor.state.settings };
+      const whenTxt = (ms) => new Date(ms).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace('.', '');
       [['nunca', 'Se nunca responder'], ['primeiro', 'Se responder no 1º passo']].forEach(([sc, title]) => {
         const col = el('div', `vb-simcol vb-sim-${sc}`);
         col.append(el('div', 'vb-fl', title));
         E.seqSimulate(E.seqNormalize(f.def), sc, opt).forEach((ev) => {
           const r = el('div', `vb-ev vb-ev-${ev.kind}`);
-          r.append(el('span', 'vb-evt', E.simAtText(ev.at)), el('span', 'vb-evx', ev.text));
+          const t = el('span', 'vb-evt', ev.when != null ? whenTxt(ev.when) : E.simAtText(ev.at));
+          t.title = E.simAtText(ev.at);
+          r.append(t, el('span', 'vb-evx', ev.text));
           col.append(r);
         });
         cols.append(col);
@@ -9262,7 +9404,7 @@
       mins.addEventListener('input', upd);
       const r = el('div', 'sc-row');
       r.append(schedField('Sem responder por (horas, só horário comercial)', hours), schedField('e minutos', mins));
-      q.append(mark(r, 'wait'), el('div', 'crm-intro', `Conta só ${E.scheduleText(motor.state.settings)} (mude em "Limites e horário").`));
+      q.append(mark(r, 'wait'), el('div', 'crm-intro', `Conta só ${E.scheduleText(motor.state.settings)} (mude em "Horário geral e limites").`));
       const older = numberInput(f.ignore_older_days, 1, 365, 'Ignorar conversas paradas há (dias)');
       older.addEventListener('input', () => { f.ignore_older_days = Math.floor(Number(older.value) || 0); });
       q.append(schedField(withInfo('Não mandar se a conversa está parada há mais de (dias)', 'Conversas muito antigas ficam de fora, para não falar com quem sumiu há meses.'), older));
@@ -9571,8 +9713,8 @@
   function renderSettings() {
     const f = fl.settingsForm;
     const sec = el('section', 'crmsec');
-    sec.append(el('div', 'wt-head', 'LIMITES E HORÁRIO'));
-    sec.append(el('div', 'crm-intro', 'Valem para tudo que sai sozinho: follows, disparos e agendados, somados.'));
+    sec.append(el('div', 'wt-head', 'HORÁRIO GERAL E LIMITES DE SEGURANÇA'));
+    sec.append(el('div', 'crm-intro', 'O horário geral é o padrão das automações (cada automação pode ter o próprio horário na caixa ▶ COMEÇA do construtor) e o horário de disparos e agendados. Os limites por hora/dia e o intervalo valem SEMPRE, para tudo que sai sozinho somado (protegem o número).'));
     const num = (key, label, min, max) => {
       const i = numberInput(f[key], min, max, label);
       i.addEventListener('input', () => { f[key] = Math.floor(Number(i.value) || 0); });
@@ -9612,7 +9754,7 @@
       delete patch.err;
       try {
         await motor.saveSettings(patch);
-        flash('Limites e horário salvos.');
+        flash('Horário geral e limites salvos.');
         backToList();
       } catch (e) {
         f.msg = e.message;

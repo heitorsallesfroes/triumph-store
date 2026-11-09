@@ -2017,10 +2017,14 @@
           if (op === 'colocar' && n.remove_others === true) out.remove_others = true;
           return out;
         }
-        // 2.13.0: ⏳ ESPERAR (só o tempo)
+        // 2.13.0: ⏳ ESPERAR (só o tempo); 2.13.2: ou "até o próximo [dia] às HH:MM", e "enviar só entre"
         if (n.type === 'pausa') {
           const unit = ['minutos', 'horas', 'dias'].includes(n.unit) ? n.unit : 'horas';
-          return { id: n.id, type: 'pausa', amount: intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`), unit };
+          const out = n.mode === 'ate'
+            ? { id: n.id, type: 'pausa', mode: 'ate', until_day: n.until_day === 'qualquer' || n.until_day == null || n.until_day === '' ? 'qualquer' : intIn(Number(n.until_day), 0, 6, `${w}: dia da semana`), until_time: checkHM(n.until_time, `${w}: a hora (HH:MM)`) }
+            : { id: n.id, type: 'pausa', amount: intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`), unit };
+          if (n.send_window) out.send_window = checkWindow(n.send_window, `${w}: "enviar só entre"`);
+          return out;
         }
         if (n.type === 'esperar') {
           // até 5 "esperar resposta" um dentro do outro (o 5º ainda pode ter caixas nos caminhos)
@@ -2028,6 +2032,7 @@
           const unit = ['minutos', 'horas', 'dias'].includes(n.unit) ? n.unit : 'horas';
           const amount = intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`);
           return { id: n.id, type: 'esperar', amount, unit, ...(n.after_mine === true ? { after_mine: true } : {}),
+            ...(n.send_window ? { send_window: checkWindow(n.send_window, `${w}: "enviar só entre"`) } : {}), // 2.13.2
             yes: walk(n.yes || [], depth + 1, `${w} (respondeu)`), no: walk(n.no || [], depth + 1, `${w} (não respondeu)`) };
         }
         if (n.type === 'fim') return { id: n.id, type: 'fim' };
@@ -2038,7 +2043,38 @@
     const steps = walk(q.steps, 1, 'Sequência');
     if (!steps.length) throw new Error('Sequência: adicione pelo menos um passo');
     gotos.forEach(([to, w]) => { if (!ids.has(to)) throw new Error(`${w}: escolha para onde continuar`); });
-    return { start, business: q.business !== false, steps };
+    // 2.13.2: horário de envio da automação (geral ou personalizado) e limite próprio por dia
+    const sc = q.schedule && typeof q.schedule === 'object' ? q.schedule : null;
+    let schedule;
+    if (sc && (sc.mode === 'personalizado' || (sc.daily_limit != null && sc.daily_limit !== ''))) {
+      schedule = { mode: sc.mode === 'personalizado' ? 'personalizado' : 'geral' };
+      if (schedule.mode === 'personalizado') {
+        const days = [...new Set((Array.isArray(sc.days) ? sc.days : []).map(Number))].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort();
+        if (!days.length) throw new Error('Horário personalizado: escolha pelo menos um dia');
+        const windows = Array.isArray(sc.windows) ? sc.windows : [];
+        if (!windows.length || windows.length > 6) throw new Error('Horário personalizado: de 1 a 6 faixas de horário');
+        schedule.days = days;
+        schedule.windows = windows.map((x, i) => checkWindow(x, `Horário personalizado, faixa ${i + 1}`));
+      }
+      if (sc.daily_limit != null && sc.daily_limit !== '') schedule.daily_limit = intIn(Number(sc.daily_limit), 1, 2000, 'Limite desta automação por dia');
+    }
+    return { start, business: q.business !== false, ...(schedule ? { schedule } : {}), steps };
+  }
+  const HM2_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const checkHM = (v, what) => { if (typeof v !== 'string' || !HM2_RE.test(v)) throw new Error(what); return v; };
+  const checkWindow = (x, what) => {
+    const start = checkHM(x && x.start, `${what}: início (HH:MM)`);
+    const end = checkHM(x && x.end, `${what}: fim (HH:MM)`);
+    if (end <= start) throw new Error(`${what}: o início precisa ser antes do fim`);
+    return { start, end };
+  };
+  // 2.13.2: envios de hoje de uma automação (limite próprio por dia)
+  async function automationSentToday({ automationId, since }) {
+    checkUuid(automationId, 'Automação inválida');
+    const t = Date.parse(since || '');
+    if (!Number.isFinite(t)) throw new Error('Data inválida');
+    const count = await countRows(`wa_send_log?select=id&source=eq.follow&source_id=eq.${automationId}&status=in.(enviando,enviado)&created_at=gte.${encodeURIComponent(new Date(t).toISOString())}`);
+    return { count };
   }
   const checkWaLabel = (v, what) => { if (typeof v !== 'string' || !WA_LABEL_RE.test(v)) throw new Error(what); return v; };
   const RUN_KEY_RE = /^[\w:@.+-]{1,120}$/;
@@ -3498,7 +3534,7 @@
     sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
     erpCatalog, createSaleFromChat, lookupCep, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
-    seqRuns, seqCreateRuns, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqRunAction, seqStats,
+    seqRuns, seqCreateRuns, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqRunAction, seqStats, automationSentToday,
     automationUnreserve, applySendLabels, getContactName,
     fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,

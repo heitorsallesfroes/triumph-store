@@ -1252,9 +1252,12 @@ async function main() {
     await q(`sh.querySelector('.vb .vb-sim').click(); await wait(300); return true;`);
     const sim = await q(`const m = sh.querySelector('.vb .vb-modal'); const col = (c) => [...m.querySelectorAll('.' + c + ' .vb-ev')].map((r) => r.textContent);
       return { never: col('vb-sim-nunca'), first: col('vb-sim-primeiro') };`);
-    check('Simular: linha do tempo de quem nunca responde (Follow 1 → Oferta especial +1 dia → Follow 3 +3 dias → Frio +6 dias) e de quem responde no 1º passo (Em atendimento)',
-      sim.never.some((x) => /^na horaRecebe “Follow 1”$/.test(x)) && sim.never.some((x) => /^\+1 diaRecebe “Oferta especial”$/.test(x)) && sim.never.some((x) => /^\+3 diasRecebe “Follow 3”$/.test(x))
-      && sim.never.some((x) => /^\+6 diasEntra na etiqueta “Frio”$/.test(x)) && sim.first.some((x) => /✅ Respondeu/.test(x)) && sim.first.some((x) => /Entra na etiqueta “Em atendimento”/.test(x)) && !sim.first.some((x) => /Oferta/.test(x)),
+    // (2.13.2: cada linha mostra a data e a hora previstas — "seg, 09/11, 13:46" — em vez de "+1 dia")
+    const DATE_RE = /^[a-zçáé]{3},? \d{2}\/\d{2},? \d{2}:\d{2}/;
+    const textsOf = (l) => l.map((x) => x.replace(DATE_RE, ''));
+    check('Simular: linha do tempo (com data e hora) de quem nunca responde (Follow 1 → Oferta especial → Follow 3 → Frio) e de quem responde no 1º passo (Em atendimento)',
+      sim.never.every((x) => DATE_RE.test(x)) && JSON.stringify(textsOf(sim.never)) === JSON.stringify(['Entra na automação', 'Recebe “Follow 1”', '❌ Não respondeu em 1 dia', 'Recebe “Oferta especial”', '❌ Não respondeu em 2 dias', 'Recebe “Follow 3”', '❌ Não respondeu em 3 dias', 'Entra na etiqueta “Frio”', 'Fim: sai da automação'])
+      && sim.first.some((x) => /✅ Respondeu/.test(x)) && sim.first.some((x) => /Entra na etiqueta “Em atendimento”/.test(x)) && !sim.first.some((x) => /Oferta/.test(x)),
       JSON.stringify(sim));
     await shot('simulacao.png');
     await q(`sh.querySelector('.vb .vb-simclose').click(); await wait(200); return true;`);
@@ -1344,6 +1347,58 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console ao excluir mensagens', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 16. horários por automação e por etapa (2.13.2): COMEÇA → Personalizado (faixa fora de 08–21 = aviso amarelo,
+    // limite por dia); ❓ "o envio seguinte só entre 14:00 e 18:00"; ⏳ "até o próximo dia às 10:00"; Simular com
+    // data e hora; salvar guarda no jsonb; a tela geral virou "Horário geral e limites de segurança"
+    fake.on = true;
+    fake.generic = true;
+    await q(`sh.querySelector('[data-sec="follows"]').click(); await wait(400); return true;`);
+    await waitFor(`return !!sh.querySelector('.fw-new');`, 15000);
+    await q(`const c = [...sh.querySelectorAll('.fw-card')].find((x) => (x.querySelector('.fw-name') || {}).textContent === 'Régua de follow-up'); c.querySelector('.fw-edit').click(); await wait(400); return true;`);
+    await waitFor(`return !!sh.querySelector('.vb .vb-box.vb-start');`, 10000);
+    await q(`sh.querySelector('.vb .vb-box.vb-start').click(); await wait(200); sh.querySelector('.vb .vb-sched input[value="personalizado"]').click(); await wait(250); return true;`);
+    const setIn = (sel, v) => q(`const i = sh.querySelector(${JSON.stringify(sel)}); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('change', { bubbles: true })); await wait(200); return true;`);
+    await setIn('.vb .vb-sched input[aria-label="Faixa 1: início"]', '07:00');
+    await setIn('.vb .vb-sched input[aria-label="Faixa 1: fim"]', '12:00');
+    await q(`sh.querySelector('.vb .vb-sched .vb-swin-add').click(); await wait(200); return true;`);
+    await setIn('.vb .vb-sched input[aria-label="Limite desta automação por dia"]', '25');
+    const sched = await q(`const v = sh.querySelector('.vb'); return { warn: (v.querySelector('.vb-sched .vb-warn') || {}).textContent || '', start: v.querySelector('.vb-box.vb-start').textContent,
+      days: [...v.querySelectorAll('.vb-sched .vb-day input')].map((c) => c.checked) };`);
+    check('COMEÇA → "Horário de envio" personalizado: dias (vêm do geral), faixas (07:00–12:00 e 14:00–18:00), limite por dia; faixa fora de 08:00–21:00 = aviso amarelo; a caixa mostra a frase',
+      /fora do horário comum \(08:00–21:00\)/.test(sched.warn) && /Envia entre 07:00 e 12:00 e entre 14:00 e 18:00, seg–sáb; no máximo 25 por dia/.test(sched.start)
+      && JSON.stringify(sched.days) === '[false,true,true,true,true,true,true]', JSON.stringify(sched));
+    // ❓ 1ª espera de resposta: o envio seguinte só entre 14:00 e 18:00
+    await q(`sh.querySelector('.vb .vb-box.vb-esperar').click(); await wait(200); sh.querySelector('.vb .vb-side .vb-win-on').click(); await wait(200); return true;`);
+    await setIn('.vb .vb-side input[aria-label="Enviar a partir de"]', '14:00');
+    await setIn('.vb .vb-side input[aria-label="Enviar até"]', '18:00');
+    // ⏳ nova logo depois do COMEÇA: "até o próximo dia às 10:00"
+    await q(`sh.querySelector('.vb .vb-plus').click(); await wait(150); sh.querySelector('.vb .vb-menu .vb-mi-pausa').click(); await wait(200);
+      sh.querySelector('.vb .vb-side .vb-pmode input[value="ate"]').click(); await wait(200); return true;`);
+    const boxes = await q(`const v = sh.querySelector('.vb'); return { pausa: v.querySelector('.vb-box.vb-pausa .vb-btxt').textContent, esperar: v.querySelector('.vb-box.vb-esperar .vb-btxt').textContent };`);
+    check('⏳ "Esperar até o próximo dia às 10:00" e ❓ "o envio seguinte só entre 14:00 e 18:00" aparecem na frase das caixas',
+      boxes.pausa === 'Espera até o próximo dia às 10:00' && /envia só entre 14:00 e 18:00$/.test(boxes.esperar), JSON.stringify(boxes));
+    await q(`sh.querySelector('.vb .vb-sim').click(); await wait(300); return true;`);
+    const simT = await q(`const m = sh.querySelector('.vb .vb-modal'); return [...m.querySelectorAll('.vb-sim-nunca .vb-ev')].map((r) => r.querySelector('.vb-evt').textContent + ' | ' + r.querySelector('.vb-evx').textContent);`);
+    const sendsT = simT.filter((x) => /Recebe/.test(x));
+    check('Simular mostra a data e a hora previstas de cada envio (dia da semana, dia/mês e hora), dentro do horário da automação',
+      sendsT.length === 3 && sendsT.every((x) => /^[a-zçáé]{3},? \d{2}\/\d{2},? (0[7-9]|1[0-7]):\d{2} \| Recebe/.test(x)) && simT.some((x) => /Esperou até o próximo dia às 10:00/.test(x)), JSON.stringify(simT));
+    await q(`sh.querySelector('.vb .vb-simclose').click(); await wait(150); sh.querySelector('.vb .vb-save').click(); return true;`);
+    const saved16 = await waitFor(`return !sh.querySelector('.vb') && !!sh.querySelector('.fw-new');`, 15000);
+    const r16 = (fake.db.wa_automations || []).find((a) => a.name === 'Régua de follow-up') || {};
+    const st16 = (r16.sequence || {}).steps || [];
+    check('salvar guarda o horário no jsonb da automação (sem migration): personalizado, faixas, limite, ⏳ até e a faixa da etapa',
+      saved16 && JSON.stringify(r16.sequence.schedule) === JSON.stringify({ mode: 'personalizado', days: [1, 2, 3, 4, 5, 6], windows: [{ start: '07:00', end: '12:00' }, { start: '14:00', end: '18:00' }], daily_limit: 25 })
+      && st16[0].type === 'pausa' && st16[0].mode === 'ate' && st16[0].until_time === '10:00' && JSON.stringify(st16[2].send_window) === '{"start":"14:00","end":"18:00"}',
+      JSON.stringify({ saved16, schedule: r16.sequence && r16.sequence.schedule, s0: st16[0], s2: st16[2] && st16[2].send_window }));
+    await q(`sh.querySelector('.fw-settings').click(); await wait(300); return true;`);
+    const setTxt = await q(`return sh.querySelector('.ftab').textContent;`);
+    check('a tela geral virou "Horário geral e limites de segurança" (padrão das automações; os limites valem sempre)',
+      /HORÁRIO GERAL E LIMITES DE SEGURANÇA/.test(setTxt) && /padrão das automações/.test(setTxt) && /valem SEMPRE/.test(setTxt), setTxt.slice(0, 200));
+    await q(`const b = [...sh.querySelectorAll('.ftab .bbtn')].find((x) => x.textContent === 'Cancelar'); if (b) b.click(); await wait(200); return true;`);
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console nos horários', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

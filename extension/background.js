@@ -105,6 +105,7 @@ const HANDLERS = {
   seqChatRuns:    (m) => WaApi.seqChatRuns({ chatId: m.chatId }),
   seqRunAction:   (m) => WaApi.seqRunAction({ id: m.id, action: m.action }),
   seqStats:       (m) => WaApi.seqStats({ automationIds: m.automationIds }),
+  automationSentToday: (m) => WaApi.automationSentToday({ automationId: m.automationId, since: m.since }), // 2.13.2
   automationReserve:    (m) => WaApi.automationReserve({ automationId: m.automationId, contactId: m.contactId, runKey: m.runKey }),
   automationUnreserve:  (m) => WaApi.automationUnreserve({ id: m.id }),
   applySendLabels:      (m) => WaApi.applySendLabels({ addLabelId: m.addLabelId, removeLabelId: m.removeLabelId, removeAll: m.removeAll === true, contactId: m.contactId, identity: m.identity, chatId: m.chatId, name: m.name }),

@@ -942,6 +942,7 @@
     const branches = [];
     let id = run.node || seqFirstOf(def.steps);
     let skip = !!run.skip_wait;
+    let win = null; // 2.13.2: faixa "enviar só entre" da última espera que esta decisão passou
     const waitStart = Number(run.wait_started_at) || null;
     const lastSent = Number(run.last_sent_at) || null;
     const all = [...(run.branches || [])];
@@ -954,13 +955,20 @@
       if (n.type === 'fim') return end('fim');
       if (n.type === 'ir') { id = n.to; continue; }
       if (n.type === 'etiqueta') { ops.push({ op: n.op, source: n.source, label_id: n.label_id || null, wa_label_id: n.wa_label_id || null, remove_others: !!n.remove_others }); id = seqNextOf(idx, id); continue; }
-      if (n.type === 'enviar') return { status: 'run', node: seqNextOf(idx, id), sendNode: id, send: { itemId: n.item_id || null }, ops, branches, waitStart: null };
+      if (n.type === 'enviar') return { status: 'run', node: seqNextOf(idx, id), sendNode: id, send: { itemId: n.item_id || null }, ops, branches, waitStart: null, window: win };
       // 2.13.0: ⏳ ESPERAR (só o tempo, sem caminhos): chegou agora → grava o começo; venceu → segue
       if (n.type === 'pausa') {
         if (run.node !== id || !waitStart) return { status: 'progress', node: id, waitStart: now, ops, branches };
-        const need = Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60) * MIN_MS;
-        const done = def.business ? businessMsBetween(waitStart, now, settings) >= need : now - waitStart >= need;
-        if (!done) return { status: 'wait', node: id, ops, branches, dueAt: def.business ? addBusinessMs(waitStart, need, settings) : waitStart + need, reason: 'esperando o tempo' };
+        // 2.13.2: "esperar até o próximo [dia] às HH:MM" (relógio, sem horário comercial)
+        if (n.mode === 'ate') {
+          const until = pausaUntil(waitStart, n);
+          if (until == null || now < until) return { status: 'wait', node: id, ops, branches, dueAt: until, reason: 'esperando o dia e a hora' };
+        } else {
+          const need = Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60) * MIN_MS;
+          const done = def.business ? businessMsBetween(waitStart, now, settings) >= need : now - waitStart >= need;
+          if (!done) return { status: 'wait', node: id, ops, branches, dueAt: def.business ? addBusinessMs(waitStart, need, settings) : waitStart + need, reason: 'esperando o tempo' };
+        }
+        win = n.send_window || null; // 2.13.2: o envio seguinte só nesta faixa
         id = seqNextOf(idx, id);
         if (!id) return end('fim');
         // a próxima caixa começa agora (outra espera grava o próprio começo no ciclo seguinte)
@@ -975,6 +983,7 @@
         const ref = lastSent && lastSent <= waitStart ? lastSent : waitStart;
         if (!skip && seqReplied(ref, chat, replies)) {
           branches.push({ node: id, result: 'sim', at: now });
+          win = n.send_window || null;
           id = seqFirstOf(n.yes);
           skip = false;
           if (!id) return end('respondeu');
@@ -998,6 +1007,7 @@
         }
         if (!timedOut) return { status: 'wait', node: id, ops, branches, dueAt, reason: 'esperando resposta' };
         branches.push({ node: id, result: 'nao', at: now });
+        win = n.send_window || null;
         id = seqFirstOf(n.no);
         skip = false;
         if (!id) return end('não respondeu');
@@ -1050,6 +1060,123 @@
     if (def && def.steps && def.steps.length && !sends && ![...idx.values()].some((e) => e.node.type === 'etiqueta')) out.push({ node: 'start', msg: 'A sequência não faz nada: adicione uma mensagem ou etiqueta.' });
     // 2.13.0: "Nunca para quem tem a etiqueta" (além do Não enviar, sempre)
     (Array.isArray(st.exclude) ? st.exclude : []).forEach((x) => { if (!(x && (x.source === 'whatsapp' ? x.wa_label_id : x.label_id))) out.push({ node: 'start', msg: 'Escolha a etiqueta de "Nunca para quem tem".' }); });
+    out.push(...scheduleProblems(def)); // 2.13.2
+    return out;
+  }
+
+  // ── 2.13.2: horário por automação e por etapa ──
+  // def.schedule = { mode: 'geral' | 'personalizado', days: [0..6], windows: [{ start: 'HH:MM', end: 'HH:MM' }], daily_limit }
+  //   geral = o "Horário geral" (Limites e horário); personalizado = estes dias e faixas (vale só para esta automação).
+  // ⏳ pausa: mode 'tempo' (padrão: amount/unit) | 'ate' (until_day: 'qualquer' | 0..6, until_time: 'HH:MM').
+  // ⏳ pausa e ❓ esperar: send_window = { start, end } — o envio SEGUINTE só sai nessa faixa (o prazo conta normal).
+  // Ordem: faixa da etapa → horário da automação → limites gerais por hora/dia e intervalo (sempre valem).
+  const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const minOf = (v) => (HM_RE.test(String(v || '')) ? Number(v.slice(0, 2)) * 60 + Number(v.slice(3, 5)) : null);
+  const COMMON_START = 8 * 60;
+  const COMMON_END = 21 * 60;
+  // dias e faixas (em minutos) que valem para a automação
+  function scheduleSpec(def, settings) {
+    const sc = def && def.schedule;
+    if (sc && sc.mode === 'personalizado') {
+      const days = new Set((sc.days || []).map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6));
+      const windows = (sc.windows || []).map((w) => [minOf(w && w.start), minOf(w && w.end)]).filter(([a, b]) => a != null && b != null && b > a);
+      return { custom: true, days, windows };
+    }
+    const s = ns(settings);
+    return { custom: false, days: s.days, windows: s.endMin > s.startMin ? [[s.startMin, s.endMin]] : [] };
+  }
+  const minuteOfDay = (ms) => { const d = new Date(ms); return d.getHours() * 60 + d.getMinutes(); };
+  const inSpec = (ms, spec) => spec.days.has(new Date(ms).getDay()) && spec.windows.some(([a, b]) => minuteOfDay(ms) >= a && minuteOfDay(ms) < b);
+  // próximo momento >= ms dentro do horário (null se não houver em 15 dias)
+  function nextInSpec(ms, spec) {
+    if (inSpec(ms, spec)) return ms;
+    let day = midnightOf(ms);
+    for (let i = 0; i < 15; i++) {
+      if (spec.days.has(new Date(day).getDay())) {
+        const d = new Date(day);
+        for (const [a] of [...spec.windows].sort((x, y) => x[0] - y[0])) {
+          const t = atMinute(d.getFullYear(), d.getMonth(), d.getDate(), a);
+          if (t >= ms) return t;
+        }
+      }
+      day = nextMidnight(day);
+    }
+    return null;
+  }
+  const winSpec = (w) => { const a = minOf(w && w.start); const b = minOf(w && w.end); return a != null && b != null && b > a ? { days: new Set([0, 1, 2, 3, 4, 5, 6]), windows: [[a, b]] } : null; };
+  // quando a etapa pode enviar: faixa da etapa e horário da automação ao mesmo tempo (null = nunca em 15 dias)
+  function nextSendTime(ms, def, stepWindow, settings) {
+    const spec = scheduleSpec(def, settings);
+    const ws = winSpec(stepWindow);
+    let t = ms;
+    for (let i = 0; i < 60 && t != null; i++) {
+      if (ws && !inSpec(t, ws)) { t = nextInSpec(t, ws); continue; }
+      if (!inSpec(t, spec)) { t = nextInSpec(t, spec); continue; }
+      return t;
+    }
+    return null;
+  }
+  // ⏳ "Esperar até o próximo [dia] às HH:MM": a próxima vez, DEPOIS do começo da espera
+  function pausaUntil(waitStart, n) {
+    const m = minOf(n && n.until_time);
+    if (m == null) return null;
+    const want = n.until_day === 'qualquer' || n.until_day == null || n.until_day === '' ? null : Number(n.until_day);
+    let day = midnightOf(waitStart);
+    for (let i = 0; i < 15; i++) {
+      const d = new Date(day);
+      const t = atMinute(d.getFullYear(), d.getMonth(), d.getDate(), m);
+      if (t > waitStart && (want == null || d.getDay() === want)) return t;
+      day = nextMidnight(day);
+    }
+    return null;
+  }
+  // limite próprio por dia (vazio = só os limites gerais)
+  const scheduleDailyLimit = (def) => { const n = Number(def && def.schedule && def.schedule.daily_limit); return Number.isInteger(n) && n > 0 ? n : null; };
+  // faixas fora do horário comum (08:00–21:00): aviso amarelo, mas deixa
+  function scheduleOutsideCommon(def) {
+    const sc = def && def.schedule;
+    const ws = [...(sc && sc.mode === 'personalizado' ? sc.windows || [] : [])];
+    seqIndex(def).forEach(({ node: n }) => { if (n.send_window) ws.push(n.send_window); });
+    return ws.some((w) => { const a = minOf(w && w.start); const b = minOf(w && w.end); return a != null && b != null && (a < COMMON_START || b > COMMON_END); });
+  }
+  const DAY_SHORT = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+  const DAY_LONG = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+  function daysText(days) {
+    const d = [...new Set(days)].map(Number).sort((a, b) => a - b);
+    if (d.length === 7) return 'todos os dias';
+    // seguidos (seg–sex) viram faixa
+    if (d.length >= 3 && d[d.length - 1] - d[0] === d.length - 1) return `${DAY_SHORT[d[0]]}–${DAY_SHORT[d[d.length - 1]]}`;
+    return d.map((x) => DAY_SHORT[x]).join(', ');
+  }
+  // "Envia entre 09:00 e 12:00 e entre 14:00 e 18:00, seg–sex" / "Envia no horário geral (…)"
+  function scheduleSentence(def, settings) {
+    const sc = def && def.schedule;
+    const lim = scheduleDailyLimit(def);
+    const limTxt = lim ? `; no máximo ${lim} por dia` : '';
+    if (!sc || sc.mode !== 'personalizado') return `Envia no horário geral (${scheduleText(settings)})${limTxt}`;
+    const ws = (sc.windows || []).filter((w) => minOf(w.start) != null && minOf(w.end) != null);
+    return `Envia ${ws.map((w) => `entre ${w.start} e ${w.end}`).join(' e ') || '(escolha a faixa)'}, ${(sc.days || []).length ? daysText(sc.days) : '(escolha os dias)'}${limTxt}`;
+  }
+  const untilText = (n) => {
+    const day = n.until_day === 'qualquer' || n.until_day == null || n.until_day === '' ? null : Number(n.until_day);
+    return `até ${day == null ? 'o próximo dia' : `${day === 0 || day === 6 ? 'o próximo' : 'a próxima'} ${DAY_LONG[day]}`} às ${n.until_time || '--:--'}`;
+  };
+  const windowText = (w) => (w && minOf(w.start) != null && minOf(w.end) != null ? `envia só entre ${w.start} e ${w.end}` : '');
+  // validação dos horários (vai junto com seqValidate)
+  function scheduleProblems(def) {
+    const out = [];
+    const sc = def && def.schedule;
+    if (sc && sc.mode === 'personalizado') {
+      if (!(sc.days || []).length) out.push({ node: 'start', msg: 'Horário personalizado: escolha pelo menos um dia.' });
+      const ws = sc.windows || [];
+      if (!ws.length) out.push({ node: 'start', msg: 'Horário personalizado: adicione uma faixa de horário.' });
+      if (ws.some((w) => minOf(w && w.start) == null || minOf(w && w.end) == null || minOf(w.end) <= minOf(w.start))) out.push({ node: 'start', msg: 'Horário personalizado: cada faixa precisa de início antes do fim.' });
+    }
+    if (sc && sc.daily_limit != null && sc.daily_limit !== '' && !(Number.isInteger(Number(sc.daily_limit)) && Number(sc.daily_limit) > 0)) out.push({ node: 'start', msg: 'Limite por dia: um número inteiro (ou vazio).' });
+    seqIndex(def).forEach(({ node: n }) => {
+      if (n.type === 'pausa' && n.mode === 'ate' && minOf(n.until_time) == null) out.push({ node: n.id, msg: 'Escolha a hora (HH:MM).' });
+      if (n.send_window && (minOf(n.send_window.start) == null || minOf(n.send_window.end) == null || minOf(n.send_window.end) <= minOf(n.send_window.start))) out.push({ node: n.id, msg: '"Enviar só entre": o início precisa ser antes do fim.' });
+    });
     return out;
   }
 
@@ -1140,34 +1267,64 @@
   // Simular (não envia nem grava): linha do tempo de uma pessoa que NUNCA responde (scenario 'nunca') ou que
   // responde no 1º "esperar resposta" ('primeiro'). Tempo corrido a partir da entrada (minutos); com horário
   // comercial ligado, pode levar mais. → [{ at (min), kind, text, node }]
-  function seqSimulate(def, scenario = 'nunca', { itemTitle = (x) => x || '(sem mensagem)', labelName = (x) => x || '(sem etiqueta)' } = {}) {
+  // 2.13.2: com startAt (ms) e settings, conta os horários de verdade: espera até o dia/hora, horário comercial das
+  // esperas, faixa "enviar só entre" da etapa e o horário da automação; cada passo ganha "when" (data e hora prevista)
+  function seqSimulate(def, scenario = 'nunca', { itemTitle = (x) => x || '(sem mensagem)', labelName = (x) => x || '(sem etiqueta)', startAt = null, settings = null } = {}) {
     const idx = seqIndex(def);
     const out = [];
+    const real = Number.isFinite(startAt);
+    let tm = real ? startAt : 0;
     let at = 0;
+    let win = null;
     let replied = false;
     let id = seqFirstOf(def && def.steps);
     const lab = (n) => (n.source === 'whatsapp' ? labelName(n.wa_label_id, 'whatsapp') : labelName(n.label_id, 'crm'));
-    out.push({ at, kind: 'inicio', text: 'Entra na automação', node: 'start' });
+    const push = (ev) => out.push(real ? { ...ev, at: Math.round((tm - startAt) / MIN_MS), when: tm } : { ...ev, at });
+    const waitFor = (amount, unit) => {
+      const need = Math.max(1, Number(amount) || 0) * (SEQ_UNIT_MIN[unit] || 60);
+      if (!real) { at += need; return; }
+      const t2 = def.business ? addBusinessMs(tm, need * MIN_MS, settings) : tm + need * MIN_MS;
+      tm = t2 == null ? tm + need * MIN_MS : t2;
+    };
+    push({ kind: 'inicio', text: 'Entra na automação', node: 'start' });
     for (let g = 0; g < 200; g++) {
-      if (!id) { out.push({ at, kind: 'fim', text: 'Fim: sai da automação', node: null }); break; }
+      if (!id) { push({ kind: 'fim', text: 'Fim: sai da automação', node: null }); break; }
       const e = idx.get(id);
-      if (!e) { out.push({ at, kind: 'fim', text: 'Fim', node: null }); break; }
+      if (!e) { push({ kind: 'fim', text: 'Fim', node: null }); break; }
       const n = e.node;
-      if (n.type === 'fim') { out.push({ at, kind: 'fim', text: 'Fim: sai da automação', node: n.id }); break; }
+      if (n.type === 'fim') { push({ kind: 'fim', text: 'Fim: sai da automação', node: n.id }); break; }
       if (n.type === 'ir') { id = n.to; continue; }
-      if (n.type === 'enviar') out.push({ at, kind: 'enviar', text: `Recebe “${itemTitle(n.item_id)}”`, node: n.id });
-      if (n.type === 'etiqueta') out.push({ at, kind: 'etiqueta', text: `${n.op === 'tirar' ? 'Sai da' : 'Entra na'} etiqueta “${lab(n)}”${n.op !== 'tirar' && n.remove_others ? ' (e sai das outras)' : ''}`, node: n.id });
-      if (n.type === 'pausa') { at += Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60); out.push({ at, kind: 'pausa', text: `Esperou ${unitText(n.amount, n.unit)}`, node: n.id }); }
+      if (n.type === 'enviar') {
+        if (real) {
+          const ok = nextSendTime(tm, def, win, settings);
+          if (ok == null) { push({ kind: 'fim', text: 'Sem horário possível para enviar (confira os horários)', node: n.id }); break; }
+          tm = ok;
+        }
+        push({ kind: 'enviar', text: `Recebe “${itemTitle(n.item_id)}”`, node: n.id });
+        win = null;
+      }
+      if (n.type === 'etiqueta') push({ kind: 'etiqueta', text: `${n.op === 'tirar' ? 'Sai da' : 'Entra na'} etiqueta “${lab(n)}”${n.op !== 'tirar' && n.remove_others ? ' (e sai das outras)' : ''}`, node: n.id });
+      if (n.type === 'pausa') {
+        if (n.mode === 'ate') {
+          if (real) { const u = pausaUntil(tm, n); tm = u == null ? tm : u; } else at += 1440;
+          push({ kind: 'pausa', text: `Esperou ${untilText(n)}`, node: n.id });
+        } else {
+          waitFor(n.amount, n.unit);
+          push({ kind: 'pausa', text: `Esperou ${unitText(n.amount, n.unit)}`, node: n.id });
+        }
+        win = n.send_window || null;
+      }
       if (n.type === 'esperar') {
+        win = n.send_window || null;
         if (scenario === 'primeiro' && !replied) {
           replied = true;
-          at += 5;
-          out.push({ at, kind: 'respondeu', text: '✅ Respondeu', node: n.id });
+          if (real) tm += 5 * MIN_MS; else at += 5;
+          push({ kind: 'respondeu', text: '✅ Respondeu', node: n.id });
           id = seqFirstOf(n.yes);
           continue;
         }
-        at += Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60);
-        out.push({ at, kind: 'nao', text: `❌ Não respondeu em ${unitText(n.amount, n.unit)}`, node: n.id });
+        waitFor(n.amount, n.unit);
+        push({ kind: 'nao', text: `❌ Não respondeu em ${unitText(n.amount, n.unit)}`, node: n.id });
         id = seqFirstOf(n.no);
         continue;
       }
@@ -1241,7 +1398,7 @@
       if (n.after_mine && !due) return 'esperando a sua mensagem';
       return due ? `esperando resposta (faltam ${formatLeft(Math.max(0, due - now))})` : 'esperando resposta';
     }
-    if (n.type === 'pausa') { const due = Number(run.due_at) || null; return due ? `esperando (faltam ${formatLeft(Math.max(0, due - now))})` : `esperando ${unitText(n.amount, n.unit)}`; } // 2.13.0
+    if (n.type === 'pausa') { const due = Number(run.due_at) || null; return due ? `esperando (faltam ${formatLeft(Math.max(0, due - now))})` : n.mode === 'ate' ? `esperando ${untilText(n)}` : `esperando ${unitText(n.amount, n.unit)}`; } // 2.13.0
     if (n.type === 'enviar') return `vai mandar “${itemTitle(n.item_id)}”`;
     if (n.type === 'etiqueta') return 'vai mexer nas etiquetas';
     return 'continuando';
@@ -1252,7 +1409,7 @@
     if (!e) return 'passo removido';
     const n = e.node;
     if (n.type === 'esperar') return `Esperando resposta (${n.amount} ${n.unit === 'minutos' ? 'min' : n.unit === 'horas' ? 'h' : n.amount === 1 ? 'dia' : 'dias'})`;
-    if (n.type === 'pausa') return `Esperando ${unitText(n.amount, n.unit)}`; // 2.13.0
+    if (n.type === 'pausa') return n.mode === 'ate' ? `Esperando ${untilText(n)}` : `Esperando ${unitText(n.amount, n.unit)}`; // 2.13.0
     if (n.type === 'enviar') return `Antes de mandar “${itemTitle(n.item_id)}”`;
     return n.type;
   }
@@ -2090,6 +2247,17 @@
       }
       if ((ops || []).length && deps.onLabelsChanged) deps.onLabelsChanged();
     }
+    // 2.13.2: envios de hoje de uma automação (limite próprio por dia), lido uma vez por ciclo
+    let sentToday = { at: 0, map: new Map() };
+    async function sentTodayBy(automationId) {
+      if (now() - sentToday.at > FOLLOW_EVAL_MS / 2) sentToday = { at: now(), map: new Map() };
+      if (!sentToday.map.has(automationId)) {
+        let n = 0;
+        try { const r = await api('automationSentToday', { automationId, since: new Date(midnightOf(now())).toISOString() }); n = Number(r && r.count) || 0; } catch { n = Infinity; } // sem saber: não envia
+        sentToday.map.set(automationId, n);
+      }
+      return sentToday.map.get(automationId);
+    }
     async function refreshSequences() {
       st.seqEvalAt = now();
       st.seqQueue = [];
@@ -2130,6 +2298,15 @@
         }
         if (res.status === 'run') {
           const until = failedRecently.get(`seq:${r.id}`);
+          // 2.13.2: faixa da etapa → horário da automação (geral ou personalizado) → limite próprio por dia. Fora: espera
+          // a próxima janela (o "faltam" do painel mostra quando). Os limites gerais valem depois, no envio.
+          const okAt = nextSendTime(t, a.sequence, res.window, st.settings);
+          if (okAt == null || okAt > t) {
+            if (okAt && Math.abs(okAt - (msOf(r.due_at) || 0)) > 60 * 1000) await seqPatch(r, { due_at: okAt });
+            continue;
+          }
+          const lim = scheduleDailyLimit(a.sequence);
+          if (lim && (await sentTodayBy(a.id)) >= lim) continue;
           if (!(until && until > t)) st.seqQueue.push({ automation: a, run: r, res });
           continue;
         }
@@ -2287,7 +2464,12 @@
       // 2.6.0: trabalho leve só da aba com a trava (ex.: "Contato" automático de lead novo de anúncio)
       if (deps.leaseWork) { try { await deps.leaseWork(); } catch { /* próximo ciclo */ } }
       if (deps.isManualBusy && deps.isManualBusy()) { st.waiting = 'envio manual em andamento'; return; }
-      if (!isBusinessTime(now(), st.settings)) { st.waiting = 'fora do horário'; return; }
+      // 2.13.2: fora do horário geral só seguem as réguas com horário personalizado (cada uma confere o dela)
+      const outside = !isBusinessTime(now(), st.settings);
+      const customSeq = () => st.sequencesAvailable && seqActive().some((a) => a.sequence.schedule && a.sequence.schedule.mode === 'personalizado');
+      // (fora do horário: confere o que está ligado no máximo a cada 2 min, para saber se alguma régua tem horário próprio)
+      if (outside && st.sequencesAvailable && (!st.active || now() - st.activityAt >= ACTIVITY_MS)) await refreshActivity();
+      if (outside && !customSeq()) { st.waiting = 'fora do horário'; return; }
       // Tem algo ativo? (1 verificação leve a cada 2 min; sem nada ativo, não faz mais nada)
       if (!st.active || now() - st.activityAt >= ACTIVITY_MS) await refreshActivity();
       if (!anyActive()) { st.waiting = 'nada ativo'; return; }
@@ -2301,9 +2483,10 @@
       st.waiting = '';
       st.workAt = now() + WORK_MS;
       // Ordem: agendados (hora marcada) → disparos → follows. Só procura o que está ativo.
-      let job = st.active.schedules ? await scheduleJob() : null;
-      if (!job && st.campaignsAvailable && st.active.campaigns && deps.campaignJob) job = await deps.campaignJob(api);
-      if (!job) {
+      // (fora do horário geral: só as réguas com horário personalizado; disparos e agendados usam o geral)
+      let job = !outside && st.active.schedules ? await scheduleJob() : null;
+      if (!job && !outside && st.campaignsAvailable && st.active.campaigns && deps.campaignJob) job = await deps.campaignJob(api);
+      if (!job && !outside) {
         if (st.automationsAvailable) job = st.active.automations ? await automationJob() : null;
         else job = st.active.flows ? await followJob() : null;
       }
@@ -2451,6 +2634,7 @@
     seqIndex, seqStep, seqValidate, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
     seqNormalize, seqInsert, seqRemove, seqExcluded, seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
     itemUsageLines, itemInUse, friendlyDeleteError, // 2.13.1
+    scheduleSpec, nextSendTime, pausaUntil, scheduleDailyLimit, scheduleOutsideCommon, scheduleSentence, scheduleProblems, untilText, windowText, daysText, // 2.13.2
     limitCheck, randomGapMs, estimateDuration, estimateText,
     createMotor,
   };

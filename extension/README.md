@@ -799,6 +799,26 @@ guardada.
 
 ## O que mudou
 
+### 2.13.2 — horários por automação e por etapa
+- **Caixa ▶ COMEÇA → "Horário de envio"**: "Usar o horário geral" (padrão; mostra qual é) ou **Personalizado**: dias da
+  semana + uma ou mais faixas (ex.: 09:00–12:00 e 14:00–18:00) e "Limite desta automação por dia" (vazio = sem limite
+  próprio). A caixa mostra a frase ("Envia entre 14:00 e 18:00, seg–sex").
+- **Caixa ⏳ ESPERAR**: além de "esperar X tempo", "**Esperar até o próximo [dia / dia da semana] às HH:MM**" (ex.:
+  amanhã às 10:00) e "**Depois da espera, enviar só entre HH:MM e HH:MM**" (fora da faixa: espera a próxima).
+  **Caixa ❓ ESPERAR RESPOSTA**: o mesmo "enviar só entre" (o prazo conta normal; o envio seguinte, ✅ ou ❌, respeita a
+  faixa).
+- **Ordem das regras**: faixa da etapa → horário da automação (geral ou personalizado) → limites gerais por hora/dia e
+  intervalo entre envios (sempre valem). Uma régua com horário personalizado pode enviar fora do horário geral (ex.:
+  domingo); disparos e agendados continuam no horário geral. Faixa fora de 08:00–21:00: aviso amarelo ("mensagem fora
+  do horário comum pode incomodar"), mas deixa. Fora da janela, o painel da conversa mostra "faltam…" até a próxima.
+- **Simular** mostra a data e a hora previstas de cada passo (horário da automação, faixas e esperas).
+- A tela "Limites e horário" virou **"Horário geral e limites de segurança"**, explicando que é o padrão das automações
+  e que os limites valem sempre.
+- Tudo guardado no jsonb da automação (`sequence.schedule`, `mode/until_day/until_time` e `send_window` nas caixas):
+  **sem migration**.
+- Testes: `tests/schedule.test.cjs` (janela personalizada, esperar até amanhã 10:00, fora da janela espera a próxima,
+  limites gerais e o limite próprio por dia, domingo com horário personalizado, servidor) e o Chrome real.
+
 ### 2.13.1 — excluir mensagem rápida que está em uso
 - O erro "Supabase 400 … 23514 Failing row contains …" vinha da regra de `wa_schedules` (mensagem ou texto
   obrigatório): ao excluir a mensagem, o agendamento antigo já enviado ficava sem as duas. A regra nova (já aplicada
