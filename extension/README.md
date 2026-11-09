@@ -799,6 +799,29 @@ guardada.
 
 ## O que mudou
 
+### 2.15.3 — exportar o catálogo do WhatsApp Business
+- Aba **Mídias** → bloco **"CATÁLOGO DO WHATSAPP"** → **"Exportar catálogo do WhatsApp"**. Só lê: **não muda o catálogo
+  e não envia nada para ninguém**.
+- A ponte lê pela WA-JS 4.7.2 (`WPP.catalog.getProducts`; se vier vazio, `getMyCatalog`; produto sem descrição ou sem
+  foto na lista: `getProductById`; coleções por `getCollections`, se existir) **todos os produtos visíveis** (os ocultos
+  ficam de fora): id, nome, descrição completa (até 5000 caracteres), preço, preço promocional (só se for menor que o
+  preço), moeda, link `https://wa.me/p/<id>/<número da loja>`, coleções, SKU/link do site (se cadastrados) e **todas as
+  fotos** (principal + adicionais, até 20 por produto).
+- Cada foto é baixada na página do WhatsApp e sobe para o bucket **wa-media** em `catalog/<id do produto>/<sha256>.<ext>`.
+  Antes de subir, confere se o arquivo já está lá (mesmo sha256 = mesmo caminho): se está, **reaproveita** sem subir de
+  novo. Exportar de novo só sobe as fotos novas.
+- O retrato completo fica em `system_config`, chave **`wa_catalog_snapshot`** (JSON: `exported_at`, `phone`,
+  `product_count`, `image_count`, `products` com os links das fotos no bucket e a origem de cada uma, `failed`). **Sem
+  migration.** Cada exportação troca o retrato anterior.
+- No fim: **"N produtos e M fotos exportados em <data>"** (e quantas já estavam no wa-media). Se uma foto ou os detalhes de
+  um produto falham, o produto segue com o que deu certo, os outros continuam e aparece a lista **"Com problema"**. Sem
+  exportação nesta tela, mostra a data da última.
+- Código: `wa-bridge.js` (`catalogExport`, `catalogImage`), `supabase-api.js` (`uploadCatalogImage`,
+  `saveCatalogSnapshot`, `catalogSnapshotInfo`), `content.js` (`exportCatalog`, `renderCatalogExport`).
+- Testes: `tests/catalog.test.cjs` (ponte com catálogo falso, upload sem duplicar, retrato limpo) e o passo 21 do
+  `tests/chrome-real.test.cjs` (Chrome real com catálogo simulado e Storage falso: exporta, lista a foto que falhou, grava
+  o retrato, exporta de novo sem subir nada, nenhum envio).
+
 ### 2.15.2 — criativo do anúncio no 👁 do Rastreamento (ERP)
 - A extensão agora guarda em `wa_ad_attribution`, além do link do post/reel (`source_url`, já guardado desde a 2.6.2),
   a **miniatura do criativo** (`thumbnail_url`: o `thumbnailUrl` do ctwaContext; se não houver e o anúncio for imagem,

@@ -3426,6 +3426,87 @@
     return { on, since, test };
   }
 
+  // ── 2.15.3: exportar o catálogo do WhatsApp Business (só leitura do catálogo; nada é enviado) ──
+  // Fotos em wa-media/catalog/<id do produto>/<sha256>.<ext>: a mesma foto (mesmo sha256) nunca sobe duas vezes.
+  // O retrato completo fica em system_config, chave wa_catalog_snapshot (sem migration).
+  const CATALOG_KEY = 'wa_catalog_snapshot';
+  const CATALOG_IMG_MIME = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+  const CATALOG_IMG_MAX = 10 * MB;
+  async function uploadCatalogImage({ productId, base64, mime }) {
+    const id = String(productId == null ? '' : productId);
+    if (!/^\d{1,30}$/.test(id)) throw new Error('Produto inválido');
+    const m = typeof mime === 'string' ? mime.toLowerCase().split(';')[0].trim() : '';
+    const ext = CATALOG_IMG_MIME[m];
+    if (!ext) throw new Error('Tipo de foto não aceito');
+    if (typeof base64 !== 'string' || !base64) throw new Error('Foto vazia');
+    if (base64.length > Math.ceil(CATALOG_IMG_MAX / 3) * 4 + 4) throw new Error('Foto acima de 10 MB');
+    const bytes = fromBase64(base64);
+    if (!bytes.length || bytes.length > CATALOG_IMG_MAX) throw new Error('Foto acima de 10 MB');
+    const sha = await sha256Of(bytes);
+    const { SUPABASE_URL } = cfg();
+    const path = `catalog/${id}/${sha}.${ext}`;
+    const url = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`;
+    const out = { url, path, sha256: sha, size: bytes.length, mime: m };
+    // já existe (mesmo sha256 neste produto): reaproveita sem subir de novo
+    try { const head = await supaFetch(url, { method: 'HEAD' }); if (head.ok) return { ...out, reused: true }; } catch { /* segue para o upload */ }
+    const res = await supaFetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`, { method: 'POST', headers: { 'Content-Type': m, 'x-upsert': 'false' }, body: bytes });
+    if (res.ok) return { ...out, reused: false };
+    const text = await res.text().catch(() => '');
+    // outra aba / exportação anterior subiu no mesmo instante: o arquivo já está lá
+    if (res.status === 409 || /duplicate|already exists/i.test(text)) return { ...out, reused: true };
+    throw new Error(`Upload falhou (${res.status}): ${text.slice(0, 120)}`);
+  }
+
+  // O retrato é conferido e limpo aqui (o painel só manda o que leu da WA-JS e os endereços do bucket)
+  const catNum = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 1e9 ? Math.round(v * 100) / 100 : null);
+  const catText = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  function checkCatalogSnapshot(snapshot) {
+    const x = snapshot && typeof snapshot === 'object' ? snapshot : {};
+    const phone = String(x.phone || '').replace(/\D/g, '');
+    if (!/^\d{8,15}$/.test(phone)) throw new Error('Número da loja inválido');
+    if (!Array.isArray(x.products) || x.products.length > 1000) throw new Error('Lista de produtos inválida');
+    const bucketUrl = `${cfg().SUPABASE_URL}/storage/v1/object/public/${BUCKET}/catalog/`;
+    const products = x.products.map((p) => {
+      const id = String((p && p.id) || '');
+      if (!/^\d{1,30}$/.test(id)) throw new Error('Produto inválido');
+      const images = (Array.isArray(p.images) ? p.images : []).slice(0, 20).map((im) => ({
+        url: typeof im.url === 'string' && im.url.startsWith(`${bucketUrl}${id}/`) ? im.url : null,
+        source: typeof im.source === 'string' && /^https:\/\/\S{1,2000}$/.test(im.source) ? im.source : null,
+        sha256: typeof im.sha256 === 'string' && /^[0-9a-f]{64}$/.test(im.sha256) ? im.sha256 : null,
+        size: Number.isInteger(im.size) && im.size > 0 ? im.size : null,
+        mime: CATALOG_IMG_MIME[im.mime] ? im.mime : null,
+      })).filter((im) => im.url);
+      return {
+        id, name: catText(p.name, 200) || 'Produto', description: catText(p.description, 5000),
+        price: catNum(p.price), salePrice: catNum(p.salePrice), currency: /^[A-Z]{3}$/.test(String(p.currency || '')) ? p.currency : 'BRL',
+        link: `https://wa.me/p/${id}/${phone}`,
+        url: typeof p.url === 'string' && /^https:\/\/\S{1,2000}$/.test(p.url) ? p.url : null,
+        retailerId: catText(p.retailerId, 100) || null,
+        collections: (Array.isArray(p.collections) ? p.collections : []).map((c) => catText(c, 100)).filter(Boolean).slice(0, 20),
+        images,
+      };
+    });
+    const failed = (Array.isArray(x.failed) ? x.failed : []).slice(0, 1000).map((f) => ({ id: catText(String((f && f.id) || ''), 30), name: catText(f && f.name, 200), error: catText(f && f.error, 300) }));
+    return {
+      version: 1, exported_at: new Date().toISOString(), phone,
+      product_count: products.length, image_count: products.reduce((n, p) => n + p.images.length, 0),
+      products, failed,
+    };
+  }
+  async function saveCatalogSnapshot({ snapshot }) {
+    const v = checkCatalogSnapshot(snapshot);
+    await rest('system_config?on_conflict=key', json('POST', 'resolution=merge-duplicates,return=minimal', { key: CATALOG_KEY, value: JSON.stringify(v), updated_at: v.exported_at }));
+    return { exported_at: v.exported_at, product_count: v.product_count, image_count: v.image_count, failed: v.failed.length };
+  }
+  // Só o resumo da última exportação (data, quantos), para a aba Mídias
+  async function catalogSnapshotInfo() {
+    const rows = await rest(`system_config?select=value&key=eq.${CATALOG_KEY}`);
+    let v = null;
+    try { v = rows.length ? JSON.parse(rows[0].value) : null; } catch { v = null; }
+    if (!v || typeof v !== 'object') return null;
+    return { exported_at: v.exported_at || null, product_count: Number(v.product_count) || 0, image_count: Number(v.image_count) || 0, failed: Array.isArray(v.failed) ? v.failed.length : 0 };
+  }
+
   // ── 2.8.3: nome para mensagens por conversa (wa_chat_names; migration 20261105150000) ──
   // manual = definido por você (nunca trocado pelo aprendido); aprendido = da sua mensagem ("Olá, Fernanda!!").
   const CN_TABLE = 'wa_chat_names';
@@ -3791,6 +3872,7 @@
   }
 
   root.WaApi = {
+    uploadCatalogImage, saveCatalogSnapshot, catalogSnapshotInfo, checkCatalogSnapshot, // 2.15.3
     lastSaleCustomerName, salePhoneVariants,
     engineActivity, clearReadCache, automationExisting, chatConversions, purchasedChats, pendingContactLeads, conversionStats,
     nativeLabelEvents, nativeLabelSweep, nativeLabelBaseline, nativeLabelIgnored, nativeLabelCandidates, activeEnrollments, enrollmentCandidates, enrollContact,

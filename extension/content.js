@@ -952,6 +952,7 @@
       .md-quota.warn { color: var(--warn); } .md-quota.warn .md-qfill { background: var(--warn); }
       .md-quota.bad { color: var(--err); } .md-quota.bad .md-qfill { background: var(--err); }
       .md-up { font-size: var(--fs-2); } .md-up.err { color: var(--err); } .md-up.warn { color: var(--warn); }
+      .md-catx { display: flex; flex-direction: column; gap: 6px; } .md-catx-btn { align-self: flex-start; } .md-catx-fail { margin: 0; padding-left: 18px; max-height: 160px; overflow-y: auto; }
       .ed-lib { cursor: pointer; }
       .md-pick { position: relative; display: flex; flex-direction: column; gap: 8px ; }
       .md-pbar { display: flex; gap: 8px ; }
@@ -12067,6 +12068,99 @@
     return box;
   }
 
+  // ── 2.15.3: exportar o catálogo do WhatsApp Business (só leitura; não envia nada nem muda o catálogo) ──
+  // A ponte lê os produtos visíveis e baixa cada foto; o background sobe em wa-media/catalog/<id>/ (sem duplicar,
+  // pelo sha256) e grava o retrato em system_config (wa_catalog_snapshot). Falha num produto: segue os outros.
+  const catx = { busy: false, step: '', result: null, error: '', last: undefined };
+  const CATX_REASON = {
+    unavailable: 'Esta versão do WhatsApp não deixa ler o catálogo.',
+    not_business: 'Esta conta não é WhatsApp Business (sem catálogo).',
+    no_me: 'Não consegui ler o número da loja no WhatsApp.',
+    failed: 'O WhatsApp não devolveu o catálogo. Tente de novo em alguns segundos.',
+  };
+  const catxWhen = (iso) => { const d = new Date(iso); return Number.isFinite(d.getTime()) ? d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''; };
+  function bufToBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  // só o bloco do catálogo (a busca e a grade não piscam durante a exportação)
+  function refreshCatx() {
+    if (!md.open || !mtabEl) return;
+    const cur = mtabEl.querySelector('.md-catx');
+    if (cur) cur.replaceWith(renderCatalogExport());
+  }
+  async function loadCatalogInfo() {
+    if (catx.last !== undefined) return;
+    catx.last = null;
+    try { catx.last = await call('catalogSnapshotInfo'); } catch { catx.last = null; }
+    refreshCatx();
+  }
+  async function exportCatalog() {
+    if (catx.busy) return;
+    Object.assign(catx, { busy: true, step: 'Lendo o catálogo do WhatsApp…', result: null, error: '' });
+    refreshCatx();
+    try {
+      let r = null;
+      try { r = await waRequest('catalogExport', {}, { timeout: 10 * 60 * 1000 }); } catch (e) { throw new Error(e.code === 'not_ready' ? 'O WhatsApp ainda está carregando. Tente de novo em alguns segundos.' : e.message); }
+      if (!r || !r.ok) throw new Error(CATX_REASON[r && r.reason] || CATX_REASON.failed);
+      const products = [];
+      const failed = (r.warnings || []).slice();
+      let photos = 0;
+      for (let i = 0; i < r.products.length; i++) {
+        const p = r.products[i];
+        catx.step = `Produto ${i + 1} de ${r.products.length}: ${p.name}`;
+        refreshCatx();
+        const images = [];
+        const errs = [];
+        for (const src of p.images || []) {
+          try {
+            const img = await waRequest('catalogImage', { url: src }, { timeout: 60000 });
+            const up = await call('uploadCatalogImage', { productId: p.id, base64: bufToBase64(img.data), mime: img.mime });
+            images.push({ url: up.url, source: src, sha256: up.sha256, size: up.size, mime: up.mime, reused: !!up.reused });
+          } catch (e) { errs.push(e.message || 'erro'); }
+        }
+        photos += images.length;
+        if (errs.length) failed.push({ id: p.id, name: p.name, error: `${errs.length} de ${(p.images || []).length} foto${(p.images || []).length === 1 ? '' : 's'} não exportada${errs.length === 1 ? '' : 's'}: ${errs[0]}` });
+        products.push({ ...p, images });
+      }
+      catx.step = 'Gravando o retrato do catálogo…';
+      refreshCatx();
+      const saved = await call('saveCatalogSnapshot', { snapshot: { phone: r.me, products, failed } });
+      catx.result = { products: saved.product_count, photos, at: saved.exported_at, failed, reused: products.reduce((n, p) => n + p.images.filter((x) => x.reused).length, 0) };
+      catx.last = { exported_at: saved.exported_at, product_count: saved.product_count, image_count: saved.image_count, failed: failed.length };
+    } catch (e) {
+      catx.error = e.message || 'Erro ao exportar';
+    }
+    catx.busy = false;
+    catx.step = '';
+    refreshCatx();
+  }
+  function renderCatalogExport() {
+    const sec = el('section', 'crmsec md-catx');
+    sec.append(el('div', 'wt-head', 'CATÁLOGO DO WHATSAPP'));
+    sec.append(el('div', 'crm-intro', 'Copia os produtos visíveis do seu catálogo (nome, descrição, preços, link, coleção e todas as fotos) para o wa-media e guarda um retrato no banco. Só lê: não muda o catálogo e não envia nada para ninguém.'));
+    const b = fbtn('bbtn md-catx-btn', catx.busy ? 'Exportando…' : 'Exportar catálogo do WhatsApp', () => exportCatalog());
+    b.disabled = catx.busy;
+    sec.append(b);
+    if (catx.busy && catx.step) sec.append(el('div', 'md-up md-catx-step', catx.step));
+    if (catx.error) sec.append(el('div', 'md-up err md-catx-err', `Não consegui exportar: ${catx.error}`));
+    const r = catx.result;
+    if (r) {
+      sec.append(el('div', 'ed-msg md-catx-done', `${r.products} produto${r.products === 1 ? '' : 's'} e ${r.photos} foto${r.photos === 1 ? '' : 's'} exportado${r.products + r.photos === 1 ? '' : 's'} em ${catxWhen(r.at)}${r.reused ? ` (${r.reused} já estava${r.reused === 1 ? '' : 'm'} no wa-media, não subi${r.reused === 1 ? 'u' : 'ram'} de novo)` : ''}.`));
+      if (r.failed.length) {
+        sec.append(el('div', 'md-up warn', `Com problema (${r.failed.length}):`));
+        const ul = el('ul', 'md-catx-fail');
+        r.failed.slice(0, 50).forEach((f) => ul.append(el('li', 'md-up err', `${f.name || f.id}: ${f.error}`)));
+        sec.append(ul);
+      }
+    } else if (catx.last && catx.last.exported_at && !catx.busy) {
+      sec.append(el('div', 'md-up md-catx-last', `Última exportação: ${catxWhen(catx.last.exported_at)} · ${catx.last.product_count} produto${catx.last.product_count === 1 ? '' : 's'} e ${catx.last.image_count} foto${catx.last.image_count === 1 ? '' : 's'}`));
+    }
+    return sec;
+  }
+
   function renderMidias() {
     if (!mtabEl) return;
     mtabEl.textContent = '';
@@ -12168,6 +12262,8 @@
     const tools = el('div', 'ed-add');
     tools.append(fbtn('bbtn', md.importing ? 'Importando…' : 'Importar mídias das mensagens rápidas', () => importMedia()));
     mtabEl.append(tools);
+    mtabEl.append(renderCatalogExport()); // 2.15.3
+    loadCatalogInfo();
     const pct = md.quota ? md.used / md.quota : 0;
     const quota = el('div', `md-quota${pct > 0.9 ? ' bad' : pct > 0.7 ? ' warn' : ''}`);
     quota.append(el('div', null, `Espaço usado no wa-media: ${formatSize(md.used)} de 1 GB (${(pct * 100).toFixed(1).replace('.', ',')}%)${pct > 0.9 ? ' — quase cheio' : pct > 0.7 ? ' — atenção' : ''}`));

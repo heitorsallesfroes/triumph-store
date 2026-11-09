@@ -123,6 +123,10 @@ const HANDLERS = {
   engineActivity:        (m) => WaApi.engineActivity({ automations: m.automations !== false, campaigns: m.campaigns !== false }),
   // 2.7.0: Biblioteca de mídias (cada uma valida a entrada em supabase-api.js)
   fetchMediaLibrary:     ()  => WaApi.fetchMediaLibrary(),
+  // 2.15.3: exportar o catálogo do WhatsApp (fotos em wa-media/catalog/<id>/, retrato em system_config)
+  uploadCatalogImage:    (m) => WaApi.uploadCatalogImage({ productId: m.productId, base64: m.base64, mime: m.mime }),
+  saveCatalogSnapshot:   (m) => WaApi.saveCatalogSnapshot({ snapshot: m.snapshot }),
+  catalogSnapshotInfo:   ()  => WaApi.catalogSnapshotInfo(),
   createMediaFolder:     (m) => WaApi.createMediaFolder({ name: m.name }),
   renameMediaFolder:     (m) => WaApi.renameMediaFolder({ id: m.id, name: m.name }),
   deleteMediaFolder:     (m) => WaApi.deleteMediaFolder({ id: m.id }),

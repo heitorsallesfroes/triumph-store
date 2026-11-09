@@ -707,6 +707,156 @@
     return { ok: true, reason: null, products };
   }
 
+  // ── 2.15.3: exportar o catálogo (só leitura: não muda o catálogo e não envia nada) ──
+  // catalogExport: TODOS os produtos visíveis, com descrição completa, preços, moeda, link, coleções e todas as fotos.
+  // catalogImage: os bytes de uma foto do catálogo (o painel sobe para o wa-media).
+  const EXPORT_DESC_MAX = 5000;
+  const EXPORT_IMAGES_MAX = 20;
+  const pickOf = (o, keys) => {
+    for (const k of keys) {
+      const v = safe(() => (o[k] !== undefined ? o[k] : (o.attributes ? o.attributes[k] : undefined)), undefined);
+      if (v !== undefined && v !== null && v !== '') return v;
+    }
+    return null;
+  };
+  const httpsOf = (v) => { const x = typeof v === 'string' ? v.trim() : ''; return /^https:\/\/[^\s"'<>]{1,2000}$/.test(x) ? x : null; };
+  // milésimos (priceAmount1000 / "price" da resposta do catálogo) → valor na moeda (2 casas)
+  const amountOf = (v) => { const n = Number(v); return v != null && v !== '' && Number.isFinite(n) && n >= 0 ? Math.round(n / 10) / 100 : null; };
+  // Todas as fotos de um produto (principal + adicionais), sem repetir, na ordem do catálogo
+  function productImages(o) {
+    const out = [];
+    const add = (v) => {
+      if (Array.isArray(v)) { const req = v.find((x) => x && x.key === 'requested') || v.find((x) => x && x.key === 'full') || v[0]; if (req && typeof req === 'object' && !Array.isArray(req)) { add(req.value || req.url); return; } v.forEach(add); return; }
+      if (v && typeof v === 'object') { add(v.value || v.url || v.imageCdnUrl || v.mediaUrl); return; }
+      const u = httpsOf(v);
+      if (u && !out.includes(u) && out.length < EXPORT_IMAGES_MAX) out.push(u);
+    };
+    add(pickOf(o, ['imageCdnUrl', 'image_cdn_url', 'image_url']));
+    add(pickOf(o, ['image_cdn_urls', 'imageCdnUrls']));
+    const extra = pickOf(o, ['additionalImageCdnUrl', 'additional_image_cdn_urls', 'additionalImageCdnUrls']);
+    if (Array.isArray(extra)) extra.forEach((x) => add(x));
+    const coll = safe(() => o.productImageCollection, null);
+    const models = safe(() => coll.getModelsArray(), null) || safe(() => coll._models, null);
+    if (Array.isArray(models)) models.forEach((m) => add(pickOf(m, ['imageCdnUrl', 'mediaUrl', 'url'])));
+    return out;
+  }
+  // Produto da WA-JS → o retrato exportado (null = inválido ou oculto)
+  function exportProduct(o, me, collections) {
+    if (!o || typeof o !== 'object') return null;
+    const rawId = pickOf(o, ['id']);
+    const id = rawId && typeof rawId === 'object' ? String(rawId._serialized || '') : rawId != null ? String(rawId) : '';
+    if (!/^\d{1,30}$/.test(id)) return null;
+    if (pickOf(o, ['isHidden', 'is_hidden']) === true) return null;
+    const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+    const curRaw = pickOf(o, ['currency']);
+    const currency = typeof curRaw === 'string' && /^[A-Z]{3}$/.test(curRaw) ? curRaw : 'BRL';
+    let price = amountOf(pickOf(o, ['priceAmount1000', 'price_amount1000']));
+    const rawPrice = pickOf(o, ['price']);
+    if (price == null && rawPrice != null && /^\d+$/.test(String(rawPrice))) price = amountOf(rawPrice);
+    let salePrice = amountOf(pickOf(o, ['salePriceAmount1000', 'sale_price_amount1000']));
+    if (salePrice == null) { const sp = pickOf(o, ['sale_price']); if (sp && typeof sp === 'object') salePrice = amountOf(sp.price || sp.amount1000); }
+    if (salePrice != null && price != null && salePrice >= price) salePrice = null; // "promoção" igual ou maior não é promoção
+    const url = httpsOf(pickOf(o, ['url']));
+    return {
+      id,
+      name: text(pickOf(o, ['name']), 200) || 'Produto',
+      description: text(pickOf(o, ['description']), EXPORT_DESC_MAX),
+      price, salePrice, currency,
+      link: `https://wa.me/p/${id}/${me}`,
+      url, // link do site do produto, se cadastrado no catálogo
+      retailerId: text(String(pickOf(o, ['retailerId', 'retailer_id']) || ''), 100) || null,
+      collections: (collections.get(id) || []).slice(0, 20),
+      images: productImages(o),
+    };
+  }
+  async function catalogExport() {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    if (!wpp.catalog || typeof wpp.catalog.getProducts !== 'function') return { ok: false, reason: 'unavailable', products: [] };
+    if (businessAccount() === false) return { ok: false, reason: 'not_business', products: [] };
+    let wid = null;
+    try { wid = wpp.conn.getMyUserId(); } catch { wid = null; }
+    const meId = wid ? String(wid._serialized || wid) : '';
+    const me = (wid && wid.user ? String(wid.user) : meId.split('@')[0]).replace(/\D/g, '');
+    if (!/^\d{8,15}$/.test(me)) return { ok: false, reason: 'no_me', products: [] };
+    let raw = null;
+    try { raw = await withTimeout(Promise.resolve().then(() => wpp.catalog.getProducts(meId, CATALOG_MAX)), 30000); } catch { raw = null; }
+    if (!Array.isArray(raw) || !raw.length) {
+      const cat = await Promise.resolve().then(() => (typeof wpp.catalog.getMyCatalog === 'function' ? wpp.catalog.getMyCatalog() : null)).catch(() => null);
+      const models = safe(() => cat.productCollection.getModelsArray(), null) || safe(() => cat.productCollection._models, null);
+      if (Array.isArray(models)) raw = models;
+    }
+    if (!Array.isArray(raw)) return { ok: false, reason: 'failed', products: [] };
+    // coleções (se a WA-JS der): id do produto → nomes das coleções
+    const collections = new Map();
+    if (typeof wpp.catalog.getCollections === 'function') {
+      let list = null;
+      try { list = await withTimeout(Promise.resolve().then(() => wpp.catalog.getCollections(meId, 50, CATALOG_MAX)), 20000); } catch { list = null; }
+      (Array.isArray(list) ? list : []).forEach((c) => {
+        const name = String(pickOf(c, ['name']) || '').trim().slice(0, 100);
+        const prods = pickOf(c, ['products']);
+        const arr = Array.isArray(prods) ? prods : safe(() => prods.getModelsArray(), null) || [];
+        if (name) arr.forEach((pr) => { const pid = String(safe(() => (pr && typeof pr === 'object' ? (pr.id && pr.id._serialized) || pr.id : pr), '') || ''); if (pid) collections.set(pid, [...(collections.get(pid) || []), name]); });
+      });
+    }
+    const seen = new Set();
+    const products = [];
+    const failed = [];
+    for (const r of raw.slice(0, CATALOG_MAX)) {
+      let n = null;
+      try { n = exportProduct(r, me, collections); } catch { n = null; }
+      if (!n || seen.has(n.id)) continue;
+      // sem descrição ou sem foto na lista: pede o produto inteiro (só leitura)
+      if ((!n.description || !n.images.length) && typeof wpp.catalog.getProductById === 'function') {
+        try {
+          const full = await withTimeout(Promise.resolve().then(() => wpp.catalog.getProductById(meId, n.id)), 10000);
+          const m = full ? exportProduct(full, me, collections) : null;
+          if (m) n = { ...n, description: n.description || m.description, images: n.images.length ? n.images : m.images, salePrice: n.salePrice != null ? n.salePrice : m.salePrice };
+        } catch { failed.push({ id: n.id, name: n.name, error: 'não consegui ler os detalhes (ficou o que a lista trouxe)' }); }
+      }
+      seen.add(n.id);
+      products.push(n);
+    }
+    return { ok: true, reason: null, me, products, warnings: failed };
+  }
+  const CATALOG_IMG_MAX = 10 * 1024 * 1024;
+  const CATALOG_IMG_MIME = ['image/jpeg', 'image/png', 'image/webp'];
+  // a foto pelo canvas (se o fetch não puder ler): vira JPEG
+  function imageViaCanvas(url) {
+    return new Promise((resolve, reject) => {
+      if (typeof Image === 'undefined' || typeof document === 'undefined') { reject(new Error('sem canvas')); return; }
+      const img = new Image();
+      const timer = setTimeout(() => reject(new Error('tempo esgotado')), 20000);
+      img.crossOrigin = 'anonymous';
+      img.onerror = () => { clearTimeout(timer); reject(new Error('não carregou')); };
+      img.onload = () => {
+        try {
+          const c = document.createElement('canvas');
+          c.width = img.naturalWidth; c.height = img.naturalHeight;
+          c.getContext('2d').drawImage(img, 0, 0);
+          c.toBlob((b) => { clearTimeout(timer); if (b) b.arrayBuffer().then((data) => resolve({ data, mime: 'image/jpeg' }), reject); else reject(new Error('canvas vazio')); }, 'image/jpeg', 0.92);
+        } catch (e) { clearTimeout(timer); reject(e); }
+      };
+      img.src = url;
+    });
+  }
+  async function catalogImage(payload) {
+    const url = httpsOf(payload && payload.url);
+    if (!url) throw new BridgeError('invalid_url', 'Endereço da foto inválido', 'before-send');
+    let out = null;
+    try {
+      const res = await withTimeout(fetch(url, { credentials: 'omit', cache: 'no-store' }), 30000);
+      if (!res.ok) throw new Error(String(res.status));
+      const mime = String(res.headers.get('content-type') || '').toLowerCase().split(';')[0].trim();
+      const data = await res.arrayBuffer();
+      out = { data, mime: CATALOG_IMG_MIME.includes(mime) ? mime : 'image/jpeg' };
+    } catch {
+      try { out = await imageViaCanvas(url); } catch { out = null; }
+    }
+    if (!out || !(out.data instanceof ArrayBuffer) || !out.data.byteLength) throw new BridgeError('image_failed', 'Não consegui baixar a foto do catálogo', 'before-send');
+    if (out.data.byteLength > CATALOG_IMG_MAX) throw new BridgeError('file_too_big', 'Foto acima de 10 MB', 'before-send');
+    return out;
+  }
+
   // Contatos salvos (nome + número) para a parte "Contato"; só @c.us, até 20, filtrados aqui
   async function contactSearch(payload) {
     if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
@@ -1606,6 +1756,8 @@
     sendRich: (payload, requestId) => sendRich(requestId, payload),
     richInfo: () => richInfo(),
     catalogProducts: () => catalogProducts(),
+    catalogExport: () => catalogExport(), // 2.15.3
+    catalogImage: (payload) => catalogImage(payload),
     contactSearch: (payload) => contactSearch(payload),
     convEvents: (payload) => convEvents(payload), // 2.10.0
     activityScan: (payload) => activityScan(payload), // 2.12.8
