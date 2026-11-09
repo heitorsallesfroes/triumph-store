@@ -1,44 +1,47 @@
-// Aba "Rastreamento": conversas ativas e leads novos (anúncio x não rastreada), tempo da 1ª resposta,
-// jornada Fez contato → Respondeu → Comprou, vendas por dia e a lista de conversas (como o Tintim: todas as
-// conversas ativas, pela última mensagem, ao vivo). Contas em src/lib/waTracking.ts; leitura em
-// src/lib/waTrackingDb.ts. Só leitura.
+// Aba "Rastreamento" (como o Tintim): conversas aguardando 1ª resposta e tempo de jornada no topo; filtros (período,
+// origem, relatório); visão geral (ativas, rastreadas × não rastreadas, 1ª resposta, meia-lua); origem por dia;
+// funil Fez contato → Comprou; vendas; a tabela de conversas (ao vivo, 25 por página, detalhes da conversa numa
+// lateral) e os eventos enviados ao Facebook. Azul = Meta Ads, laranja = Não rastreada.
+// Contas em src/lib/waTracking.ts; leitura em src/lib/waTrackingDb.ts. Só leitura.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bar, BarChart, CartesianGrid, ComposedChart, LabelList, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Download, Search } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Download, Eye, MessageCircle, Search, X } from 'lucide-react';
 import { periodRanges, spDay, type PeriodPreset } from '../../lib/waPanel';
 import {
-  buildConversations, conversationsCsv, conversationsIn, filterStage, journey, originByDay, pageInfo, salesByDay, searchConversations,
-  sortConversations, trackSummary, businessHoursLabel, businessHoursOf, saleLinksText, DEFAULT_SORT, STAGE_FILTERS, STAGE_LABEL,
-  type Conversation, type OriginFilter, type SalesDateMode, type SortKey, type Stage, type StageFilter,
+  buildConversations, buyFunnel, conversationsCsv, conversationsIn, conversationTimeline, filterStage, originByDay, originMatches, pageInfo, salesByDay, salesCsv,
+  searchConversations, sortConversations, trackSummary, businessHoursLabel, businessHoursOf, saleLinksText, DEFAULT_SORT, STAGE_FILTERS, STAGE_LABEL,
+  type Conversation, type OriginFilter, type SalesDateMode, type SortKey, type Stage, type StageFilter, type TrackInput,
 } from '../../lib/waTracking';
 import { loadTracking, type TrackLoad } from '../../lib/waTrackingDb';
 import { startVisibleInterval } from '../../lib/visibleInterval';
 import { btn, input, ORANGE } from './shared';
 import WaConversions from './WaConversions';
-import { EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoTip, panel, SectionHeader, Skeleton, SkeletonStyle, SLATE, StatCard } from './ui';
+import { EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoTip, panel, Skeleton, SkeletonStyle, SLATE } from './ui';
 
+// cores do Tintim
+const META = '#2563eb';
+const UNTR = '#f97316';
 const PRESETS: [PeriodPreset, string][] = [['hoje', 'Hoje'], ['7d', '7 dias'], ['30d', '30 dias'], ['mes', 'Este mês'], ['custom', 'Personalizado']];
-const ORIGINS: [OriginFilter, string][] = [['todas', 'Todas'], ['anuncio', 'Anúncio'], ['nao_rastreada', 'Não rastreada']];
+const ORIGINS: [OriginFilter, string][] = [['todas', 'Todas as origens'], ['anuncio', 'Meta Ads'], ['nao_rastreada', 'Não rastreada']];
 const PAGE = 25;
-// 2.12.8: atualiza sozinha a cada 30 s (com a aba visível e o período incluindo hoje). O teste no Chrome real
-// usa um intervalo menor (window.__TSP_LIVE_MS).
+// 2.12.8: atualiza sozinha a cada 30 s (aba visível, período incluindo hoje). O teste usa window.__TSP_LIVE_MS.
 const LIVE_MS = Number((globalThis as { __TSP_LIVE_MS?: number }).__TSP_LIVE_MS) || 30 * 1000;
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const br = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
-const when = (ms: number | null) => (ms == null ? '—' : new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
+const when = (ms: number | null) => (ms == null ? '—' : new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }));
+const fmtDays = (d: number | null) => (d == null ? '—' : `${(Math.round(d * 10) / 10).toLocaleString('pt-BR')} dia${Math.round(d * 10) / 10 === 1 ? '' : 's'}`);
 
 const INFO = {
-  active: 'Conversas (uma por pessoa) em que o CLIENTE mandou mensagem no período, novas ou antigas — igual ao "Conversas novas ativas" do Tintim. Gravado pela extensão 2.12.8 (aba com a trava) a cada mensagem; ao abrir o WhatsApp Web, ela varre todas as conversas com mensagem nas últimas 72 h (quem chamou com o PC desligado entra quando você abrir). Também contam os leads novos e as respostas a envios nossos do período.',
-  leads: 'Conversas que falaram com a loja pela PRIMEIRA vez no período: a 1ª mensagem da conversa é do cliente e não havia nenhuma antes, uma por pessoa (anúncio ou orgânico). Gravado pela extensão (aba com a trava), pelo anúncio ou pela varredura das últimas 72 h ao abrir o WhatsApp Web.',
-  ad: 'Conversas que vieram de um anúncio do Meta (Facebook/Instagram, clique para o WhatsApp).',
-  untracked: 'Conversas sem anúncio: o cliente chamou direto, pelo link, indicação etc.',
-  reply: 'Média do tempo entre a 1ª mensagem do cliente e o 1º envio nosso registrado na conversa (o que você digitou, mensagem rápida, automação…). "Só horário comercial" (ligado por padrão) conta só os minutos dentro do horário do motor de envios da extensão (Automações → horário). Conversas sem resposta e as com início não registrado não entram na média.',
-  sales: 'Vendas das conversas do período: registradas pelo 💰 na conversa, ligadas pelo 📈 (a Compra enviada ao Facebook ligada à venda do ERP) ou vendas do ERP com o telefone da conversa. Conversa nova: as vendas depois da 1ª mensagem; conversa que já existia: as vendas do período. Canceladas/reembolsadas não contam. Como cada venda foi ligada: (i) na etapa da tabela.',
-  conversion: 'Conversas do período que compraram, divididas pelas conversas do período.',
-  origin: 'Leads novos por dia (dia do 1º contato), separados pela origem (anúncio ou não rastreada). O número em cada pedaço é a quantidade.',
-  journey: 'Fez contato = conversas do período. Respondeu = o cliente respondeu a uma mensagem nossa depois do 1º contato. Comprou = teve venda pelo WhatsApp depois do 1º contato (quem comprou conta também em Respondeu).',
-  salesDay: '"Data do primeiro contato": as vendas das conversas novas do período, no dia em que a conversa começou. "Data da venda": as vendas pelo WhatsApp feitas no período, no dia da venda (de conversas de qualquer data).',
-  table: 'Uma linha por conversa do período: todas as conversas ativas (o cliente mandou mensagem no período), os leads novos e as que tiveram venda no período. Ordem padrão: última mensagem, mais recente primeiro (clique no título da coluna para trocar). Atualiza sozinha a cada 30 s ("Ao vivo") quando o período inclui hoje, sem sair da página em que você está. Etapa: Fez contato / Respondeu (o cliente respondeu a uma mensagem nossa) / Comprou + valor. Contato: nome aprendido/salvo → nome do WhatsApp → telefone. "início não registrado" = a 1ª mensagem da conversa não é conhecida.',
+  awaiting: 'Conversas do período que começaram com o cliente (1º contato registrado) e em que a loja ainda não respondeu: nenhuma mensagem nossa registrada depois da 1ª mensagem e a última mensagem não é da loja.',
+  journey: 'Média de dias entre o 1º contato registrado e a 1ª venda, das conversas do período que compraram.',
+  active: 'Total de conversas novas ativas (como no Tintim): conversas, uma por pessoa, em que o CLIENTE mandou mensagem no período, novas ou antigas. Gravado pela extensão 2.12.8; ao abrir o WhatsApp Web ela varre as conversas com mensagem nas últimas 72 h.',
+  ad: 'Conversas ativas que vieram de um anúncio do Meta (Facebook/Instagram, clique para o WhatsApp).',
+  untracked: 'Conversas ativas sem anúncio: o cliente chamou direto, pelo link, indicação etc.',
+  reply: 'Média do tempo entre a 1ª mensagem do cliente e a 1ª mensagem nossa registrada. "Calcular a partir da 2ª mensagem": ignora a 1ª mensagem nossa (automática / saudação) e mede até a 2ª. "Só horário comercial": conta só os minutos dentro do horário do motor de envios. Conversas sem resposta e as com início não registrado não entram.',
+  origin: 'Conversas ativas por dia (o 1º dia delas no período), separadas pela origem. O número dentro de cada pedaço é a quantidade.',
+  funnel: 'Fez contato = conversas ativas do período (100%). Comprou = as que tiveram venda pelo WhatsApp (💰, 📈 ou o telefone da venda) depois do 1º contato. Canceladas/reembolsadas não contam.',
+  sales: '"Data do primeiro contato": as vendas das conversas do período, no dia em que a conversa começou. "Data da venda": as vendas pelo WhatsApp feitas no período, no dia da venda (de conversas de qualquer data).',
+  table: 'Todas as conversas do período: as ativas, os leads novos e as que tiveram venda no período. Ordem padrão: última mensagem, mais recente primeiro. Atualiza sozinha a cada 30 s ("Ao vivo") quando o período inclui hoje, sem sair da página em que você está. 👁 abre a linha do tempo da conversa; 💬 abre no WhatsApp.',
 };
 
 type Loaded = { load: TrackLoad; key: string; at: number };
@@ -49,8 +52,11 @@ export default function WaTracking() {
   const [start, setStart] = useState(ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 13)));
   const [end, setEnd] = useState(ymd(today));
   const [origin, setOrigin] = useState<OriginFilter>('todas');
-  const [businessOnly, setBusinessOnly] = useState(true); // como o motor de envios (pode desligar)
+  const [businessOnly, setBusinessOnly] = useState(true);
+  const [fromSecond, setFromSecond] = useState(false);
   const [salesMode, setSalesMode] = useState<SalesDateMode>('contato');
+  const [awaitingOnly, setAwaitingOnly] = useState(false);
+  const tableRef = useRef<HTMLDivElement>(null);
   const ranges = useMemo(() => periodRanges(preset, Date.now(), { start, end }), [preset, start, end]);
   const r = ranges.cur;
   const key = `${r.fromDay}|${r.toDay}`;
@@ -66,8 +72,7 @@ export default function WaTracking() {
     return () => { alive = false; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 2.12.8: "Ao vivo" — com o período incluindo hoje, recarrega a cada 30 s (aba visível), sem esqueleto e sem
-  // mexer na página/filtros da tabela. Uma atualização por vez; se o período mudar no meio, a resposta é descartada.
+  // "Ao vivo": recarrega a cada 30 s sem esqueleto e sem mexer na página/filtros da tabela
   const live = r.toDay >= spDay(Date.now());
   const busy = useRef(false);
   useEffect(() => {
@@ -88,30 +93,57 @@ export default function WaTracking() {
   const bh = useMemo(() => businessHoursOf(data ? data.load.settings : null), [data]);
   const model = useMemo(() => (data && !loading ? buildConversations(data.load.input, bh) : null), [data, loading, bh]);
   const list = useMemo(() => (model && data ? conversationsIn(model, r, origin, data.load.input.replies) : null), [model, data, r, origin]);
-  const s = useMemo(() => (list ? trackSummary(list, businessOnly) : null), [list, businessOnly]);
+  const s = useMemo(() => (list ? trackSummary(list, businessOnly, fromSecond) : null), [list, businessOnly, fromSecond]);
   const daily = useMemo(() => (list ? originByDay(list, r) : null), [list, r]);
-  const steps = useMemo(() => (list ? journey(list) : null), [list]);
+  const funnel = useMemo(() => (list ? buyFunnel(list) : null), [list]);
   const salesDaily = useMemo(() => (model ? salesByDay(model, r, origin, salesMode) : null), [model, r, origin, salesMode]);
+  const salesTot = useMemo(() => (salesDaily ? salesDaily.reduce((a, x) => ({ n: a.n + x.vendas, v: a.v + x.receita }), { n: 0, v: 0 }) : null), [salesDaily]);
+  const originTot = useMemo(() => (daily ? daily.reduce((a, x) => ({ ad: a.ad + x.anuncio, un: a.un + x.nao_rastreada }), { ad: 0, un: 0 }) : null), [daily]);
+  const tag = `${r.fromDay}_a_${r.toDay}`;
+  const download = (text: string, name: string) => {
+    const blob = new Blob([String.fromCharCode(0xfeff) + text], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const seeAwaiting = () => { setAwaitingOnly(true); setTimeout(() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }} data-testid="wa-tracking">
       <SkeletonStyle />
-      <SectionHeader
-        title="Rastreamento das conversas"
-        subtitle={`${br(r.fromDay)} a ${br(r.toDay)} · conversas ativas, leads novos e quantas viram venda`}
-        right={(
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end', maxWidth: '100%' }}>
-            <Segmented label="Período" options={PRESETS} value={preset} onChange={setPreset} />
-            {preset === 'custom' && (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <input type="date" aria-label="Data inicial" value={start} onChange={(e) => setStart(e.target.value)} style={input} />
-                <input type="date" aria-label="Data final" value={end} onChange={(e) => setEnd(e.target.value)} style={input} />
-              </div>
-            )}
-            <Segmented label="Origem" options={ORIGINS} value={origin} onChange={setOrigin} small />
-          </div>
-        )}
-      />
+      <div>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>Rastreamento</h2>
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>{br(r.fromDay)} a {br(r.toDay)} · de onde vêm as conversas e quantas viram venda</p>
+      </div>
+
+      {/* Topo: dois cartões grandes */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: 12 }}>
+        <BigCard label="Conversas aguardando primeira resposta" info={INFO.awaiting} value={s ? fmtInt(s.awaiting) : null} testId="track-awaiting"
+          action={<button type="button" style={{ ...btn, color: META, border: '1px solid rgba(37,99,235,0.45)' }} onClick={seeAwaiting} disabled={!s || !s.awaiting} data-testid="track-see-awaiting">Ver conversas</button>} />
+        <BigCard label="Tempo médio de jornada" info={INFO.journey} value={s ? fmtDays(s.journeyDays) : null} testId="track-journey-days"
+          sub={s ? (s.journeyCount ? `do 1º contato até a venda · ${fmtInt(s.journeyCount)} compra${s.journeyCount === 1 ? '' : 's'}` : 'ninguém comprou ainda neste período') : ''} />
+      </div>
+
+      {/* Filtros */}
+      <div style={{ ...panel, padding: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }} data-testid="track-filters">
+        <Segmented label="Período" options={PRESETS} value={preset} onChange={setPreset} small />
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+          De <input type="date" aria-label="Data inicial" value={preset === 'custom' ? start : r.fromDay} onChange={(e) => { setStart(e.target.value); if (preset !== 'custom') setEnd(r.toDay); setPreset('custom'); }} style={input} />
+        </label>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+          Até <input type="date" aria-label="Data final" value={preset === 'custom' ? end : r.toDay} onChange={(e) => { setEnd(e.target.value); if (preset !== 'custom') setStart(r.fromDay); setPreset('custom'); }} style={input} />
+        </label>
+        <Segmented label="Origem" options={ORIGINS} value={origin} onChange={setOrigin} small colors={{ anuncio: META, nao_rastreada: UNTR }} />
+        <span style={{ flex: 1 }} />
+        <button type="button" style={btn} disabled={!list || !list.length} onClick={() => list && download(conversationsCsv(sortConversations(list, DEFAULT_SORT.key, DEFAULT_SORT.desc)), `conversas_whatsapp_${tag}.csv`)} data-testid="track-report">
+          <Download size={14} /> Baixar relatório
+        </button>
+      </div>
       {error && <div style={{ ...panel, color: '#ef4444', fontSize: 13 }}>{error}</div>}
       {data && data.load.missing.length > 0 && (
         <div style={{ ...panel, padding: '12px 16px', background: 'rgba(249,115,22,0.08)', borderColor: 'rgba(249,115,22,0.35)', color: ORANGE, fontSize: 13 }}>
@@ -119,97 +151,111 @@ export default function WaTracking() {
         </div>
       )}
 
-      {/* Visão geral */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }} data-testid="track-cards">
-        {!s ? Array.from({ length: 7 }, (_, i) => (
-          <div key={i} style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 10 }}><Skeleton h={10} w="55%" /><Skeleton h={28} w="45%" /><Skeleton h={10} w="70%" /></div>
-        )) : (<>
-          <StatCard accent label="Conversas ativas" value={fmtInt(s.active)} info={INFO.active}
-            sub={s.total > s.active ? `o cliente mandou mensagem · + ${fmtInt(s.total - s.active)} só com venda no período` : 'o cliente mandou mensagem no período'} />
-          <StatCard accent label="Leads novos" value={fmtInt(s.leads)} info={INFO.leads}
-            sub={<><b style={{ color: ORANGE }}>{fmtInt(s.leadsAd)}</b> anúncio · <b style={{ color: 'var(--text-secondary)' }}>{fmtInt(s.leads - s.leadsAd)}</b> orgânico</>} />
-          <StatCard label="Rastreadas (anúncio)" value={fmtInt(s.ad)} info={INFO.ad} sub={<><b style={{ color: ORANGE }}>{fmtPct(s.adPct, 1)}</b> das conversas</>} />
-          <StatCard label="Não rastreadas" value={fmtInt(s.untracked)} info={INFO.untracked} sub={<><b style={{ color: 'var(--text-secondary)' }}>{fmtPct(s.untrackedPct, 1)}</b> das conversas</>} />
-          <StatCard label="Tempo médio da 1ª resposta" value={fmtMinutes(s.avgReplyMinutes)} info={INFO.reply} sub={(
-            <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span>{fmtInt(s.answered)} de {fmtInt(s.total)} conversas respondidas</span>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                <input type="checkbox" checked={businessOnly} onChange={(e) => setBusinessOnly(e.target.checked)} /> só horário comercial ({businessHoursLabel(bh)})
-              </label>
-            </span>
-          )} />
-          <StatCard accent label="Vendas das conversas" value={fmtMoney(s.revenue)} info={INFO.sales} sub={`${fmtInt(s.sales)} venda${s.sales === 1 ? '' : 's'} · ${fmtInt(s.bought)} conversa${s.bought === 1 ? '' : 's'}`} />
-          <StatCard label="Fez contato → Comprou" value={fmtPct(s.conversion, 1)} info={INFO.conversion} sub={`${fmtInt(s.bought)} de ${fmtInt(s.total)} compraram`} />
-        </>)}
-      </div>
+      {/* Visão geral das conversas */}
+      <Card title="Visão geral das conversas" testId="track-overview">
+        {!s ? <Skeleton h={160} /> : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))', gap: 16, alignItems: 'center' }}>
+            <Metric testId="track-active" label="Total de conversas novas ativas" info={INFO.active} value={fmtInt(s.active)} sub={`${fmtInt(s.leads)} leads novos no período`} />
+            <Metric testId="track-ad" label="Conversas rastreadas" info={INFO.ad} value={fmtInt(s.activeAd)} color={META} sub={`${fmtPct(s.activeAdPct, 1)} das conversas`} />
+            <Metric testId="track-untracked" label="Não rastreadas" info={INFO.untracked} value={fmtInt(s.activeUntracked)} color={UNTR} sub={`${fmtPct(s.activeUntrackedPct, 1)} das conversas`} />
+            <Metric testId="track-reply" label="Tempo médio de 1ª resposta" info={INFO.reply} value={fmtMinutes(s.avgReplyMinutes)} sub={(
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span>{fmtInt(s.answered)} conversas respondidas</span>
+                <Toggle on={fromSecond} onChange={setFromSecond} label="Calcular a partir da 2ª mensagem" testId="track-from-second" />
+                <Toggle on={businessOnly} onChange={setBusinessOnly} label={`Só horário comercial (${businessHoursLabel(bh)})`} />
+              </span>
+            )} />
+            <Gauge ad={s.activeAd} untracked={s.activeUntracked} />
+          </div>
+        )}
+      </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 460px), 1fr))', gap: 20 }}>
-        {/* Origem por dia */}
-        <Card title="Origem dos leads novos por dia" info={INFO.origin}>
-          {!daily ? <Skeleton h={260} /> : daily.every((x) => !x.anuncio && !x.nao_rastreada) ? <EmptyState /> : (
-            <div style={{ width: '100%', height: 280 }}>
-              <ResponsiveContainer>
-                <BarChart data={daily.map((x) => ({ ...x, dia: br(x.day) }))} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-main)" vertical={false} />
-                  <XAxis dataKey="dia" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border-main)' }} minTickGap={8} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: 'rgba(249,115,22,0.08)' }} contentStyle={tooltipStyle} labelStyle={{ color: 'var(--text-primary)', fontWeight: 700 }} formatter={(v, name) => [fmtInt(Number(v)), name]} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  {(origin !== 'nao_rastreada') && (
-                    <Bar dataKey="anuncio" name="Anúncio" stackId="o" fill={ORANGE} maxBarSize={40}>
-                      <LabelList dataKey="anuncio" position="center" fill="#fff" fontSize={11} fontWeight={700} formatter={hideZero} />
-                    </Bar>
-                  )}
-                  {(origin !== 'anuncio') && (
-                    <Bar dataKey="nao_rastreada" name="Não rastreada" stackId="o" fill={SLATE} radius={[6, 6, 0, 0]} maxBarSize={40}>
-                      <LabelList dataKey="nao_rastreada" position="center" fill="#fff" fontSize={11} fontWeight={700} formatter={hideZero} />
-                    </Bar>
-                  )}
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </Card>
-
-        {/* Jornada */}
-        <Card title="Jornada" info={INFO.journey} right={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>conta conversas</span>}>
-          {!steps ? <Skeleton h={220} /> : <Journey steps={steps} />}
-        </Card>
-      </div>
-
-      {/* Vendas por dia */}
-      <Card title="Vendas por dia" info={INFO.salesDay} right={(
-        <Segmented label="Data usada no gráfico de vendas" small value={salesMode} onChange={setSalesMode}
-          options={[['contato', 'Data do primeiro contato'], ['venda', 'Data da venda']]} />
+      {/* Origem das conversas */}
+      <Card title="Origem das conversas" info={INFO.origin} testId="track-origin" right={originTot && (
+        <span style={{ display: 'flex', gap: 14, fontSize: 13 }}>
+          <span><b style={{ color: META, fontSize: 18 }}>{fmtInt(originTot.ad)}</b> Meta Ads</span>
+          <span><b style={{ color: UNTR, fontSize: 18 }}>{fmtInt(originTot.un)}</b> Não rastreada</span>
+        </span>
       )}>
-        {!salesDaily ? <Skeleton h={260} /> : salesDaily.every((x) => !x.vendas) ? <EmptyState text="Nenhuma venda neste período." /> : (
+        {!daily ? <Skeleton h={260} /> : daily.every((x) => !x.anuncio && !x.nao_rastreada) ? <EmptyState /> : (
           <div style={{ width: '100%', height: 280 }}>
             <ResponsiveContainer>
-              <ComposedChart data={salesDaily.map((x) => ({ ...x, dia: br(x.day) }))} margin={{ top: 18, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={daily.map((x) => ({ ...x, dia: br(x.day) }))} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-main)" vertical={false} />
                 <XAxis dataKey="dia" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border-main)' }} minTickGap={8} />
-                <YAxis yAxisId="r" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} tickFormatter={(v) => (Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)} mil` : String(v))} />
-                <YAxis yAxisId="q" orientation="right" allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} />
-                <Tooltip cursor={{ fill: 'rgba(34,197,94,0.08)' }} contentStyle={tooltipStyle} labelStyle={{ color: 'var(--text-primary)', fontWeight: 700 }}
-                  formatter={(v, name) => (name === 'Faturamento' ? [fmtMoney(Number(v)), name] : [fmtInt(Number(v)), name])} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} />
+                <Tooltip cursor={{ fill: 'rgba(37,99,235,0.06)' }} contentStyle={tooltipStyle} labelStyle={{ color: 'var(--text-primary)', fontWeight: 700 }} formatter={(v, name) => [fmtInt(Number(v)), name]} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar yAxisId="r" dataKey="receita" name="Faturamento" fill={GREEN} radius={[6, 6, 0, 0]} maxBarSize={40}>
-                  <LabelList dataKey="vendas" position="top" fill="var(--text-muted)" fontSize={11} fontWeight={700} formatter={hideZero} />
-                </Bar>
-                <Line yAxisId="q" type="monotone" dataKey="vendas" name="Vendas" stroke={ORANGE} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-              </ComposedChart>
+                {origin !== 'nao_rastreada' && (
+                  <Bar dataKey="anuncio" name="Meta Ads" stackId="o" fill={META} maxBarSize={40}>
+                    <LabelList dataKey="anuncio" position="center" fill="#fff" fontSize={11} fontWeight={700} formatter={hideZero} />
+                  </Bar>
+                )}
+                {origin !== 'anuncio' && (
+                  <Bar dataKey="nao_rastreada" name="Não rastreada" stackId="o" fill={UNTR} radius={[6, 6, 0, 0]} maxBarSize={40}>
+                    <LabelList dataKey="nao_rastreada" position="center" fill="#fff" fontSize={11} fontWeight={700} formatter={hideZero} />
+                  </Bar>
+                )}
+              </BarChart>
             </ResponsiveContainer>
           </div>
         )}
       </Card>
 
-      {/* Conversas */}
-      <Card title="Conversas" info={INFO.table} right={live && data && !loading ? <LiveBadge at={data.at} /> : undefined}>
-        {!list ? <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} h={18} />)}</div>
-          : <ConversationsTable list={list} fileTag={`${r.fromDay}_a_${r.toDay}`} resetKey={`${key}|${origin}`} />}
-      </Card>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 20 }}>
+        {/* Funil */}
+        <Card title="Funil da jornada de compra" info={INFO.funnel} testId="track-funnel">
+          {!funnel ? <Skeleton h={160} /> : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <FunnelBlock label="Fez contato" count={funnel.contact} pct={funnel.contact ? 1 : null} width={1} />
+              <FunnelBlock label="Comprou" count={funnel.bought} pct={funnel.boughtPct} width={funnel.contact ? Math.max(0.08, funnel.bought / funnel.contact) : 0.08} />
+            </div>
+          )}
+        </Card>
 
-      {/* Eventos enviados ao Facebook (a antiga sub-aba "Conversões (Facebook)") */}
+        {/* Vendas */}
+        <Card title="Vendas" info={INFO.sales} testId="track-sales" right={(
+          <Segmented label="Data usada nas vendas" small value={salesMode} onChange={setSalesMode} options={[['contato', 'Data do primeiro contato'], ['venda', 'Data da venda']]} />
+        )}>
+          {!salesDaily || !salesTot ? <Skeleton h={220} /> : (<>
+            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 10 }}>
+              <Metric label="Total de vendas" value={fmtInt(salesTot.n)} testId="track-sales-n" />
+              <Metric label="Faturamento total" value={fmtMoney(salesTot.v)} color={GREEN} testId="track-sales-v" />
+            </div>
+            {salesDaily.every((x) => !x.vendas) ? <EmptyState text="Nenhuma venda neste período." /> : (
+              <div style={{ width: '100%', height: 200 }}>
+                <ResponsiveContainer>
+                  <BarChart data={salesDaily.map((x) => ({ ...x, dia: br(x.day) }))} margin={{ top: 18, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-main)" vertical={false} />
+                    <XAxis dataKey="dia" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={{ stroke: 'var(--border-main)' }} minTickGap={8} />
+                    <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} tickFormatter={(v) => (Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)} mil` : String(v))} />
+                    <Tooltip cursor={{ fill: 'rgba(34,197,94,0.08)' }} contentStyle={tooltipStyle} labelStyle={{ color: 'var(--text-primary)', fontWeight: 700 }}
+                      formatter={(v, name, item) => (name === 'Faturamento' ? [`${fmtMoney(Number(v))} (${fmtInt(Number((item && (item as { payload?: { vendas?: number } }).payload?.vendas) || 0))} vendas)`, name] : [fmtInt(Number(v)), name])} />
+                    <Bar dataKey="receita" name="Faturamento" fill={GREEN} radius={[6, 6, 0, 0]} maxBarSize={40}>
+                      <LabelList dataKey="vendas" position="top" fill="var(--text-muted)" fontSize={11} fontWeight={700} formatter={hideZero} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            <div style={{ marginTop: 10 }}>
+              <button type="button" style={btn} disabled={!model || !salesTot.n} onClick={() => model && download(salesCsv(model, r, origin, salesMode), `vendas_whatsapp_${tag}.csv`)} data-testid="track-sales-report">
+                <Download size={14} /> Baixar relatório de vendas
+              </button>
+            </div>
+          </>)}
+        </Card>
+      </div>
+
+      {/* Conversas */}
+      <div ref={tableRef}>
+        <Card title="Conversas" info={INFO.table} testId="track-conversations" right={live && data && !loading ? <LiveBadge at={data.at} /> : undefined}>
+          {!list || !data ? <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} h={18} />)}</div>
+            : <ConversationsTable list={list} input={data.load.input} fileTag={tag} resetKey={`${key}|${origin}`} awaitingOnly={awaitingOnly} setAwaitingOnly={setAwaitingOnly} />}
+        </Card>
+      </div>
+
+      {/* Eventos enviados ao Facebook */}
       <section style={panel}>
         <WaConversions title="Eventos enviados ao Facebook" startDay={r.fromDay} endDay={r.toDay} />
       </section>
@@ -220,9 +266,9 @@ export default function WaTracking() {
 const tooltipStyle: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border-main)', borderRadius: 10, fontSize: 12 };
 const hideZero = (v: unknown) => (Number(v) ? String(v) : '');
 
-function Card({ title, info, right, children }: { title: string; info?: string; right?: React.ReactNode; children: React.ReactNode }) {
+function Card({ title, info, right, children, testId }: { title: string; info?: string; right?: React.ReactNode; children: React.ReactNode; testId?: string }) {
   return (
-    <section style={panel}>
+    <section style={panel} data-testid={testId}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
         <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
           {title}{info && <InfoTip text={info} label={`Como "${title}" é calculado`} />}
@@ -233,58 +279,92 @@ function Card({ title, info, right, children }: { title: string; info?: string; 
     </section>
   );
 }
+function BigCard({ label, info, value, sub, action, testId }: { label: string; info: string; value: string | null; sub?: string; action?: React.ReactNode; testId?: string }) {
+  return (
+    <section style={{ ...panel, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }} data-testid={testId}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+        <span style={{ ...eyebrow, display: 'flex', alignItems: 'center', gap: 6 }}>{label}<InfoTip text={info} label={`Como "${label}" é calculado`} /></span>
+        {value == null ? <Skeleton h={32} w={80} /> : <span style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.1 }} data-testid={testId ? `${testId}-value` : undefined}>{value}</span>}
+        {sub && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{sub}</span>}
+      </div>
+      {action}
+    </section>
+  );
+}
+function Metric({ label, info, value, sub, color, testId }: { label: string; info?: string; value: string; sub?: React.ReactNode; color?: string; testId?: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }} data-testid={testId}>
+      <span style={{ ...eyebrow, display: 'flex', alignItems: 'center', gap: 6 }}>{label}{info && <InfoTip text={info} label={`Como "${label}" é calculado`} />}</span>
+      <span style={{ fontSize: 26, fontWeight: 800, color: color || 'var(--text-primary)', lineHeight: 1.1 }} data-testid={testId ? `${testId}-value` : undefined}>{value}</span>
+      {sub && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{sub}</span>}
+    </div>
+  );
+}
+function Toggle({ on, onChange, label, testId }: { on: boolean; onChange: (v: boolean) => void; label: string; testId?: string }) {
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+      <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} data-testid={testId} /> {label}
+    </label>
+  );
+}
+// meia-lua (gauge) rastreadas × não rastreadas
+function Gauge({ ad, untracked }: { ad: number; untracked: number }) {
+  const total = ad + untracked;
+  const data = total ? [{ name: 'Meta Ads', value: ad }, { name: 'Não rastreada', value: untracked }] : [{ name: 'Sem conversas', value: 1 }];
+  return (
+    <div style={{ position: 'relative', width: '100%', height: 130 }} data-testid="track-gauge" aria-label={`Rastreadas ${ad}, não rastreadas ${untracked}`}>
+      <ResponsiveContainer>
+        <PieChart>
+          <Pie data={data} dataKey="value" startAngle={180} endAngle={0} cx="50%" cy="100%" innerRadius="120%" outerRadius="175%" paddingAngle={total ? 1 : 0} stroke="none" isAnimationActive={false}>
+            {data.map((d) => <Cell key={d.name} fill={d.name === 'Meta Ads' ? META : d.name === 'Não rastreada' ? UNTR : 'var(--bg-inner)'} />)}
+          </Pie>
+          {total > 0 && <Tooltip contentStyle={tooltipStyle} formatter={(v, name) => [`${fmtInt(Number(v))} (${fmtPct(Number(v) / total, 1)})`, name]} />}
+        </PieChart>
+      </ResponsiveContainer>
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+        <b style={{ color: META }}>{fmtPct(total ? ad / total : null, 0)}</b> rastreadas
+      </div>
+    </div>
+  );
+}
+function FunnelBlock({ label, count, pct, width }: { label: string; count: number; pct: number | null; width: number }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center' }} data-testid="track-funnel-step">
+      <div style={{ width: `${Math.round(Math.max(0.08, Math.min(1, width)) * 100)}%`, minWidth: 180, padding: '14px 16px', borderRadius: 10, background: META, color: '#fff', textAlign: 'center', transition: 'width .3s' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9 }}>{label}</div>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>{fmtInt(count)} <span style={{ fontSize: 13, fontWeight: 600, opacity: 0.9 }}>({fmtPct(pct, 1)})</span></div>
+      </div>
+    </div>
+  );
+}
 
-function Segmented<T extends string>({ label, options, value, onChange, small = false }: { label: string; options: [T, string][]; value: T; onChange: (v: T) => void; small?: boolean }) {
+function Segmented<T extends string>({ label, options, value, onChange, small = false, colors = {} }: { label: string; options: [T, string][]; value: T; onChange: (v: T) => void; small?: boolean; colors?: Partial<Record<T, string>> }) {
   return (
     <div role="group" aria-label={label} style={{ display: 'flex', gap: 4, padding: 4, borderRadius: 12, background: 'var(--bg-inner)', border: '1px solid var(--border-main)', flexWrap: 'wrap' }}>
       {options.map(([id, text]) => {
         const on = value === id;
+        const c = colors[id] || ORANGE;
         return (
           <button key={id} type="button" aria-pressed={on} onClick={() => onChange(id)}
             style={{ padding: small ? '4px 10px' : '6px 12px', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              background: on ? ORANGE : 'transparent', color: on ? '#fff' : 'var(--text-muted)' }}>{text}</button>
+              background: on ? c : 'transparent', color: on ? '#fff' : 'var(--text-muted)' }}>{text}</button>
         );
       })}
     </div>
   );
 }
 
-const STAGE_COLOR: Record<Stage, string> = { contato: SLATE, respondeu: ORANGE, comprou: GREEN };
-
-function Journey({ steps }: { steps: ReturnType<typeof journey> }) {
-  const top = Math.max(1, steps[0].count);
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }} data-testid="track-journey">
-      {steps.map((st, i) => (
-        <div key={st.stage} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-            <span style={{ ...eyebrow, color: STAGE_COLOR[st.stage] }}>{i + 1}. {STAGE_LABEL[st.stage]}</span>
-            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-              <b style={{ fontSize: 20, color: 'var(--text-primary)', marginRight: 6 }}>{fmtInt(st.count)}</b>{fmtPct(st.pct, 1)}
-            </span>
-          </div>
-          <div style={{ height: 28, borderRadius: 8, background: 'var(--bg-inner)', overflow: 'hidden', display: 'flex', justifyContent: 'center' }}>
-            <div style={{ width: `${Math.max(st.count ? 2 : 0, (st.count / top) * 100)}%`, height: '100%', background: STAGE_COLOR[st.stage], borderRadius: 8, transition: 'width .3s' }} />
-          </div>
-          {i > 0 && steps[i - 1].count > 0 && (
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{fmtPct(st.count / steps[i - 1].count, 1)} da etapa anterior</span>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
+const STAGE_COLOR: Record<Stage, string> = { contato: SLATE, respondeu: META, comprou: GREEN };
 
 function OriginBadge({ c }: { c: Conversation }) {
-  if (!c.ad) return <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Não rastreada</span>;
+  if (!c.ad) return <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(249,115,22,0.12)', color: UNTR, whiteSpace: 'nowrap' }}>Não rastreada</span>;
   return (
     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 6, background: 'rgba(249,115,22,0.12)', color: ORANGE, alignSelf: 'flex-start', whiteSpace: 'nowrap' }}>Meta Ads</span>
-      {c.adTitle && <span title={c.adTitle} style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.adTitle}</span>}
+      <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(37,99,235,0.12)', color: META, alignSelf: 'flex-start', whiteSpace: 'nowrap' }}>Meta Ads</span>
+      <span title={c.adTitle || ''} style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.adTitle || 'Via Campanha de Mensagem'}</span>
     </span>
   );
 }
-
 function StageBadge({ c }: { c: Conversation }) {
   const color = STAGE_COLOR[c.stage];
   return (
@@ -296,18 +376,6 @@ function StageBadge({ c }: { c: Conversation }) {
     </span>
   );
 }
-
-const check = (on: boolean, label: string) => (
-  <span title={on ? `${label} enviado ao Facebook` : `${label} não enviado`} style={{ fontSize: 12, whiteSpace: 'nowrap', color: on ? GREEN : 'var(--text-muted)', fontWeight: on ? 700 : 400 }}>
-    {label} {on ? '✓' : '—'}
-  </span>
-);
-
-const COLS: { key: SortKey | null; label: string; align?: 'right' }[] = [
-  { key: 'name', label: 'Contato' }, { key: 'origin', label: 'Origem' }, { key: 'stage', label: 'Etapa' },
-  { key: 'firstAt', label: 'Primeira mensagem' }, { key: 'lastAt', label: 'Última mensagem' }, { key: 'reply', label: '1ª resposta', align: 'right' },
-  { key: null, label: 'Facebook' },
-];
 
 // 2.12.8: selo "Ao vivo" (com a hora da última atualização)
 function LiveBadge({ at }: { at: number }) {
@@ -322,19 +390,34 @@ function LiveBadge({ at }: { at: number }) {
   </>);
 }
 
+const COLS: { key: SortKey | null; label: string; align?: 'right' }[] = [
+  { key: 'name', label: 'Contato' }, { key: 'origin', label: 'Origem' }, { key: 'stage', label: 'Etapa da jornada' },
+  { key: 'firstAt', label: 'Primeira mensagem' }, { key: 'lastAt', label: 'Última mensagem' }, { key: null, label: 'Ações', align: 'right' },
+];
+
 // resetKey: período/origem; ao trocar, volta para a página 1. A atualização ao vivo (nova lista com o mesmo
 // resetKey) NÃO volta: a página só é ajustada se a lista diminuir (pageInfo).
-function ConversationsTable({ list, fileTag, resetKey }: { list: Conversation[]; fileTag: string; resetKey: string }) {
+function ConversationsTable({ list, input: data, fileTag, resetKey, awaitingOnly, setAwaitingOnly }: {
+  list: Conversation[]; input: TrackInput; fileTag: string; resetKey: string; awaitingOnly: boolean; setAwaitingOnly: (v: boolean) => void;
+}) {
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>(DEFAULT_SORT);
   const [stage, setStage] = useState<StageFilter>('todas');
+  const [orig, setOrig] = useState<OriginFilter>('todas');
   const [page, setPage] = useState(0);
+  const [open, setOpen] = useState<Conversation | null>(null);
   const lastReset = useRef(resetKey);
+  const lastAwait = useRef(awaitingOnly);
   if (lastReset.current !== resetKey) { lastReset.current = resetKey; if (page !== 0) setPage(0); }
-  const rows = useMemo(() => sortConversations(filterStage(searchConversations(list, q), stage), sort.key, sort.desc), [list, q, stage, sort]);
+  if (lastAwait.current !== awaitingOnly) { lastAwait.current = awaitingOnly; if (page !== 0) setPage(0); }
+  const base = useMemo(() => searchConversations(list, q).filter((c) => originMatches(c.ad, orig) && (!awaitingOnly || c.awaiting)), [list, q, orig, awaitingOnly]);
+  const totals = useMemo(() => ({ all: base.length, ad: base.filter((c) => c.ad).length }), [base]);
+  const rows = useMemo(() => sortConversations(filterStage(base, stage), sort.key, sort.desc), [base, stage, sort]);
   const pi = pageInfo(rows.length, page, PAGE);
   const cur = rows.slice(pi.from, pi.to);
   const go = (p: number) => setPage(pageInfo(rows.length, p, PAGE).page);
+  // a lateral acompanha a atualização ao vivo (a mesma conversa, com os dados novos)
+  const openNow = open ? list.find((c) => c.key === open.key) || open : null;
   const exportCsv = () => {
     const blob = new Blob([String.fromCharCode(0xfeff) + conversationsCsv(rows)], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -348,20 +431,29 @@ function ConversationsTable({ list, fileTag, resetKey }: { list: Conversation[];
   };
   const th: React.CSSProperties = { ...eyebrow, padding: '10px 12px', borderBottom: '1px solid var(--border-main)', whiteSpace: 'nowrap', background: 'var(--bg-card)' };
   const td: React.CSSProperties = { padding: '10px 12px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-main)', verticalAlign: 'middle' };
+  const iconBtn: React.CSSProperties = { ...btn, padding: '6px 8px' };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-        <label style={{ position: 'relative', flex: '1 1 240px', maxWidth: 360 }}>
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 13 }} data-testid="track-totals">
+        <span><b style={{ fontSize: 18 }}>{fmtInt(totals.all)}</b> Total</span>
+        <span><b style={{ fontSize: 18, color: META }}>{fmtInt(totals.ad)}</b> Meta Ads</span>
+        <span><b style={{ fontSize: 18, color: UNTR }}>{fmtInt(totals.all - totals.ad)}</b> Não rastreada</span>
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <label style={{ position: 'relative', flex: '1 1 220px', maxWidth: 320 }}>
           <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-          <input type="search" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder="Buscar por nome ou telefone" aria-label="Buscar conversa por nome ou telefone"
+          <input type="search" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder="Buscar por telefone ou nome" aria-label="Buscar conversa por telefone ou nome"
             style={{ ...input, width: '100%', paddingLeft: 30, boxSizing: 'border-box' }} />
         </label>
+        <div data-testid="track-table-origin"><Segmented label="Origem da conversa" small options={ORIGINS} value={orig} onChange={(v) => { setOrig(v); setPage(0); }} colors={{ anuncio: META, nao_rastreada: UNTR }} /></div>
+        <button type="button" aria-pressed={awaitingOnly} onClick={() => setAwaitingOnly(!awaitingOnly)} data-testid="track-awaiting-filter"
+          style={{ ...btn, ...(awaitingOnly ? { background: META, color: '#fff', border: `1px solid ${META}` } : {}) }}>Conversas aguardando primeira resposta</button>
         <div data-testid="track-stage"><Segmented label="Etapa" small options={STAGE_FILTERS} value={stage} onChange={(v) => { setStage(v); setPage(0); }} /></div>
-        <button type="button" style={btn} onClick={exportCsv} disabled={!rows.length}><Download size={14} /> Exportar CSV</button>
+        <button type="button" style={btn} onClick={exportCsv} disabled={!rows.length}><Download size={14} /> CSV</button>
       </div>
-      {!rows.length ? <EmptyState text={q ? 'Nenhuma conversa com essa busca.' : stage !== 'todas' ? 'Nenhuma conversa nesta etapa.' : 'Nenhuma conversa neste período.'} /> : (
+      {!rows.length ? <EmptyState text={q ? 'Nenhuma conversa com essa busca.' : awaitingOnly ? 'Nenhuma conversa aguardando a primeira resposta.' : stage !== 'todas' ? 'Nenhuma conversa nesta etapa.' : 'Nenhuma conversa neste período.'} /> : (
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }} data-testid="track-table">
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 860 }} data-testid="track-table">
             <thead>
               <tr>
                 {COLS.map((c) => {
@@ -386,14 +478,21 @@ function ConversationsTable({ list, fileTag, resetKey }: { list: Conversation[];
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                       <span style={{ fontWeight: 600 }}>{c.name}</span>
                       {c.phoneLabel && c.phoneLabel !== c.name && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.phoneLabel}</span>}
+                      {c.awaiting && <span style={{ fontSize: 10, fontWeight: 700, color: META }}>aguardando 1ª resposta</span>}
                     </span>
                   </td>
                   <td style={td}><OriginBadge c={c} /></td>
                   <td style={td}><StageBadge c={c} /></td>
-                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{when(c.firstAt)}{!c.tracked && <div style={{ fontSize: 11, color: 'var(--text-muted)' }} title="A conversa já existia antes do rastreamento: entrou pela venda; a data é a 1ª atividade conhecida">início não registrado</div>}</td>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{when(c.firstAt)}{!c.tracked && <div style={{ fontSize: 11, color: 'var(--text-muted)' }} title="A 1ª mensagem da conversa não é conhecida; a data é a 1ª atividade conhecida">início não registrado</div>}</td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{when(c.lastAt)}{c.lastFrom && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.lastFrom === 'cliente' ? 'do cliente' : 'da loja'}</div>}</td>
-                  <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>{c.replyMinutes == null ? <span style={{ color: 'var(--text-muted)' }}>{c.tracked ? 'sem resposta' : '—'}</span> : fmtMinutes(c.replyMinutes)}</td>
-                  <td style={td}><span style={{ display: 'flex', gap: 10 }}>{check(c.fbContact, 'Contato')}{check(c.fbPurchase, 'Compra')}</span></td>
+                  <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <span style={{ display: 'inline-flex', gap: 6 }}>
+                      <button type="button" style={iconBtn} onClick={() => setOpen(c)} aria-label={`Detalhes da conversa com ${c.name}`} title="Detalhes da conversa" data-testid="track-details"><Eye size={15} /></button>
+                      {c.waLink ? (
+                        <a href={c.waLink} target="_blank" rel="noopener noreferrer" style={{ ...iconBtn, textDecoration: 'none', color: GREEN }} aria-label={`Abrir ${c.name} no WhatsApp`} title="Abrir no WhatsApp"><MessageCircle size={15} /></a>
+                      ) : <span style={{ ...iconBtn, opacity: 0.4, cursor: 'not-allowed' }} title="Conversa sem número conhecido (@lid): procure pelo nome no WhatsApp"><MessageCircle size={15} /></span>}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -401,6 +500,45 @@ function ConversationsTable({ list, fileTag, resetKey }: { list: Conversation[];
         </div>
       )}
       {rows.length > 0 && <Pager info={pi} onPage={go} testId="track-pager" />}
+      {openNow && <ConversationDrawer c={openNow} input={data} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+const KIND_ICON: Record<string, string> = { contato: '👋', anuncio: '📣', loja: '🏪', follow: '🔁', disparo: '📢', resposta: '💬', venda: '💰', facebook: '📈' };
+function ConversationDrawer({ c, input: data, onClose }: { c: Conversation; input: TrackInput; onClose: () => void }) {
+  const events = useMemo(() => conversationTimeline(c, data, fmtMoney), [c, data]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.35)', display: 'flex', justifyContent: 'flex-end' }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <aside role="dialog" aria-label={`Detalhes da conversa com ${c.name}`} data-testid="track-drawer"
+        style={{ width: 'min(420px, 100vw)', height: '100%', overflowY: 'auto', background: 'var(--bg-card)', borderLeft: '1px solid var(--border-main)', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text-primary)' }}>{c.name}</div>
+            {c.phoneLabel && c.phoneLabel !== c.name && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.phoneLabel}</div>}
+          </div>
+          <button type="button" onClick={onClose} style={{ ...btn, padding: '6px 8px' }} aria-label="Fechar detalhes"><X size={16} /></button>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}><OriginBadge c={c} /><StageBadge c={c} /></div>
+        {c.waLink && <a href={c.waLink} target="_blank" rel="noopener noreferrer" style={{ ...btn, textDecoration: 'none', color: GREEN, alignSelf: 'flex-start' }}><MessageCircle size={14} /> Abrir no WhatsApp</a>}
+        <div style={{ ...eyebrow }}>Linha do tempo</div>
+        <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 }} data-testid="track-timeline">
+          {events.map((ev, i) => (
+            <li key={i} style={{ display: 'grid', gridTemplateColumns: '24px 1fr', gap: 8 }}>
+              <span aria-hidden style={{ fontSize: 15 }}>{KIND_ICON[ev.kind] || '•'}</span>
+              <span style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{ev.text}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{when(ev.t)}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      </aside>
     </div>
   );
 }

@@ -1,35 +1,33 @@
-// Aba "Painel": resultados do WhatsApp no período (leads, respostas, vendas, follow-ups, mensagens rápidas,
-// anúncios, automações e horários), comparando com o período anterior. Contas em src/lib/waPanel.ts.
+// Aba "Painel" ("como estou?"): resumo executivo do período, comparado com o período anterior (▲▼ %).
+// Cartões, "Leads × vendas por dia", horários dos leads e o resultado por anúncio. Sem tabela de conversas, origem por
+// dia nem funil (ficam no Rastreamento e em Resultados). Contas em src/lib/waPanel.ts.
 import { useEffect, useMemo, useState } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { computePanel, delta, periodRanges, AUTO_KIND_LABEL, type AdRow, type FunnelStep, type PeriodPreset, type SendGroupRow, type Summary } from '../../lib/waPanel';
+import { computePanel, delta, periodRanges, AWAITING_DAYS, type AdRow, type PeriodPreset, type Summary } from '../../lib/waPanel';
 import { loadPanel, type PanelLoad } from '../../lib/waPanelDb';
 import { input, ORANGE } from './shared';
 import {
-  BLUE, EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoTip, panel, SectionHeader, Skeleton, SkeletonStyle, SLATE, SortTable, StatCard,
+  EmptyState, fmtInt, fmtMoney, fmtPct, GREEN, InfoTip, panel, SectionHeader, Skeleton, SkeletonStyle, SLATE, SortTable, StatCard,
   type Column,
 } from './ui';
 
 const PRESETS: [PeriodPreset, string][] = [['hoje', 'Hoje'], ['ontem', 'Ontem'], ['7d', '7 dias'], ['30d', '30 dias'], ['mes', 'Este mês'], ['custom', 'Personalizado']];
 const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const br = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+export const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export const br = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
 
 // Regras explicadas no (i) de cada número
 const INFO = {
-  active: 'Conversas (uma por pessoa) em que o CLIENTE mandou mensagem no período, novas ou antigas — igual ao "Conversas novas ativas" do Tintim. Gravado pela extensão 2.12.8 (aba com a trava) a cada mensagem; ao abrir o WhatsApp Web, ela varre todas as conversas com mensagem nas últimas 72 h, então quem chamou com o PC desligado entra quando você abrir. Também contam os leads novos e as respostas a envios nossos do período.',
-  leads: 'Conversas que falaram com a loja pela PRIMEIRA vez no período: a 1ª mensagem da conversa é do cliente e não havia nenhuma antes (anúncio ou orgânico). Gravado pela extensão na aba que tem a trava; ao abrir o WhatsApp, ela recupera as das últimas 72 h (carregando as mensagens antigas quando precisa). De anúncio = a mensagem veio de um anúncio (ctwa). Conversas de anúncio de antes da 2.10.0 entram pelo registro do anúncio.',
-  replied: 'Conversas (não mensagens) em que o cliente respondeu a um envio nosso no período: mensagem que você digitou, mensagem rápida, agendada, automação ou disparo. Só a 1ª resposta depois de cada envio conta.',
+  active: 'Conversas (uma por pessoa) em que o CLIENTE mandou mensagem no período, novas ou antigas — igual ao "Conversas novas ativas" do Tintim. Gravado pela extensão 2.12.8 (aba com a trava) a cada mensagem; ao abrir o WhatsApp Web, ela varre todas as conversas com mensagem nas últimas 72 h. Também contam os leads novos e as respostas a envios nossos do período.',
+  leads: 'Conversas que falaram com a loja pela PRIMEIRA vez no período: a 1ª mensagem da conversa é do cliente e não havia nenhuma antes (anúncio ou orgânico). De anúncio = a mensagem veio de um anúncio (ctwa).',
   sales: 'Venda pelo WhatsApp = venda registrada pelo 💰 da conversa, ou venda do ERP (não cancelada/reembolsada) com o telefone de uma conversa do WhatsApp (lead, anúncio, envio ou resposta registrados). Data: dia da venda.',
   ticket: 'Valor das vendas pelo WhatsApp dividido pela quantidade.',
   conversion: 'Leads novos do período que fizeram uma venda pelo WhatsApp depois da 1ª mensagem, até o fim do período, dividido pelos leads novos.',
-  afterFollow: 'Vendas pelo WhatsApp feitas até 7 dias depois do último follow-up que a conversa recebeu antes da venda. Follow-up = mensagem rápida marcada "Esta mensagem é um follow-up" (enviada à mão ou por automação).',
-  fromAd: 'Vendas pelo WhatsApp de conversas que vieram de anúncio (registro do anúncio na conversa ou lead de anúncio) ou registradas pelo 💰 com origem anúncio.',
-  fb: 'Compras reais enviadas com sucesso ao Facebook (API de Conversões) no período. Testes e falhas não contam.',
-  funnel: 'Para cada etapa: conversas que receberam o follow-up no período; responderam = o cliente respondeu a esse envio (tempo mediano até responder); compraram = venda pelo WhatsApp até 7 dias depois do 1º envio da etapa; seguiram sem responder = não responderam e receberam a etapa seguinte depois.',
-  quick: 'Envios de cada mensagem rápida no período (pela seta, prévia, agendamento, automação ou disparo). Responderam = o cliente respondeu a esse envio. Vendas = vendas pelo WhatsApp da conversa em até 7 dias depois do envio (cada venda conta uma vez por mensagem).',
+  fromAd: 'Vendas pelo WhatsApp de conversas que vieram de anúncio (registro do anúncio na conversa ou lead de anúncio) ou registradas pelo 💰 com origem anúncio. % = parte do faturamento.',
+  afterFollow: 'Vendas pelo WhatsApp feitas até 7 dias depois do último follow-up que a conversa recebeu antes da venda (mensagem marcada como follow-up ou enviada por automação). % = parte do faturamento. O detalhe por régua está em Resultados.',
+  awaiting: `Leads novos dos últimos ${AWAITING_DAYS} dias em que a loja ainda não respondeu (nenhuma mensagem nossa depois da 1ª mensagem do cliente). Se o período já passou, conta até o fim dele. A lista está no Rastreamento ("Conversas aguardando primeira resposta").`,
+  daily: 'Barras: leads novos por dia (anúncio e orgânico). Linha: vendas pelo WhatsApp por dia.',
   ads: 'Leads novos de anúncio do período, por anúncio. Responderam = o cliente respondeu a um envio nosso depois da 1ª mensagem. Vendas = vendas pelo WhatsApp da conversa depois da 1ª mensagem, até o fim do período.',
-  autos: 'Envios das automações (e réguas de follow), dos disparos e das mensagens agendadas no período. Vendas = vendas pelo WhatsApp em até 7 dias depois do envio.',
   heat: 'Quantos leads novos chegaram em cada dia da semana e hora (horário de São Paulo), no período.',
 };
 
@@ -61,13 +59,14 @@ export default function WaPanel() {
   const prevLabel = `${br(ranges.prev.fromDay)} a ${br(ranges.prev.toDay)}`;
   const d = (k: keyof Summary) => (s && p ? delta(Number(s[k]) || 0, Number(p[k]) || 0) : undefined);
   const dt = (k: keyof Summary, fmt: (n: number) => string = fmtInt) => (p ? `Período anterior (${prevLabel}): ${fmt(Number(p[k]) || 0)}` : undefined);
+  const share = (part: number, total: number) => fmtPct(total ? part / total : null);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }} data-testid="wa-panel">
       <SkeletonStyle />
       <SectionHeader
-        title="Painel de resultados"
-        subtitle={`${br(ranges.cur.fromDay)} a ${br(ranges.cur.toDay)} · comparado com ${prevLabel}`}
+        title="Painel"
+        subtitle={`Como estou? ${br(ranges.cur.fromDay)} a ${br(ranges.cur.toDay)} · comparado com ${prevLabel}`}
         right={<PeriodPicker preset={preset} setPreset={setPreset} start={start} end={end} setStart={setStart} setEnd={setEnd} />}
       />
       {error && <div style={{ ...panel, color: '#ef4444', fontSize: 13 }}>{error}</div>}
@@ -78,15 +77,14 @@ export default function WaPanel() {
       )}
 
       {/* Cartões */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-        {!s ? Array.from({ length: 9 }, (_, i) => (
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }} data-testid="panel-cards">
+        {!s || !r ? Array.from({ length: 8 }, (_, i) => (
           <div key={i} style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 10 }}><Skeleton h={10} w="55%" /><Skeleton h={28} w="45%" /><Skeleton h={10} w="70%" /></div>
         )) : (<>
           <StatCard accent label="Conversas ativas" value={fmtInt(s.active)} delta={d('active')} deltaTitle={dt('active')} info={INFO.active}
             sub="o cliente mandou mensagem no período" />
           <StatCard accent label="Leads novos" value={fmtInt(s.leads)} delta={d('leads')} deltaTitle={dt('leads')} info={INFO.leads}
             sub={<><b style={{ color: ORANGE }}>{fmtInt(s.leadsAd)}</b> anúncio · <b style={{ color: 'var(--text-secondary)' }}>{fmtInt(s.leadsOrganic)}</b> orgânico</>} />
-          <StatCard label="Conversas respondidas" value={fmtInt(s.replied)} delta={d('replied')} deltaTitle={dt('replied')} info={INFO.replied} sub="clientes que responderam a um envio" />
           <StatCard accent label="Vendas pelo WhatsApp" value={fmtMoney(s.revenue)} delta={d('revenue')} deltaTitle={dt('revenue', fmtMoney)} info={INFO.sales}
             sub={`${fmtInt(s.sales)} venda${s.sales === 1 ? '' : 's'}`} />
           <StatCard label="Ticket médio" value={fmtMoney(s.ticket)} delta={s.ticket != null && p && p.ticket != null ? delta(s.ticket, p.ticket) : undefined}
@@ -94,16 +92,17 @@ export default function WaPanel() {
           <StatCard label="Conversão lead → venda" value={fmtPct(s.conversion, 1)} info={INFO.conversion}
             delta={s.conversion != null && p && p.conversion != null ? delta(s.conversion, p.conversion) : undefined}
             deltaTitle={p ? `Período anterior: ${fmtPct(p.conversion, 1)}` : undefined} sub={`${fmtInt(s.leadsBought)} de ${fmtInt(s.leads)} leads compraram`} />
-          <StatCard label="Vendas depois de follow-up" value={fmtInt(s.afterFollow)} delta={d('afterFollow')} deltaTitle={dt('afterFollow')} info={INFO.afterFollow}
-            sub={`${fmtMoney(s.afterFollowRevenue)} · ${fmtPct(s.sales ? s.afterFollow / s.sales : null)} das vendas`} />
-          <StatCard label="Vendas de anúncio" value={fmtInt(s.fromAd)} delta={d('fromAd')} deltaTitle={dt('fromAd')} info={INFO.fromAd}
-            sub={`${fmtMoney(s.fromAdRevenue)} · ${fmtPct(s.sales ? s.fromAd / s.sales : null)} das vendas`} />
-          <StatCard label="Compras enviadas ao Facebook" value={fmtInt(s.fbPurchases)} delta={d('fbPurchases')} deltaTitle={dt('fbPurchases')} info={INFO.fb} sub={fmtMoney(s.fbRevenue)} />
+          <StatCard label="Vendas de anúncio" value={fmtMoney(s.fromAdRevenue)} delta={d('fromAdRevenue')} deltaTitle={dt('fromAdRevenue', fmtMoney)} info={INFO.fromAd}
+            sub={`${fmtInt(s.fromAd)} venda${s.fromAd === 1 ? '' : 's'} · ${share(s.fromAdRevenue, s.revenue)} do faturamento`} />
+          <StatCard label="Vendas depois de follow-up" value={fmtMoney(s.afterFollowRevenue)} delta={d('afterFollowRevenue')} deltaTitle={dt('afterFollowRevenue', fmtMoney)} info={INFO.afterFollow}
+            sub={`${fmtInt(s.afterFollow)} venda${s.afterFollow === 1 ? '' : 's'} · ${share(s.afterFollowRevenue, s.revenue)} do faturamento`} />
+          <StatCard label="Aguardando 1ª resposta agora" value={fmtInt(r.awaiting)} info={INFO.awaiting}
+            sub={r.awaiting ? `leads dos últimos ${AWAITING_DAYS} dias sem resposta da loja` : 'nenhum lead esperando'} />
         </>)}
       </div>
 
-      {/* Leads por dia */}
-      <Card title="Leads por dia" info={INFO.leads} right={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>barras: leads · linha: vendas</span>}>
+      {/* Leads × vendas por dia */}
+      <Card title="Leads × vendas por dia" info={INFO.daily} right={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>barras: leads · linha: vendas</span>}>
         {!r ? <Skeleton h={260} /> : r.daily.every((x) => !x.anuncio && !x.organico && !x.vendas) ? <EmptyState /> : (
           <div style={{ width: '100%', height: 280 }}>
             <ResponsiveContainer>
@@ -113,11 +112,10 @@ export default function WaPanel() {
                 <YAxis yAxisId="l" allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} />
                 <YAxis yAxisId="v" orientation="right" allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} />
                 <Tooltip cursor={{ fill: 'rgba(249,115,22,0.08)' }} contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-main)', borderRadius: 10, fontSize: 12 }}
-                  labelStyle={{ color: 'var(--text-primary)', fontWeight: 700 }}
-                  formatter={(v, name) => (name === 'Vendas' ? [fmtInt(Number(v)), name] : [fmtInt(Number(v)), name])} />
+                  labelStyle={{ color: 'var(--text-primary)', fontWeight: 700 }} formatter={(v, name) => [fmtInt(Number(v)), name]} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar yAxisId="l" dataKey="anuncio" name="Anúncio" stackId="leads" fill={ORANGE} radius={[0, 0, 0, 0]} maxBarSize={36} />
-                <Bar yAxisId="l" dataKey="organico" name="Orgânico" stackId="leads" fill={SLATE} radius={[6, 6, 0, 0]} maxBarSize={36} />
+                <Bar yAxisId="l" dataKey="anuncio" name="Leads de anúncio" stackId="leads" fill={ORANGE} radius={[0, 0, 0, 0]} maxBarSize={36} />
+                <Bar yAxisId="l" dataKey="organico" name="Leads orgânicos" stackId="leads" fill={SLATE} radius={[6, 6, 0, 0]} maxBarSize={36} />
                 <Line yAxisId="v" type="monotone" dataKey="vendas" name="Vendas" stroke={GREEN} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
               </ComposedChart>
             </ResponsiveContainer>
@@ -125,37 +123,21 @@ export default function WaPanel() {
         )}
       </Card>
 
-      {/* Funil dos follow-ups */}
-      <Card title="Funil dos follow-ups" info={INFO.funnel} right={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>conta conversas, não envios</span>}>
-        {!r ? <Skeleton h={150} /> : r.funnel.length === 0
-          ? <EmptyState text="Sem follow-ups neste período. Marque as mensagens rápidas como follow-up (etapa 1, 2, 3…) na extensão." />
-          : <Funnel steps={r.funnel} />}
-      </Card>
-
-      {/* Tabelas */}
-      <Card title="Resultado por mensagem rápida" info={INFO.quick}>
-        {!r ? <TableSkeleton /> : <SortTable rows={r.quick} columns={sendColumns('Mensagem rápida')} rowKey={(x) => x.id} initialSort="sent" empty="Nenhuma mensagem rápida enviada neste período." />}
-      </Card>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 460px), 1fr))', gap: 20 }}>
-        <Card title="Resultado por anúncio" info={INFO.ads}>
-          {!r ? <TableSkeleton /> : <SortTable rows={r.ads} columns={adColumns} rowKey={(x) => x.id} initialSort="leads" empty="Nenhum lead de anúncio neste período." />}
-        </Card>
-        <Card title="Automações e disparos" info={INFO.autos}>
-          {!r ? <TableSkeleton /> : <SortTable rows={r.automations} columns={sendColumns('Automação / disparo', true)} rowKey={(x) => `${x.kind}:${x.id}`} initialSort="sent" empty="Nenhuma automação ou disparo enviado neste período." />}
-        </Card>
-      </div>
-
       {/* Horários */}
       <Card title="Quando os leads chegam" info={INFO.heat}>
         {!r ? <Skeleton h={200} /> : r.heatmap.every((row) => row.every((v) => !v)) ? <EmptyState /> : <Heatmap grid={r.heatmap} />}
+      </Card>
+
+      <Card title="Resultado por anúncio" info={INFO.ads}>
+        {!r ? <TableSkeleton /> : <SortTable rows={r.ads} columns={adColumns} rowKey={(x) => x.id} initialSort="leads" empty="Nenhum lead de anúncio neste período." />}
       </Card>
     </div>
   );
 }
 
-function Card({ title, info, right, children }: { title: string; info?: string; right?: React.ReactNode; children: React.ReactNode }) {
+export function Card({ title, info, right, children, testId }: { title: string; info?: string; right?: React.ReactNode; children: React.ReactNode; testId?: string }) {
   return (
-    <section style={panel}>
+    <section style={panel} data-testid={testId}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
         <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
           {title}{info && <InfoTip text={info} label={`Como "${title}" é calculado`} />}
@@ -167,9 +149,9 @@ function Card({ title, info, right, children }: { title: string; info?: string; 
   );
 }
 
-const TableSkeleton = () => <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} h={18} />)}</div>;
+export const TableSkeleton = () => <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} h={18} />)}</div>;
 
-function PeriodPicker({ preset, setPreset, start, end, setStart, setEnd }: {
+export function PeriodPicker({ preset, setPreset, start, end, setStart, setEnd }: {
   preset: PeriodPreset; setPreset: (p: PeriodPreset) => void; start: string; end: string; setStart: (v: string) => void; setEnd: (v: string) => void;
 }) {
   return (
@@ -194,49 +176,6 @@ function PeriodPicker({ preset, setPreset, start, end, setStart, setEnd }: {
   );
 }
 
-function Bar100({ value, color }: { value: number | null; color: string }) {
-  return (
-    <div style={{ height: 8, borderRadius: 999, background: 'var(--bg-inner)', overflow: 'hidden' }}>
-      <div style={{ width: `${Math.max(0, Math.min(1, value || 0)) * 100}%`, height: '100%', background: color, borderRadius: 999, transition: 'width .3s' }} />
-    </div>
-  );
-}
-
-function Funnel({ steps }: { steps: FunnelStep[] }) {
-  const top = Math.max(...steps.map((x) => x.received), 1);
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-      {steps.map((st, i) => (
-        <div key={st.step} style={{ position: 'relative', padding: 14, borderRadius: 14, background: 'var(--bg-inner)', border: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <span style={{ ...eyebrow, color: ORANGE }}>Follow {st.step}</span>
-            {i < steps.length - 1 && <span aria-hidden style={{ color: 'var(--text-muted)', fontSize: 16 }}>→</span>}
-          </div>
-          <div>
-            <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>{fmtInt(st.received)}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>receberam</div>
-            <div style={{ marginTop: 6 }}><Bar100 value={st.received / top} color={SLATE} /></div>
-          </div>
-          <FunnelLine label="responderam" value={`${fmtInt(st.responded)} (${fmtPct(st.respondedPct)}${st.medianMinutes != null ? `, em ${fmtMinutes(st.medianMinutes)}` : ''})`} bar={st.respondedPct} color={ORANGE} />
-          <FunnelLine label="compraram depois" value={`${fmtInt(st.bought)} (${fmtPct(st.boughtPct)}, ${fmtMoney(st.revenue)})`} bar={st.boughtPct} color={GREEN} />
-          <FunnelLine label="seguiram para a próxima sem responder" value={`${fmtInt(st.advancedNoReply)} (${fmtPct(st.advancedPct)})`} bar={st.advancedPct} color={BLUE} />
-        </div>
-      ))}
-    </div>
-  );
-}
-function FunnelLine({ label, value, bar, color }: { label: string; value: string; bar: number | null; color: string }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}>
-        <span style={{ color: 'var(--text-muted)' }}>{label}</span>
-        <b style={{ color: 'var(--text-primary)', textAlign: 'right' }}>{value}</b>
-      </div>
-      <Bar100 value={bar} color={color} />
-    </div>
-  );
-}
-
 const pctCell = (p: number | null) => (
   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
     <span style={{ width: 44, height: 6, borderRadius: 999, background: 'var(--bg-inner)', overflow: 'hidden', display: 'inline-block' }}>
@@ -245,22 +184,6 @@ const pctCell = (p: number | null) => (
     {fmtPct(p)}
   </span>
 );
-
-function sendColumns(nameLabel: string, withKind = false): Column<SendGroupRow>[] {
-  return [
-    { key: 'name', label: nameLabel, value: (x) => x.name, render: (x) => (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-        {withKind && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 6, background: 'rgba(249,115,22,0.12)', color: ORANGE, whiteSpace: 'nowrap' }}>{AUTO_KIND_LABEL[x.kind] || x.kind}</span>}
-        <span style={{ fontWeight: 600 }}>{x.name}</span>
-      </span>
-    ) },
-    { key: 'sent', label: 'Enviadas', value: (x) => x.sent, render: (x) => fmtInt(x.sent), align: 'right' },
-    { key: 'repliedPct', label: 'Responderam', value: (x) => x.repliedPct, render: (x) => pctCell(x.repliedPct), align: 'right' },
-    { key: 'medianMinutes', label: 'Tempo mediano', value: (x) => x.medianMinutes, render: (x) => fmtMinutes(x.medianMinutes), align: 'right' },
-    { key: 'sales', label: 'Vendas (7 dias)', value: (x) => x.sales, render: (x) => fmtInt(x.sales), align: 'right' },
-    { key: 'revenue', label: 'R$', value: (x) => x.revenue, render: (x) => <b>{fmtMoney(x.revenue)}</b>, align: 'right' },
-  ];
-}
 
 const adColumns: Column<AdRow>[] = [
   { key: 'title', label: 'Anúncio', value: (x) => x.title, render: (x) => (

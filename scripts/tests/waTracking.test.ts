@@ -5,7 +5,7 @@ import { periodRanges, type SendRow } from '../../src/lib/waPanel.ts';
 import {
   buildConversations, businessMinutesBetween, conversationsCsv, conversationsIn, formatPhone, journey, originByDay,
   salesByDay, searchConversations, sortConversations, trackingWindow, trackSummary, waLinkOf, businessHoursOf, businessHoursLabel, saleLinksText, saleDateFilter, type TrackInput,
-  filterStage, pageInfo, DEFAULT_SORT, STAGE_FILTERS,
+  filterStage, pageInfo, DEFAULT_SORT, STAGE_FILTERS, buyFunnel, conversationTimeline, salesCsv,
 } from '../../src/lib/waTracking.ts';
 import * as tracking from '../../src/lib/waTracking.ts';
 import { conversionContact, maskPhoneDigits } from '../../src/lib/waConversions.ts';
@@ -346,6 +346,55 @@ test('2.12.8: conversa antiga ativa só leva as vendas do período; resposta a e
   const old = list.find((c) => c.chatId === OLD)!;
   assert.deepEqual([old.stage, old.sales, old.revenue], ['comprou', 1, 120]);
   assert.ok(list.find((c) => c.chatId === QUIET)?.periodActive);
+});
+
+// ── ERP 09/11: Rastreamento como o Tintim ──
+test('aguardando 1ª resposta: começou com o cliente e a loja não falou (envio, dia da loja ou última da loja tiram)', () => {
+  const list = conversationsIn(buildConversations(withActivity()), R, 'todas');
+  const by = Object.fromEntries(list.map((c) => [c.chatId, c.awaiting]));
+  // L: lead sem nenhuma resposta → aguardando; A e 5555: a loja respondeu; OFF: dia com mensagem da loja; OLD: não é lead
+  assert.deepEqual([by[L], by[A], by['5511944445555@c.us'], by[OFF], by[OLD]], [true, false, false, false, false]);
+  assert.equal(trackSummary(list).awaiting, 1);
+});
+test('1ª resposta "a partir da 2ª mensagem": ignora a 1ª mensagem nossa (automática / saudação)', () => {
+  const list = conversationsIn(buildConversations(scenario()), R, 'todas');
+  const a = list.find((c) => c.chatId === A)!;
+  assert.deepEqual([a.replyMinutes, a.replyMinutes2], [30, 60]); // 10:30 e 11:00 depois da 1ª mensagem às 10:00
+  assert.equal(trackSummary(list, false, true).avgReplyMinutes, 60);
+  assert.equal(trackSummary(list, false, false).avgReplyMinutes, 20); // (30 + 10) / 2
+});
+test('tempo médio de jornada: do 1º contato até a 1ª venda (só quem comprou)', () => {
+  const s = trackSummary(conversationsIn(buildConversations(scenario()), R, 'todas'));
+  assert.deepEqual([s.journeyCount, Math.round((s.journeyDays as number) * 100) / 100], [1, 2.21]); // 02/11 10:00 → 04/11 15:00
+});
+test('visão geral: rastreadas × não rastreadas entre as ATIVAS; origem por dia soma o total de ativas; funil Fez contato → Comprou', () => {
+  const list = conversationsIn(buildConversations(withActivity()), R, 'todas');
+  const s = trackSummary(list);
+  assert.deepEqual([s.active, s.activeAd, s.activeUntracked], [5, 1, 4]);
+  const days = originByDay(list, R);
+  assert.equal(days.reduce((x, d) => x + d.anuncio + d.nao_rastreada, 0), s.active);
+  assert.deepEqual(days.find((d) => d.day === '2026-11-06'), { day: '2026-11-06', anuncio: 0, nao_rastreada: 1 }); // a OLD voltou a falar
+  assert.deepEqual(buyFunnel(list), { contact: 5, bought: 1, boughtPct: 0.2 });
+});
+test('detalhes da conversa (👁): linha do tempo com 1º contato, anúncio, envios, respostas, venda e eventos do Facebook', () => {
+  const input = scenario();
+  input.items = [{ id: 'it1', title: 'Follow 1', follow_step: 1 }];
+  input.sends.push(send(A, '2026-11-03T10:00:00', { origin: 'automacao', source: 'follow', item_id: 'it1' }));
+  const a = conversationsIn(buildConversations(input), R, 'todas').find((c) => c.chatId === A)!;
+  const tl = conversationTimeline(a, input, (n) => `R$ ${n}`);
+  assert.deepEqual(tl.map((e) => e.kind), ['contato', 'anuncio', 'facebook', 'loja', 'resposta', 'loja', 'follow', 'venda', 'facebook']);
+  assert.match(tl[1].text, /Relógio Promo/);
+  assert.match(tl[6].text, /“Follow 1”/);
+  assert.match(tl[7].text, /Comprou R\$ 300/);
+  for (let i = 1; i < tl.length; i++) assert.ok(tl[i].t >= tl[i - 1].t);
+});
+test('relatório de vendas (CSV): as mesmas vendas do gráfico, com contato, origem e valor', () => {
+  const m = buildConversations(scenario());
+  const csv = salesCsv(m, R, 'todas', 'venda').split('\r\n');
+  assert.equal(csv.length, 3); // cabeçalho + 2 vendas no período (v0 e v1)
+  assert.equal(csv[0].split(';')[0], 'Data da venda');
+  assert.ok(csv[2].includes(';Maria;(11) 91111-2222;Meta Ads;Relógio Promo;') && csv[2].endsWith(';300,00;registrada pelo 💰 nesta conversa'), csv[2]);
+  assert.equal(salesCsv(m, R, 'anuncio', 'contato').split('\r\n').length, 2);
 });
 
 // ── 2.12.8: tabela ──

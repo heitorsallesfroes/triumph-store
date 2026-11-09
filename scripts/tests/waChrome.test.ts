@@ -74,9 +74,20 @@ function fixtures(now: number) {
     event_id: `ev${String(i).padStart(3, '0')}`, chat_id: chat((i % 60) + 1), contact_name: `Cliente ${pad((i % 60) + 1)}`, value: i % 2 ? null : 100 + i,
     ad_id: null, ad_title: null, test: false, status: 'enviado', error: null, created_at: iso(now - (i + 1) * 5 * MIN), event_name: i % 2 ? 'Contact' : 'Purchase', sale_id: null, sale_link_set_chat: null,
   }));
+  // régua da extensão (automação AUTO): Follow 1 para os leads 01–05 e Follow 2 para 01–03 (logo depois da 1ª mensagem)
+  const AUTO = 'a0000000-0000-4000-8000-0000000000aa';
+  const IT1 = 'b0000000-0000-4000-8000-0000000000b1';
+  const IT2 = 'b0000000-0000-4000-8000-0000000000b2';
+  for (let n = 1; n <= 5; n++) {
+    const last = now - (n * 8 + 1) * MIN;
+    sends.push({ id: `5e4d10${pad(n)}-0000-4000-8000-000000000000`, chat_id: chat(n), created_at: iso(last - 3 * MIN), source: 'follow', source_id: AUTO, item_id: IT1, status: 'enviado', origin: 'automacao', follow_step: null });
+    if (n <= 3) sends.push({ id: `5e4d20${pad(n)}-0000-4000-8000-000000000000`, chat_id: chat(n), created_at: iso(last - 2 * MIN), source: 'follow', source_id: AUTO, item_id: IT2, status: 'enviado', origin: 'automacao', follow_step: null });
+  }
   return {
     wa_chat_activity: activity, wa_chat_activity_days: days, wa_leads: leads, sales, wa_send_log: sends, wa_replies: replies, wa_conversion_events: events,
-    wa_ad_attribution: [], wa_chat_names: [], wa_settings: [], wa_items: [], wa_automations: [], wa_flows: [], wa_campaigns: [],
+    wa_ad_attribution: [], wa_chat_names: [], wa_settings: [], wa_flows: [], wa_campaigns: [],
+    wa_items: [{ id: IT1, title: 'Follow 1', follow_step: null }, { id: IT2, title: 'Follow 2', follow_step: null }],
+    wa_automations: [{ id: AUTO, name: 'Régua teste' }],
   };
 }
 
@@ -166,6 +177,8 @@ async function main() {
       return r.result.value;
     };
     const waitFor = async (expr: string, ms = 10000) => { const until = Date.now() + ms; while (Date.now() < until) { if (await ev(expr).catch(() => false)) return true; await sleep(100); } return false; };
+    // SHOTS_DIR=…: print da página inteira (para conferir o visual)
+    const shot = async (name: string) => { if (!process.env.SHOTS_DIR) return; await sleep(500); const m = await s('Page.getLayoutMetrics'); const h = Math.ceil(m.cssContentSize.height); const { data } = await s('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width: 1366, height: Math.min(h, 6000), scale: 1 } }); fs.mkdirSync(process.env.SHOTS_DIR, { recursive: true }); fs.writeFileSync(path.join(process.env.SHOTS_DIR, name), Buffer.from(data, 'base64')); };
     const H = `const txt = (e) => (e ? e.textContent.replace(/\\s+/g, ' ').trim() : '');
       const btn = (t, root = document) => [...root.querySelectorAll('button')].find((b) => txt(b) === t);
       const eyebrowOf = (label) => [...document.querySelectorAll('div')].find((d) => d.firstElementChild && d.firstElementChild.tagName === 'SPAN' && txt(d.firstElementChild) === label && txt(d) === label);
@@ -180,17 +193,29 @@ async function main() {
     const panel = await ev(`${H} const v = (l) => { const c = card(l); return c ? txt(c.children[1]).split(' ')[0] : null; };
       return { active: v('Conversas ativas'), leads: v('Leads novos'), infoActive: !!(card('Conversas ativas') || {}).querySelector?.('button[aria-label*="Conversas ativas"]'), infoLeads: !!(card('Leads novos') || {}).querySelector?.('button[aria-label*="Leads novos"]') };`).catch((e) => ({ err: String(e) }));
     check('Painel: "Conversas ativas" (60) e "Leads novos" (10) separados, cada um com (i)', panelOk && panel.active === '60' && panel.leads === '10' && panel.infoActive && panel.infoLeads, JSON.stringify(panel));
+    const p2 = await ev(`${H} const t = txt(document.body); return { cards: document.querySelectorAll('[data-testid="panel-cards"] > div').length, awaiting: !!card('Aguardando 1ª resposta agora'),
+      daily: t.includes('Leads × vendas por dia'), heat: t.includes('Quando os leads chegam'), repeated: ['Funil dos follow-ups', 'Resultado por mensagem rápida', 'Automações e disparos', 'Origem das conversas', 'Primeira mensagem'].filter((x) => t.includes(x)) };`);
+    check('Painel ("como estou?"): 8 cartões (com "Aguardando 1ª resposta agora"), "Leads × vendas por dia" e o mapa de horários; sem funil, tabela de conversas nem origem por dia',
+      p2.cards === 8 && p2.awaiting && p2.daily && p2.heat && p2.repeated.length === 0, JSON.stringify(p2));
 
+    await shot('painel.png');
     // ── Rastreamento ──
     await ev(`${H} btn('Rastreamento').click(); return true;`);
     const trackOk = await waitFor(`${H} return !!document.querySelector('[data-testid="track-table"] tbody tr');`, 15000);
     const rows = `[...document.querySelectorAll('[data-testid="track-table"] tbody tr')].map((tr) => txt(tr.cells[0]).split(' (')[0])`;
     const pager = `txt((pg(section('Conversas')) || document.createElement('i')).querySelector('span'))`;
-    const t1 = await ev(`${H} const t = txt(document.body);
-      const v = (l) => { const c = card(l); return c ? txt(c.children[1]).split(' ')[0] : null; };
-      return { active: v('Conversas ativas'), leads: v('Leads novos'), rows: ${rows}, pager: ${pager}, unmarked: t.includes('Possíveis vendas não marcadas'), live: !!document.querySelector('[data-testid="track-live"]') };`).catch((e) => ({ err: String(e) }));
-    check('Rastreamento: cartões "Conversas ativas" 60 e "Leads novos" 10', trackOk && t1.active === '60' && t1.leads === '10', JSON.stringify({ active: t1.active, leads: t1.leads }));
+    const t1 = await ev(`${H} const t = txt(document.body); const tv = (id) => txt(document.querySelector('[data-testid="' + id + '-value"]'));
+      return { active: tv('track-active'), ad: tv('track-ad'), un: tv('track-untracked'), awaiting: tv('track-awaiting'), journey: tv('track-journey-days'), rows: ${rows}, pager: ${pager},
+        unmarked: t.includes('Possíveis vendas não marcadas'), live: !!document.querySelector('[data-testid="track-live"]'),
+        sections: ['track-filters', 'track-overview', 'track-gauge', 'track-origin', 'track-funnel', 'track-sales', 'track-conversations'].filter((id) => !document.querySelector('[data-testid="' + id + '"]')),
+        funnel: [...document.querySelectorAll('[data-testid="track-funnel-step"]')].map((x) => txt(x)), report: !!document.querySelector('[data-testid="track-report"]'),
+        salesN: tv('track-sales-n'), totals: txt(document.querySelector('[data-testid="track-totals"]')) };`).catch((e) => ({ err: String(e) }));
+    check('Rastreamento (Tintim): aguardando 1ª resposta (2) e tempo de jornada no topo; filtros e "Baixar relatório"; visão geral 60 ativas = 5 Meta Ads + 55 não rastreadas, meia-lua, origem, funil Fez contato → Comprou, vendas',
+      trackOk && t1.active === '60' && t1.ad === '5' && t1.un === '55' && t1.awaiting === '2' && /dia/.test(t1.journey) && t1.sections.length === 0 && t1.report
+      && JSON.stringify(t1.funnel) === '["Fez contato60 (100,0%)","Comprou3 (5,0%)"]' && t1.salesN === '1' && /60 Total5 Meta Ads55 Não rastreada/.test(t1.totals),
+      JSON.stringify({ active: t1.active, ad: t1.ad, un: t1.un, awaiting: t1.awaiting, journey: t1.journey, sections: t1.sections, funnel: t1.funnel, salesN: t1.salesN, totals: t1.totals }));
     check('Rastreamento: sem "Possíveis vendas não marcadas"', trackOk && t1.unmarked === false);
+    await shot('rastreamento.png');
     check('Conversas: todas as ativas (não só leads), ordem pela última mensagem (mais recente primeiro), 25 por página',
       trackOk && Array.isArray(t1.rows) && t1.rows.length === 25 && t1.rows[0].startsWith('Cliente 01') && t1.rows[1].startsWith('Cliente 02') && t1.rows[24].startsWith('Cliente 25') && t1.pager === 'Página 1 de 3 · 60 conversas',
       JSON.stringify({ first: (t1.rows || []).slice(0, 3), n: (t1.rows || []).length, pager: t1.pager }));
@@ -217,7 +242,7 @@ async function main() {
     const t5 = await ev(`${H} return { pager: ${pager}, first: ${rows}[0], live: txt(document.querySelector('[data-testid="track-live"]')) };`);
     await ev(`${H} btn('Anterior', pg(section('Conversas'))).click(); return true;`);
     await sleep(300);
-    const t6 = await ev(`${H} return { rows: ${rows}, active: txt(card('Conversas ativas').children[1]).split(' ')[0] };`);
+    const t6 = await ev(`${H} return { rows: ${rows}, active: txt(document.querySelector('[data-testid="track-active-value"]')) };`);
     check('Ao vivo: atualiza sozinha (selo "Ao vivo"), sem voltar para a página 1 (a 2 agora começa pela Cliente 25); a conversa nova aparece no topo e conta nos cartões',
       liveOk && /Ao vivo/.test(t5.live) && t5.first.startsWith('Cliente 25') && t6.rows[0].startsWith('Cliente Nova') && t6.active === '61', JSON.stringify({ t5, t6: { first: t6.rows[0], active: t6.active } }));
 
@@ -232,6 +257,33 @@ async function main() {
       sBought.pager === 'Página 1 de 1 · 3 conversas' && sBought.stages.every((x: string) => /^Comprou\s*R\$/.test(x)) && sReplied.pager === 'Página 1 de 1 · 11 conversas' && sReplied.stages.every((x: string) => x.startsWith('Respondeu'))
       && sContact.pager === 'Página 1 de 2 · 47 conversas' && sContact.stages.every((x: string) => x.startsWith('Fez contato')) && sAll.pager === 'Página 1 de 3 · 61 conversas',
       JSON.stringify({ b: [sBought.pager, sBought.stages], r: sReplied.pager, c: sContact.pager, a: sAll.pager }));
+    });
+
+    // "Ver conversas" (aguardando 1ª resposta) filtra a tabela; 👁 abre a linha do tempo na lateral
+    await step('Vendas: data do primeiro contato × data da venda', async () => {
+      await ev(`${H} btn('Data da venda', document.querySelector('[data-testid="track-sales"]')).click(); return true;`);
+      const vOk = await waitFor(`${H} return txt(document.querySelector('[data-testid="track-sales-n-value"]')) === '3';`, 3000);
+      const v = await ev(`${H} return { n: txt(document.querySelector('[data-testid="track-sales-n-value"]')), v: txt(document.querySelector('[data-testid="track-sales-v-value"]')), rep: !!document.querySelector('[data-testid="track-sales-report"]') };`);
+      await ev(`${H} btn('Data do primeiro contato', document.querySelector('[data-testid="track-sales"]')).click(); return true;`);
+      check('Vendas: "Data da venda" mostra as 3 vendas do período (R$ 5.800; "Data do primeiro contato" só a do lead novo) e "Baixar relatório de vendas"',
+        vOk && /R\$\s5\.800/.test(v.v) && v.rep, JSON.stringify(v));
+    });
+    await step('Conversas: aguardando 1ª resposta e detalhes', async () => {
+      await ev(`${H} document.querySelector('[data-testid="track-see-awaiting"]').click(); return true;`);
+      const awOk = await waitFor(`${H} return ${pager} === 'Página 1 de 1 · 3 conversas';`, 5000);
+      const aw = await ev(`${H} return { rows: ${rows}, on: document.querySelector('[data-testid="track-awaiting-filter"]').getAttribute('aria-pressed') };`);
+      await ev(`${H} document.querySelector('[data-testid="track-awaiting-filter"]').click(); return true;`);
+      const offOk = await waitFor(`${H} return ${pager} === 'Página 1 de 3 · 61 conversas';`, 5000);
+      check('"Ver conversas": a tabela mostra só as 3 aguardando a 1ª resposta (a nova, a 07 e a 09); o botão desliga o filtro',
+        awOk && aw.on === 'true' && JSON.stringify(aw.rows.map((x: string) => x.slice(0, 12)).sort()) === JSON.stringify(['Cliente 07(1', 'Cliente 09(1', 'Cliente Nova'].sort()) && offOk, JSON.stringify(aw));
+      await ev(`${H} [...document.querySelectorAll('[data-testid="track-table"] tbody tr')].find((tr) => txt(tr.cells[0]).startsWith('Cliente 03')).querySelector('[data-testid="track-details"]').click(); return true;`);
+      const drOk = await waitFor(`${H} return !!document.querySelector('[data-testid="track-drawer"]');`, 5000);
+      const dr = await ev(`${H} const d = document.querySelector('[data-testid="track-drawer"]'); return { name: txt(d.querySelector('div div')), items: [...d.querySelectorAll('[data-testid="track-timeline"] li')].map((li) => txt(li)) };`);
+      await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); return true;`);
+      const closed = await waitFor(`${H} return !document.querySelector('[data-testid="track-drawer"]');`, 3000);
+      check('👁 detalhes da conversa: lateral com a linha do tempo (1º contato, anúncio, follow-ups da régua, venda, eventos do Facebook); Esc fecha',
+        drOk && /Cliente 03/.test(dr.name) && dr.items.some((x: string) => /1º contato/.test(x)) && dr.items.some((x: string) => /anúncio/.test(x)) && dr.items.filter((x: string) => /follow-up da automação “Follow \d”/.test(x)).length === 2
+        && dr.items.some((x: string) => /Comprou R\$/.test(x)) && dr.items.some((x: string) => /Facebook/.test(x)) && closed, JSON.stringify(dr));
     });
 
     // ── Eventos enviados ao Facebook ──
@@ -253,6 +305,24 @@ async function main() {
     check('Eventos ao Facebook: filtro Todos / Compras (60) / Contatos (60), voltando para a página 1',
       fBuy.pager === 'Página 1 de 2 · 60 eventos' && fBuy.rows.every((x: string) => x.startsWith('Compra|')) && fCon.pager === 'Página 1 de 2 · 60 eventos' && fCon.rows.every((x: string) => x.startsWith('Contato|')) && fAll.pager === 'Página 1 de 3 · 120 eventos',
       JSON.stringify({ b: fBuy.pager, c: fCon.pager, a: fAll.pager }));
+    });
+
+    // ── Resultados ──
+    await step('Resultados: funil por caminho', async () => {
+      await ev(`${H} btn('Resultados').click(); return true;`);
+      const resOk = await waitFor(`${H} return !!document.querySelector('[data-testid="res-path"]');`, 15000);
+      await sleep(400); await shot('resultados.png');
+      const res = await ev(`${H} const p = document.querySelector('[data-testid="res-path"]'); const t = txt(document.body);
+        return { title: txt(p.querySelector('[data-testid="res-path-title"]')), head: txt(p.querySelector('[data-testid="res-path-head"]')),
+          reached: [...p.querySelectorAll('[data-testid="res-reached"]')].map((x) => txt(x)), follow: [...p.querySelectorAll('[data-testid="res-follow"]')].map((x) => txt(x)),
+          resp: txt(p.querySelector('[data-testid="res-resp"]')), buy: [...p.querySelectorAll('[data-testid="res-buy"]')].map((x) => txt(x)),
+          msgs: document.querySelectorAll('[data-testid="res-msg"]').length, footer: txt(document.querySelector('[data-testid="res-footer"]')),
+          sections: ['res-acc', 'res-camps'].filter((id) => !document.querySelector('[data-testid="' + id + '"]')),
+          repeated: ['Leads × vendas por dia', 'Origem das conversas', 'Visão geral das conversas'].filter((x) => t.includes(x)) };`);
+      check('Resultados ("meus follow-ups funcionam?"): bloco da régua "FOLLOW 1 → FOLLOW 2" com "5 entraram · 1 compraram", etapas 5 → 3 conversas com respostas, compras e "seguiram"; mensagens, acumulados, disparos e rodapé; nada repetido das outras abas',
+        resOk && res.title === 'Follow 1 → Follow 2' && /^5 entraram · 1 compraram \(20%\) · R\$/.test(res.head) && JSON.stringify(res.reached) === '["5 conversas","3 conversas"]'
+        && /^↓ 60% seguiram/.test(res.follow[0]) && /responderam/.test(res.resp) && /^💰 1 compraram/.test(res.buy[1]) && res.msgs === 2 && /^Vendas pelo WhatsApp: 3/.test(res.footer) && res.sections.length === 0 && res.repeated.length === 0,
+        JSON.stringify(res));
     });
 
     check('nenhum erro no console nem exceção', errors.length === 0, errors.slice(0, 5).join(' | '));

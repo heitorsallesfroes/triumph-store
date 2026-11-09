@@ -77,6 +77,7 @@ export interface PanelInput {
   items: ItemInfo[]; names: Record<string, string>;
   activityDays?: ActivityDayRow[];
   activityPhones?: { chat_id: string; phone: string | null }[]; // @lid → telefone, da atividade
+  activity?: ActivityRow[]; // ERP 09/11: última mensagem e de quem (aguardando 1ª resposta)
   fb?: { cur: { count: number; total: number }; prev: { count: number; total: number } };
 }
 
@@ -202,6 +203,23 @@ export function mergeActivityLeads(leads: LeadRow[], activity: ActivityRow[] | n
   return extra.length ? [...leads, ...extra] : leads;
 }
 
+// ERP 09/11: "Aguardando 1ª resposta agora" = leads novos dos últimos 7 dias (até agora, ou até o fim do período se
+// ele já passou) em que a loja ainda não falou: nenhum envio registrado depois da 1ª mensagem, nenhum dia com mensagem
+// da loja (wa_chat_activity_days) e a última mensagem da conversa não é da loja.
+export const AWAITING_DAYS = 7;
+export function awaitingFirstReply(input: PanelInput, idx: Index, r: Pick<Range, 'to'>, now = Date.now()): number {
+  const ref = Math.min(now, r.to);
+  const leads = dedupeLeads(input, idx).filter((l) => l.t <= ref && l.t >= ref - AWAITING_DAYS * DAY_MS);
+  if (!leads.length) return 0;
+  const sendsBy = new Map<string, number[]>();
+  input.sends.forEach((s) => { const k = idx.keyOfChat(s.chat_id); const t = ts(s.created_at); if (k && s.status === 'enviado' && Number.isFinite(t)) sendsBy.set(k, [...(sendsBy.get(k) || []), t]); });
+  const storeDays = new Map<string, string[]>();
+  (input.activityDays || []).forEach((d) => { if (!d.from_store) return; const k = idx.keyOfChat(d.chat_id); if (k) storeDays.set(k, [...(storeDays.get(k) || []), String(d.day).slice(0, 10)]); });
+  const lastStore = new Map<string, number>();
+  (input.activity || []).forEach((a) => { const k = idx.keyOfChat(a.chat_id); const t = ts(a.last_message_at); if (k && a.last_from === 'loja' && Number.isFinite(t)) lastStore.set(k, Math.max(lastStore.get(k) || 0, t)); });
+  return leads.filter((l) => !(sendsBy.get(l.key) || []).some((t) => t >= l.t) && !(storeDays.get(l.key) || []).some((d) => d >= spDay(l.t)) && !((lastStore.get(l.key) || 0) >= l.t)).length;
+}
+
 // 2.12.8: "Conversas ativas" = conversas (uma por pessoa) em que o cliente mandou mensagem no período:
 // dia com mensagem do cliente (wa_chat_activity_days), lead novo do período ou resposta do cliente no período
 export function activeKeys(input: Pick<PanelInput, 'activityDays' | 'replies'>, keyOfChat: (c: string | null | undefined) => string | null, r: Pick<Range, 'fromDay' | 'toDay' | 'from' | 'to'>, leadKeys: Iterable<string> = []): Set<string> {
@@ -233,7 +251,8 @@ export function summaryFor(input: PanelInput, idx: Index, r: Range, itemSteps: M
   // venda depois de follow-up: até 7 dias depois do último follow-up que a conversa recebeu antes da venda
   const follows = new Map<string, number[]>();
   input.sends.forEach((s) => {
-    if (s.status !== 'enviado' || stepOfSend(s, itemSteps) == null) return;
+    // follow = mensagem marcada como follow-up OU envio de automação/régua (ERP 09/11: igual à aba Resultados)
+    if (s.status !== 'enviado' || (stepOfSend(s, itemSteps) == null && originOf(s) !== 'automacao')) return;
     const k = idx.keyOfChat(s.chat_id);
     const t = ts(s.created_at);
     if (!k || !Number.isFinite(t)) return;
@@ -421,6 +440,7 @@ export function computePanel(input: PanelInput, ranges: PeriodRanges) {
     automations: automationTable(input, idx, ranges.cur),
     ads: adTable(input, idx, ranges.cur),
     heatmap: leadHeatmap(input, idx, ranges.cur),
+    awaiting: awaitingFirstReply(input, idx, ranges.cur), // ERP 09/11
   };
 }
 export type PanelResult = ReturnType<typeof computePanel>;

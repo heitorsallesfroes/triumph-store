@@ -32,7 +32,7 @@ export async function loadTracking(r: Range): Promise<TrackLoad> {
   ]);
   if (!trackCols) missing.push('última mensagem dos leads (migration 20261107120000 + extensão 2.12.2)');
   const leadCols = `chat_id, phone, first_message_at, origin, ad_id, ad_title${trackCols ? ', last_message_at' : ''}`;
-  const sendCols = `id, chat_id, created_at, source, source_id, item_id, status${originCol ? ', origin' : ''}`;
+  const sendCols = `id, chat_id, created_at, source, source_id, item_id, status${originCol ? ', origin, follow_step' : ''}`;
   const salesCols = `id, sale_date, created_at, total_sale_price, customer_phone, customer_name${saleCols ? ', wa_chat_id, origin' : ''}`;
   const convCols = `chat_id, error, value, test, status, created_at, contact_name, ad_title${eventCol ? ', event_name' : ''}${saleIdCol ? ', sale_id, sale_link_set_chat' : ''}`;
 
@@ -59,13 +59,18 @@ export async function loadTracking(r: Range): Promise<TrackLoad> {
       .select('chat_id, phone, name, first_seen_at, first_message_at, last_message_at, last_from, last_customer_at, is_new_lead').gte('last_message_at', iso(r.from))
       .order('chat_id').range(f, t) as any)),
     orEmpty<ActivityDayRow>(ACTIVITY_LABEL, missing, () => fetchAllRows<ActivityDayRow>((f, t) => supabase.from('wa_chat_activity_days')
-      .select('chat_id, day, from_customer, from_store').eq('from_customer', true).gte('day', r.fromDay).lte('day', r.toDay)
+      .select('chat_id, day, from_customer, from_store').gte('day', r.fromDay).lte('day', r.toDay)
       .order('chat_id').order('day').range(f, t) as any)),
   ]);
+  // ERP 09/11: nomes das mensagens (linha do tempo da conversa); sem a coluna follow_step, só o título
+  let items: { id: string; title: string; follow_step?: number | null }[] = [];
+  for (const cols of ['id, title, follow_step', 'id, title']) {
+    try { items = await fetchAllRows<{ id: string; title: string; follow_step?: number | null }>((f, t) => supabase.from('wa_items').select(cols).order('id').range(f, t) as any); break; } catch { items = []; }
+  }
   let settings: BusinessSettings | null = null;
   try {
     const { data } = await supabase.from('wa_settings').select('business_days, business_start, business_end').eq('id', 1).maybeSingle();
     settings = (data as BusinessSettings | null) || null;
   } catch { settings = null; }
-  return { input: { leads, attributions, sends, replies, sales, names, conversions, activity, activityDays }, missing: [...new Set(missing)], settings };
+  return { input: { leads, attributions, sends, replies, sales, names, conversions, activity, activityDays, items }, missing: [...new Set(missing)], settings };
 }

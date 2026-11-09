@@ -799,6 +799,36 @@ guardada.
 
 ## O que mudou
 
+### ERP (09/11) — aba WhatsApp: 3 abas sem repetição (Painel · Rastreamento · Resultados)
+Cada aba responde uma pergunta; nenhum gráfico aparece em duas. Tudo agregado sem o limite de 1000 linhas,
+claro/escuro, com esqueleto ao carregar.
+- **Painel ("como estou?")**: período no topo e comparação com o anterior (▲▼ %). Cartões: Conversas ativas · Leads
+  novos (anúncio / orgânico) · Vendas pelo WhatsApp (qtd e R$) · Ticket médio · Conversão lead → venda · Vendas de
+  anúncio (R$ e % do faturamento) · Vendas depois de follow-up (R$ e %) · **Aguardando 1ª resposta agora** (leads dos
+  últimos 7 dias sem resposta da loja). "Leads × vendas por dia", mapa de horários e o resultado por anúncio. Saíram
+  daqui o funil dos follow-ups e as tabelas de mensagem rápida / automações (agora em Resultados).
+- **Rastreamento (como o Tintim; azul = Meta Ads, laranja = Não rastreada)**: no topo "Conversas aguardando primeira
+  resposta" (com "Ver conversas", que filtra a tabela) e "Tempo médio de jornada" (do 1º contato até a venda);
+  filtros (período com De/Até, Todas as origens / Meta Ads / Não rastreada, "Baixar relatório" CSV); "Visão geral
+  das conversas" (total de conversas novas ativas, rastreadas e não rastreadas com %, tempo médio de 1ª resposta com
+  "Calcular a partir da 2ª mensagem", meia-lua); "Origem das conversas" (barras empilhadas por dia com o número
+  dentro); "Funil da jornada de compra" (Fez contato → Comprou, blocos azuis); "Vendas" (data do 1º contato / da
+  venda, total, faturamento, barras, "Baixar relatório de vendas"); a tabela **Conversas** (totais, busca por
+  telefone ou nome, origem, "Conversas aguardando primeira resposta", etapa; colunas Contato · Origem (Meta Ads +
+  anúncio ou "Via Campanha de Mensagem", ou Não rastreada) · Etapa da jornada · Primeira · Última mensagem (ao vivo,
+  mais recente primeiro) · Ações: 👁 lateral com a linha do tempo da conversa e 💬 abrir no WhatsApp; 25 por página)
+  e os **Eventos enviados ao Facebook**.
+- **Resultados ("meus follow-ups funcionam?")**: "Funil por caminho" (um bloco por automação/régua e sequência:
+  "FOLLOW 1 → FOLLOW 2 → FOLLOW 3", "N entraram · N compraram (x%) · R$" e, por etapa, quantas chegaram, "💬 x%
+  responderam (n · em X min)", "💰 n compraram · R$", "↓ x% seguiram · Xd depois"); "Acumulados" (follow-ups fora de
+  régua, por etapa); "Resultado por mensagem de follow-up"; "Disparos"; rodapé "Vendas pelo WhatsApp: N (R$) · N
+  depois de um follow · N vieram de anúncio". Regras no (i): respondeu = mensagem do cliente depois do envio e antes
+  do próximo follow; comprou = venda até 7 dias depois do último follow recebido; seguiu = recebeu a etapa seguinte.
+  "Vendas depois de follow-up" (Painel e rodapé) agora conta também os envios das automações/réguas.
+- Testes: `scripts/tests/waResults.test.ts` (novo), `waTracking.test.ts`, `waPanel.test.ts` e o Chrome real
+  `scripts/tests/waChrome.test.ts` (abre as 3 abas, paginação, filtros, "Ver conversas", lateral 👁, vendas,
+  Resultados). Sem migration nova.
+
 ### 2.13.0 — construtor visual de automações (em cascata)
 - **"+ Nova automação" e "Editar" abrem uma tela ampla por cima do WhatsApp Web** (fundo claro): nome e botões no
   topo (**Simular · Testar comigo · Salvar desligada · Salvar e ligar · Fechar**), o desenho no meio e a edição da

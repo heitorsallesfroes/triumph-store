@@ -255,6 +255,26 @@ test('2.12.8: lead novo achado pela atividade (is_new_lead) entra nos leads sem 
   assert.equal(mergeActivityLeads(leads, undefined), leads);
 });
 
+test('ERP 09/11: "Aguardando 1ª resposta agora" = leads dos últimos 7 dias sem nenhuma mensagem da loja depois', () => {
+  const input = base();
+  const lead = (n: number, at: string) => ({ chat_id: `55119000001${n}@c.us`, phone: null, first_message_at: sp(at), origin: 'organico', ad_id: null, ad_title: null });
+  input.leads.push(lead(1, '2026-11-06T10:00:00'), lead(2, '2026-11-06T11:00:00'), lead(3, '2026-11-05T09:00:00'), lead(4, '2026-11-05T09:00:00'), lead(5, '2026-10-20T09:00:00'));
+  input.sends.push(send('551190000012@c.us', '2026-11-06T11:05:00')); // a loja respondeu a 2
+  input.activityDays = [{ chat_id: '551190000013@c.us', day: '2026-11-05', from_customer: true, from_store: true }]; // a loja falou com a 3
+  input.activity = [{ chat_id: '551190000014@c.us', phone: null, first_message_at: null, last_message_at: sp('2026-11-05T10:00:00'), last_from: 'loja', last_customer_at: null, is_new_lead: true }]; // última da loja
+  const r = computePanel(input, ranges); // 5: de outubro (fora dos 7 dias)
+  assert.equal(r.awaiting, 1); // só a 1
+  assert.equal(computePanel(input, periodRanges('7d', Date.parse('2026-10-21T12:00:00-03:00'))).awaiting, 1); // período passado: até o fim dele (a 5)
+});
+test('ERP 09/11: "vendas depois de follow-up" conta também os envios das automações/réguas', () => {
+  const input = base();
+  const C = '5511900000081@c.us';
+  input.sends.push(send(C, '2026-11-02T10:00:00', { source: 'follow', origin: 'automacao', source_id: 'auto1' }));
+  input.sales.push({ id: 'v9', sale_date: '2026-11-04', created_at: sp('2026-11-04T10:00:00'), total_sale_price: 80, customer_phone: null, wa_chat_id: C });
+  const s = computePanel(input, ranges).summary;
+  assert.deepEqual([s.sales, s.afterFollow, s.afterFollowRevenue], [1, 1, 80]);
+});
+
 test('sem dados: tudo zerado, sem erro', () => {
   const r = computePanel(base(), ranges);
   assert.equal(r.summary.leads, 0);

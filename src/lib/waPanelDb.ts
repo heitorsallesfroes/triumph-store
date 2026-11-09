@@ -60,7 +60,7 @@ export async function loadPanel(ranges: PeriodRanges): Promise<PanelLoad> {
       .select('chat_id, phone, first_message_at, last_message_at, last_from, last_customer_at, is_new_lead').gte('last_message_at', iso(ranges.prev.from))
       .order('chat_id').range(f, t) as any)),
     orEmpty<ActivityDayRow>('conversas ativas (wa_chat_activity, migration 20261109120000 + extensão 2.12.8)', missing, () => fetchAllRows<ActivityDayRow>((f, t) => supabase.from('wa_chat_activity_days')
-      .select('chat_id, day, from_customer, from_store').eq('from_customer', true).gte('day', ranges.prev.fromDay).lte('day', ranges.cur.toDay)
+      .select('chat_id, day, from_customer, from_store').gte('day', ranges.prev.fromDay).lte('day', ranges.cur.toDay)
       .order('chat_id').order('day').range(f, t) as any)),
   ]);
 
@@ -78,7 +78,7 @@ export async function loadPanel(ranges: PeriodRanges): Promise<PanelLoad> {
   return {
     input: {
       leads: mergeActivityLeads(leads, activity), replies, sends, sales, attributions, items, names, activityDays,
-      activityPhones: activity.map((a) => ({ chat_id: a.chat_id, phone: a.phone })),
+      activityPhones: activity.map((a) => ({ chat_id: a.chat_id, phone: a.phone })), activity,
       fb: { cur: fbOf(conv.filter(inCur)), prev: fbOf(conv.filter((r) => !inCur(r))) },
     },
     missing: [...new Set(missing)],
