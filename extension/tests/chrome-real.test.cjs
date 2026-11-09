@@ -1235,12 +1235,12 @@ async function main() {
     const drawn = await q(`const v = sh.querySelector('.vb'); const t = (sel) => [...v.querySelectorAll(sel)].map((b) => b.querySelector('.vb-btxt').textContent);
       return { name: v.querySelector('.vb-name').value, start: t('.vb-box.vb-start')[0], sends: t('.vb-box.vb-enviar'), waits: t('.vb-box.vb-esperar'), tags: t('.vb-box.vb-etiqueta'),
         fims: v.querySelectorAll('.vb-box.vb-fim').length, yes: v.querySelectorAll('.vb-lane.vb-yes').length, no: v.querySelectorAll('.vb-lane.vb-no').length, plus: v.querySelectorAll('.vb-plus').length,
-        btns: [...v.querySelectorAll('.vb-tr button')].map((b) => b.textContent), side: v.querySelector('.vb-side .vb-sh').textContent };`);
+        btns: [...v.querySelectorAll('.vb-tr button:not(.more-item)')].map((b) => b.textContent), side: v.querySelector('.vb-side .vb-sh').textContent };`);
     check('modelo "Régua de follow-up (3 etapas)" desenhado em cascata: COMEÇA (Follow Up 1) → Follow 1/2/3 já escolhidas → 3 esperas de resposta com ✅ / ❌ → Em atendimento / Frio, todo caminho em FIM; "+" entre as caixas; botões no topo',
       drawn.name === 'Régua de follow-up' && /etiqueta “Follow Up 1”/.test(drawn.start) && JSON.stringify(drawn.sends) === '["Envia “Follow 1”","Envia “Follow 2”","Envia “Follow 3”"]'
       && JSON.stringify(drawn.waits) === '["Espera resposta por até 1 dia","Espera resposta por até 2 dias","Espera resposta por até 3 dias"]'
       && drawn.tags.filter((x) => /Em atendimento/.test(x)).length === 3 && drawn.tags.filter((x) => /Frio/.test(x)).length === 1 && drawn.fims === 4 && drawn.yes === 3 && drawn.no === 3 && drawn.plus >= 10
-      && JSON.stringify(drawn.btns) === '["Simular","Testar comigo","Salvar desligada","Salvar e ligar","Fechar"]' && drawn.side === '▶ COMEÇA', JSON.stringify(drawn));
+      && JSON.stringify(drawn.btns) === '["Salvar desligada","Salvar e ligar","Fechar","⋯"]' && drawn.side === '▶ COMEÇA', JSON.stringify(drawn));
     await shot('regua-3-etapas.png');
     // trocar a mensagem do Follow 2 pela "Oferta especial" (busca + prévia)
     await q(`sh.querySelectorAll('.vb .vb-box.vb-enviar')[1].click(); await wait(200); const i = sh.querySelector('.vb-side .vb-search'); i.value = 'oferta'; i.dispatchEvent(new Event('input', { bubbles: true })); await wait(150);
@@ -1257,8 +1257,17 @@ async function main() {
       red.bad === 1 && red.txt === 'Escolha ou crie a mensagem.' && /rgb\(220, 38, 38\)/.test(red.border) && /Escolha ou crie a mensagem/.test(red.msg) && !red.modal && (fake.db.wa_automations || []).length === nAutos, JSON.stringify(red));
     await shot('caixa-incompleta.png');
     await q(`sh.querySelector('.vb .vb-side .vb-del').click(); await wait(200); return true;`);
-    // Simular
-    await q(`sh.querySelector('.vb .vb-sim').click(); await wait(300); return true;`);
+    // 2.14.1: no topo só Salvar desligada · Salvar e ligar · Fechar (+ "⋯"); Simular e Testar comigo no "⋯"
+    const top141 = await q(`const t = sh.querySelector('.vb .vb-tr'); const vis = [...t.children].filter((x) => x.matches('button')).map((x) => x.textContent);
+      const menu = t.querySelector('.more-menu'); const closed = menu.hidden; t.querySelector('.more-btn').click(); await wait(150);
+      const open = !menu.hidden && getComputedStyle(menu).display !== 'none'; const items = [...menu.querySelectorAll('.more-item')].map((x) => x.textContent);
+      return { vis, closed, open, items, more: t.querySelector('.more-btn').getAttribute('aria-label') };`);
+    check('construtor: no topo só "Salvar desligada", "Salvar e ligar" e "Fechar" + "⋯" (Mais opções), que abre com "Simular" e "Testar comigo"',
+      JSON.stringify(top141.vis) === JSON.stringify(['Salvar desligada', 'Salvar e ligar', 'Fechar']) && top141.closed && top141.open && JSON.stringify(top141.items) === JSON.stringify(['Simular', 'Testar comigo']) && top141.more === 'Mais opções da automação',
+      JSON.stringify(top141));
+    await shot('mais-opcoes.png');
+    // Simular (pelo "⋯")
+    await q(`sh.querySelector('.vb .vb-tr .more-menu .vb-sim').click(); await wait(300); return true;`);
     const sim = await q(`const m = sh.querySelector('.vb .vb-modal'); const col = (c) => [...m.querySelectorAll('.' + c + ' .vb-ev')].map((r) => r.textContent);
       return { never: col('vb-sim-nunca'), first: col('vb-sim-primeiro') };`);
     // (2.13.2: cada linha mostra a data e a hora previstas — "seg, 09/11, 13:46" — em vez de "+1 dia")
@@ -1270,8 +1279,8 @@ async function main() {
       JSON.stringify(sim));
     await shot('simulacao.png');
     await q(`sh.querySelector('.vb .vb-simclose').click(); await wait(200); return true;`);
-    // Testar comigo
-    await q(`sh.querySelector('.vb .vb-test').click(); return true;`);
+    // Testar comigo (pelo "⋯")
+    await q(`sh.querySelector('.vb .vb-tr .more-btn').click(); await wait(150); sh.querySelector('.vb .vb-tr .more-menu .vb-test').click(); return true;`);
     await waitFor(`const s0 = sh.querySelector('.vb .vb-testchat'); return !!s0 && s0.value === '${TCH}';`, 8000);
     await q(`sh.querySelector('.vb .vb-test-go').click(); return true;`);
     const testSaved = await waitFor(`return !sh.querySelector('.vb') && !!sh.querySelector('.fw-new');`, 15000);
@@ -1288,7 +1297,7 @@ async function main() {
       JSON.stringify({ testSaved, kind: r14.kind, active: r14.active, test: r14.test_chat_id, types: flat14.map((n) => n.type), card: testCard14.slice(0, 200) }));
     // Editar: abre no construtor (EM TESTE) → "Ligar para todos" → confirmação → ligada para todos
     await q(`const c = [...sh.querySelectorAll('.fw-card')].find((x) => (x.querySelector('.fw-name') || {}).textContent === 'Régua de follow-up'); c.querySelector('.fw-edit').click(); await wait(300); return true;`);
-    const edit14 = await q(`const v = sh.querySelector('.vb'); return v ? { btns: [...v.querySelectorAll('.vb-tr button')].map((b) => b.textContent), badge: (v.querySelector('.vb-tl .fw-badge') || {}).textContent || '', sends: [...v.querySelectorAll('.vb-box.vb-enviar .vb-btxt')].map((x) => x.textContent) } : null;`);
+    const edit14 = await q(`const v = sh.querySelector('.vb'); return v ? { btns: [...v.querySelectorAll('.vb-tr button:not(.more-item)')].map((b) => b.textContent), badge: (v.querySelector('.vb-tl .fw-badge') || {}).textContent || '', sends: [...v.querySelectorAll('.vb-box.vb-enviar .vb-btxt')].map((x) => x.textContent) } : null;`);
     await q(`sh.querySelector('.vb .vb-all').click(); return true;`);
     await waitFor(`const g = sh.querySelector('.vb .vb-on-go'); return !!g && !g.disabled;`, 15000);
     const conf14 = await q(`const m = sh.querySelector('.vb .vb-modal'); return { title: m.querySelector('.vb-sh').textContent, text: (m.querySelector('.act-text') || {}).textContent || '', go: m.querySelector('.vb-on-go').textContent };`);
@@ -1297,7 +1306,7 @@ async function main() {
     const allOk = await waitFor(`return !sh.querySelector('.vb') && !!sh.querySelector('.fw-new');`, 15000);
     const r14b = row14() || {};
     check('Editar abre a régua no construtor (EM TESTE: Salvar / Salvar e desligar / Ligar para todos); "Ligar para todos" confirma ("Vale para quem se encaixar daqui pra frente.") e liga para todos',
-      !!edit14 && edit14.badge === 'EM TESTE' && JSON.stringify(edit14.btns) === '["Simular","Salvar","Salvar e desligar","Ligar para todos","Fechar"]' && edit14.sends[1] === 'Envia “Oferta especial”'
+      !!edit14 && edit14.badge === 'EM TESTE' && JSON.stringify(edit14.btns) === '["Salvar","Salvar e desligar","Ligar para todos","Fechar","⋯"]' && edit14.sends[1] === 'Envia “Oferta especial”'
       && conf14.title === 'Ligar “Régua de follow-up”?' && /^Vale para quem se encaixar daqui pra frente\./.test(conf14.text) && conf14.go === 'Ligar'
       && allOk && r14b.active === true && !r14b.test_chat_id && r14b.activated_at && r14b.activated_at !== actBefore14, JSON.stringify({ edit14, conf14, active: r14b.active, test: r14b.test_chat_id, at: [actBefore14, r14b.activated_at] }));
     const listCard = await q(`const c = [...sh.querySelectorAll('.fw-card')].find((x) => (x.querySelector('.fw-name') || {}).textContent === 'Régua de follow-up'); return c ? { on: c.querySelector('.fw-switch').getAttribute('aria-checked'), txt: c.textContent } : null;`);
@@ -1364,6 +1373,12 @@ async function main() {
     fake.generic = true;
     await q(`sh.querySelector('[data-sec="follows"]').click(); await wait(400); return true;`);
     await waitFor(`return !!sh.querySelector('.fw-new');`, 15000);
+    // 2.14.1: a lista de automações não tem mais a seção "Ferramentas": tudo no "⋯" do título
+    const list141 = await q(`const t = sh.querySelector('.ftab'); const head = t.querySelector('.fw-listhead');
+      return { ferr: /FERRAMENTAS/.test(t.textContent), items: head ? [...head.querySelectorAll('.more-item')].map((x) => x.textContent) : [], hidden: head ? head.querySelector('.more-menu').hidden : null,
+        loose: [...t.querySelectorAll('button')].filter((b) => !b.closest('.more-menu') && /^(Simular|Testar com a conversa aberta|Histórico)$/.test(b.textContent)).length };`);
+    check('lista de automações: sem a seção "Ferramentas"; Simular, Testar com a conversa aberta, Histórico e Adicionar a conversa ficam no "⋯"',
+      !list141.ferr && list141.hidden === true && list141.loose === 0 && JSON.stringify(list141.items) === JSON.stringify(['Simular', 'Testar com a conversa aberta', 'Histórico', '🔁 Adicionar a conversa aberta a uma automação']), JSON.stringify(list141));
     await q(`const c = [...sh.querySelectorAll('.fw-card')].find((x) => (x.querySelector('.fw-name') || {}).textContent === 'Régua de follow-up'); c.querySelector('.fw-edit').click(); await wait(400); return true;`);
     await waitFor(`return !!sh.querySelector('.vb .vb-box.vb-start');`, 10000);
     await q(`sh.querySelector('.vb .vb-box.vb-start').click(); await wait(200); sh.querySelector('.vb .vb-sched input[value="personalizado"]').click(); await wait(250); return true;`);
@@ -1520,7 +1535,10 @@ async function main() {
     const speedUi = await q(`return { risk: !!sh.querySelector('.dtab .dp-risk'), text: sh.querySelector('.dtab .dp-speed-text').textContent, fc: (sh.querySelector('.dtab .dp-forecast') || {}).textContent || '', adv: !!sh.querySelector('.dtab details.dp-adv:not([open])'), recent: sh.querySelector('.dtab .dp-recent-on').checked };`);
     check('Velocidade e segurança: personalizado mais rápido que o Normal = aviso amarelo; previsão "3 contatos · termina em cerca de…"; "Excluir quem recebeu…" desligado e em Opções avançadas',
       speedUi.risk && /Personalizado: 20–21 s entre envios/.test(speedUi.text) && /^3 contatos · termina em cerca de .+ \((hoje|amanhã) às \d\d:\d\d\)$/.test(speedUi.fc) && speedUi.adv && speedUi.recent === false, JSON.stringify(speedUi));
-    await q(`[...sh.querySelectorAll('.dtab .bbtn')].find((b) => b.textContent === 'Salvar e revisar').click(); return true;`);
+    // 2.14.1: o formulário mostra só "Salvar" e "Cancelar" + "⋯" (Simular)
+    const dpBtns = await q(`const a = [...sh.querySelectorAll('.dtab .ed-add')].pop(); return { vis: [...a.children].filter((x) => x.matches('button')).map((x) => x.textContent), items: [...a.querySelectorAll('.more-menu .more-item')].map((x) => x.textContent), hidden: a.querySelector('.more-menu').hidden };`);
+    check('disparo (formulário): à vista só "Salvar" e "Cancelar"; "Simular" no "⋯"', JSON.stringify(dpBtns) === JSON.stringify({ vis: ['Salvar', 'Cancelar'], items: ['Simular'], hidden: true }), JSON.stringify(dpBtns));
+    await q(`sh.querySelector('.dtab .dp-save').click(); return true;`);
     const dpConf = await waitFor(`return /CONFIRMAR/.test((sh.querySelector('.dtab .wt-head') || {}).textContent || '') && !/Calculando/.test(sh.querySelector('.dtab').textContent);`, 20000);
     const dpConfTxt = await q(`return sh.querySelector('.dtab .fw-test').textContent;`);
     const saved18 = (fake.db.wa_campaigns || [])[0] || {};
@@ -1530,7 +1548,11 @@ async function main() {
       && /Na etiqueta do WhatsApp PROMO: 3 contatos/.test(dpConfTxt) && /Vão receber: 2 \(1 em conversa que não está carregada agora\)/.test(dpConfTxt) && /Pulados: 1 \(Não enviar: 1\)/.test(dpConfTxt)
       && /Variações: 2 \(alternadas\)/.test(dpConfTxt) && /Previsão: 2 contatos · termina em cerca de/.test(dpConfTxt),
       JSON.stringify({ dpConf, dpConfTxt, saved18, msg: await q(`return (sh.querySelector('.dtab .dp-msg') || {}).textContent || '';`) }));
-    await q(`[...sh.querySelectorAll('.dtab .bbtn')].find((b) => b.textContent === 'Iniciar disparo').click(); return true;`);
+    const cfBtns = await q(`const a = [...sh.querySelectorAll('.dtab .ed-add')].pop(); return { vis: [...a.children].filter((x) => x.matches('button')).map((x) => x.textContent), items: [...a.querySelectorAll('.more-menu .more-item')].map((x) => x.textContent),
+      fc: ((a.nextElementSibling && a.nextElementSibling.matches('.dp-forecast-start')) ? a.nextElementSibling.textContent : '') };`);
+    check('disparo (confirmação): à vista "Iniciar disparo" e "Voltar"; "Simular" no "⋯"; a previsão aparece sozinha logo abaixo do botão de iniciar',
+      JSON.stringify(cfBtns.vis) === JSON.stringify(['Iniciar disparo', 'Voltar']) && JSON.stringify(cfBtns.items) === JSON.stringify(['Simular']) && /^2 contatos · termina em cerca de .+ \((hoje|amanhã) às \d\d:\d\d\)$/.test(cfBtns.fc), JSON.stringify(cfBtns));
+    await q(`sh.querySelector('.dtab .dp-start').click(); return true;`);
     const started = await waitFor(`return /Disparo iniciado/.test(sh.querySelector('.dtab').textContent);`, 20000);
     const tg = (fake.db.wa_campaign_targets || []).map((t) => [t.name, t.chat_id, t.status, t.reason || null]);
     check('Iniciar: a foto tem Ana (carregada), Beto (@lid NÃO carregado, pelo telefone) e Caio pulado ("Não enviar" do WhatsApp)',

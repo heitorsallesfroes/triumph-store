@@ -799,6 +799,22 @@ guardada.
 
 ## O que mudou
 
+### 2.14.1 — telas de automação e disparo mais limpas
+- Botão **"⋯" (Mais opções)** discreto no canto: os itens menos usados ficam nele e funcionam igual. Fecha ao
+  escolher, ao clicar fora e com Esc.
+- **Construtor de automação**:
+  - no topo ficam só "Salvar desligada", "Salvar e ligar" e "Fechar" + "⋯" (Simular, Testar comigo);
+  - ligada: "Salvar", "Salvar e desligar" e "Fechar" + "⋯";
+  - em teste: continua o selo **EM TESTE** e o botão "Ligar para todos".
+- **Lista de automações**: a seção "Ferramentas" saiu. Simular, Testar com a conversa aberta, Histórico e "Adicionar a
+  conversa aberta a uma automação" ficam no "⋯" ao lado do título.
+- **Disparo**:
+  - formulário: "Salvar" (abre a revisão, como antes) e "Cancelar" + "⋯" (Simular);
+  - confirmação: "Iniciar disparo" e "Voltar" + "⋯" (Simular), com a previsão ("N contatos · termina em cerca de…")
+    sozinha logo abaixo do botão de iniciar;
+  - "Pausar" e "Retomar" continuam no cartão do disparo.
+- Nada muda nas regras. Testado no Chrome real, que abre o "⋯" e confere o que fica à vista em cada tela.
+
 ### 2.14.0 — disparos mais completos e mais seguros
 - **Público por etiqueta do WhatsApp**: em "Para quem", escolha CRM ou WhatsApp e a etiqueta (com "+ Nova etiqueta…").
   - A extensão lê pela WA-JS **todas** as conversas da etiqueta do WhatsApp, inclusive as não carregadas e as

@@ -1571,6 +1571,15 @@
       .vb-days { display: flex; flex-wrap: wrap; gap: 4px; }
       .vb-day { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: var(--r-pill); background: #eef2f5; font-size: var(--fs-2); cursor: pointer; }
       .vb-dlimit { width: 140px !important; }
+      /* 2.14.1: "⋯" Mais opções */
+      .more-wrap { position: relative; display: inline-flex; }
+      .more-btn { min-width: 34px; padding-left: 8px; padding-right: 8px; font-weight: 700; letter-spacing: 1px; }
+      .more-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 60; display: flex; flex-direction: column; min-width: 230px; padding: 4px; background: #fff; border: 1px solid #e2e8f0; border-radius: var(--r-md); box-shadow: 0 8px 24px rgba(15, 23, 42, .14); }
+      .more-menu[hidden] { display: none; }
+      .more-item { text-align: left; padding: 8px 10px; border: 0; background: none; border-radius: 6px; font: inherit; font-size: var(--fs-2); color: inherit; cursor: pointer; white-space: nowrap; }
+      .more-item:hover, .more-item:focus-visible { background: #f1f5f9; outline: none; }
+      .more-item[disabled] { opacity: .5; cursor: default; }
+      .fw-listhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       /* 2.14.0: disparos */
       .dp-speed { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
       .dp-speed-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px; }
@@ -7257,9 +7266,12 @@
     sec.append(adv);
 
     const actions = el('div', 'ed-add');
-    const save = fbtn('bbtn primary', f.saving ? 'Salvando…' : 'Salvar e revisar', () => saveCampaignForm());
+    // 2.14.1: "Salvar" (vai para a revisão, como antes) + "⋯" com Simular; Cancelar continua para sair
+    const save = fbtn('bbtn primary dp-save', f.saving ? 'Salvando…' : 'Salvar', () => saveCampaignForm());
+    save.title = 'Salva e abre a revisão (nada é enviado sem "Iniciar disparo")';
     save.disabled = f.saving;
-    actions.append(save, fbtn('bbtn', 'Simular', () => simulateCampaignForm()), fbtn('bbtn', 'Cancelar', () => { dp.view = 'list'; renderDisparos(); }));
+    actions.append(save, fbtn('bbtn', 'Cancelar', () => { dp.view = 'list'; renderDisparos(); }),
+      moreMenu([{ cls: 'dp-sim', text: 'Simular', fn: () => simulateCampaignForm() }], 'Mais opções do disparo'));
     sec.append(actions, el('div', `ed-msg dp-msg${f.err ? ' err' : ''}`, f.msg));
     dtabEl.append(sec);
   }
@@ -7631,10 +7643,13 @@
     if (E.campaignSpeedRisk(c.speed)) sec.append(el('div', 'vb-warn dp-risk', '⚠ Mais rápido que o "Normal": aumenta o risco de o WhatsApp bloquear o número.'));
     sec.append(el('div', 'ed-note', MASS_WARNING));
     const actions = el('div', 'ed-add');
-    const go = fbtn('bbtn primary', dp.busy ? 'Iniciando…' : 'Iniciar disparo', () => startCampaignNow(c, cf.wa));
+    const go = fbtn('bbtn primary dp-start', dp.busy ? 'Iniciando…' : 'Iniciar disparo', () => startCampaignNow(c, cf.wa));
     go.disabled = dp.busy || !cf.sending;
-    actions.append(go, fbtn('bbtn', 'Simular', () => simulateSaved(c)), fbtn('bbtn', 'Voltar', () => { dp.view = 'list'; refreshDisparos(); }));
-    sec.append(actions);
+    // 2.14.1: Simular no "⋯"; a previsão fica ao lado de "Iniciar disparo", sem precisar simular
+    actions.append(go, fbtn('bbtn', 'Voltar', () => { dp.view = 'list'; refreshDisparos(); }),
+      moreMenu([{ cls: 'dp-sim', text: 'Simular', fn: () => simulateSaved(c) }], 'Mais opções do disparo'));
+    const startAt = c.start_at && Date.parse(c.start_at) > Date.now() ? Date.parse(c.start_at) : Date.now();
+    sec.append(actions, el('div', 'fw-count dp-forecast dp-forecast-start', E.forecastText(cf.sending, E.campaignForecast(cf.sending, c.speed, motor.state.settings, startAt), Date.now())));
     dtabEl.append(sec);
   }
 
@@ -7811,6 +7826,47 @@
     b.addEventListener('click', onClick);
     return b;
   };
+
+  // ── 2.14.1: "⋯" (Mais opções) discreto no canto: os itens menos usados, funcionando igual ──
+  // items: [{ cls, text, fn, disabled }] (itens falsos são ignorados). Fecha ao escolher, ao clicar fora e no Esc.
+  function moreMenu(items, aria = 'Mais opções') {
+    const wrap = el('span', 'more-wrap');
+    const btn = el('button', 'bbtn more-btn', '⋯');
+    btn.type = 'button';
+    btn.title = 'Mais opções';
+    btn.setAttribute('aria-label', aria);
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', 'false');
+    const menu = el('div', 'more-menu');
+    menu.setAttribute('role', 'menu');
+    menu.hidden = true;
+    const outside = (e) => { if (!e.composedPath().includes(wrap)) close(); };
+    function close() {
+      menu.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('pointerdown', outside, true);
+    }
+    items.filter(Boolean).forEach((it) => {
+      const b = el('button', `more-item ${it.cls || ''}`.trim(), it.text);
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.disabled = !!it.disabled;
+      b.addEventListener('click', (e) => { e.stopPropagation(); close(); it.fn(); });
+      menu.append(b);
+    });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!menu.hidden) { close(); return; }
+      menu.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      document.addEventListener('pointerdown', outside, true);
+      const first = menu.querySelector('.more-item:not([disabled])');
+      if (first) first.focus();
+    });
+    wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) { e.preventDefault(); e.stopPropagation(); close(); btn.focus(); } });
+    wrap.append(btn, menu);
+    return wrap;
+  }
 
   // ── 2.13.4: "+ Nova etiqueta…" em qualquer lista de etiquetas (uma função só, usada em todas) ──
   // Primeira opção da lista. Escolhendo, abre ali mesmo nome + cor com "Criar"/"Cancelar" (a lista volta ao que
@@ -8273,26 +8329,25 @@
     if (!fl.statsAt) queueMicrotask(() => loadFollowStats()); // 2.11.0: números da lista (de novo depois de salvar)
     if (fl.msg) ftabEl.append(el('div', `ed-msg${fl.msgErr ? ' err' : ''}`, fl.msg));
     const list = el('section', 'crmsec');
-    list.append(el('div', 'wt-head', 'AUTOMAÇÕES'));
+    // 2.14.1: o que era a seção "Ferramentas" fica no "⋯" do título (funciona igual)
+    const head = el('div', 'wt-head fw-listhead');
+    head.append(el('span', null, 'AUTOMAÇÕES'), moreMenu([
+      { cls: 'fw-tool-sim', text: 'Simular', fn: () => openSimulation() },
+      { cls: 'fw-tool-test', text: 'Testar com a conversa aberta', fn: () => testOpenChat() },
+      { cls: 'fw-tool-hist', text: 'Histórico', fn: () => openHistory() },
+      { cls: 'fw-tool-add', text: '🔁 Adicionar a conversa aberta a uma automação', fn: () => openChatAutomations() },
+    ], 'Mais opções das automações'));
+    list.append(head);
+    if (fl.test) {
+      const t = el('div', 'fw-test');
+      fl.test.forEach((line) => t.append(el('div', null, line)));
+      list.append(t);
+    }
     const items = [...motor.state.automations].sort((a, b) => (a.position || 0) - (b.position || 0));
     if (!items.length) list.append(el('div', 'lt-none', fl.loading ? 'Carregando…' : 'Nenhuma automação ainda.'));
     items.forEach((a) => list.append(automationCard(a)));
     list.append(fbtn('fw-card fw-new', '+ Nova automação', () => vbOpen(null))); // 2.13.0: construtor visual
     ftabEl.append(list);
-
-    const tools = el('section', 'crmsec');
-    tools.append(el('div', 'wt-head', 'FERRAMENTAS'));
-    const r1 = el('div', 'ed-add');
-    r1.append(fbtn('bbtn', 'Simular', () => openSimulation()), fbtn('bbtn', 'Testar com a conversa aberta', () => testOpenChat()), fbtn('bbtn', 'Histórico', () => openHistory()));
-    tools.append(r1);
-    if (fl.test) {
-      const t = el('div', 'fw-test');
-      fl.test.forEach((line) => t.append(el('div', null, line)));
-      tools.append(t);
-    }
-    tools.append(el('div', 'crm-sub', 'Conversa aberta: em quais automações ela está, adicionar a partir de agora ou tirar'));
-    tools.append(fbtn('bbtn primary', '🔁 Adicionar à automação', () => openChatAutomations()));
-    ftabEl.append(tools);
   }
 
   // ── Modelos prontos (só preenchem o editor; nada é criado sem Salvar) ──
@@ -8829,16 +8884,21 @@
     const right = el('div', 'vb-tr');
     const b = (cls, text, fn) => { const x = fbtn(cls, text, fn); x.disabled = !!f.saving; return x; };
     if (f.mode === 'edit') {
-      right.append(b('bbtn vb-sim', 'Simular', () => { f.modal = { kind: 'sim' }; vbRender(); }));
       if (f.wasActive) {
         right.append(b('bbtn primary vb-save', f.saving ? 'Salvando…' : 'Salvar', () => vbSave('keep')), b('bbtn vb-save-disable', 'Salvar e desligar', () => vbSave('off')));
         if (f.testOn) right.append(b('bbtn vb-all', 'Ligar para todos', () => vbAskOn('todos')));
       } else {
-        right.append(b('bbtn vb-test', 'Testar comigo', () => vbAskTest()), b('bbtn vb-save-off', f.saving ? 'Salvando…' : 'Salvar desligada', () => vbSave('off')),
-          b('bbtn primary vb-save-on', 'Salvar e ligar', () => vbAskOn('on')));
+        right.append(b('bbtn vb-save-off', f.saving ? 'Salvando…' : 'Salvar desligada', () => vbSave('off')), b('bbtn primary vb-save-on', 'Salvar e ligar', () => vbAskOn('on')));
       }
     }
     right.append(fbtn('bbtn vb-close', 'Fechar', () => vbClose()));
+    // 2.14.1: Simular e Testar comigo ficam no "⋯" (funcionam igual)
+    if (f.mode === 'edit') {
+      right.append(moreMenu([
+        { cls: 'vb-sim', text: 'Simular', fn: () => { f.modal = { kind: 'sim' }; vbRender(); }, disabled: !!f.saving },
+        !f.wasActive && { cls: 'vb-test', text: 'Testar comigo', fn: () => vbAskTest(), disabled: !!f.saving },
+      ], 'Mais opções da automação'));
+    }
     top.append(left, right);
     const wrap = el('div', 'vb-topwrap');
     wrap.append(top);
