@@ -210,10 +210,9 @@
     const maxAge = (Number(flow.ignore_older_days) || 15) * DAY_MS;
     if (now - lastMs > maxAge) return { action: 'skip', reason: 'conversa parada', chatId };
     const needMs = (Number(flow.wait_minutes) || 0) * MIN_MS;
-    const spent = businessMsBetween(lastMs, now, settings);
-    if (spent < needMs) {
-      const dueAt = addBusinessMs(lastMs, needMs, settings);
-      return { action: 'wait', reason: 'aguardando', chatId, dueAt, leftMs: dueAt == null ? null : Math.max(0, dueAt - now) };
+    if (now - lastMs < needMs) { // 2.14.2: tempo corrido
+      const dueAt = lastMs + needMs;
+      return { action: 'wait', reason: 'aguardando', chatId, dueAt, leftMs: Math.max(0, dueAt - now) };
     }
     const pick = pickVariant(flow, labels, chat.ad || []);
     if (!pick) return { action: 'skip', reason: 'sem mensagem', chatId };
@@ -789,9 +788,9 @@
       if (now - lastMs > (Number(a.ignore_older_days) || 15) * DAY_MS) return { action: 'skip', reason: 'conversa parada', chatId };
       const need = (Number(a.wait_minutes) || 0) * MIN_MS;
       const fromMs = manual ? Math.max(lastMs, enteredAt) : lastMs;
-      if (businessMsBetween(fromMs, now, settings) < need) {
-        const dueAt = addBusinessMs(fromMs, need, settings);
-        return { action: 'wait', reason: 'aguardando', chatId, dueAt, leftMs: dueAt == null ? null : Math.max(0, dueAt - now), entry };
+      if (now - fromMs < need) { // 2.14.2: tempo corrido
+        const dueAt = fromMs + need;
+        return { action: 'wait', reason: 'aguardando', chatId, dueAt, leftMs: Math.max(0, dueAt - now), entry };
       }
       runKey = labelKey;
     } else if (a.trigger_type === 'entrou_etiqueta') {
@@ -965,8 +964,8 @@
           if (until == null || now < until) return { status: 'wait', node: id, ops, branches, dueAt: until, reason: 'esperando o dia e a hora' };
         } else {
           const need = Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60) * MIN_MS;
-          const done = def.business ? businessMsBetween(waitStart, now, settings) >= need : now - waitStart >= need;
-          if (!done) return { status: 'wait', node: id, ops, branches, dueAt: def.business ? addBusinessMs(waitStart, need, settings) : waitStart + need, reason: 'esperando o tempo' };
+          // 2.14.2: esperas sempre em tempo corrido (o envio que cair fora do horário espera o próximo horário permitido)
+          if (now - waitStart < need) return { status: 'wait', node: id, ops, branches, dueAt: waitStart + need, reason: 'esperando o tempo' };
         }
         win = n.send_window || null; // 2.13.2: o envio seguinte só nesta faixa
         id = seqNextOf(idx, id);
@@ -997,13 +996,8 @@
         if (!timedOut) {
           if (n.after_mine && !mine) return { status: 'wait', node: id, ops, branches, reason: 'esperando a sua mensagem', dueAt: null };
           const from = Math.max(waitStart, mine);
-          if (def.business) {
-            timedOut = businessMsBetween(from, now, settings) >= need;
-            dueAt = addBusinessMs(from, need, settings);
-          } else {
-            timedOut = now - from >= need;
-            dueAt = from + need;
-          }
+          timedOut = now - from >= need; // 2.14.2: tempo corrido
+          dueAt = from + need;
         }
         if (!timedOut) return { status: 'wait', node: id, ops, branches, dueAt, reason: 'esperando resposta' };
         branches.push({ node: id, result: 'nao', at: now });
@@ -1448,8 +1442,7 @@
     const waitFor = (amount, unit) => {
       const need = Math.max(1, Number(amount) || 0) * (SEQ_UNIT_MIN[unit] || 60);
       if (!real) { at += need; return; }
-      const t2 = def.business ? addBusinessMs(tm, need * MIN_MS, settings) : tm + need * MIN_MS;
-      tm = t2 == null ? tm + need * MIN_MS : t2;
+      tm += need * MIN_MS; // 2.14.2: tempo corrido
     };
     push({ kind: 'inicio', text: 'Entra na automação', node: 'start' });
     for (let g = 0; g < 200; g++) {
@@ -1548,7 +1541,7 @@
     } else {
       steps = [...(Number(a.wait_minutes) > 0 ? [{ id: seqId(), type: 'pausa', ...seqAmountOf(a.wait_minutes) }] : []), ...acts, { id: seqId(), type: 'fim' }];
     }
-    return { def: { start, business: a.trigger_type === 'sem_resposta', steps } };
+    return { def: { start, business: false, steps } };
   }
   // Texto do passo atual de uma conversa ("esperando resposta (faltam 1h20)")
   function seqDescribe(def, run, now, { itemTitle = (id) => id } = {}) {
@@ -1589,7 +1582,7 @@
     if (kind === 'followup3') {
       const ok = () => [tag('Em atendimento'), fim()];
       return {
-        start: { type: 'etiqueta', source: 'crm', label_id: 'new:Follow Up 1' }, business: true,
+        start: { type: 'etiqueta', source: 'crm', label_id: 'new:Follow Up 1' }, business: false,
         steps: [send('Follow 1'), { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', yes: ok(), no: [
           send('Follow 2'), { id: seqId(), type: 'esperar', amount: 2, unit: 'dias', yes: ok(), no: [
             send('Follow 3'), { id: seqId(), type: 'esperar', amount: 3, unit: 'dias', yes: ok(), no: [tag('Frio'), fim()] },
@@ -1602,17 +1595,17 @@
     }
     if (kind === 'lead_sumiu') {
       return {
-        start: { type: 'lead', origin: 'todos' }, business: true,
+        start: { type: 'lead', origin: 'todos' }, business: false,
         steps: [{ id: seqId(), type: 'esperar', amount: 1, unit: 'dias', after_mine: true, yes: [fim()], no: [
           send('ainda tem interesse?'), { id: seqId(), type: 'esperar', amount: 2, unit: 'dias', yes: [tag('Em atendimento'), fim()], no: [tag('Frio'), fim()] },
         ] }],
       };
     }
-    if (kind === 'vazio') return { start: { type: 'etiqueta', source: 'crm', label_id: '' }, business: true, steps: [fim()] };
+    if (kind === 'vazio') return { start: { type: 'etiqueta', source: 'crm', label_id: '' }, business: false, steps: [fim()] };
     if (kind === 'lead_followup') {
       const tag = () => ({ id: seqId(), type: 'etiqueta', op: 'colocar', source: 'crm', label_id: 'new:Em atendimento' });
       return {
-        start: { type: 'lead', origin: 'todos' }, business: true,
+        start: { type: 'lead', origin: 'todos' }, business: false,
         steps: [{ id: seqId(), type: 'esperar', amount: 2, unit: 'horas', after_mine: true, yes: [tag()], no: [
           { id: seqId(), type: 'enviar', item_id: '', hint: 'Follow 1' },
           { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', yes: [tag()], no: [
@@ -1624,7 +1617,7 @@
         ] }],
       };
     }
-    return { start: { type: 'lead', origin: 'todos' }, business: true, steps: [{ id: seqId(), type: 'enviar', item_id: '' }, { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', yes: [], no: [] }] };
+    return { start: { type: 'lead', origin: 'todos' }, business: false, steps: [{ id: seqId(), type: 'enviar', item_id: '' }, { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', yes: [], no: [] }] };
   }
 
   // ── 2.11.0: modelos com passo a passo (Quem → Quando → O quê) ──

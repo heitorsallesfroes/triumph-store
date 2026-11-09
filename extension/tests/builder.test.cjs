@@ -200,7 +200,7 @@ test('"Nunca para quem tem a etiqueta": CRM e WhatsApp tiram da automação sem 
   assert.strictEqual(E.seqExcluded({ exclude: [{ source: 'crm', label_id: VIP }] }, [VIP], []), true);
   assert.strictEqual(E.seqExcluded({}, [VIP], ['7']), false);
 });
-test('⏳ ESPERAR (só o tempo): espera e segue, responda ou não; com horário comercial, conta só o expediente', () => {
+test('⏳ ESPERAR (só o tempo): espera e segue, responda ou não; sempre em tempo corrido (2.14.2), mesmo se estava "só no horário comercial"', () => {
   const def = { start: { type: 'venda' }, business: false, steps: [{ id: 'p', type: 'pausa', amount: 7, unit: 'dias' }, { id: 'm', type: 'enviar', item_id: F[0] }, { id: 'f', type: 'fim' }] };
   const run = { node: null, branches: [] };
   const r1 = E.seqStep({ def, run, chat: null, replies: [], now: T0, settings: SETTINGS });
@@ -212,7 +212,12 @@ test('⏳ ESPERAR (só o tempo): espera e segue, responda ou não; com horário 
   const biz = { ...def, business: true, steps: [{ id: 'p', type: 'pausa', amount: 2, unit: 'horas' }, def.steps[1]] };
   const fri = Date.parse('2026-11-06T18:30:00-03:00');
   const r4 = E.seqStep({ def: biz, run: { node: 'p', wait_started_at: fri, branches: [] }, chat: null, replies: [], now: fri + 3 * HOUR, settings: SETTINGS });
-  assert.deepStrictEqual([r4.status, r4.dueAt], ['wait', Date.parse('2026-11-09T10:30:00-03:00')]);
+  // 2h a partir de sexta 18h30 = sexta 20h30 (corrido); a régua antiga com "business: true" também vira corrido
+  const r4b = E.seqStep({ def: biz, run: { node: 'p', wait_started_at: fri, branches: [] }, chat: null, replies: [], now: fri + HOUR, settings: SETTINGS });
+  assert.deepStrictEqual([r4b.status, r4b.dueAt], ['wait', fri + 2 * HOUR]);
+  assert.deepStrictEqual([r4.status, r4.send.itemId], ['run', F[0]]);
+  // fora do horário de envio (sexta 21h30): o envio espera o próximo horário permitido
+  assert.ok(E.nextSendTime(fri + 3 * HOUR, biz, null, SETTINGS) > fri + 3 * HOUR);
   assert.strictEqual(E.seqDescribe(def, { status: 'ativo', node: 'p', due_at: T0 + 3 * HOUR }, T0), 'esperando (faltam 3h00)');
   assert.ok(plain(E.seqValidate({ ...def, steps: [{ id: 'p', type: 'pausa', amount: 0, unit: 'dias' }, def.steps[1]] })).some((x) => x.node === 'p'));
 });

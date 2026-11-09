@@ -8102,7 +8102,7 @@
     respondeu: 'O cliente respondeu', dia_hora: 'Num dia e hora fixos da semana', venda_registrada: 'Uma venda foi registrada pela conversa (💰)',
   };
   const TRIGGER_INFO = {
-    sem_resposta: 'Conta só o horário comercial (mude em "Horário geral e limites"), a partir da sua última mensagem. Se o cliente responder antes, não manda.',
+    sem_resposta: 'Conta em tempo corrido, a partir da sua última mensagem. Se o cliente responder antes, não manda. O envio respeita o horário de envio (mude em "Horário geral e limites").',
     entrou_etiqueta: 'Conta o tempo corrido (dia e noite) desde que o contato entrou na etiqueta, mesmo que vocês tenham conversado no meio.',
     respondeu: 'Roda quando a última mensagem da conversa é do cliente.',
     dia_hora: 'Nos dias e na hora escolhidos, uma vez por dia, para cada contato da etiqueta.',
@@ -8422,7 +8422,7 @@
     const n = [...idx.values()];
     const sends = n.filter((e) => e.node.type === 'enviar').length;
     const waits = n.filter((e) => e.node.type === 'esperar').length;
-    return `Sequência: começa ${seqStartText(def.start)}; ${sends} mensage${sends === 1 ? 'm' : 'ns'} e ${waits} espera${waits === 1 ? '' : 's'} de resposta${def.business ? ' (tempo só no horário comercial)' : ''}.`;
+    return `Sequência: começa ${seqStartText(def.start)}; ${sends} mensage${sends === 1 ? 'm' : 'ns'} e ${waits} espera${waits === 1 ? '' : 's'} de resposta.`;
   }
   function seqStatsEl(a) {
     const box = el('div', 'fw-stats sq-stats');
@@ -8599,13 +8599,7 @@
     const sbad = (f.invalid || []).filter((x) => x.node === 'start').map((x) => x.msg).join(' ');
     if (sbad) { start.classList.add('fw-invalid'); start.append(el('div', 'fw-errmsg', sbad)); }
     sec.append(start);
-    const biz = el('label', 'sc-radio');
-    const bcb = el('input');
-    bcb.type = 'checkbox';
-    bcb.checked = f.def.business !== false;
-    bcb.addEventListener('change', () => { f.def.business = bcb.checked; });
-    biz.append(bcb, ` Contar o tempo das esperas só no horário comercial (${E.scheduleText(motor.state.settings)})`);
-    sec.append(biz);
+    sec.append(el('div', 'crm-intro', 'Esperas em tempo corrido (5 dias = 5 dias de calendário). Se o envio cair fora do horário de envio, espera o próximo horário permitido.')); // 2.14.2
     const steps = el('div', 'fw-block');
     steps.append(el('div', 'fw-k', 'PASSOS'));
     steps.append(seqListEl(f, f.def.steps, 1));
@@ -8947,7 +8941,7 @@
       id: 'start', kind: 'start', icon: '▶', title: 'COMEÇA', text: vbStartText(st), sel: f.sel === 'start',
       extra: [st.type === 'etiqueta' && f.include ? 'Quem entra: também quem já está na etiqueta' : 'Quem entra: só quem se encaixar daqui pra frente',
         E.scheduleSentence(f.def, motor.state.settings), // 2.13.2
-        ...(f.def.business !== false ? ['Esperas só no horário comercial'] : []), `Nunca para quem tem: Não enviar${ex.length ? `, ${ex.join(', ')}` : ''}`],
+        'Esperas em tempo corrido', `Nunca para quem tem: Não enviar${ex.length ? `, ${ex.join(', ')}` : ''}`],
     });
   }
   function vbConn(f, list, i, { last = false } = {}) {
@@ -9224,14 +9218,8 @@
     }
     side.append(who);
     // horário e exclusões
-    const biz = el('label', 'sc-radio');
-    const bcb = el('input');
-    bcb.type = 'checkbox';
-    bcb.checked = f.def.business !== false;
-    bcb.addEventListener('change', () => { f.def.business = bcb.checked; vbChange(); vbRender(); });
-    biz.append(bcb, ` Esperas contam só no horário comercial (${E.scheduleText(motor.state.settings)})`);
-    side.append(biz);
     side.append(vbScheduleField(f));
+    side.append(el('div', 'vb-sub vb-corrido', 'Esperas em tempo corrido (5 dias = 5 dias de calendário; 2 horas = 2 horas). Se o envio cair fora do horário de envio, espera o próximo horário permitido.')); // 2.14.2
     const ex = el('div', 'vb-field');
     ex.append(el('div', 'vb-fl', 'Nunca para quem tem a etiqueta'));
     const chips = el('div', 'vb-chips');
@@ -9682,7 +9670,7 @@
       r.append(amount, unit);
       body.append(r, preview);
       upd();
-      if (w.kind !== 'posvenda') body.append(el('div', 'crm-intro', `Conta só o horário comercial (${E.scheduleText(motor.state.settings)}), a partir da SUA última mensagem. Se o cliente responder antes, não manda.`));
+      if (w.kind !== 'posvenda') body.append(el('div', 'crm-intro', 'Conta em tempo corrido, a partir da SUA última mensagem. Se o cliente responder antes, não manda. O envio respeita o horário de envio.'));
     } else if (w.step === 3) {
       if (w.kind === 'followup') {
         w.stages.slice(0, w.nStages).forEach((st, k) => {
@@ -10044,8 +10032,8 @@
       hours.addEventListener('input', upd);
       mins.addEventListener('input', upd);
       const r = el('div', 'sc-row');
-      r.append(schedField('Sem responder por (horas, só horário comercial)', hours), schedField('e minutos', mins));
-      q.append(mark(r, 'wait'), el('div', 'crm-intro', `Conta só ${E.scheduleText(motor.state.settings)} (mude em "Horário geral e limites").`));
+      r.append(schedField('Sem responder por (horas, tempo corrido)', hours), schedField('e minutos', mins));
+      q.append(mark(r, 'wait'), el('div', 'crm-intro', `Tempo corrido. O envio respeita o horário de envio (${E.scheduleText(motor.state.settings)}; mude em "Horário geral e limites").`));
       const older = numberInput(f.ignore_older_days, 1, 365, 'Ignorar conversas paradas há (dias)');
       older.addEventListener('input', () => { f.ignore_older_days = Math.floor(Number(older.value) || 0); });
       q.append(schedField(withInfo('Não mandar se a conversa está parada há mais de (dias)', 'Conversas muito antigas ficam de fora, para não falar com quem sumiu há meses.'), older));

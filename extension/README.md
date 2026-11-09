@@ -799,6 +799,18 @@ guardada.
 
 ## O que mudou
 
+### 2.14.2 — esperas sempre em tempo corrido
+- Saiu a opção "Esperas contam só no horário comercial", tanto da caixa ▶ COMEÇA quanto do editor antigo. Toda espera
+  agora é em **tempo corrido**: 5 dias são 5 dias de calendário e 2 horas são 2 horas.
+- Vale para as réguas (⏳ esperar e ❓ esperar resposta), para a automação antiga "sem resposta por X horas" e para o
+  follow antigo.
+- Se o envio cair fora do horário de envio, ele espera o próximo horário permitido, como já era.
+- Automações que estavam com a opção ligada passam para tempo corrido sem precisar editar. Ao salvar, a régua passa a
+  ser gravada com `business: false`.
+- O Simular e a previsão contam em tempo corrido. Os textos das telas foram ajustados.
+- Testes: `sequence.test.cjs` e `builder.test.cjs` (2 h a partir de sexta 18h30 vencem sexta 20h30; 5 dias = 5 dias
+  de calendário; régua antiga com a opção ligada) e o Chrome real.
+
 ### 2.14.1 — telas de automação e disparo mais limpas
 - Botão **"⋯" (Mais opções)** discreto no canto: os itens menos usados ficam nele e funcionam igual. Fecha ao
   escolher, ao clicar fora e com Esc.

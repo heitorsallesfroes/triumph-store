@@ -684,7 +684,7 @@ async function main() {
       trigger: bad.some((b) => /etiqueta do gatilho/.test(b.textContent)), msg: (sh.querySelector('.fw-editor .ed-msg') || {}).textContent || '', i: sh.querySelectorAll('.fw-editor .fw-i').length };`);
     check('validação: não salva e marca em vermelho onde está cada problema (ação sem etiqueta, etiqueta do gatilho)',
       inv.n >= 2 && inv.action && inv.trigger && /escolha a etiqueta/i.test(inv.msg) && (fake.db.wa_automations || []).length === nAuto, JSON.stringify(inv));
-    check('editor avançado com frases e (i) explicando as opções', inv.i >= 3 && await q(`return /Para quem está na etiqueta/.test(sh.querySelector('.fw-editor').textContent) && !/tempo corrido\\)/.test(sh.querySelector('.fw-editor').textContent);`), `(i): ${inv.i}`);
+    check('editor avançado com frases e (i) explicando as opções', inv.i >= 3 && await q(`return /Para quem está na etiqueta/.test(sh.querySelector('.fw-editor').textContent) && /tempo corrido/.test(sh.querySelector('.fw-editor').textContent);`), `(i): ${inv.i}`); // 2.14.2: esperas em tempo corrido
     check('nenhum erro no console nas automações', errors.length === 0, errors.slice(0, 8).join(' | '));
 
     // 8. sequência (2.12.0): modelo "Follow-up de lead novo" no editor visual, validação por passo, salvar e os
@@ -718,7 +718,7 @@ async function main() {
     const walk = (list) => (list || []).forEach((n) => { flat.push(n); if (n.type === 'esperar') { walk(n.yes); walk(n.no); } });
     if (savedSeq) walk(savedSeq.sequence.steps);
     check('sequência salva: kind "sequencia", começo lead, 3 envios com a mensagem e "Em atendimento" criada nos ✅',
-      !!savedSeq && savedSeq.trigger_type === 'sequencia' && savedSeq.sequence.start.type === 'lead' && savedSeq.sequence.business === true
+      !!savedSeq && savedSeq.trigger_type === 'sequencia' && savedSeq.sequence.start.type === 'lead' && savedSeq.sequence.business === false /* 2.14.2: tempo corrido */
       && flat.filter((n) => n.type === 'enviar' && n.item_id === itemId).length === 3 && !!lbl && flat.filter((n) => n.type === 'etiqueta' && n.label_id === lbl.id).length === 3
       && savedSeq.sequence.steps[0].after_mine === true && savedSeq.sequence.steps[0].amount === 2,
       JSON.stringify(savedSeq && { trigger_type: savedSeq.trigger_type, start: savedSeq.sequence.start, nodes: flat.map((n) => n.type) }));

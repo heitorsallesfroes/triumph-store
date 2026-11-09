@@ -130,14 +130,19 @@ test('respostas gravadas (wa_replies) também contam, mesmo se você falou depoi
   assert.ok(['progress', 'end'].includes(r2.status));
   assert.strictEqual(plain(r.branches)[0].result, 'sim');
 });
-test('horário comercial: 2h a partir de sexta 18h30 vencem segunda 10h30 (corrido: sexta 20h30)', () => {
+test('2.14.2: esperas sempre em tempo corrido: 2h a partir de sexta 18h30 vencem sexta 20h30 (antes, "só no horário comercial", segunda 10h30)', () => {
   const fri = Date.parse('2026-11-06T18:30:00-03:00');
   const def = { start: { type: 'lead' }, business: true, steps: [{ id: 'w', type: 'esperar', amount: 2, unit: 'horas', yes: [], no: [] }] };
   const run = { node: 'w', wait_started_at: fri, last_sent_at: fri, branches: [] };
   const chat = { loaded: true, last: { t: fri / 1000, fromMe: true } };
-  const r = E.seqStep({ def, run, chat, replies: [], now: fri + 3 * HOUR, settings: SETTINGS });
+  const r = E.seqStep({ def, run, chat, replies: [], now: fri + HOUR, settings: SETTINGS });
   assert.strictEqual(r.status, 'wait');
-  assert.strictEqual(r.dueAt, Date.parse('2026-11-09T10:30:00-03:00'));
+  assert.strictEqual(r.dueAt, fri + 2 * HOUR); // a régua salva com a opção ligada também vira corrido
+  // 5 dias = 5 dias de calendário (inclusive o domingo)
+  const d5 = E.seqStep({ def: { ...def, steps: [{ id: 'w', type: 'esperar', amount: 5, unit: 'dias', yes: [], no: [] }] }, run, chat, replies: [], now: fri + HOUR, settings: SETTINGS });
+  assert.strictEqual(d5.dueAt, fri + 5 * 24 * HOUR);
+  const sim = plain(E.seqSimulate(E.seqNormalize(def), 'nunca', { startAt: fri, settings: SETTINGS }));
+  assert.strictEqual(sim.find((x) => x.kind === 'nao').when, fri + 2 * HOUR);
   const r2 = E.seqStep({ def: { ...def, business: false }, run, chat, replies: [], now: fri + HOUR, settings: SETTINGS });
   assert.strictEqual(r2.dueAt, fri + 2 * HOUR);
   const r3 = E.seqStep({ def: { ...def, business: false }, run, chat, replies: [], now: fri + 2 * HOUR + 1, settings: SETTINGS });

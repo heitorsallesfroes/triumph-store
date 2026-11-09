@@ -2218,7 +2218,7 @@
       }
       if (sc.daily_limit != null && sc.daily_limit !== '') schedule.daily_limit = intIn(Number(sc.daily_limit), 1, 2000, 'Limite desta automação por dia');
     }
-    return { start, business: q.business !== false, ...(schedule ? { schedule } : {}), steps };
+    return { start, business: false, ...(schedule ? { schedule } : {}), steps }; // 2.14.2: esperas sempre em tempo corrido
   }
   const HM2_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const checkHM = (v, what) => { if (typeof v !== 'string' || !HM2_RE.test(v)) throw new Error(what); return v; };
