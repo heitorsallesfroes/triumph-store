@@ -477,17 +477,40 @@
     return chat;
   }
 
+  // 2.14.4: abre QUALQUER conversa individual: carregada, arquivada, não carregada na lista e @lid.
+  // 1) carregada (chat.list, inclui arquivadas) → chat.openChatBottom; 2) não carregada → chat.openChatBottom pelo id
+  // (a WA-JS 4.7.2 acha a conversa com findOrCreateLatestChat) e, se não der, pelo telefone (o do pedido ou o do
+  // @lid, contact.getPnLidEntry). Telefone @c.us só depois de contact.queryExists confirmar que tem WhatsApp, para
+  // nunca abrir conversa vazia com número sem WhatsApp. Só conversa individual (nunca grupo).
+  const OPEN_TIMEOUT_MS = 8000;
   async function openChat(payload) {
     if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
-    const chatId = payload && payload.chatId;
-    // openChatBottom pode CRIAR conversa: só abre conversas que já estão carregadas no WhatsApp Web
-    await loadedChat(chatId);
-    try {
-      await wpp.chat.openChatBottom(chatId);
-    } catch {
-      throw new BridgeError('open_failed', 'Não consegui abrir a conversa', 'before-send');
+    const p = payload || {};
+    const chatId = typeof p.chatId === 'string' && /^[0-9]+@(c\.us|lid)$/.test(p.chatId) ? p.chatId : null;
+    let phone = typeof p.phone === 'string' && /^\d{8,15}$/.test(p.phone) ? p.phone : null;
+    if (!chatId && !phone) throw new BridgeError('invalid_chat', 'Conversa inválida', 'before-send');
+    const open = async (id) => {
+      try { await withTimeout(Promise.resolve().then(() => wpp.chat.openChatBottom(id)), OPEN_TIMEOUT_MS); return true; } catch { return false; }
+    };
+    let loaded = null;
+    try { loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS); } catch { loaded = null; }
+    const loadedIds = new Set(Array.isArray(loaded) ? loaded.map((c) => chatIdOf(c)) : []);
+    if (chatId && loadedIds.has(chatId) && await open(chatId)) return { opened: true, via: 'carregada' };
+    if (!phone && chatId) phone = await pnOfChat(chatId);
+    if (chatId && /@lid$/.test(chatId) && await open(chatId)) return { opened: true, via: 'id' };
+    if (phone) {
+      const pid = `${phone}@c.us`;
+      if (loadedIds.has(pid) && await open(pid)) return { opened: true, via: 'carregada' };
+      let ex = null;
+      try { ex = await withTimeout(Promise.resolve().then(() => wpp.contact.queryExists(pid)), QUERY_TIMEOUT_MS); } catch { ex = null; }
+      if (ex) {
+        const lid = String(safe(() => ex.lid._serialized || ex.lid, '') || '');
+        if (/^\d+@lid$/.test(lid) && loadedIds.has(lid) && await open(lid)) return { opened: true, via: 'carregada' };
+        const wid = String(safe(() => ex.wid._serialized || ex.wid, '') || '');
+        if (await open(/^\d{8,15}@c\.us$/.test(wid) ? wid : pid)) return { opened: true, via: 'telefone' };
+      }
     }
-    return { opened: true };
+    throw new BridgeError('open_failed', 'Não consegui abrir a conversa', 'before-send');
   }
 
   // ── Etiquetas nativas: trocar (a pedido do usuário ou de uma automação que ele criou; uma conversa por vez) ──

@@ -1544,14 +1544,16 @@
     const rows = await engineRest(`wa_send_log?select=id,source,contact_id,chat_id,status,reason,created_at&${AUTO_SOURCES}&order=created_at.desc&limit=${lim}`);
     const contactIds = [...new Set(rows.map((r) => r.contact_id).filter(Boolean))];
     const names = {};
+    const phones = {}; // 2.14.4: para abrir a conversa pelo telefone
     for (let i = 0; i < contactIds.length; i += 100) {
       const got = await rest(`wa_contacts?select=id,name,phone&id=in.${inList(contactIds.slice(i, i + 100))}`);
-      got.forEach((c) => { names[c.id] = c.name || c.phone || null; });
+      got.forEach((c) => { names[c.id] = c.name || c.phone || null; phones[c.id] = c.phone || null; });
     }
     const byChat = await contactsByChats(rows.filter((r) => !r.contact_id && r.chat_id).map((r) => r.chat_id));
     return rows.map((r) => ({
       id: r.id, source: r.source, status: r.status, reason: r.reason, created_at: r.created_at,
       name: (r.contact_id && names[r.contact_id]) || (r.chat_id && byChat[r.chat_id] && byChat[r.chat_id].name) || null,
+      chat_id: r.chat_id || null, phone: (r.contact_id && phones[r.contact_id]) || null,
     }));
   }
 
@@ -2122,7 +2124,7 @@
     checkUuid(id, 'Disparo inválido');
     const off = Math.max(0, Math.floor(Number(offset) || 0));
     const lim = Math.min(500, Math.max(1, Math.floor(Number(limit) || 200)));
-    const rows = await campRest(`wa_campaign_targets?select=id,name,status,reason,sent_at&campaign_id=eq.${id}&order=id.asc&offset=${off}&limit=${lim + 1}`);
+    const rows = await campRest(`wa_campaign_targets?select=id,chat_id,name,status,reason,sent_at&campaign_id=eq.${id}&order=id.asc&offset=${off}&limit=${lim + 1}`);
     return { targets: rows.slice(0, lim), hasMore: rows.length > lim };
   }
 

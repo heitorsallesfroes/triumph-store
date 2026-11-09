@@ -799,6 +799,22 @@ guardada.
 
 ## O que mudou
 
+### 2.14.4 — abrir qualquer conversa com um clique
+- Acabou o aviso "Conversa não carregada no WhatsApp Web. Procure pelo nome…". Agora uma função única abre a conversa:
+  1. pelo id, se ela está carregada na lista (inclusive arquivada);
+  2. se não está, pede ao WhatsApp Web para abrir pelo id (WA-JS 4.7.2 `chat.openChatBottom`), também @lid;
+  3. se não der, pelo telefone (o do contato ou o do @lid). Telefone só abre depois de `contact.queryExists`
+     confirmar que o número tem WhatsApp, então nunca abre uma conversa vazia com número sem WhatsApp.
+  4. Só se tudo falhar aparece o aviso com o número e o botão **"Copiar número"**.
+- **Quadro**: clicar no nome ou no número do cartão abre a conversa (mão + dica "Abrir conversa"). "Mover para…"
+  continua só movendo.
+- A mesma função vale na lista de clientes da etiqueta (sem telefone: põe o nome na busca, como antes), Agendados,
+  Disparos (prévia e alvos), automações (Simular e Histórico), 📈 Resultados e 💰 vendas.
+- Nunca abre grupo. O arquivo da WA-JS não mudou.
+- Testes: `tests/openconv.test.cjs` (a ponte de verdade com WA-JS falsa: carregada, não carregada pelo telefone, número
+  sem WhatsApp, @lid, grupo; e todos os lugares usando a mesma função) e Chrome real (Agendados: clique abre; falha
+  mostra o número e "Copiar número").
+
 ### 2.14.3 — horário por dia da semana
 - Na caixa ▶ COMEÇA (Horário de envio → Personalizado) e na tela **"Horário geral e limites de segurança"**, o horário
   virou uma **tabela com os 7 dias**, um embaixo do outro (Seg, Ter, Qua, Qui, Sex, Sáb, Dom). Em cada linha:

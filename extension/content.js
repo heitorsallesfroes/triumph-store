@@ -1000,6 +1000,8 @@
       .sc-item { display: flex; gap: 8px ; padding: 8px 8px ; border-radius: var(--r-md) ; background: var(--bg2); font-size: var(--fs-2); }
       .sc-main { flex: 1; min-width: 0; }
       .sc-who { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .conv-link { cursor: pointer; }
+      .conv-link:hover, .conv-link:focus-visible { text-decoration: underline; color: var(--accent, inherit); outline: none; }
       .sc-prev { color: var(--muted); font-size: var(--fs-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .sc-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px ; flex-shrink: 0; }
       .sc-when { font-size: var(--fs-1); font-variant-numeric: tabular-nums; }
@@ -3091,11 +3093,13 @@
     lt.clients.forEach((c) => {
       const b = el('button', 'lt-client');
       b.type = 'button';
-      b.title = 'Colocar na busca do WhatsApp';
+      // 2.14.4: abre a conversa (função única); sem telefone, coloca o nome na busca do WhatsApp (como antes)
+      b.classList.add('conv-link');
+      b.title = c.phone ? 'Abrir conversa' : 'Colocar na busca do WhatsApp';
       b.append(el('span', 'n', c.name || formatPhone(c.phone) || '—'));
       if (c.phone && c.name) b.append(el('span', 'p', formatPhone(c.phone)));
       else if (!c.phone) b.append(el('span', 'p byname', 'só pelo nome'));
-      b.addEventListener('click', () => searchClientInWhatsApp(c));
+      b.addEventListener('click', () => openConversation({ phone: c.phone, chatId: c.chat_id || null, name: c.name }, { noTarget: () => searchClientInWhatsApp(c) }));
       ltClientsEl.append(b);
     });
     if (lt.hasMore || (lt.loading && lt.clients.length)) {
@@ -3163,6 +3167,42 @@
       ltHint.append(el('div', 'manual', parts.join(' · ') || '—'));
     }
     ltHint.hidden = false;
+  }
+
+  // 2.14.4: UMA função para "abrir conversa" em toda a extensão (Quadro, lista de clientes da etiqueta, Agendados,
+  // Disparos, automações, Resultados e vendas). A ponte abre pelo id (carregada, arquivada, não carregada, @lid) e
+  // depois pelo telefone; só se tudo falhar aparece o aviso com o número e "Copiar número".
+  const phoneOfChatId = (id) => { const m = /^(\d{8,15})@c\.us$/.exec(String(id || '')); return m ? m[1] : null; };
+  let convOpening = false;
+  async function openConversation(target, { notify = toast, onOpened = null, noTarget = null } = {}) {
+    const t = target || {};
+    const chatId = typeof t.chatId === 'string' && /^[0-9]+@(c\.us|lid)$/.test(t.chatId) ? t.chatId : null;
+    const digits = String(t.phone || '').replace(/\D/g, '');
+    const phone = /^\d{8,15}$/.test(digits) ? digits : phoneOfChatId(chatId);
+    if (!chatId && !phone && noTarget) { noTarget(); return false; }
+    if (convOpening) return false;
+    if (chatId || phone) {
+      convOpening = true;
+      try {
+        const r = await waRequest('openChat', { chatId, phone }, { timeout: 25000 });
+        if (r && r.opened) { if (onOpened) onOpened(); return true; }
+      } catch { /* aviso abaixo */ } finally { convOpening = false; }
+    }
+    const who = t.name || (phone ? formatPhone(phone) : '') || 'este contato';
+    if (phone) notify(`Não consegui abrir a conversa de ${who} no WhatsApp Web. Número: ${formatPhone(phone)}`, 'error', 10000, { label: 'Copiar número', onClick: async () => { notify(await copyToClipboard(phone) ? `Número copiado: ${phone}` : 'Não consegui copiar o número.', 'info', 4000); } });
+    else notify(`Não consegui abrir a conversa de ${who} no WhatsApp Web (sem número salvo). Procure pelo nome.`, 'error', 8000);
+    return false;
+  }
+  // Nome ou número clicável (mão + "Abrir conversa"); o clique não chega ao cartão/linha de fora
+  function convLink(node, target, opts) {
+    node.classList.add('conv-link');
+    node.title = 'Abrir conversa';
+    node.tabIndex = 0;
+    node.setAttribute('role', 'link');
+    const go = (e) => { e.stopPropagation(); e.preventDefault(); openConversation(typeof target === 'function' ? target() : target, typeof opts === 'function' ? opts() : opts); };
+    node.addEventListener('click', go);
+    node.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); });
+    return node;
   }
 
   async function searchClientInWhatsApp(client) {
@@ -6430,7 +6470,7 @@
       rows.forEach((row) => {
         const line = el('div', `sc-item st-${row.status}`);
         const main = el('div', 'sc-main');
-        main.append(el('div', 'sc-who', row.chat_name || 'Conversa'), el('div', 'sc-prev', schedPreview(row)));
+        main.append(convLink(el('div', 'sc-who', row.chat_name || 'Conversa'), { chatId: row.chat_id, name: row.chat_name }), el('div', 'sc-prev', schedPreview(row)));
         const side = el('div', 'sc-side');
         side.append(el('span', 'sc-when', schedWhen(row.send_at)));
         const status = el('span', 'sc-status', SCHED_STATUS_LABEL[row.status] || row.status);
@@ -7585,7 +7625,7 @@
     sim.rows.slice(0, 200).forEach((r) => {
       const line = el('div', `sc-item fw-sim ${r.send ? 'ok' : 'skip'}`);
       const main = el('div', 'sc-main');
-      main.append(el('div', 'sc-who', r.name || 'Contato'), el('div', 'sc-prev', r.send ? `${r.newChat ? '(conversa nova) ' : ''}${r.preview}` : `pulado: ${r.reason}`));
+      main.append(convLink(el('div', 'sc-who', r.name || 'Contato'), { chatId: r.chat_id, phone: r.phone, name: r.name }), el('div', 'sc-prev', r.send ? `${r.newChat ? '(conversa nova) ' : ''}${r.preview}` : `pulado: ${r.reason}`));
       line.append(main);
       sec.append(line);
     });
@@ -7718,7 +7758,7 @@
     d.targets.forEach((t) => {
       const line = el('div', `sc-item st-${t.status}`);
       const main = el('div', 'sc-main');
-      main.append(el('div', 'sc-who', t.name || 'Contato'), el('div', 'sc-prev', t.reason || (t.sent_at ? `enviado ${schedWhen(t.sent_at)}` : '')));
+      main.append(convLink(el('div', 'sc-who', t.name || 'Contato'), { chatId: t.chat_id, name: t.name }), el('div', 'sc-prev', t.reason || (t.sent_at ? `enviado ${schedWhen(t.sent_at)}` : '')));
       const side = el('div', 'sc-side');
       side.append(el('span', 'sc-status', TARGET_STATUS_LABEL[t.status] || t.status));
       line.append(main, side);
@@ -10479,7 +10519,7 @@
       const t = evText(r.ev);
       const line = el('div', `sc-item fw-sim ${t.kind}`);
       const main = el('div', 'sc-main');
-      main.append(el('div', 'sc-who', `${r.contact.name || r.contact.phone || 'Contato'} · ${(r.automation || r.flow).name}`), el('div', 'sc-prev', t.text));
+      main.append(convLink(el('div', 'sc-who', `${r.contact.name || r.contact.phone || 'Contato'} · ${(r.automation || r.flow).name}`), { chatId: r.contact.chat_id || (r.chat && r.chat.id) || null, phone: r.contact.phone, name: r.contact.name }), el('div', 'sc-prev', t.text));
       line.append(main);
       sec.append(line);
     });
@@ -10684,7 +10724,7 @@
     (h.rows || []).forEach((r) => {
       const line = el('div', `sc-item st-${r.status}`);
       const main = el('div', 'sc-main');
-      main.append(el('div', 'sc-who', r.name || 'Contato'), el('div', 'sc-prev', `${SOURCE_LABEL[r.source] || r.source}${r.reason ? ` · ${r.reason}` : ''}`));
+      main.append(convLink(el('div', 'sc-who', r.name || 'Contato'), { chatId: r.chat_id, phone: r.phone, name: r.name }), el('div', 'sc-prev', `${SOURCE_LABEL[r.source] || r.source}${r.reason ? ` · ${r.reason}` : ''}`));
       const side = el('div', 'sc-side');
       side.append(el('span', 'sc-when', schedWhen(r.created_at)), el('span', 'sc-status', r.status));
       line.append(main, side);
@@ -11616,9 +11656,8 @@
     else if (!vs.list) sec.append(el('div', 'lt-none loading', 'Carregando…'));
     else if (!vs.list.length) sec.append(el('div', 'lt-none', 'Nenhuma venda registrada pela extensão ainda.'));
     (vs.list || []).forEach((s) => {
-      const line = fbtn('sc-item vd-sale', '', async () => {
-        try { await waRequest('openChat', { chatId: s.wa_chat_id }, { timeout: 6000 }); } catch { toast('Essa conversa não está carregada no WhatsApp Web.', 'warn', 4000); }
-      });
+      const line = fbtn('sc-item vd-sale conv-link', '', () => openConversation({ chatId: s.wa_chat_id, name: s.customer_name }));
+      line.title = 'Abrir conversa';
       const main = el('div', 'sc-main');
       main.append(el('div', 'sc-who', s.customer_name || 'Cliente'), el('div', 'sc-prev', `${TS.money(s.total_sale_price)} · ${ERP_STATUS[s.status] || s.status}`));
       const side = el('div', 'sc-side');
@@ -13098,7 +13137,7 @@
     (cv.history || []).forEach((h) => {
       const line = el('div', `sc-item st-${h.status === 'enviado' ? 'enviada' : 'falhou'}`);
       const main = el('div', 'sc-main');
-      main.append(el('div', 'sc-who', `${h.contact_name || 'Cliente'} · ${h.event_name === 'Contact' ? 'Contato (lead de anúncio)' : TS.money(h.value)}`),
+      main.append(convLink(el('div', 'sc-who', `${h.contact_name || 'Cliente'} · ${h.event_name === 'Contact' ? 'Contato (lead de anúncio)' : TS.money(h.value)}`), { chatId: h.chat_id, phone: h.phone, name: h.contact_name }),
         el('div', 'sc-prev', `${h.ad_title ? `anúncio: ${h.ad_title}` : 'sem anúncio'} · ${h.method === 'business_messaging' ? 'WhatsApp (clique do anúncio)' : 'chat (telefone)'}${h.test ? ' · teste' : ''}${h.error ? ` · ${h.error}` : ''}`));
       const side = el('div', 'sc-side');
       side.append(el('span', 'sc-when', schedWhen(h.created_at)), el('span', 'sc-status', h.status));
@@ -13715,14 +13754,18 @@
       // Contato do CRM: nome, telefone, data em que entrou na etiqueta e 📝 se tiver nota
       const title = c.name || formatPhone(c.phone) || '—';
       const name = el('div', 'bcname', `${c.hasNote ? '📝 ' : ''}${title}`);
-      name.title = c.hasNote ? `${title} (tem nota)` : title;
-      main.append(name, el('div', 'bprev', c.phone ? (c.name ? formatPhone(c.phone) : '') : 'só pelo nome'));
+      convLink(name, () => crmCardTarget(c), () => boardOpenOpts());
+      name.title = c.hasNote ? `Abrir conversa · ${title} (tem nota)` : `Abrir conversa · ${title}`;
+      const ph = el('div', 'bprev', c.phone ? (c.name ? formatPhone(c.phone) : '') : 'só pelo nome');
+      if (c.phone && c.name) convLink(ph, () => crmCardTarget(c), () => boardOpenOpts());
+      main.append(name, ph);
       const date = el('span', 'bdate', formatChatDate(isoSeconds(c.addedAt)));
       date.title = 'Entrou nesta etiqueta CRM';
       side.append(date);
     } else {
       const name = el('div', 'bcname', c.name || '—');
-      name.title = c.name || '';
+      convLink(name, () => ({ chatId: c.id, name: c.name }), () => boardOpenOpts());
+      name.title = `Abrir conversa${c.name ? ` · ${c.name}` : ''}`;
       main.append(name, el('div', 'bprev', previewLine(c)));
       side.append(el('span', 'bdate', formatChatDate(c.t)));
       if (c.unread > 0) side.append(el('span', 'bunread', c.unread > 99 ? '99+' : String(c.unread)));
@@ -13737,7 +13780,7 @@
       side.append(move);
     }
     card.append(main, side);
-    const open = () => (c.crm ? openCrmCard(c) : openBoardChat(c.id));
+    const open = () => (c.crm ? openCrmCard(c) : openBoardChat(c.id, c.name));
     card.addEventListener('click', open);
     card.addEventListener('keydown', (e) => {
       if (e.target !== card) return;
@@ -13962,36 +14005,22 @@
     els.body.scrollTop = scroll;
   }
 
-  async function openBoardChat(chatId) {
+  // 2.14.4: o Quadro abre pela função única openConversation (também conversa não carregada, arquivada e @lid)
+  function boardOpenOpts() { return { notify: boardToast, onOpened: closeBoard }; }
+  function crmCardTarget(c) { return { phone: c.phone, chatId: c.chat_id || null, name: c.name || null }; }
+  async function openBoardChat(chatId, name = null) {
     if (board.opening) return;
     board.opening = true;
     boardStatus('');
-    try {
-      await waRequest('openChat', { chatId }, { timeout: 6000 });
-      closeBoard();
-    } catch {
-      boardStatus('Não consegui abrir a conversa. Tente de novo.');
-    } finally {
-      board.opening = false;
-    }
+    try { await openConversation({ chatId, name }, boardOpenOpts()); } finally { board.opening = false; }
   }
 
-  // Cartão do CRM: abre a conversa <telefone>@c.us se ela estiver carregada no WhatsApp Web
+  // Cartão do CRM: abre a conversa pelo telefone do contato (carregada ou não)
   async function openCrmCard(c) {
     if (board.opening) return;
-    const who = c.name || formatPhone(c.phone) || '—';
-    const notLoaded = () => boardToast(`Conversa não carregada no WhatsApp Web. Procure pelo nome: ${who}`, 'error', 6000);
-    if (!c.phone || !/^\d{8,15}$/.test(c.phone)) { notLoaded(); return; }
     board.opening = true;
     boardStatus('');
-    try {
-      await waRequest('openChat', { chatId: `${c.phone}@c.us` }, { timeout: 6000 });
-      closeBoard();
-    } catch {
-      notLoaded();
-    } finally {
-      board.opening = false;
-    }
+    try { await openConversation(crmCardTarget(c), boardOpenOpts()); } finally { board.opening = false; }
   }
 
   function setColsMenu(open) {

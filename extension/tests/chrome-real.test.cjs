@@ -1602,6 +1602,39 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console nos disparos', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 19. abrir qualquer conversa com um clique (2.14.4): nome clicável (mão + "Abrir conversa") nos Agendados; abre pela
+    // função única (openChat com id e telefone); se a ponte não abrir, o aviso traz o número e "Copiar número"
+    fake.on = true;
+    fake.generic = true;
+    const OC = '5521944445555@c.us';
+    fake.db.wa_schedules = [{ id: uuid(), chat_id: OC, chat_name: 'Zeca Agendado', item_id: null, body: 'Oi Zeca, lembrete', send_at: new Date(Date.now() + 10 * 86400000).toISOString(), status: 'pendente', error_code: null, sent_at: null, created_at: new Date().toISOString() }];
+    await pg(`window.__opens = []; window.__fakeBridge = { openChat: (p) => { window.__opens.push(p); return { opened: true, via: 'telefone' }; } }; return true;`);
+    await q(`sh.querySelector('[data-sec="vendas"]').click(); await wait(200); sh.querySelector('[data-sec="agendados"]').click(); await wait(300); return true;`);
+    const zeca = `[...sh.querySelectorAll('.sc-who.conv-link')].find((x) => x.textContent === 'Zeca Agendado')`;
+    const ocList = await waitFor(`return !!${zeca};`, 15000);
+    const ocUi = await q(`const z = ${zeca}; return z ? { title: z.title, cursor: getComputedStyle(z).cursor, role: z.getAttribute('role') } : null;`);
+    await q(`${zeca}.click(); await wait(400); return true;`);
+    const opens = await pg('return window.__opens;');
+    check('Agendados: o nome é clicável (mão + "Abrir conversa") e abre pela função única (openChat com id e telefone)',
+      ocList && ocUi && ocUi.title === 'Abrir conversa' && ocUi.cursor === 'pointer' && JSON.stringify(opens) === JSON.stringify([{ chatId: OC, phone: '5521944445555' }]), JSON.stringify({ ocList, ocUi, opens }));
+    // sem openChat na ponte simulada: a ponte de verdade responde (sem WhatsApp, não abre) → aviso com o número
+    await pg(`window.__fakeBridge = {}; return true;`);
+    await c.send('Browser.grantPermissions', { origin: 'https://web.whatsapp.com', permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] }).catch(() => {});
+    await s('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+    await q(`${zeca}.click(); return true;`);
+    const warnOk = await waitFor(`return /Não consegui abrir a conversa de Zeca Agendado/.test(sh.querySelector('.toast').textContent);`, 30000);
+    const warn = await q(`const t = sh.querySelector('.toast'); return { text: t.textContent, btn: [...t.querySelectorAll('button')].map((b) => b.textContent) };`);
+    await q(`[...sh.querySelectorAll('.toast button')].find((b) => b.textContent === 'Copiar número').click(); await wait(400); return true;`);
+    const copied = await q(`return sh.querySelector('.toast').textContent;`);
+    const clip = await pg(`try { return await navigator.clipboard.readText(); } catch (e) { return 'erro: ' + e.message; }`);
+    check('se tudo falhar: aviso com o número e o botão "Copiar número" (que copia o número)',
+      warnOk && /Número: \+55 \(21\) 94444-5555/.test(warn.text) && JSON.stringify(warn.btn) === JSON.stringify(['Copiar número']) && copied === 'Número copiado: 5521944445555' && clip === '5521944445555', JSON.stringify({ warnOk, warn, copied, clip }));
+    await pg('window.__fakeBridge = null; return true;');
+    fake.db.wa_schedules = [];
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console ao abrir conversa', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {
