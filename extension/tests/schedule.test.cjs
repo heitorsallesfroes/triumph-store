@@ -76,6 +76,10 @@ test('frases, aviso fora de 08:00–21:00 e validação', () => {
   assert.ok(msgs.includes('start: Horário personalizado: escolha pelo menos um dia.') && msgs.includes('start: Horário personalizado: cada faixa precisa de início antes do fim.')
     && msgs.includes('p: Escolha a hora (HH:MM).') && msgs.includes('w: "Enviar só entre": o início precisa ser antes do fim.'), JSON.stringify(msgs));
 });
+test('régua salva com ⏳ "até o próximo dia às 10:00" (sem amount, como o servidor guarda) reabre e salva de novo sem erro', () => {
+  const def = { start: { type: 'lead' }, steps: [{ id: 'p', type: 'pausa', mode: 'ate', until_day: 'qualquer', until_time: '10:00' }, { id: 'm', type: 'enviar', item_id: F1 }] };
+  assert.deepStrictEqual(plain(E.seqValidate(def)), []);
+});
 test('Simular com data e hora: cada envio cai no horário da automação e na faixa da etapa', () => {
   const def = E.seqNormalize({ start: { type: 'venda' }, business: false, schedule: CUSTOM, steps: [
     { id: 'm1', type: 'enviar', item_id: F1 },

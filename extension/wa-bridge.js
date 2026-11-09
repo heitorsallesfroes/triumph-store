@@ -79,6 +79,41 @@
     }
   }
 
+  // 2.13.4: criar etiqueta do WhatsApp Business (WA-JS 4.7.2: labels.addNewLabel + getLabelColorPalette)
+  function labelCreateInfo() {
+    if (!isReady()) return { available: false, reason: 'not_ready' };
+    if (!wpp.labels || typeof wpp.labels.addNewLabel !== 'function') return { available: false, reason: 'no_function' };
+    if (businessAccount() === false) return { available: false, reason: 'not_business' };
+    return { available: true, reason: null };
+  }
+  async function labelColors() {
+    const info = labelCreateInfo();
+    if (!info.available) return { ...info, colors: [] };
+    let pal = [];
+    try { pal = typeof wpp.labels.getLabelColorPalette === 'function' ? await withTimeout(wpp.labels.getLabelColorPalette(), LABELS_TIMEOUT_MS) : []; } catch { pal = []; }
+    return { available: true, reason: null, colors: (Array.isArray(pal) ? pal : []).map(String).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 30) };
+  }
+  async function labelCreate(payload) {
+    const info = labelCreateInfo();
+    if (!info.available) throw new BridgeError(info.reason, info.reason === 'not_business' ? 'Criar etiqueta do WhatsApp só no WhatsApp Business' : 'Esta versão do WhatsApp Web não deixa criar etiqueta', 'before-send');
+    const name = String((payload && payload.name) || '').replace(/\s+/g, ' ').trim();
+    if (!name || name.length > 60) throw new BridgeError('bad_name', 'Nome da etiqueta: de 1 a 60 caracteres', 'before-send');
+    const color = payload && /^#[0-9a-f]{6}$/i.test(String(payload.color || '')) ? String(payload.color) : undefined;
+    let created = null;
+    try {
+      created = await withTimeout(wpp.labels.addNewLabel(name, color ? { labelColor: color } : {}), LABELS_TIMEOUT_MS * 2);
+    } catch (err) {
+      if (err instanceof BridgeError) throw err;
+      throw new BridgeError('label_create_failed', `Não consegui criar a etiqueta no WhatsApp${err && err.message ? `: ${String(err.message).slice(0, 80)}` : ''}`, 'before-send');
+    }
+    let list = [];
+    try { list = await labels(); } catch { list = []; }
+    const id = created && created.id != null ? String(created.id) : null;
+    const got = (id && list.find((l) => l.id === id)) || list.find((l) => l.name.toLowerCase() === name.toLowerCase());
+    if (!got) throw new BridgeError('label_create_failed', 'Criei, mas a etiqueta não apareceu no WhatsApp: atualize a página', 'after-send');
+    return { label: got, labels: list };
+  }
+
   function labelWriteInfo() {
     if (!isReady() || !wpp.labels || typeof wpp.labels.addOrRemoveLabels !== 'function') return { available: false, reason: 'not_ready' };
     if (businessAccount() === false) return { available: false, reason: 'not_business' };
@@ -456,8 +491,8 @@
   }
 
   // ── Etiquetas nativas: trocar (a pedido do usuário ou de uma automação que ele criou; uma conversa por vez) ──
-  // A única escrita é labels.addOrRemoveLabels, chamada uma vez por pedido. Nunca cria, apaga,
-  // renomeia ou muda a cor de etiquetas.
+  // A escrita é labels.addOrRemoveLabels, chamada uma vez por pedido. Nunca apaga, renomeia ou muda a cor
+  // de etiquetas. 2.13.4: cria uma etiqueta nova só quando você pede ("+ Nova etiqueta…" numa lista; labelCreate).
 
   const LABEL_CONFIRM_MS = 1500;
 
@@ -1431,6 +1466,8 @@
     sendMedia: (payload, requestId) => sendMedia(requestId, payload),
     cancel: (payload) => cancel(payload),
     labels: () => labels(),
+    labelColors: () => labelColors(),
+    labelCreate: (payload) => labelCreate(payload),
     labelChats: (payload) => labelChats(payload),
     openChat: (payload) => openChat(payload),
     chatLabels: (payload) => chatLabels(payload),

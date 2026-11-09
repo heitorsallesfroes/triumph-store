@@ -1571,6 +1571,15 @@
       .vb-days { display: flex; flex-wrap: wrap; gap: 4px; }
       .vb-day { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: var(--r-pill); background: #eef2f5; font-size: var(--fs-2); cursor: pointer; }
       .vb-dlimit { width: 140px !important; }
+      /* 2.13.4: "+ Nova etiqueta…" ali mesmo */
+      .lc-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; margin-top: 4px; padding: 8px; border: 1px dashed var(--line, #cbd5e1); border-radius: var(--r-md); background: #f8fafc; }
+      .lc-form .lc-name { flex: 1 1 160px; min-width: 120px; }
+      .lc-colors { display: flex; flex-wrap: wrap; gap: 4px; }
+      .lc-color { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+      .lc-color[aria-pressed="true"] { border-color: #111827; box-shadow: 0 0 0 2px #fff inset; }
+      .lc-msg { flex-basis: 100%; font-size: var(--fs-1); color: var(--muted); }
+      .lc-msg:empty { display: none; }
+      .lc-msg.err { color: #b91c1c; }
       .vb-warn { padding: 6px 8px; border-radius: var(--r-md); background: #fef9c3; border: 1px solid #fde047; color: #854d0e; font-size: var(--fs-2); font-weight: 600; }
       .vb-tpl { display: flex; flex-direction: column; gap: 6px; padding: var(--s-4); border-radius: var(--r-lg); background: var(--bg); border: 1.5px solid var(--border-strong); text-align: left; color: var(--fg); }
       .vb-tpl:hover:not(:disabled) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
@@ -7389,7 +7398,157 @@
     return b;
   };
 
-  function labelSelect(value, { empty = null, aria } = {}) {
+  // ── 2.13.4: "+ Nova etiqueta…" em qualquer lista de etiquetas (uma função só, usada em todas) ──
+  // Primeira opção da lista. Escolhendo, abre ali mesmo nome + cor com "Criar"/"Cancelar" (a lista volta ao que
+  // estava, ninguém vê a opção). Criada, a etiqueta já fica escolhida NAQUELA lista (dispara o "change" normal da
+  // lista, então quem a usa grava como se você tivesse escolhido). Nome repetido: "Já existe" e escolhe a existente.
+  // CRM: createLabel. WhatsApp: WA-JS labels.addNewLabel (só WhatsApp Business; sem isso a opção diz por quê).
+  const LC_NEW = '__nova_etiqueta__';
+  const LC_PALETTE = ['#f97316', '#ef4444', '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#6366f1', '#a855f7', '#ec4899', '#6b7280'];
+  const lcWa = { info: null, loading: null }; // { available, reason, colors }
+  function lcWaInfo() {
+    if (lcWa.info || lcWa.loading) return lcWa.loading || Promise.resolve(lcWa.info);
+    lcWa.loading = waRequest('labelColors', {}, { timeout: 5000 })
+      .then((r) => { lcWa.info = r && typeof r === 'object' ? r : { available: false, reason: 'no_function', colors: [] }; })
+      .catch((e) => { lcWa.info = e && e.code === 'unknown_type' ? { available: false, reason: 'no_function', colors: [] } : null; })
+      .finally(() => { lcWa.loading = null; });
+    // "ainda não está pronto" não fica guardado: pergunta de novo na próxima vez
+    return lcWa.loading.then(() => { const i = lcWa.info; if (i && i.reason === 'not_ready') lcWa.info = null; return i; });
+  }
+  const lcWaReason = (info) => (!info ? '' : info.reason === 'not_business' ? 'só no WhatsApp Business' : info.reason === 'no_function' ? 'esta versão do WhatsApp Web não deixa criar' : info.reason === 'not_ready' ? 'o WhatsApp ainda não está pronto' : '');
+  // sel: o <select>; kinds: ['crm'] | ['wa'] | ['crm', 'wa']; waPrefix: valor das opções do WhatsApp numa lista mista ('wa:')
+  function withLabelCreate(sel, { kinds = ['crm'], waPrefix = '' } = {}) {
+    const mixed = kinds.length > 1;
+    const opts = kinds.map((k) => {
+      const o = el('option', 'lc-opt', mixed ? (k === 'wa' ? '+ Nova etiqueta do WhatsApp…' : '+ Nova etiqueta CRM…') : '+ Nova etiqueta…');
+      o.value = `${LC_NEW}${k}`;
+      o.dataset.kind = k;
+      return o;
+    });
+    sel.prepend(...opts);
+    const waOpt = opts.find((o) => o.dataset.kind === 'wa');
+    const markWa = (info) => {
+      if (!waOpt || !info || info.available) return;
+      waOpt.disabled = true;
+      waOpt.textContent = `${waOpt.textContent} (indisponível: ${lcWaReason(info)})`;
+    };
+    if (waOpt) { if (lcWa.info) markWa(lcWa.info); else lcWaInfo().then(markWa).catch(() => {}); }
+    let prev = sel.value;
+    // a lista pode ter sido escolhida pelo código depois de montada: guarda o valor de verdade ao focar
+    sel.addEventListener('focus', () => { if (!sel.value.startsWith(LC_NEW)) prev = sel.value; });
+    sel.addEventListener('change', (e) => {
+      if (!sel.value.startsWith(LC_NEW)) { prev = sel.value; return; }
+      e.stopImmediatePropagation(); // quem usa a lista nunca vê a opção "+ Nova etiqueta…"
+      const kind = sel.value.slice(LC_NEW.length);
+      sel.value = prev;
+      lcOpenForm(sel, kind, waPrefix);
+    }, true);
+    return sel;
+  }
+  function lcPick(sel, value) {
+    if (![...sel.options].some((o) => o.value === value)) {
+      const l = value.startsWith('wa:') || sel.dataset.lcKind === 'wa' ? waLabelById(value.replace(/^wa:/, '')) : state.labels.find((x) => x.id === value);
+      const o = el('option', null, l ? l.name : value);
+      o.value = value;
+      sel.append(o);
+    }
+    sel.value = value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  function lcOpenForm(sel, kind, waPrefix) {
+    const old = sel.parentElement && sel.parentElement.querySelector(':scope > .lc-form');
+    if (old) old.remove();
+    const wa = kind === 'wa';
+    const form = el('div', 'lc-form');
+    form.setAttribute('role', 'group');
+    form.setAttribute('aria-label', wa ? 'Nova etiqueta do WhatsApp' : 'Nova etiqueta CRM');
+    const name = el('input', 'ed-title lc-name');
+    name.type = 'text';
+    name.maxLength = wa ? 25 : 40;
+    name.placeholder = wa ? 'Nome da etiqueta do WhatsApp' : 'Nome da etiqueta CRM';
+    name.setAttribute('aria-label', 'Nome da nova etiqueta');
+    const colors = el('div', 'lc-colors');
+    const msg = el('div', 'lc-msg');
+    let color = null;
+    const paint = (list) => {
+      colors.textContent = '';
+      color = list[wa ? 0 : 5] || list[0] || null;
+      list.forEach((c) => {
+        const b = el('button', 'lc-color');
+        b.type = 'button';
+        b.style.background = c;
+        b.setAttribute('aria-label', `Cor ${c}`);
+        b.setAttribute('aria-pressed', String(c === color));
+        b.addEventListener('click', () => { color = c; colors.querySelectorAll('.lc-color').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); });
+        colors.append(b);
+      });
+    };
+    let busy = false;
+    const close = () => { form.remove(); try { sel.focus(); } catch { /* */ } };
+    const create = async () => {
+      if (busy) return;
+      const nm = name.value.replace(/\s+/g, ' ').trim();
+      if (!nm) { msg.textContent = 'Escreva o nome.'; msg.className = 'lc-msg err'; name.focus(); return; }
+      const val = (id) => (wa ? `${waPrefix}${id}` : id);
+      const existing = wa ? waLabelByName(nm) : state.labels.find((l) => l.name.toLowerCase() === nm.toLowerCase());
+      if (existing) {
+        toast(`Já existe a etiqueta “${existing.name}”: escolhi a existente.`, 'info', 4000);
+        form.remove();
+        lcPick(sel, val(existing.id));
+        return;
+      }
+      busy = true;
+      go.disabled = true;
+      go.textContent = 'Criando…';
+      msg.textContent = '';
+      try {
+        let id;
+        if (wa) {
+          const r = await waRequest('labelCreate', { name: nm, color }, { timeout: 15000 });
+          if (r && Array.isArray(r.labels)) state.waLabels = r.labels;
+          id = r && r.label && r.label.id;
+          try { renderBar(); renderWaTab(); } catch { /* ainda iniciando */ }
+        } else {
+          try { id = (await call('createLabel', { name: nm, color: color || '#3b82f6' })).id; } catch (e) {
+            await syncLabels().catch(() => {});
+            const again = state.labels.find((l) => l.name.toLowerCase() === nm.toLowerCase());
+            if (!again) throw e;
+            toast(`Já existe a etiqueta “${again.name}”: escolhi a existente.`, 'info', 4000);
+            form.remove();
+            lcPick(sel, again.id);
+            return;
+          }
+          await syncLabels().catch(() => {});
+        }
+        if (!id) throw new Error('a etiqueta não voltou');
+        toast(`Etiqueta “${nm}” criada${wa ? ' no WhatsApp' : ''} e escolhida.`, 'success', 3000);
+        form.remove();
+        lcPick(sel, val(String(id)));
+      } catch (e) {
+        busy = false;
+        go.disabled = false;
+        go.textContent = 'Criar';
+        msg.textContent = `Não consegui criar: ${e.message}`;
+        msg.className = 'lc-msg err';
+      }
+    };
+    const go = fbtn('ed-mini primary lc-create', 'Criar', create);
+    const no = fbtn('ed-mini lc-cancel', 'Cancelar', close);
+    name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); create(); } if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } });
+    form.append(name, colors, go, no, msg);
+    sel.after(form);
+    if (wa) {
+      paint(lcWa.info && lcWa.info.colors && lcWa.info.colors.length ? lcWa.info.colors : []);
+      lcWaInfo().then((info) => {
+        if (!form.isConnected) return;
+        if (info && info.available === false) { msg.textContent = `Não dá para criar etiqueta do WhatsApp aqui: ${lcWaReason(info)}.`; msg.className = 'lc-msg err'; go.disabled = true; return; }
+        if (info && info.colors && info.colors.length && !colors.children.length) paint(info.colors);
+      }).catch(() => {});
+    } else paint(LC_PALETTE);
+    setTimeout(() => name.focus(), 0);
+  }
+
+  function labelSelect(value, { empty = null, aria, create = true } = {}) {
     const sel = el('select', 'ed-cat');
     if (aria) sel.setAttribute('aria-label', aria);
     if (empty !== null) {
@@ -7409,7 +7568,7 @@
       o.selected = true;
       sel.append(o);
     }
-    return sel;
+    return create ? withLabelCreate(sel, { kinds: ['crm'] }) : sel; // 2.13.4
   }
 
   function itemSelect(value, { empty = 'Escolha uma mensagem…', aria } = {}) {
@@ -9301,6 +9460,7 @@
     if (f.trigger_label_source === 'whatsapp' && f.trigger_wa_label_id && !waList.some((l) => l.id === f.trigger_wa_label_id)) opt(wa, cur, `WhatsApp: etiqueta ${f.trigger_wa_label_id} (não encontrada)`);
     if (!waList.length) opt(wa, 'wa:', Array.isArray(state.waLabels) ? 'WhatsApp: nenhuma etiqueta nesta conta' : 'WhatsApp: carregando…', true);
     sel.append(crm, wa);
+    withLabelCreate(sel, { kinds: v25 && waList.length ? ['crm', 'wa'] : ['crm'], waPrefix: 'wa:' }); // 2.13.4
     sel.addEventListener('change', () => { setTrigger(f, sel.value); renderFollows(); });
     wrap.append(sel);
     if (pending) {
@@ -9340,7 +9500,8 @@
       o.selected = true;
       sel.append(o);
     }
-    return sel;
+    sel.dataset.lcKind = 'wa';
+    return Array.isArray(state.waLabels) ? withLabelCreate(sel, { kinds: ['wa'] }) : sel; // 2.13.4 (carregando: depois)
   }
 
   function renderAutomationEditor() {
@@ -10241,6 +10402,7 @@
     return i;
   }
 
+  const lcWaSel = (sel) => { sel.dataset.lcKind = 'wa'; return withLabelCreate(sel, { kinds: ['wa'] }); }; // 2.13.4
   function selectOf(options, value, aria, onChange) {
     const sel = el('select', 'ed-cat');
     sel.setAttribute('aria-label', aria);
@@ -10633,11 +10795,11 @@
       const wa = Array.isArray(state.waLabels) ? state.waLabels : null;
       if (wa) {
         const g = el('div', 'vd-grid2');
-        g.append(schedField('Etiqueta do WhatsApp ao registrar', selectOf([['', 'Nenhuma'], ...wa.map((l) => [l.id, l.name])], a.waAdd, 'Etiqueta do WhatsApp ao registrar', (v) => { a.waAdd = v; keep(); })),
-          schedField('Tirar das etiquetas do WhatsApp', selectOf([['', 'Nenhuma'], [SALE_WA_ALL, 'Todas (menos a que vai colocar)'], ...wa.filter((l) => !isNoSendWa(l)).map((l) => [l.id, l.name])], a.waRemove, 'Tirar das etiquetas do WhatsApp', (v) => { a.waRemove = v; keep(); })));
+        g.append(schedField('Etiqueta do WhatsApp ao registrar', lcWaSel(selectOf([['', 'Nenhuma'], ...wa.map((l) => [l.id, l.name])], a.waAdd, 'Etiqueta do WhatsApp ao registrar', (v) => { a.waAdd = v; keep(); }))),
+          schedField('Tirar das etiquetas do WhatsApp', lcWaSel(selectOf([['', 'Nenhuma'], [SALE_WA_ALL, 'Todas (menos a que vai colocar)'], ...wa.filter((l) => !isNoSendWa(l)).map((l) => [l.id, l.name])], a.waRemove, 'Tirar das etiquetas do WhatsApp', (v) => { a.waRemove = v; keep(); }))));
         body.append(g);
       } else body.append(el('div', 'ed-note', 'Etiquetas do WhatsApp indisponíveis agora (o WhatsApp ainda não respondeu): nada será mexido nelas.'));
-      body.append(schedField('Etiqueta CRM ao registrar', selectOf([['', 'Não mexe'], ...state.labels.map((l) => [l.id, l.name])], a.crmAdd, 'Etiqueta CRM ao registrar', (v) => { a.crmAdd = v; keep(); })));
+      body.append(schedField('Etiqueta CRM ao registrar', withLabelCreate(selectOf([['', 'Não mexe'], ...state.labels.map((l) => [l.id, l.name])], a.crmAdd, 'Etiqueta CRM ao registrar', (v) => { a.crmAdd = v; keep(); }))));
       body.append(el('div', 'ed-varhint', 'A etiqueta "Não enviar" nunca é retirada. Nada disso é feito se a venda não for gravada.'));
     }));
 

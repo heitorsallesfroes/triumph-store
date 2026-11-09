@@ -799,6 +799,23 @@ guardada.
 
 ## O que mudou
 
+### 2.13.4 — criar etiqueta na hora, em qualquer lista
+- Toda lista de etiquetas tem **"+ Nova etiqueta…"** como primeira opção. Isso vale para o editor de mensagem rápida
+  ("Ao enviar, colocar/tirar"), a venda 💰, os disparos e seus filtros, as automações antigas (gatilho, condições,
+  ações, variantes), as sequências e o construtor visual. Escolhendo a opção, abre ali mesmo um campo pequeno
+  (nome + cor) com "Criar" e "Cancelar". A etiqueta criada é salva e já fica escolhida naquela lista, sem sair da tela
+  e sem perder o que estava sendo editado.
+- Vale para etiqueta **CRM** e para etiqueta do **WhatsApp**. A do WhatsApp é criada no WhatsApp Business pela WA-JS
+  4.7.2 (`labels.addNewLabel`, com as cores da paleta do WhatsApp). Em conta que não é Business, a opção aparece como
+  "indisponível: só no WhatsApp Business". A lista do gatilho mista oferece as duas opções.
+- Nome repetido (sem diferenciar maiúsculas): avisa "Já existe" e escolhe a existente.
+- Uma função só (`withLabelCreate`) reaproveitada em todas as listas. O atalho 🏷️ do cabeçalho já tinha
+  "+ Nova etiqueta". A cópia de etiqueta do WhatsApp para CRM já tinha "Criar nova com o mesmo nome".
+- Correção da 2.13.2: uma régua com ⏳ "até o próximo dia às…" voltava com "Escolha quanto tempo esperar" ao ser
+  reaberta e salva de novo.
+- Testes: `tests/labelcreate.test.cjs` e o Chrome real, seção 17 (cria uma CRM com cor, trata o nome repetido, cria
+  uma do WhatsApp pela ponte simulada e salva).
+
 ### 2.13.3 — nome da conversa a partir da venda
 - Ao registrar a venda pelo 💰, ou ao ligar uma venda do ERP à conversa (📈, inclusive a ligação automática pelo
   telefone), o "Nome para mensagens" da conversa vira o **primeiro nome do cliente da venda** ("MARIA DA SILVA" →

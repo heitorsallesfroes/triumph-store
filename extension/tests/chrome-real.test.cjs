@@ -975,7 +975,7 @@ async function main() {
     // 2.12.4: "Ao registrar a venda": padrões, e as escolhas deste teste (tirar todas as etiquetas do WhatsApp menos a
     // que vai colocar; etiqueta CRM VIP)
     const afterUi = await q(`const f = sh.querySelector('.vd-form'); const v = (a) => { const e = f.querySelector('[aria-label="' + a + '"]'); return e ? (e.type === 'checkbox' ? e.checked : e.value) : null; };
-      const remOpts = [...f.querySelector('select[aria-label="Tirar das etiquetas do WhatsApp"]').options].map((o) => o.textContent);
+      const remOpts = [...f.querySelector('select[aria-label="Tirar das etiquetas do WhatsApp"]').options].filter((o) => !o.classList.contains('lc-opt')).map((o) => o.textContent); // (2.13.4: sem o "+ Nova etiqueta…")
       return { leave: v('Tirar de todas as automações e sequências'), waAdd: v('Etiqueta do WhatsApp ao registrar'), waRemove: v('Tirar das etiquetas do WhatsApp'), crm: v('Etiqueta CRM ao registrar'), remOpts, old: f.textContent.includes('Tirar das automações e pôr na etiqueta CRM') };`);
     check('💰 "Ao registrar a venda": tirar de todas as automações e sequências (marcado), etiqueta do WhatsApp CLIENTE, tirar nenhuma, CRM "não mexe"; "Não enviar" não aparece para tirar',
       afterUi.leave === true && afterUi.waAdd === '1' && afterUi.waRemove === '' && afterUi.crm === '' && !afterUi.old
@@ -1408,6 +1408,58 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console nos horários', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 17. "+ Nova etiqueta…" em qualquer lista (2.13.4): na caixa 🏷 do construtor, criar CRM ali mesmo (fica
+    // escolhida, o que estava sendo editado continua), nome repetido escolhe a existente, e criar do WhatsApp
+    // (ponte simulada: labels.addNewLabel); salvar grava a etiqueta escolhida
+    fake.on = true;
+    fake.generic = true;
+    await pg(`window.__waCreates = []; const L = [{ id: '1', name: 'CLIENTE', hexColor: '#22c55e', count: 3 }, { id: '3', name: 'Não enviar', hexColor: '#ef4444', count: 1 }];
+      window.__fakeBridge = { labels: () => L.slice(), labelColors: { available: true, reason: null, colors: ['#ff9dff', '#d3a91d', '#6d7cce'] },
+        labelCreate: (p) => { window.__waCreates.push(p); const l = { id: String(10 + window.__waCreates.length), name: p.name, hexColor: p.color || '#ff9dff', count: 0 }; L.push(l); return { label: l, labels: L.slice() }; } }; return true;`);
+    await q(`sh.querySelector('[data-sec="follows"]').click(); await wait(400); return true;`);
+    await waitFor(`return !!sh.querySelector('.fw-new');`, 15000);
+    await q(`const c = [...sh.querySelectorAll('.fw-card')].find((x) => (x.querySelector('.fw-name') || {}).textContent === 'Régua de follow-up'); c.querySelector('.fw-edit').click(); await wait(400); return true;`);
+    await waitFor(`return !!sh.querySelector('.vb .vb-box.vb-etiqueta');`, 10000);
+    await q(`sh.querySelector('.vb .vb-box.vb-etiqueta').click(); await wait(250); return true;`);
+    const pickNew = (aria, kind) => q(`const s = sh.querySelector('.vb .vb-side select[aria-label="${aria}"]'); s.value = '__nova_etiqueta__${kind}'; s.dispatchEvent(new Event('change', { bubbles: true })); await wait(200);
+      return { first: s.options[0].textContent, value: s.value, form: !!sh.querySelector('.vb .vb-side .lc-form') };`);
+    const crmOpen = await pickNew('Etiqueta', 'crm');
+    await q(`const f = sh.querySelector('.vb .vb-side .lc-form'); f.querySelector('.lc-name').value = 'Atacado VIP'; f.querySelectorAll('.lc-color')[3].click(); f.querySelector('.lc-create').click(); return true;`);
+    const crmDone = await waitFor(`const s = sh.querySelector('.vb .vb-side select[aria-label="Etiqueta"]'); return !!s && !sh.querySelector('.vb .vb-side .lc-form') && /Atacado VIP/.test(s.selectedOptions[0].textContent);`, 10000);
+    const newCrm = (fake.db.wa_labels || []).find((l) => l.name === 'Atacado VIP');
+    const crmBox = await q(`return sh.querySelector('.vb .vb-box.vb-etiqueta .vb-btxt').textContent;`);
+    check('"+ Nova etiqueta…" é a 1ª opção; escolhendo abre nome + cor ali mesmo (a lista não muda); "Criar" grava a CRM com a cor e ela já fica escolhida na caixa',
+      crmOpen.first === '+ Nova etiqueta…' && crmOpen.form && !crmOpen.value.startsWith('__nova') && crmDone && !!newCrm && newCrm.color === '#22c55e' && /Atacado VIP/.test(crmBox),
+      JSON.stringify({ crmOpen, crmDone, newCrm, crmBox }));
+    await pickNew('Etiqueta', 'crm');
+    await q(`const f = sh.querySelector('.vb .vb-side .lc-form'); f.querySelector('.lc-name').value = 'atacado vip'; f.querySelector('.lc-create').click(); await wait(400); return true;`);
+    const dup = await q(`const s = sh.querySelector('.vb .vb-side select[aria-label="Etiqueta"]'); return { sel: s.selectedOptions[0].textContent, toast: (sh.querySelector('.toast') || {}).textContent || '' };`);
+    check('nome repetido ("atacado vip"): avisa "Já existe" e escolhe a existente (não cria outra)',
+      /Atacado VIP/.test(dup.sel) && /Já existe/.test(dup.toast) && (fake.db.wa_labels || []).filter((l) => /atacado vip/i.test(l.name)).length === 1, JSON.stringify(dup));
+    // WhatsApp
+    await q(`const s = sh.querySelector('.vb .vb-side select[aria-label="Etiqueta: tipo"]'); s.value = 'whatsapp'; s.dispatchEvent(new Event('change', { bubbles: true })); await wait(300); return true;`);
+    const waReady = await waitFor(`const s = sh.querySelector('.vb .vb-side select[aria-label="Etiqueta"]'); if (s && s.options[0] && s.options[0].classList.contains('lc-opt')) return true;
+      const b = sh.querySelector('.vb .vb-box.vb-etiqueta'); if (b) b.click(); return false;`, 20000);
+    const waOpen = await pickNew('Etiqueta', 'wa');
+    await new Promise((r) => setTimeout(r, 500));
+    await q(`const f = sh.querySelector('.vb .vb-side .lc-form'); f.querySelector('.lc-name').value = 'Promo Natal'; f.querySelectorAll('.lc-color')[1].click(); f.querySelector('.lc-create').click(); return true;`);
+    const waDone = await waitFor(`const s = sh.querySelector('.vb .vb-side select[aria-label="Etiqueta"]'); return !!s && !sh.querySelector('.vb .vb-side .lc-form') && s.selectedOptions[0].textContent === 'Promo Natal';`, 10000);
+    const waCreates = await pg('return window.__waCreates;');
+    check('lista do WhatsApp: "+ Nova etiqueta…" cria no WhatsApp Business (cor da paleta do WhatsApp) e já escolhe',
+      waReady && waOpen.form && waDone && JSON.stringify(waCreates) === JSON.stringify([{ name: 'Promo Natal', color: '#d3a91d' }]), JSON.stringify({ waReady, waOpen, waDone, waCreates }));
+    await q(`sh.querySelector('.vb .vb-save').click(); return true;`);
+    const saved17 = await waitFor(`return !sh.querySelector('.vb') && !!sh.querySelector('.fw-new');`, 15000);
+    const vbMsg17 = saved17 ? '' : await q(`return [...sh.querySelectorAll('.vb .ed-msg, .vb .vb-msg, .vb .vb-err, .vb .vb-problems')].map((x) => x.textContent).join(' | ');`);
+    const r17 = (fake.db.wa_automations || []).find((a) => a.name === 'Régua de follow-up') || {};
+    const et17 = [];
+    (function walk(l) { (l || []).forEach((n) => { if (n.type === 'etiqueta') et17.push(n); walk(n.yes); walk(n.no); }); })((r17.sequence || {}).steps);
+    check('salvar grava a etiqueta criada ali mesmo (o resto da régua continua igual)',
+      saved17 && et17.some((n) => n.source === 'whatsapp' && n.wa_label_id === '11') && JSON.stringify(r17.sequence.schedule || {}).includes('personalizado'), JSON.stringify({ saved17, vbMsg17, et17 }));
+    await pg('window.__fakeBridge = null; return true;');
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console ao criar etiquetas', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

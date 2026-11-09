@@ -1038,7 +1038,7 @@
         if (!(Number(n.amount) >= 1)) out.push({ node: n.id, msg: 'Escolha quanto tempo esperar.' });
         if (depth > SEQ_MAX_DEPTH) out.push({ node: n.id, msg: `No máximo ${SEQ_MAX_DEPTH} esperas uma dentro da outra.` });
       }
-      if (n.type === 'pausa' && !(Number(n.amount) >= 1)) out.push({ node: n.id, msg: 'Escolha quanto tempo esperar.' }); // 2.13.0
+      if (n.type === 'pausa' && n.mode !== 'ate' && !(Number(n.amount) >= 1)) out.push({ node: n.id, msg: 'Escolha quanto tempo esperar.' }); // 2.13.0 (2.13.4: no "até o próximo dia às" vale a hora)
       if (n.type === 'ir') {
         if (!n.to || !idx.has(n.to)) out.push({ node: n.id, msg: 'Escolha para onde continuar.' });
         else {
