@@ -1340,6 +1340,88 @@
   }
   try { if (wpp && typeof wpp.on === 'function') wpp.on('chat.new_message', onNewMessage); } catch { /* sem eventos: sem Contato automático */ }
 
+  // ── 2.15.0: mensagens apagadas e editadas (cópia SÓ LOCAL: deleted-store.js, IndexedDB deste computador) ──
+  // Ao receber (chat.new_message): guarda a cópia da mensagem do cliente (conversa individual; nunca as suas, nunca
+  // grupo) e, se a mídia tem até 5 MB, o arquivo (chat.downloadMedia). chat.msg_revoke / chat.msg_edited só marcam a
+  // cópia que já existe. Sem os eventos, sem a biblioteca ou com erro: não faz nada (sem erro).
+  const Del = window.TspDeleted || null;
+  const del = { on: true, store: null, changes: [] };
+  try { if (Del) del.store = Del.createStore(Del.idbBackend()); } catch { del.store = null; }
+  const DEL_CHANGES_MAX = 200;
+  const pushDelChange = (m, change) => {
+    if (!m) return;
+    del.changes.push({ id: m.id, chatId: m.chatId, change });
+    if (del.changes.length > DEL_CHANGES_MAX) del.changes.splice(0, del.changes.length - DEL_CHANGES_MAX);
+  };
+  async function delFetchMedia(id) {
+    if (!del.on || !del.store || !wpp || !wpp.chat || typeof wpp.chat.downloadMedia !== 'function') return;
+    try {
+      const blob = await withTimeout(Promise.resolve().then(() => wpp.chat.downloadMedia(id)), 60000);
+      if (blob && typeof blob.size === 'number') await del.store.attachMedia(id, blob);
+    } catch { /* sem o arquivo: fica a miniatura e o texto */ }
+  }
+  function onDelNew(m) {
+    try {
+      if (!del.on || !del.store) return;
+      const rec = Del.recordOf(m);
+      if (!rec) return;
+      del.store.save(rec).then(() => { if (Del.wantsMedia(rec)) setTimeout(() => { delFetchMedia(rec.id); }, 1500); }).catch(() => {});
+    } catch { /* mensagem estranha: ignora */ }
+  }
+  const keyStr = (k) => String(safe(() => k._serialized, '') || (k && typeof k.toString === 'function' && k.toString !== Object.prototype.toString ? k.toString() : '') || (typeof k === 'string' ? k : ''));
+  function onDelRevoke(e) {
+    try {
+      if (!del.on || !del.store || !e) return;
+      if (e.type !== 'revoke' && e.type !== 'sender_revoke') return; // admin_revoke = grupo
+      const chat = keyStr(e.from);
+      if (!/^[0-9]+@(c\.us|lid)$/.test(chat)) return;
+      const ref = keyStr(e.refId);
+      const raw = String(safe(() => e.refId.id, '') || '');
+      const ids = [...new Set([ref, raw ? `false_${chat}_${raw}` : ''].filter((x) => /^false_/.test(x)))]; // só as do cliente
+      (async () => {
+        for (const id of ids) { const m = await del.store.markRevoked(id); if (m) { pushDelChange(m, 'apagada'); return; } }
+      })().catch(() => {});
+    } catch { /* evento estranho: ignora */ }
+  }
+  function onDelEdited(e) {
+    try {
+      if (!del.on || !del.store || !e) return;
+      const id = typeof e.id === 'string' ? e.id : keyStr(e.id);
+      if (!/^false_[0-9]+@(c\.us|lid)_/.test(id)) return;
+      const text = safe(() => e.msg.body, '') || safe(() => e.msg.caption, '') || '';
+      del.store.markEdited(id, typeof text === 'string' ? text : '').then((m) => { if (m && m.editedAt) pushDelChange(m, 'editada'); }).catch(() => {});
+    } catch { /* evento estranho: ignora */ }
+  }
+  try {
+    if (wpp && typeof wpp.on === 'function' && del.store) {
+      wpp.on('chat.new_message', onDelNew);
+      wpp.on('chat.msg_revoke', onDelRevoke);
+      wpp.on('chat.msg_edited', onDelEdited);
+    }
+  } catch { /* sem eventos: não guarda nada */ }
+  const delCheckId = (id) => { if (typeof id !== 'string' || !/^false_[0-9]+@(c\.us|lid)_[A-Za-z0-9]{1,80}$/.test(id)) throw new BridgeError('invalid_request', 'Mensagem inválida', 'before-send'); return id; };
+  async function deletedConfig(p) { del.on = !(p && p.on === false); return { on: del.on, available: !!del.store }; }
+  async function deletedList(p) {
+    const chatId = p && p.chatId;
+    if (typeof chatId !== 'string' || !/^[0-9]+@(c\.us|lid)$/.test(chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida', 'before-send');
+    if (!del.store) return { available: false, items: [] };
+    try { return { available: true, items: (await del.store.changedInChat(chatId)).slice(0, 200) }; } catch { return { available: false, items: [] }; }
+  }
+  async function deletedGet(p) {
+    const id = delCheckId(p && p.id);
+    const r = del.store ? await del.store.get(id).catch(() => null) : null;
+    if (!r) throw new BridgeError('not_found', 'Cópia não encontrada (mais de 7 dias ou apagada)', 'before-send');
+    let media = null;
+    try { media = r.media && typeof r.media.arrayBuffer === 'function' ? await r.media.arrayBuffer() : null; } catch { media = null; }
+    return { ...Del.meta(r), body: r.body, caption: r.caption, mimetype: r.mimetype, filename: r.filename, duration: r.duration, thumb: r.thumb,
+      edits: (r.edits || []).map((x) => ({ body: x.body, at: x.at })), media, mime: (r.media && r.media.type) || r.mimetype || '' };
+  }
+  async function deletedClear() {
+    del.changes.splice(0, del.changes.length);
+    if (del.store) await del.store.clear();
+    return { cleared: true };
+  }
+
   // ── 2.6.2: atribuição do anúncio (wa_ad_attribution) ──
   // Fila só na memória desta aba; o painel (aba com a trava) grava no banco. scan: na abertura do WhatsApp,
   // varre as conversas já carregadas (a mensagem mais antiga com ctwaContext de cada uma).
@@ -1514,6 +1596,11 @@
     contactSearch: (payload) => contactSearch(payload),
     convEvents: (payload) => convEvents(payload), // 2.10.0
     activityScan: (payload) => activityScan(payload), // 2.12.8
+    deletedConfig: (payload) => deletedConfig(payload), // 2.15.0
+    deletedChanges: () => del.changes.splice(0, del.changes.length),
+    deletedList: (payload) => deletedList(payload),
+    deletedGet: (payload) => deletedGet(payload),
+    deletedClear: () => deletedClear(),
   };
 
   function reply(request, ok, data, error) {

@@ -421,6 +421,7 @@
       hdrHidePanel: false, // 2.12.1: com os atalhos ligados, esconder do painel Venda / Compra / Automação
       density: 'confortavel',
       keepListPos: true, // 2.10.3: manter a posição da lista de conversas ao enviar
+      keepDeleted: true, // 2.15.0: guardar (só neste computador) as mensagens recebidas para ver as apagadas/editadas
       collapsed: { conv: false, etiquetas: false, nome: false, busca: false },
       topH: null,
     };
@@ -439,6 +440,7 @@
       hdrHidePanel: typeof r.hdrHidePanel === 'boolean' ? r.hdrHidePanel : d.hdrHidePanel,
       density: r.density === 'compacta' ? 'compacta' : 'confortavel',
       keepListPos: typeof r.keepListPos === 'boolean' ? r.keepListPos : d.keepListPos,
+      keepDeleted: typeof r.keepDeleted === 'boolean' ? r.keepDeleted : d.keepDeleted,
       collapsed: bools(r.collapsed, PANEL_BLOCKS, d.collapsed),
       topH: r.topH != null && Number.isFinite(h) ? Math.round(Math.min(2000, Math.max(48, h))) : null,
     };

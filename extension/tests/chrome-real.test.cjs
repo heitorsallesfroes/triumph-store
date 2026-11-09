@@ -1635,6 +1635,69 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console ao abrir conversa', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 20. ver mensagens apagadas e editadas (2.15.0): a ponte simulada tem 1 áudio apagado e 1 texto editado na conversa;
+    // selos junto das mensagens, janela com o original (áudio tocável; original + editada), lista no painel da conversa,
+    // "Guardar mensagens apagadas" e "Apagar tudo agora" no Personalizar
+    const DCH = '5521966667777@c.us';
+    const DID = `false_${DCH}_3EB0APAGADA1`;
+    const EID = `false_${DCH}_3EB0EDITADA1`;
+    const delNowS = Math.floor(Date.now() / 1000);
+    const DITEMS = [
+      { id: DID, chatId: DCH, type: 'ptt', kind: 'audio', t: delNowS - 60, revokedAt: Date.now(), editedAt: null, preview: '', hasMedia: true, hasThumb: false, edits: 0 },
+      { id: EID, chatId: DCH, type: 'chat', kind: 'texto', t: delNowS - 120, revokedAt: null, editedAt: Date.now(), preview: 'oi, quero o tênis 42', hasMedia: false, hasThumb: false, edits: 1 },
+    ];
+    await pg(`window.__delCfg = []; window.__delCleared = 0; const IT = ${JSON.stringify(DITEMS)};
+      window.__fakeBridge = { activeChat: { kind: 'individual', chatId: ${JSON.stringify(DCH)} }, chatPhone: { phone: '5521966667777', name: 'Dora Apaga', via: 'numero' }, recentChats: [], labels: [], chatLabels: { labelIds: [] },
+        deletedConfig: (p) => { window.__delCfg.push(p.on); return { on: p.on, available: true }; },
+        deletedChanges: [],
+        deletedList: (p) => ({ available: true, items: p.chatId === ${JSON.stringify(DCH)} ? IT : [] }),
+        deletedGet: (p) => p.id === ${JSON.stringify(DID)}
+          ? { ...IT[0], body: '', caption: '', mimetype: 'audio/ogg; codecs=opus', filename: '', duration: 3, thumb: null, edits: [], media: new Uint8Array([79, 103, 103, 83, 0, 2]).buffer, mime: 'audio/ogg' }
+          : { ...IT[1], body: 'oi, quero o tênis 42', caption: '', mimetype: '', filename: '', duration: 0, thumb: null, edits: [{ body: 'oi, quero o tênis 43', at: Date.now() }], media: null, mime: '' },
+        deletedClear: () => { window.__delCleared++; return { cleared: true }; } };
+      return true;`);
+    await openChat('Cliente 7');
+    await pg(`document.querySelector('#main .msgs').innerHTML = '<div data-id="${DID}"><span>🚫 Esta mensagem foi apagada</span></div><div data-id="${EID}"><span>oi, quero o tênis 43</span> <span>Editada</span></div>'; return true;`);
+    await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(200); sh.querySelector('[data-sec="mensagens"]').click(); await wait(300); return true;`);
+    const dBadgesOk = await (async () => { for (const stop = Date.now() + 20000; Date.now() < stop;) { if (await pg(`return document.querySelectorAll('#main .tsp-del-badge').length === 2;`)) return true; await sleep(300); } return false; })();
+    const dBadges = await pg(`return [...document.querySelectorAll('#main .tsp-del-badge')].map((b) => [b.closest('[data-id]').dataset.id.slice(-12), b.textContent]);`);
+    check('na conversa: selo "👁 Ver mensagem apagada" junto da apagada e "✏️ Ver original" junto da editada',
+      dBadgesOk && JSON.stringify(dBadges) === JSON.stringify([['3EB0APAGADA1', '👁 Ver mensagem apagada'], ['3EB0EDITADA1', '✏️ Ver original']]), JSON.stringify({ dBadgesOk, dBadges }));
+    const dCdel = await q(`const b = sh.querySelector('.cdel'); return { hidden: b.hidden, vis: getComputedStyle(b).display, t: (b.querySelector('.cdel-t') || {}).textContent, rows: [...b.querySelectorAll('.cdel-row')].map((r) => r.textContent) };`);
+    check('painel da conversa: lista "Mensagens apagadas/editadas nesta conversa (últimos 7 dias)" com as duas',
+      !dCdel.hidden && dCdel.vis !== 'none' && dCdel.t === 'Mensagens apagadas/editadas nesta conversa (últimos 7 dias)' && dCdel.rows.length === 2 && /^👁 apagada/.test(dCdel.rows[0]) && /🎤 áudio$/.test(dCdel.rows[0]) && /^✏️ editada/.test(dCdel.rows[1]) && /oi, quero o tênis 42$/.test(dCdel.rows[1]), JSON.stringify(dCdel));
+    const dView = (js) => pg(`const h = document.getElementById('tsp-del-view'); const v = h && h.shadowRoot; ${js}`);
+    await pg(`document.querySelector('#main .tsp-del-badge').click(); await wait(500); return true;`);
+    const dv1 = await dView(`if (!v) return null; const a = v.querySelector('audio'); return { head: v.querySelector('.h span').textContent, audio: !!a && a.controls && /^blob:/.test(a.src), note: [...v.querySelectorAll('.note')].map((n) => n.textContent) };`);
+    await dView(`v.querySelector('.x').click(); await wait(150); return true;`);
+    const dClosed = await pg(`return !document.getElementById('tsp-del-view');`);
+    check('"👁 Ver mensagem apagada" abre a janela com o original: áudio tocável (controles, arquivo local) e fecha no ✕',
+      dv1 && /^👁 Mensagem apagada pelo cliente/.test(dv1.head) && dv1.audio && dv1.note.includes('Cópia guardada só neste computador por 7 dias.') && dClosed, JSON.stringify({ dv1, dClosed }));
+    await q(`[...sh.querySelectorAll('.cdel-row')][1].click(); await wait(500); return true;`);
+    const dv2 = await dView(`if (!v) return null; return { head: v.querySelector('.h span').textContent, lbl: [...v.querySelectorAll('.lbl')].map((x) => x.textContent), txt: [...v.querySelectorAll('.txt')].map((x) => x.textContent), ed: [...v.querySelectorAll('.ed')].map((x) => x.textContent.split('  · ')[0]) };`);
+    await pg(`document.getElementById('tsp-del-view').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(150); return true;`);
+    check('"✏️ Ver original" (pela lista do painel): mostra o original e o texto editado; Esc fecha',
+      dv2 && /^✏️ Mensagem editada pelo cliente/.test(dv2.head) && JSON.stringify(dv2.lbl) === JSON.stringify(['Original', 'Editada para']) && JSON.stringify(dv2.txt) === JSON.stringify(['oi, quero o tênis 42'])
+      && JSON.stringify(dv2.ed) === JSON.stringify(['oi, quero o tênis 43']) && await pg(`return !document.getElementById('tsp-del-view');`), JSON.stringify(dv2));
+    // Personalizar: desligar/ligar manda a configuração para a ponte; "Apagar tudo agora" apaga e tira os selos
+    await czOpen();
+    const dCz = await q(`const l = [...sh.querySelectorAll('.cz-opt')].find((x) => x.textContent === 'Guardar mensagens apagadas'); return { found: !!l, checked: !!(l && l.querySelector('input').checked), btn: !!sh.querySelector('.cz .cz-delclear') };`);
+    await czClickLabel('Guardar mensagens apagadas');
+    await sleep(400);
+    const dCfgOff = await pg('return window.__delCfg.slice();');
+    await czClickLabel('Guardar mensagens apagadas');
+    await sleep(400);
+    await czOpen();
+    await q(`sh.querySelector('.cz .cz-delclear').click(); await wait(500); return true;`);
+    const dAfter = await pg(`return { cfg: window.__delCfg.slice(), cleared: window.__delCleared, dBadges: document.querySelectorAll('#main .tsp-del-badge').length };`);
+    const cdelGone = await q(`return sh.querySelector('.cdel').hidden;`);
+    await czClose();
+    check('Personalizar: "Guardar mensagens apagadas" ligado por padrão (desligar/ligar avisa a ponte) e "Apagar tudo agora" apaga e tira selos e lista',
+      dCz.found && dCz.checked && dCz.btn && dCfgOff[dCfgOff.length - 1] === false && dAfter.cfg[dAfter.cfg.length - 1] === true && dAfter.cleared === 1 && dAfter.dBadges === 0 && cdelGone,
+      JSON.stringify({ dCz, dCfgOff, dAfter, cdelGone }));
+    await pg(`window.__fakeBridge = null; document.querySelector('#main .msgs').innerHTML = ''; return true;`);
+    check('nenhum erro no console nas mensagens apagadas', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

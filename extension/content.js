@@ -1637,6 +1637,14 @@
       .cseq[hidden] { display: none; }
       .cseq-line { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); flex-wrap: wrap; padding: var(--s-1) var(--s-2); border-radius: var(--r-md); background: var(--accent-soft); font-size: var(--fs-1); font-weight: 600; }
       .cseq-btns { display: inline-flex; gap: var(--s-1); }
+      .cdel { margin: 0 var(--s-3) var(--s-2); display: flex; flex-direction: column; gap: 2px; padding: var(--s-1) var(--s-2); border-radius: var(--r-md); background: var(--bg2); font-size: var(--fs-1); }
+      .cdel[hidden] { display: none; }
+      .cdel-t { font-weight: 700; color: var(--muted); }
+      .cdel-row { display: flex; gap: 6px; align-items: baseline; text-align: left; border: 0; background: none; padding: 2px 0; font: inherit; color: inherit; cursor: pointer; min-width: 0; }
+      .cdel-row:hover .cdel-p { text-decoration: underline; }
+      .cdel-k { font-weight: 600; flex: none; }
+      .cdel-p { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+      .panel.sec-labels .cdel, .panel.sec-sched .cdel, .panel.sec-disparos .cdel, .panel.sec-vendas .cdel, .panel.sec-midias .cdel, .panel.editing .cdel, .panel.diag .cdel { display: none; }
       .panel.sec-labels .cseq, .panel.sec-sched .cseq, .panel.sec-disparos .cseq, .panel.sec-vendas .cseq, .panel.sec-midias .cseq, .panel.editing .cseq, .panel.diag .cseq { display: none; }
       /* ═══ 2.11.0: automações mais simples ═══ */
       .fw-models { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s-2); }
@@ -1886,6 +1894,7 @@
         <div class="cname" role="group" aria-label="Nome para mensagens" hidden></div>
         <div class="cbuy" hidden>💰 compra enviada</div>
         <div class="cseq" hidden></div>
+        <div class="cdel" hidden></div>
         <div class="name-note" hidden title="Sem telefone visível nesta conversa: a etiqueta fica ligada ao nome do contato. Se o nome mudar, ela não acompanha.">identificado só pelo nome</div>
         <div class="tools">
           <div class="trow">
@@ -2515,6 +2524,7 @@
     chatNames.current = chatId;
     loadChatBought(chatId);
     try { loadChatSequence(chatId).catch(() => {}); } catch { /* 2.12.0: ainda iniciando */ }
+    try { delLoadChat(chatId).catch(() => {}); } catch { /* 2.15.0: ainda iniciando */ }
     cn.editing = false;
     renderNameRow();
     if (!chatId) return;
@@ -3381,6 +3391,7 @@
     E2P.PANEL_CONV_BTNS.forEach((k) => panel.classList.toggle(`cz-no-${k}`, !pz.prefs.convBtns[k]));
     panel.classList.toggle('cz-hdr-hide', pz.prefs.hdr.on && pz.prefs.hdrHidePanel); // 2.12.1
     try { hdrTick(); hdrApplyVisibility(); } catch { /* 2.12.1: atalhos ainda iniciando */ }
+    try { delSyncConfig(); } catch { /* 2.15.0: ainda iniciando */ }
     Object.keys(CS_BLOCKS).forEach(csDecorate);
     applyTopH();
     renderFilters();
@@ -3452,6 +3463,14 @@
     box.append(czGroup('Atalhos no cabeçalho da conversa', 'Ícones no topo da conversa do WhatsApp, à esquerda do vídeo/ligação (só em conversa individual). Se o WhatsApp mudar e o cabeçalho não for achado, os botões continuam no painel.', [hdrOn, ...hdrItems, hdrHide]));
     box.append(czGroup('Lista de conversas', 'Depois de você enviar, se a lista do WhatsApp pular para o topo, ela volta para onde você estava. Se você rolar ou clicar na lista, não mexe.', [
       czCheck('Manter a posição da lista de conversas ao enviar', p.keepListPos, (v) => set((n) => { n.keepListPos = v; })),
+    ]));
+    // 2.15.0: cópia local das mensagens recebidas (para ver as apagadas/editadas)
+    const delClear = el('button', 'bbtn cz-delclear', 'Apagar tudo agora');
+    delClear.type = 'button';
+    delClear.addEventListener('click', () => clearDeletedCopies(delClear));
+    box.append(czGroup('Mensagens apagadas e editadas', 'Guarda só neste computador (nunca no servidor) uma cópia das mensagens que o cliente manda em conversa individual: texto, miniatura e arquivos de até 5 MB. Some sozinha depois de 7 dias (no máximo 200 MB). Quando o cliente apagar ou editar, aparece "👁 Ver mensagem apagada" ou "✏️ Ver original" na conversa.', [
+      czCheck('Guardar mensagens apagadas', p.keepDeleted, (v) => set((n) => { n.keepDeleted = v; })),
+      delClear,
     ]));
     const dg = el('div', 'cz-grp');
     dg.append(el('div', 'cz-t', 'Densidade'));
@@ -8779,6 +8798,167 @@
     await loadChatSequence(cseq.chatId);
   }
   setInterval(() => { if (state.open && cseq.chatId && cseq.runs.length && !document.hidden) renderChatSequence(); }, 30 * 1000); // "faltam…" anda sozinho
+
+  // ── 2.15.0: ver mensagens apagadas e editadas ──
+  // A cópia fica SÓ neste computador (deleted-store.js, pela ponte; nunca no Supabase). Aqui: liga/desliga, lista da
+  // conversa aberta (painel), selo "👁 Ver mensagem apagada" / "✏️ Ver original" junto da mensagem no WhatsApp e a
+  // janela que mostra o conteúdo original. Se a ponte não tiver os eventos ou falhar, nada aparece (sem erro).
+  const dl = { chatId: null, items: [], busy: false, cfg: null, view: null };
+  const DEL_KIND = { texto: 'texto', imagem: '📷 imagem', video: '🎥 vídeo', audio: '🎤 áudio', documento: '📄 documento', figurinha: 'figurinha', localizacao: '📍 localização', contato: '👤 contato' };
+  function delSyncConfig() {
+    const on = !!pz.prefs.keepDeleted;
+    if (dl.cfg === on) return;
+    dl.cfg = on;
+    waRequest('deletedConfig', { on }, { timeout: 5000 }).catch(() => { dl.cfg = null; });
+  }
+  async function delLoadChat(chatId) {
+    dl.chatId = chatId || null;
+    if (!dl.chatId) { dl.items = []; renderDeleted(); return; }
+    let res = null;
+    try { res = await waRequest('deletedList', { chatId: dl.chatId }, { timeout: 8000 }); } catch { res = null; }
+    if (dl.chatId !== chatId) return;
+    dl.items = res && Array.isArray(res.items) ? res.items : [];
+    renderDeleted();
+    decorateDeleted();
+  }
+  async function delTick() {
+    if (dl.busy || document.hidden) return;
+    dl.busy = true;
+    try {
+      delSyncConfig();
+      let ch = [];
+      try { ch = await waRequest('deletedChanges', {}, { timeout: 5000 }); } catch { ch = []; }
+      if (Array.isArray(ch) && dl.chatId && ch.some((x) => x && x.chatId === dl.chatId)) await delLoadChat(dl.chatId);
+      else decorateDeleted();
+    } finally { dl.busy = false; }
+  }
+  setInterval(() => { delTick().catch(() => {}); }, 3000);
+  const delLabel = (m) => (m.revokedAt ? '👁 apagada' : '✏️ editada');
+  function renderDeleted() {
+    const box = shadow.querySelector('.cdel');
+    if (!box) return;
+    box.textContent = '';
+    box.hidden = !dl.items.length;
+    if (!dl.items.length) return;
+    box.append(el('div', 'cdel-t', 'Mensagens apagadas/editadas nesta conversa (últimos 7 dias)'));
+    dl.items.slice(0, 20).forEach((m) => {
+      const b = el('button', 'cdel-row');
+      b.type = 'button';
+      b.title = m.revokedAt ? 'Ver mensagem apagada' : 'Ver original';
+      b.append(el('span', 'cdel-k', `${delLabel(m)} · ${formatChatDate(m.t)}`), el('span', 'cdel-p', m.preview || DEL_KIND[m.kind] || 'mensagem'));
+      b.addEventListener('click', () => openDeletedView(m.id));
+      box.append(b);
+    });
+    if (dl.items.length > 20) box.append(el('div', 'cdel-t', `+ ${dl.items.length - 20} mais antigas`));
+  }
+  // Selo junto da mensagem no WhatsApp (a linha da mensagem tem data-id = id da mensagem)
+  function decorateDeleted() {
+    const main = document.getElementById('main');
+    if (!main) return;
+    const want = new Map(dl.items.map((m) => [m.id, m]));
+    main.querySelectorAll('.tsp-del-badge').forEach((b) => { if (!want.has(b.dataset.id)) b.remove(); });
+    want.forEach((m, id) => {
+      let row = null;
+      try { row = main.querySelector(`[data-id="${CSS.escape(id)}"]`); } catch { row = null; }
+      if (!row) return;
+      const label = m.revokedAt ? '👁 Ver mensagem apagada' : '✏️ Ver original';
+      const old = row.querySelector('.tsp-del-badge');
+      if (old) { if (old.textContent !== label) old.textContent = label; return; }
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tsp-del-badge';
+      b.dataset.id = id;
+      b.textContent = label;
+      b.title = 'Cópia guardada só neste computador';
+      b.style.cssText = 'display:inline-block;margin:2px 8px 4px;padding:2px 10px;border:1px solid #b9c3c9;border-radius:12px;background:#fff;color:#111b21;font:600 12px/1.6 Segoe UI,Helvetica,Arial,sans-serif;cursor:pointer;position:relative;z-index:1';
+      b.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); openDeletedView(id); });
+      b.addEventListener('mousedown', (e) => e.stopPropagation());
+      row.append(b);
+    });
+  }
+  async function clearDeletedCopies(btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await waRequest('deletedClear', {}, { timeout: 15000 });
+      dl.items = [];
+      renderDeleted();
+      decorateDeleted();
+      toast('Cópias das mensagens apagadas: tudo apagado deste computador.', 'ok', 4000);
+    } catch {
+      toast('Não consegui apagar agora: espere o WhatsApp carregar e tente de novo.', 'error', 6000);
+    } finally { if (btn) btn.disabled = false; }
+  }
+  // Janela com o conteúdo original (fora do painel: funciona com o painel fechado)
+  function closeDeletedView() {
+    const v = dl.view;
+    dl.view = null;
+    if (!v) return;
+    v.urls.forEach((u) => { try { URL.revokeObjectURL(u); } catch { /* ok */ } });
+    v.host.remove();
+  }
+  async function openDeletedView(id) {
+    closeDeletedView();
+    let r = null;
+    try { r = await waRequest('deletedGet', { id }, { timeout: 15000 }); } catch { r = null; }
+    if (!r) { toast('Não achei a cópia dessa mensagem (mais de 7 dias ou apagada).', 'warn', 5000); return; }
+    const host = document.createElement('div');
+    host.id = 'tsp-del-view';
+    host.style.cssText = 'position:fixed;inset:0;z-index:2147483647';
+    const sh = host.attachShadow({ mode: 'open' });
+    const v = { host, urls: [] };
+    dl.view = v;
+    const st = document.createElement('style');
+    st.textContent = `.bg{position:fixed;inset:0;background:rgba(11,20,26,.55);display:flex;align-items:center;justify-content:center;padding:16px;font:14px/1.45 Segoe UI,Helvetica,Arial,sans-serif;color:#111b21}
+      .box{background:#fff;border-radius:12px;max-width:min(520px,100%);max-height:90vh;overflow:auto;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.3);display:flex;flex-direction:column;gap:10px}
+      .h{display:flex;justify-content:space-between;gap:12px;align-items:center;font-weight:700}
+      .x{border:0;background:#f0f2f5;border-radius:50%;width:32px;height:32px;font-size:16px;cursor:pointer}
+      .lbl{font-size:12px;font-weight:700;color:#667781;text-transform:uppercase}
+      .txt{white-space:pre-wrap;word-break:break-word;background:#f0f2f5;border-radius:8px;padding:8px 10px}
+      .ed{white-space:pre-wrap;word-break:break-word;border-left:3px solid #d9fdd3;padding:4px 8px}
+      img,video{max-width:100%;max-height:60vh;border-radius:8px;display:block}
+      audio{width:100%}.note{font-size:12px;color:#667781}a{color:#027eb5}`;
+    const bg = document.createElement('div');
+    bg.className = 'bg';
+    const box = document.createElement('div');
+    box.className = 'box';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', r.revokedAt ? 'Mensagem apagada' : 'Mensagem original');
+    const mk = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+    const h = mk('div', 'h');
+    const when = r.t ? new Date(r.t * 1000) : null;
+    h.append(mk('span', null, `${r.revokedAt ? '👁 Mensagem apagada pelo cliente' : '✏️ Mensagem editada pelo cliente'}${when ? ` · ${schedWhen(when.toISOString())}` : ''}`));
+    const x = mk('button', 'x', '✕');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Fechar');
+    x.addEventListener('click', closeDeletedView);
+    h.append(x);
+    box.append(h, mk('div', 'lbl', r.edits && r.edits.length ? 'Original' : 'Conteúdo'));
+    const url = r.media instanceof ArrayBuffer && r.media.byteLength ? URL.createObjectURL(new Blob([r.media], { type: r.mime || 'application/octet-stream' })) : null;
+    if (url) v.urls.push(url);
+    const thumb = typeof r.thumb === 'string' && /^data:image\/jpeg;base64,/.test(r.thumb) ? r.thumb : null;
+    const img = (src) => { const i = mk('img'); i.src = src; i.alt = 'imagem original'; return i; };
+    if (r.kind === 'imagem' || r.kind === 'figurinha') { if (url || thumb) box.append(img(url || thumb)); }
+    else if (r.kind === 'video') { if (url) { const vd = mk('video'); vd.controls = true; vd.src = url; box.append(vd); } else if (thumb) box.append(img(thumb)); }
+    else if (r.kind === 'audio') { if (url) { const a = mk('audio'); a.controls = true; a.src = url; box.append(a); } }
+    else if (r.kind === 'documento') {
+      if (url) { const a = mk('a', null, `⬇ ${r.filename || 'documento'}`); a.href = url; a.download = r.filename || 'documento'; box.append(a); } else if (thumb) box.append(img(thumb));
+      if (!url) box.append(mk('div', 'txt', `📄 ${r.filename || 'documento'}`));
+    }
+    const text = r.body || r.caption || '';
+    if (text) box.append(mk('div', 'txt', text));
+    if (['imagem', 'video', 'audio', 'documento', 'figurinha'].includes(r.kind) && !url) box.append(mk('div', 'note', 'O arquivo não foi guardado (acima de 5 MB ou não deu para baixar)' + (thumb ? '; esta é a miniatura.' : '.')));
+    if (r.edits && r.edits.length) {
+      box.append(mk('div', 'lbl', r.edits.length > 1 ? 'Editada para (em ordem)' : 'Editada para'));
+      r.edits.forEach((e) => box.append(mk('div', 'ed', `${e.body || '(vazio)'}${e.at ? `  · ${schedWhen(new Date(e.at).toISOString())}` : ''}`)));
+    }
+    box.append(mk('div', 'note', 'Cópia guardada só neste computador por 7 dias.'));
+    bg.append(box);
+    bg.addEventListener('click', (e) => { if (e.target === bg) closeDeletedView(); });
+    host.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeDeletedView(); } });
+    sh.append(st, bg);
+    document.body.append(host);
+    x.focus();
+  }
 
   // ══ 2.13.0: CONSTRUTOR VISUAL de automações (em cascata) ══════════════════════════════════════════
   // Tela ampla por cima do WhatsApp Web (fundo claro): COMEÇA → caixas ligadas por linhas, de cima para baixo; "+"

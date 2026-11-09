@@ -799,6 +799,25 @@ guardada.
 
 ## O que mudou
 
+### 2.15.0 — ver mensagens apagadas e editadas
+- A extensão guarda **só neste computador** (IndexedDB `tsp-deleted-msgs` do navegador; **nunca** no Supabase nem em
+  outro servidor) uma cópia de cada mensagem **recebida do cliente** em conversa individual: o texto e, para mídia, a
+  miniatura e, se tiver até 5 MB, o arquivo. Suas mensagens e grupos nunca são guardados.
+- Cópias com mais de 7 dias somem sozinhas. Limite total de 200 MB: passando disso, apaga as mais antigas primeiro.
+- Quando o cliente **apaga** (evento `chat.msg_revoke` da WA-JS), aparece junto do "Mensagem apagada" o selo
+  **"👁 Ver mensagem apagada"**: abre uma janela com o conteúdo original (texto, imagem, áudio tocável, vídeo, documento
+  para baixar). Quando ele **edita** (`chat.msg_edited`): selo **"✏️ Ver original"** (mostra o original e cada edição).
+- Painel da conversa: lista **"Mensagens apagadas/editadas nesta conversa (últimos 7 dias)"**; clique para abrir.
+- Personalizar → "Mensagens apagadas e editadas": **"Guardar mensagens apagadas"** (ligado por padrão; desligado, para
+  de guardar) e **"Apagar tudo agora"**.
+- Só funciona para mensagens que chegaram com o WhatsApp Web aberto e a extensão ligada. Se o evento não existir ou
+  falhar, não aparece nada (sem erro). O arquivo da WA-JS não mudou.
+- Arquivo novo: `deleted-store.js` (mundo MAIN, carregado antes de `wa-bridge.js`).
+- Testes: `tests/deleted.test.cjs` (o armazenamento de verdade em memória: só recebidas, nada de grupo, 7 dias, 200 MB,
+  5 MB, original mantido na edição; a ponte de verdade com eventos falsos de receber/apagar/editar, desligado, apagar
+  tudo e sem eventos) e Chrome real (selos, janela com áudio tocável, original + editada, lista no painel,
+  Personalizar).
+
 ### 2.14.4 — abrir qualquer conversa com um clique
 - Acabou o aviso "Conversa não carregada no WhatsApp Web. Procure pelo nome…". Agora uma função única abre a conversa:
   1. pelo id, se ela está carregada na lista (inclusive arquivada);
