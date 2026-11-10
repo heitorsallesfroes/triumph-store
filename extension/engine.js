@@ -1621,20 +1621,55 @@
   }
   // 2.16.0: entrar no meio da régua (manual), na caixa ✉ ENVIAR sendNode: a pessoa entra "como se tivesse entrado há
   // X tempo" (o tempo daquela etapa), então ela sai assim que estiver no horário de envio e as próximas seguem a
-  // contagem normal. mode 'agora' = manda assim que o horário da automação deixar; 'marcado' = passa pela espera
-  // logo antes (vale o "até o próximo dia às HH:MM" e o "enviar só entre" dela; o prazo já venceu).
+  // contagem normal. mode 'agora' = manda assim que o horário da automação deixar.
+  // 2.16.6: mode 'marcado' ("Esperar o tempo da régua") = entra como se tivesse ACABADO de receber o follow anterior
+  // (entrada recuada o tempo dele) e passa pelas esperas entre os dois a partir de agora: o follow sai no intervalo
+  // da régua (e no horário/faixa); respondeu nesse meio → ✅ como sempre. No Follow 1: começa do começo, agora.
   // → { node, entered_at, wait_started_at, skip_wait, branches } (para o percurso) ou null se a caixa não existe
   function seqManualPlan(def, sendNode, { now, mode = 'agora' } = {}) {
     const first = seqFirstOf(def && def.steps);
     if (!sendNode) return { node: first, entered_at: now, wait_started_at: null, skip_wait: false, branches: [] };
-    const step = seqSendSteps(def).find((s) => s.node === sendNode);
-    if (!step) return null;
-    const entered = now - step.at * MIN_MS;
+    const steps = seqSendSteps(def);
+    const i = steps.findIndex((s) => s.node === sendNode);
+    if (i < 0) return null;
+    const step = steps[i];
     const br = (ids) => ids.map((node) => ({ node, result: 'nao', at: now }));
-    const pw = mode === 'marcado' && step.prevWait ? (seqIndex(def).get(step.prevWait) || {}).node : null;
-    if (pw && pw.type === 'esperar') return { node: pw.id, entered_at: entered, wait_started_at: now, skip_wait: true, branches: br(step.branches.slice(0, -1)) };
-    if (pw && pw.type === 'pausa') return { node: pw.id, entered_at: entered, wait_started_at: pw.mode === 'ate' ? now : now - seqNeedMs(pw), skip_wait: false, branches: br(step.branches) };
-    return { node: step.afterNode, entered_at: entered, wait_started_at: null, skip_wait: false, branches: br(step.branches) };
+    if (mode === 'marcado') {
+      const prev = steps[i - 1];
+      if (!prev) return { node: first, entered_at: now, wait_started_at: null, skip_wait: false, branches: [] };
+      const idx = seqIndex(def);
+      const node = seqNextOf(idx, prev.node);
+      if (!node) return null;
+      const nx = (idx.get(node) || {}).node || {};
+      const isWait = nx.type === 'esperar' || nx.type === 'pausa';
+      return { node, entered_at: now - prev.at * MIN_MS, wait_started_at: isWait ? now : null, skip_wait: false, branches: br(prev.branches) };
+    }
+    return { node: step.afterNode, entered_at: now - step.at * MIN_MS, wait_started_at: null, skip_wait: false, branches: br(step.branches) };
+  }
+  // 2.16.6: previsão de quando a caixa sendNode sai para um percurso novo (plan de seqManualPlan), se a pessoa não
+  // responder: roda o próprio seqStep no tempo (esperas, "desde a entrada", faixas e horário da automação).
+  // → ms ou null (não chega lá / sem horário possível)
+  function seqManualForecast(def, plan, sendNode, { now, settings = null } = {}) {
+    if (!plan || !plan.node) return null;
+    const run = { node: plan.node, entered_at: plan.entered_at, wait_started_at: plan.wait_started_at, last_sent_at: null, skip_wait: !!plan.skip_wait, branches: [...(plan.branches || [])] };
+    const chat = { loaded: true, last: null };
+    let t = now;
+    for (let g = 0; g < 200; g++) {
+      const r = seqStep({ def, run, chat, replies: [], now: t, settings });
+      run.branches = [...run.branches, ...(r.branches || [])];
+      run.skip_wait = false;
+      if (r.status === 'end') return null;
+      if (r.status === 'progress') { run.node = r.node; run.wait_started_at = r.waitStart; continue; }
+      if (r.status === 'wait') { if (r.dueAt == null) return null; t = Math.max(t + 1, r.dueAt); continue; }
+      const ok = nextSendTime(t, def, r.window, settings);
+      if (ok == null) return null;
+      if (r.sendNode === sendNode) return ok;
+      t = ok;
+      const nx = r.node ? (seqIndex(def).get(r.node) || {}).node : null;
+      Object.assign(run, { node: r.node, last_sent_at: t, wait_started_at: nx && (nx.type === 'esperar' || nx.type === 'pausa') ? t : null });
+      if (!r.node) return null;
+    }
+    return null;
   }
   // minutos → { amount, unit } (o maior que dá certo)
   const seqAmountOf = (min) => {
@@ -2946,7 +2981,7 @@
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
     WIZARDS, wizardToAutomations, wizardSentence, wizardMinutes, businessMinutesPerDay, validateAutomationDraft,
-    seqIndex, seqStep, seqValidate, seqFromEntry, sinceEntryText, seqEntryOrderWarnings, seqSendSteps, seqManualPlan, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
+    seqIndex, seqStep, seqValidate, seqFromEntry, sinceEntryText, seqEntryOrderWarnings, seqSendSteps, seqManualPlan, seqManualForecast, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
     seqNormalize, seqInsert, seqRemove, seqExcluded, seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
     itemUsageLines, itemInUse, friendlyDeleteError, // 2.13.1
     scheduleSpec, nextSendTime, pausaUntil, scheduleDailyLimit, scheduleOutsideCommon, scheduleSentence, scheduleProblems, untilText, windowText, daysText, // 2.13.2

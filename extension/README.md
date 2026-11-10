@@ -799,6 +799,25 @@ guardada.
 
 ## O que mudou
 
+### 2.16.6 — "Adicionar à automação" no meio da régua: "Esperar o tempo da régua"
+- Em **Começar no: Follow N**, as opções agora são **Enviar esta etapa agora** (como antes: entra como se tivesse
+  entrado há o tempo desta etapa e sai assim que estiver no horário de envio) e **Esperar o tempo da régua** (antes
+  "No horário marcado", que saía na hora porque o prazo já tinha vencido).
+- **Esperar o tempo da régua** = a pessoa entra como se tivesse **acabado de receber o follow anterior**: a entrada é
+  recuada o tempo dele e o percurso começa logo depois dele, com as esperas entre os dois contando a partir de agora.
+  Ex.: Follow 1 = 3 h, Follow 2 = dia 1 → entrada recuada 3 h; o Follow 2 sai ao completar "dia 1 desde a entrada"
+  (≈ 21 h depois de agora), respeitando o horário de envio e a faixa da espera. Terça 10:24 → vence quarta 07:24 →
+  sai quarta 09:00 (horário 09:00–18:00).
+  - No **Follow 1**: começa do começo, agora (espera o tempo da 1ª espera inteiro). "Começar no: o começo" não mudou.
+  - Se a pessoa **responder** durante essa espera → ✅ (sai da régua), como sempre. Mensagens de antes de entrar não
+    contam.
+- Antes de clicar em **Adicionar**, aparece a previsão **"Follow N sai: qua 11/11 às 09:00"** (`seqManualForecast` no
+  `engine.js`: roda o próprio `seqStep` no tempo, com esperas, "desde a entrada", faixas e horário da automação; a
+  mesma conta do Simular). Muda na hora ao trocar a etapa ou a opção.
+- Sem migration (o percurso usa os campos de sempre: `node`, `created_at` = entrada, `wait_started_at`, `branches`).
+- Testes: `entrystep.test.cjs` (Follow 2 "Esperar o tempo da régua" terça 10:24 → quarta 09:00; "Enviar agora" na
+  hora; respondeu → ✅; Follow 1; Follow 4 na faixa) e `chrome-real.test.cjs` (opções, previsão e percurso criado).
+
 ### 2.16.5 — troca de id do WhatsApp (c.us ↔ lid) não conta mais como entrada na etiqueta
 - **O problema (9/11)**: o WhatsApp trocou o id de ~511 conversas que já estavam na etiqueta "Cliente" (de `@lid` para
   `@c.us` e de volta). A ponte viu o `@c.us` "entrando" e gravou como entrada confirmada; a régua "Avaliação Google"

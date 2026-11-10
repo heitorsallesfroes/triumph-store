@@ -2,7 +2,7 @@
 // - ⏳/❓ "até X depois que a pessoa ENTROU": contagem desde a entrada (atraso de uma etapa não empurra as próximas),
 //   já passou → segue na hora, respondeu → sai pelo ✅
 // - Simular: "dia X" e data/hora; horário fora da janela espera o próximo horário permitido
-// - entrada manual no Follow 4 ("como se tivesse entrado há 5 dias"), "enviar agora" e "no horário marcado"
+// - entrada manual no Follow 4 ("como se tivesse entrado há 5 dias"), "enviar agora" e (2.16.6) "esperar o tempo da régua"
 // - motor: o lead entra com a hora da 1ª mensagem; servidor: created_at = entrada, "Tirar das outras réguas"
 'use strict';
 const fs = require('fs');
@@ -134,21 +134,69 @@ test('entrada manual no Follow 4 ("enviar agora"): entra como se fosse há 5 dia
   assert.deepStrictEqual(plain(E.seqManualPlan(def, null, { now })), { node: 's1', entered_at: now, wait_started_at: null, skip_wait: false, branches: [] });
 });
 
-test('entrada manual no Follow 4 "no horário marcado": passa pela espera de antes (faixa "enviar só entre" dela vale)', () => {
+test('2.16.6 Follow 4 "Esperar o tempo da régua": entra como se tivesse acabado de receber o Follow 3 (dia 3) → Follow 4 sai 2 dias depois, na faixa da espera', () => {
   const def = regua();
   E.seqIndex(def).get('w3').node.send_window = { start: '14:00', end: '18:00' };
   const now = new Date(2026, 11, 9, 10, 0).getTime(); // quarta 10:00
   const plan = E.seqManualPlan(def, 's4', { now, mode: 'marcado' });
-  assert.deepStrictEqual(plain([plan.node, plan.skip_wait, plan.wait_started_at, plan.branches.map((b) => b.node)]), ['w3', true, now, ['w1', 'w2']]);
-  const r = E.seqStep({ def, run: plan, chat: chat(now - DAY), replies: [], now: now + MIN });
-  assert.deepStrictEqual(plain([r.status, r.sendNode, r.window, r.branches.map((b) => [b.node, b.result])]), ['run', 's4', { start: '14:00', end: '18:00' }, [['w3', 'nao']]]);
-  assert.strictEqual(E.nextSendTime(now + MIN, def, r.window, {}), new Date(2026, 11, 9, 14, 0).getTime());
-  // ⏳ antes da etapa: o prazo já venceu (começou "há X")
+  assert.deepStrictEqual(plain([plan.node, plan.skip_wait, plan.wait_started_at, plan.entered_at, plan.branches.map((b) => b.node)]), ['w3', false, now, now - 3 * DAY, ['w1', 'w2']]);
+  const r = E.seqStep({ def, run: plan, chat: chat(now - DAY), replies: [], now: now + DAY });
+  assert.deepStrictEqual([r.status, r.dueAt], ['wait', now + 2 * DAY]);
+  const go = E.seqStep({ def, run: plan, chat: chat(now - DAY), replies: [], now: now + 2 * DAY });
+  assert.deepStrictEqual(plain([go.status, go.sendNode, go.window]), ['run', 's4', { start: '14:00', end: '18:00' }]);
+  assert.strictEqual(E.seqManualForecast(def, plan, 's4', { now, settings: {} }), new Date(2026, 11, 11, 14, 0).getTime());
+  // ⏳ sem caminhos antes da etapa: o tempo dela inteiro a partir de agora
   const def2 = { start: { type: 'manual' }, steps: [{ id: 's1', type: 'enviar', item_id: ITEMS[0] }, { id: 'p', type: 'pausa', amount: 2, unit: 'dias' }, { id: 's2', type: 'enviar', item_id: ITEMS[1] }, { id: 'f', type: 'fim' }] };
   const p2 = E.seqManualPlan(def2, 's2', { now, mode: 'marcado' });
-  assert.deepStrictEqual([p2.node, p2.wait_started_at, p2.entered_at], ['p', now - 2 * DAY, now - 2 * DAY]);
-  const r2 = E.seqStep({ def: def2, run: p2, chat: null, replies: [], now });
-  assert.deepStrictEqual([r2.status, r2.sendNode], ['run', 's2']);
+  assert.deepStrictEqual([p2.node, p2.wait_started_at, p2.entered_at], ['p', now, now]);
+  assert.strictEqual(E.seqStep({ def: def2, run: p2, chat: null, replies: [], now: now + DAY }).status, 'wait');
+  assert.strictEqual(E.seqManualForecast(def2, p2, 's2', { now, settings: {} }), now + 2 * DAY);
+});
+
+// régua do pedido: ⏳ 3 h desde a entrada → Follow 1 → ❓ até dia 1 desde a entrada → Follow 2; seg–sex 09:00–18:00
+const WEEK = [[], ...[1, 2, 3, 4, 5].map(() => [{ start: '09:00', end: '18:00' }]), []];
+const regua3h = () => ({ start: { type: 'manual' }, business: false, schedule: { mode: 'personalizado', week: WEEK }, steps: [
+  { id: 'p1', type: 'pausa', amount: 3, unit: 'horas', from: 'entrada' },
+  { id: 's1', type: 'enviar', item_id: ITEMS[0] },
+  { id: 'w1', type: 'esperar', amount: 1, unit: 'dias', from: 'entrada', yes: [{ id: 'fy', type: 'fim' }], no: [{ id: 's2', type: 'enviar', item_id: ITEMS[1] }, { id: 'fn', type: 'fim' }] },
+] });
+const TUE = new Date(2026, 10, 10, 10, 24).getTime(); // terça 10:24
+
+test('2.16.6 Follow 2 "Esperar o tempo da régua" terça 10:24 → entrada recuada 3 h, vence quarta 07:24 e sai quarta 09:00 (horário)', () => {
+  const def = regua3h();
+  const plan = E.seqManualPlan(def, 's2', { now: TUE, mode: 'marcado' });
+  assert.deepStrictEqual(plain([plan.node, plan.entered_at, plan.wait_started_at, plan.skip_wait, plan.branches]), ['w1', TUE - 3 * HOUR, TUE, false, []]);
+  const r = E.seqStep({ def, run: plan, chat: chat(TUE - DAY), replies: [], now: TUE + MIN });
+  assert.deepStrictEqual([r.status, r.dueAt], ['wait', new Date(2026, 10, 11, 7, 24).getTime()]);
+  assert.strictEqual(E.seqManualForecast(def, plan, 's2', { now: TUE, settings: {} }), new Date(2026, 10, 11, 9, 0).getTime());
+});
+
+test('2.16.6 "Enviar esta etapa agora" continua saindo na hora (terça 10:24 está no horário)', () => {
+  const def = regua3h();
+  const plan = E.seqManualPlan(def, 's2', { now: TUE, mode: 'agora' });
+  assert.strictEqual(plan.entered_at, TUE - DAY);
+  const r = E.seqStep({ def, run: plan, chat: chat(TUE - DAY), replies: [], now: TUE });
+  assert.deepStrictEqual([r.status, r.sendNode], ['run', 's2']);
+  assert.strictEqual(E.seqManualForecast(def, plan, 's2', { now: TUE, settings: {} }), TUE);
+});
+
+test('2.16.6 durante a espera da régua, se a pessoa responder → ✅ (sai da régua)', () => {
+  const def = regua3h();
+  const plan = E.seqManualPlan(def, 's2', { now: TUE, mode: 'marcado' });
+  // uma mensagem dela de ANTES de entrar não conta
+  const old = E.seqStep({ def, run: plan, chat: chat(TUE - HOUR, false), replies: [TUE - HOUR], now: TUE + HOUR });
+  assert.strictEqual(old.status, 'wait');
+  const r = E.seqStep({ def, run: plan, chat: chat(TUE + HOUR, false), replies: [TUE + HOUR], now: TUE + 2 * HOUR });
+  assert.deepStrictEqual([r.status, r.outcome], ['end', 'respondeu']);
+});
+
+test('2.16.6 Follow 1 "Esperar o tempo da régua": começa do começo, agora (a 1ª espera inteira: 3 h → 13:24)', () => {
+  const def = regua3h();
+  const plan = E.seqManualPlan(def, 's1', { now: TUE, mode: 'marcado' });
+  assert.deepStrictEqual(plain([plan.node, plan.entered_at, plan.wait_started_at, plan.branches]), ['p1', TUE, null, []]);
+  assert.strictEqual(E.seqManualForecast(def, plan, 's1', { now: TUE, settings: {} }), TUE + 3 * HOUR);
+  // "começo" não muda
+  assert.deepStrictEqual(plain(E.seqManualPlan(def, null, { now: TUE, mode: 'marcado' })), { node: 'p1', entered_at: TUE, wait_started_at: null, skip_wait: false, branches: [] });
 });
 
 // ── motor: o lead entra com a hora da 1ª mensagem ──

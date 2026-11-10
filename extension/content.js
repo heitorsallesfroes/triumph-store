@@ -10947,20 +10947,37 @@
       sec.append(r2);
       if (c.step) {
         const st = steps.find((s) => s.node === c.step);
-        sec.append(el('div', 'crm-intro', `Entra como se tivesse entrado há ${st ? E.simAtText(st.at).replace(/^\+/, '') : '?'} (o tempo desta etapa): ela sai assim que estiver no horário de envio e as próximas seguem a contagem normal.`));
+        const mode = c.mode || 'agora';
+        const iSt = steps.indexOf(st);
+        const prevSt = iSt > 0 ? steps[iSt - 1] : null;
+        // 2.16.6: "Esperar o tempo da régua" = como se tivesse acabado de receber o follow anterior
+        sec.append(el('div', 'crm-intro', mode === 'agora'
+          ? `Entra como se tivesse entrado há ${st ? E.simAtText(st.at).replace(/^\+/, '') : '?'} (o tempo desta etapa): ela sai assim que estiver no horário de envio e as próximas seguem a contagem normal.`
+          : prevSt
+            ? `Entra como se tivesse acabado de receber o Follow ${prevSt.n}: o Follow ${st.n} sai no intervalo da régua (e no horário de envio). Se responder antes, sai da régua (✅).`
+            : 'Entra agora no começo: espera o tempo da 1ª espera inteiro a partir de agora (e o horário de envio).'));
         const modes = el('div', 'vb-radios fl-add-mode');
-        [['agora', 'Enviar esta etapa agora'], ['marcado', 'No horário marcado']].forEach(([v, txt]) => {
+        [['agora', 'Enviar esta etapa agora'], ['marcado', 'Esperar o tempo da régua']].forEach(([v, txt]) => {
           const l = el('label', 'sc-radio');
           const r0 = el('input');
           r0.type = 'radio';
           r0.name = 'fl-add-mode';
           r0.value = v;
-          r0.checked = (c.mode || 'agora') === v;
-          r0.addEventListener('change', () => { c.mode = v; });
+          r0.checked = mode === v;
+          r0.addEventListener('change', () => { c.mode = v; renderFollows(); });
           l.append(r0, ` ${txt}`);
           modes.append(l);
         });
         sec.append(modes);
+        // 2.16.6: previsão (mesma conta do Simular: esperas, horário da automação e faixas)
+        if (st) {
+          const def = E.seqNormalize(picked.sequence);
+          const now = Date.now();
+          const when = E.seqManualForecast(def, E.seqManualPlan(def, c.step, { now, mode }), c.step, { now, settings: motor.state.settings });
+          const wtxt = when == null ? 'sem horário possível (confira os horários)'
+            : new Date(when).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '').replace(',', '') + ' às ' + new Date(when).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          sec.append(el('div', 'crm-sub fl-add-when', `Follow ${st.n} sai: ${wtxt}`));
+        }
         // 4. pode estar em várias réguas; entrando por etapa, pergunta (marcado por padrão)
         const lo = el('label', 'sc-radio');
         const cb = el('input');
@@ -10996,7 +11013,7 @@
         if (!plan || !plan.node) throw new Error('essa etapa não existe mais');
         const r = await call('seqManualEnter', { automationId: a.id, chatId: open.chatId, plan, leaveOthers: !!c.step && c.leaveOthers !== false });
         const st = c.step ? E.seqSendSteps(E.seqNormalize(a.sequence)).find((s) => s.node === c.step) : null;
-        c.msg = `Conversa adicionada a "${a.name}"${st ? ` no Follow ${st.n}${(c.mode || 'agora') === 'agora' ? ' (sai assim que estiver no horário de envio)' : ' (no horário marcado)'}` : ' a partir de agora'}.${r && r.left ? ` Saiu de ${r.left} outra${r.left === 1 ? '' : 's'} régua${r.left === 1 ? '' : 's'}.` : ''}${a.active ? '' : ' A automação está desligada: ligue para rodar.'}`;
+        c.msg = `Conversa adicionada a "${a.name}"${st ? ` no Follow ${st.n}${(c.mode || 'agora') === 'agora' ? ' (sai assim que estiver no horário de envio)' : ' (espera o tempo da régua)'}` : ' a partir de agora'}.${r && r.left ? ` Saiu de ${r.left} outra${r.left === 1 ? '' : 's'} régua${r.left === 1 ? '' : 's'}.` : ''}${a.active ? '' : ' A automação está desligada: ligue para rodar.'}`;
         c.err = false;
       } catch (e) {
         c.msg = `Não consegui adicionar: ${e.message}`;

@@ -1857,9 +1857,10 @@ async function main() {
       !!steps22 && steps22.length === 7 && steps22[0] === 'o começo (entra agora)' && /^Follow 1 · “.+” \(dia 0\)$/.test(steps22[1]) && /^Follow 4 · “.+” \(dia 5\)$/.test(steps22[4]) && /^Follow 6 · “.+” \(dia 10\)$/.test(steps22[6]), JSON.stringify(steps22));
     await q(`const s = sh.querySelector('.ftab .fl-add-step'); s.value = 's4'; s.dispatchEvent(new Event('change', { bubbles: true })); await wait(250); return true;`);
     const opts22 = await q(`const f = sh.querySelector('.ftab'); const lv = f.querySelector('.fl-add-leave'); return { modes: [...f.querySelectorAll('.fl-add-mode input')].map((r) => [r.value, r.checked, r.parentElement.textContent.trim()]),
-      leave: lv ? lv.checked : null, leaveTxt: lv ? lv.parentElement.textContent : '', intro: [...f.querySelectorAll('.crm-intro')].map((x) => x.textContent).join(' | ') };`);
-    check('Follow 4: "como se tivesse entrado há 5 dias", "Enviar esta etapa agora" (padrão) / "No horário marcado" e "Tirar das outras réguas?" marcado',
-      JSON.stringify(opts22.modes) === JSON.stringify([['agora', true, 'Enviar esta etapa agora'], ['marcado', false, 'No horário marcado']]) && opts22.leave === true && /Tirar das outras réguas\?/.test(opts22.leaveTxt) && /como se tivesse entrado há 5 dias/.test(opts22.intro), JSON.stringify(opts22));
+      leave: lv ? lv.checked : null, leaveTxt: lv ? lv.parentElement.textContent : '', intro: [...f.querySelectorAll('.crm-intro')].map((x) => x.textContent).join(' | '), when: (f.querySelector('.fl-add-when') || {}).textContent || '' };`);
+    const WHEN_RE = /^Follow 4 sai: [a-zç]{3} \d{2}\/\d{2} às \d{2}:\d{2}$/;
+    check('Follow 4: "como se tivesse entrado há 5 dias", "Enviar esta etapa agora" (padrão) / "Esperar o tempo da régua", "Tirar das outras réguas?" marcado e a previsão "Follow 4 sai: …"',
+      JSON.stringify(opts22.modes) === JSON.stringify([['agora', true, 'Enviar esta etapa agora'], ['marcado', false, 'Esperar o tempo da régua']]) && opts22.leave === true && /Tirar das outras réguas\?/.test(opts22.leaveTxt) && /como se tivesse entrado há 5 dias/.test(opts22.intro) && WHEN_RE.test(opts22.when), JSON.stringify(opts22));
     await shot('adicionar-follow-4.png');
     const t22 = Date.now();
     await q(`sh.querySelector('.ftab .fl-add-go').click(); return true;`);
@@ -1871,6 +1872,25 @@ async function main() {
     check('entrou no Follow 4: percurso na caixa do Follow 4, entrada "de há 5 dias", 3 ❌ já tomados; a outra régua saiu; a mensagem diz o que aconteceu',
       !!run22 && run22.node === 's4' && run22.status === 'ativo' && Math.abs(ago22 - 5) < 0.01 && JSON.stringify((run22.branches || []).map((b) => b.node)) === '["w1","w2","w3"]' && /^manual@\d+$/.test(run22.entry_key)
       && !!other22 && other22.status === 'saiu' && other22.outcome === 'outra_regua' && /Saiu de 1 outra régua/.test(msg22), JSON.stringify({ run22, other22: other22 && [other22.status, other22.outcome], msg22 }));
+    // 2.16.6: "Esperar o tempo da régua" no Follow 4 = como se tivesse acabado de receber o Follow 3 (dia 3): entrada
+    // de há 3 dias, na espera antes do Follow 4 começando agora; a previsão diz daqui a 2 dias (régua aberta o dia todo)
+    await q(`const s = sh.querySelector('.ftab .fl-add-step'); if (s.value !== 's4') { s.value = 's4'; s.dispatchEvent(new Event('change', { bubbles: true })); await wait(250); }
+      sh.querySelector('.ftab .fl-add-mode input[value="marcado"]').click(); await wait(250); return true;`);
+    const t22b = Date.now();
+    const mk22b = await q(`const f = sh.querySelector('.ftab'); return { checked: (f.querySelector('.fl-add-mode input:checked') || {}).value, intro: [...f.querySelectorAll('.crm-intro')].map((x) => x.textContent).join(' | '), when: (f.querySelector('.fl-add-when') || {}).textContent || '' };`);
+    const exp22 = new Date(t22b + 2 * 86400000);
+    const expTxt22 = `${String(exp22.getDate()).padStart(2, '0')}/${String(exp22.getMonth() + 1).padStart(2, '0')}`;
+    check('2.16.6: "Esperar o tempo da régua" → "como se tivesse acabado de receber o Follow 3" e a previsão "Follow 4 sai:" daqui a 2 dias',
+      mk22b.checked === 'marcado' && /como se tivesse acabado de receber o Follow 3/.test(mk22b.intro) && WHEN_RE.test(mk22b.when) && mk22b.when.includes(expTxt22), JSON.stringify(mk22b));
+    await shot('adicionar-follow-4-esperar-regua.png');
+    await q(`sh.querySelector('.ftab .fl-add-go').click(); return true;`);
+    await waitFor(`return /espera o tempo da régua/.test((sh.querySelector('.ftab .ed-msg') || {}).textContent || '');`, 15000);
+    const runs22b = (fake.db.wa_sequence_runs || []).filter((r) => r.automation_id === REG && r.chat_id === CH22);
+    const act22b = runs22b.find((r) => r.status === 'ativo');
+    const ago22b = act22b ? (t22b - Date.parse(act22b.created_at)) / 86400000 : null;
+    check('2.16.6: percurso na espera antes do Follow 4 (w3) começando agora, entrada "de há 3 dias", 2 ❌ já tomados; o percurso anterior saiu (reentrou)',
+      !!act22b && act22b.node === 'w3' && Math.abs(ago22b - 3) < 0.01 && Math.abs(Date.parse(act22b.wait_started_at) - t22b) < 60000 && act22b.skip_wait === false
+      && JSON.stringify((act22b.branches || []).map((b) => b.node)) === '["w1","w2"]' && runs22b.some((r) => r.status === 'saiu' && r.outcome === 'reentrou'), JSON.stringify(runs22b));
     await pg(`window.__fakeBridge = null; return true;`);
     fake.on = false;
     fake.generic = false;
