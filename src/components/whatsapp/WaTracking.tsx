@@ -27,7 +27,6 @@ const ORIGINS: [OriginFilter, string][] = [['todas', 'Todas as origens'], ['anun
 const PAGE = 25;
 // 2.12.8: atualiza sozinha a cada 30 s (aba visível, período incluindo hoje). O teste usa window.__TSP_LIVE_MS.
 const LIVE_MS = Number((globalThis as { __TSP_LIVE_MS?: number }).__TSP_LIVE_MS) || 30 * 1000;
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const br = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
 const when = (ms: number | null) => (ms == null ? '—' : new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }));
 const fmtDays = (d: number | null) => (d == null ? '—' : `${(Math.round(d * 10) / 10).toLocaleString('pt-BR')} dia${Math.round(d * 10) / 10 === 1 ? '' : 's'}`);
@@ -48,14 +47,14 @@ const INFO = {
 type Loaded = { load: TrackLoad; key: string; at: number };
 
 export default function WaTracking() {
-  const today = new Date();
-  const [preset, setPreset] = useState<PeriodPreset>('7d');
-  const [start, setStart] = useState(ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 13)));
-  const [end, setEnd] = useState(ymd(today));
+  // Padrão: Hoje (fuso de São Paulo, igual ao botão "Hoje") e vendas pela data da venda
+  const [preset, setPreset] = useState<PeriodPreset>('hoje');
+  const [start, setStart] = useState(() => spDay(Date.now()));
+  const [end, setEnd] = useState(() => spDay(Date.now()));
   const [origin, setOrigin] = useState<OriginFilter>('todas');
   const [businessOnly, setBusinessOnly] = useState(true);
   const [fromSecond, setFromSecond] = useState(false);
-  const [salesMode, setSalesMode] = useState<SalesDateMode>('contato');
+  const [salesMode, setSalesMode] = useState<SalesDateMode>('venda');
   const [awaitingOnly, setAwaitingOnly] = useState(false);
   const tableRef = useRef<HTMLDivElement>(null);
   const ranges = useMemo(() => periodRanges(preset, Date.now(), { start, end }), [preset, start, end]);
