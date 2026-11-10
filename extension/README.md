@@ -613,6 +613,10 @@ O mesmo seletor **WhatsApp | CRM** da barra fica no cabeçalho do Quadro.
 **Colunas** escolhe até 6 etiquetas, lembradas separadamente para cada
 família. **Esc** ou **Fechar** fecha o Quadro.
 
+Desde a 2.16.10, abrir uma conversa pelo cartão **encolhe** o Quadro para o
+lugar da lista de conversas (a conversa no meio, o painel à direita), com o
+cartão aberto destacado. **⤢ Expandir** volta ao Quadro grande.
+
 **Modo WhatsApp** (igual à 1.7.0):
 - Uma coluna por etiqueta do WhatsApp, com um cartão por conversa (nome, última
   mensagem, data e não lidas). Clique num cartão (ou aperte Enter) para abrir a
@@ -798,6 +802,25 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.16.10 — Quadro encolhido ao lado da conversa
+- Clicar num cartão do Quadro (WhatsApp ou CRM) abre a conversa e o Quadro **não fecha mais**: ele **encolhe** para o
+  lugar da lista de conversas do WhatsApp (da barra da esquerda até onde começa a conversa), com as colunas lado a lado
+  (rolagem para o lado) e o **cartão aberto destacado**. A conversa fica livre no meio e o painel continua à direita:
+  dá para atender um lead atrás do outro sem reabrir o Quadro.
+  ```
+  ┌──── QUADRO (encolhido) ────┬──── CONVERSA (WhatsApp) ────┬─ PAINEL ─┐
+  │ Analisar │ Follow Up 1 │…  │  mensagens do lead…         │ rápidas  │
+  │ [card]◄── clicado          │                             │ etiqueta │
+  └────────────────────────────┴─────────────────────────────┴──────────┘
+  ```
+- Outro cartão abre a outra conversa e o destaque passa para ele. Se a conversa aberta mudar pelo WhatsApp, o destaque
+  acompanha (sem cartão daquela conversa: nenhum destacado).
+- **⤢ Expandir** volta ao Quadro grande; **Fechar** (ou Esc) fecha. Abrir o Quadro de novo (barra ou "Quadro") vem
+  grande. Arrastar para trocar a etiqueta continua funcionando no encolhido ("Mover para…", "Colunas" e o seletor
+  WhatsApp | CRM ficam só no grande). A largura acompanha a janela.
+- Teste: `chrome-real.test.cjs` (grande → clicar no cartão → encolhido do lado da conversa com o cartão destacado e o
+  painel à direita; outro cartão; conversa trocada pelo WhatsApp; Expandir; Fechar e abrir de novo grande).
 
 ### 2.16.9 — lista de conversas não pula mais para o topo em envio com imagem / várias partes
 - **O problema**: a 2.10.3 vigiava a lista (#pane-side) só por 2 s depois de cada parte. Com mídia (upload) e

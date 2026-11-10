@@ -672,6 +672,61 @@ async function main() {
     fake.files = false;
     check('nenhum erro no console nos envios demorados', errors.length === 0, errors.slice(0, 8).join(' | '));
 
+    // 5c. Quadro encolhido (2.16.10): clicar num cartão abre a conversa e o Quadro NÃO fecha: encolhe para o lugar da
+    // lista de conversas (até onde começa a conversa, #main), com o cartão aberto destacado; o painel fica à direita.
+    // Outro cartão troca o destaque; a conversa mudando pelo WhatsApp também; "⤢ Expandir" volta ao grande; Fechar fecha.
+    const waitQB = async (js, ms = 12000) => { for (const stop = Date.now() + ms; Date.now() < stop;) { if (await q(js).catch(() => false)) return true; await sleep(250); } return false; };
+    const shotQB = async (name) => { if (!SHOTS_DIR) return; await sleep(250); const { data } = await s('Page.captureScreenshot', { format: 'png' }); fs.mkdirSync(SHOTS_DIR, { recursive: true }); fs.writeFileSync(path.join(SHOTS_DIR, name), Buffer.from(data, 'base64')); };
+    const QB = { '1': [['5521911110001@c.us', 'Ana Analisar'], ['5521911110002@c.us', 'Caio Analisar']], '2': [['5521911110003@c.us', 'Bia Follow 1'], ['5521911110004@c.us', 'Duda Follow 1']], '3': [['5521911110005@c.us', 'Edu Follow 2']] };
+    await pg5(`const QB = ${JSON.stringify(QB)}; window.__opened = []; window.__fakeBridge = { status: { ready: true, version: 'teste' }, activeChat: { kind: 'individual', chatId: '5521900000001@c.us' },
+      labels: [{ id: '1', name: 'Analisar', hexColor: '#f59e0b', count: 2 }, { id: '2', name: 'Follow Up 1', hexColor: '#3b82f6', count: 2 }, { id: '3', name: 'Follow Up 2', hexColor: '#8b5cf6', count: 1 }],
+      labelChats: (p) => ({ total: (QB[p.labelId] || []).length, chats: (QB[p.labelId] || []).map(([id, name], i) => ({ id, name, t: Math.floor(Date.now() / 1000) - i * 60, unread: 0, fromMe: false, preview: { kind: 'texto', text: 'oi' } })) }),
+      openChat: (p) => { window.__opened.push(p.chatId); window.__fakeBridge.activeChat = { kind: 'individual', chatId: p.chatId }; return { opened: true }; },
+    }; return true;`);
+    await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); return true;`);
+    await sleep(6000); // a barra relê as etiquetas do WhatsApp (a cada 5 s enquanto não tem)
+    await q(`sh.querySelector('.pboard').click(); return true;`);
+    await waitQB(`return sh.querySelectorAll('.board .bcard').length === 5;`, 15000);
+    const qbGeo = () => q(`const b = sh.querySelector('.board'); const r = b.getBoundingClientRect(); const m = document.getElementById('main').getBoundingClientRect(); const p = sh.querySelector('.panel').getBoundingClientRect();
+      return { hidden: b.hidden, compact: b.classList.contains('compact'), left: Math.round(r.left), right: Math.round(r.right), mainLeft: Math.round(m.left), mainRight: Math.round(m.right), panelLeft: Math.round(p.left), vw: window.innerWidth,
+        active: [...b.querySelectorAll('.bcard.active .bcname')].map((x) => x.textContent), expand: getComputedStyle(b.querySelector('.bexpand')).display !== 'none', cols: [...b.querySelectorAll('.bcol .bname')].map((x) => x.textContent) };`);
+    const qb0 = await qbGeo();
+    check('2.16.10 Quadro: abre grande (cobre a conversa), sem "Expandir", com as 3 colunas', !qb0.hidden && !qb0.compact && !qb0.expand && qb0.right > qb0.mainLeft + 100 && qb0.cols.join() === 'ANALISAR,FOLLOW UP 1,FOLLOW UP 2', JSON.stringify(qb0));
+    await shotQB('quadro-grande.png');
+    await q(`[...sh.querySelectorAll('.board .bcard')].find((c) => /Ana Analisar/.test(c.textContent)).click(); return true;`);
+    await waitQB(`return sh.querySelector('.board').classList.contains('compact');`, 8000);
+    await sleep(500);
+    const qb1 = await qbGeo();
+    check('2.16.10 Quadro: clicar no cartão abre a conversa e o Quadro encolhe no lugar da lista (a conversa fica livre, o painel à direita), com o cartão destacado e "⤢ Expandir"',
+      !qb1.hidden && qb1.compact && qb1.expand && qb1.left === 64 && Math.abs(qb1.right - qb1.mainLeft) <= 2 && qb1.panelLeft >= qb1.mainLeft && JSON.stringify(qb1.active) === '["Ana Analisar"]'
+      && JSON.stringify(await pg5('return window.__opened')) === '["5521911110001@c.us"]', JSON.stringify(qb1));
+    await shotQB('quadro-encolhido.png');
+    await q(`[...sh.querySelectorAll('.board .bcard')].find((c) => /Bia Follow 1/.test(c.textContent)).click(); return true;`);
+    await sleep(600);
+    const qb2 = await qbGeo();
+    check('2.16.10 Quadro encolhido: outro cartão abre a outra conversa, continua encolhido e o destaque passa para ele', qb2.compact && JSON.stringify(qb2.active) === '["Bia Follow 1"]' && (await pg5('return window.__opened.length')) === 2, JSON.stringify(qb2));
+    // a conversa muda pelo WhatsApp (não pelo Quadro): o destaque acompanha
+    await pg5(`window.__fakeBridge.activeChat = { kind: 'individual', chatId: '5521911110005@c.us' }; return true;`);
+    await waitQB(`return [...sh.querySelectorAll('.board .bcard.active .bcname')].map((x) => x.textContent).join() === 'Edu Follow 2';`, 8000);
+    const qb3 = await qbGeo();
+    check('2.16.10 Quadro encolhido: a conversa aberta mudou → o destaque vai para o cartão dela', JSON.stringify(qb3.active) === '["Edu Follow 2"]', JSON.stringify(qb3));
+    await q(`sh.querySelector('.board .bexpand').click(); return true;`);
+    await sleep(300);
+    const qb4 = await qbGeo();
+    check('2.16.10 "⤢ Expandir" volta ao Quadro grande (o destaque continua)', !qb4.compact && !qb4.expand && qb4.right > qb4.mainLeft + 100 && JSON.stringify(qb4.active) === '["Edu Follow 2"]', JSON.stringify(qb4));
+    await q(`[...sh.querySelectorAll('.board .bcard')].find((c) => /Caio Analisar/.test(c.textContent)).click(); return true;`);
+    await waitQB(`return sh.querySelector('.board').classList.contains('compact');`, 8000);
+    await q(`sh.querySelector('.board .bclose').click(); return true;`);
+    await sleep(300);
+    const qb5 = await qbGeo();
+    await q(`sh.querySelector('.pboard').click(); return true;`);
+    await waitQB(`return sh.querySelectorAll('.board .bcard').length === 5;`, 15000);
+    const qb6 = await qbGeo();
+    check('2.16.10 Fechar fecha o Quadro encolhido; abrir de novo vem grande e sem destaque', qb5.hidden && !qb6.hidden && !qb6.compact && qb6.active.length === 0, JSON.stringify({ qb5, qb6 }));
+    await q(`sh.querySelector('.board .bclose').click(); return true;`);
+    await pg5(`window.__fakeBridge = null; return true;`);
+    check('nenhum erro no console no Quadro encolhido', errors.length === 0, errors.slice(0, 8).join(' | '));
+
     // 6. 📈 → venda do ERP (2.10.5), com o Supabase falso: achar pelo telefone, escolher por valor, nenhuma,
     // mais de uma pelo telefone, desligar. Conferindo cada gravação: só wa_chat_id e telefone vazio na venda.
     const iso = (daysAgo, h = 12) => new Date(Date.now() - daysAgo * 86400000 + (h - 12) * 3600000).toISOString();

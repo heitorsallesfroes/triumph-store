@@ -1107,6 +1107,18 @@
       .bnote { flex-shrink: 0; padding: 8px 4px 2px ; text-align: center; font-size: var(--fs-1); color: var(--muted); }
       .bempty { padding: 32px ; font-size: var(--fs-3); color: var(--muted); }
       /* Quadro: trocar etiqueta (arrastar ou "Mover para…") */
+      /* 2.16.10: Quadro encolhido (abriu a conversa por um cartão): fica no lugar da lista de conversas do WhatsApp, à
+         esquerda da conversa, com o cartão aberto destacado; o painel continua à direita */
+      .board.compact { animation: none; box-shadow: 2px 0 12px var(--shadow); }
+      .board.compact .btitle, .board.compact .wfam, .board.compact .bcolsbtn { display: none; }
+      .board.compact .bheader { gap: 8px; padding-left: 8px; padding-right: 8px; flex-wrap: wrap; }
+      .board.compact .bstatus:empty { display: none; }
+      .board.compact .bactions { margin-left: auto; }
+      .board.compact .bcols { gap: 8px; padding: 8px; }
+      .board.compact .bcol { flex-basis: 220px; }
+      .board.compact .bmove { display: none; }
+      .board:not(.compact) .bbtn.bexpand { display: none; }
+      .bcard.active { border-color: var(--accent); border-left-color: var(--c); background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); }
       .bcard.busy { opacity: .45; pointer-events: none; }
       .bcard.dragging { opacity: .6; }
       .bcol.drop { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
@@ -1861,6 +1873,7 @@
           <div class="bactions">
             <button class="bbtn bcolsbtn" type="button" aria-haspopup="true" aria-expanded="false">Colunas</button>
             <button class="bbtn icon brefresh" type="button" title="Atualizar" aria-label="Atualizar">${svg('refresh')}</button>
+            <button class="bbtn bexpand" type="button" title="Voltar ao Quadro grande">⤢ Expandir</button>
             <button class="bbtn bclose" type="button" title="Fechar (Esc)">Fechar</button>
           </div>
           <div class="bcolsmenu" hidden></div>
@@ -2541,6 +2554,7 @@
     loadChatBought(chatId);
     try { loadChatSequence(chatId).catch(() => {}); } catch { /* 2.12.0: ainda iniciando */ }
     adoptOpenChatId(chatId).catch(() => {});
+    try { boardFollowChat(chatId); } catch { /* 2.16.10: Quadro ainda iniciando */ }
     try { delLoadChat(chatId).catch(() => {}); } catch { /* 2.15.0: ainda iniciando */ }
     cn.editing = false;
     renderNameRow();
@@ -14044,6 +14058,7 @@
   const board = {
     open: false, columns: [], data: new Map(), saved: { whatsapp: null, crm: null }, menuOpen: false, opening: false,
     moving: new Set(), drag: null, moveMenu: null, toastTimer: null, // ids das conversas/contatos sendo trocados agora
+    compact: false, activeId: null, // 2.16.10: encolhido ao lado da conversa, com o cartão aberto destacado
   };
   const LABEL_FAIL_MSG = 'Não consegui trocar a etiqueta. Confira no WhatsApp.';
   const CRM_FAIL_MSG = 'Não consegui trocar a etiqueta CRM. Tente de novo.';
@@ -14204,6 +14219,7 @@
 
   function openBoard(firstId) {
     if (!boardEls) return;
+    if (board.compact) expandBoard(); // 2.16.10: abrir pela barra = o Quadro grande de novo
     board.open = true;
     board.columns = boardColumnIds(firstId);
     board.data = new Map();
@@ -14220,6 +14236,8 @@
   // Fecha e apaga da memória as conversas carregadas
   function closeBoard() {
     if (!boardEls) return;
+    if (board.compact) expandBoard(); // 2.16.10: da próxima vez abre grande
+    board.activeId = null;
     board.open = false;
     board.data = new Map();
     board.drag = null;
@@ -14333,10 +14351,12 @@
 
   function boardCard(c, label) {
     const busy = board.moving.has(c.id);
-    const card = el('div', `bcard${busy ? ' busy' : ''}`);
+    const card = el('div', `bcard${busy ? ' busy' : ''}${board.activeId && board.activeId === c.id ? ' active' : ''}`);
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
     card.style.setProperty('--c', label.hexColor);
+    card.dataset.id = c.id; // 2.16.10: destaque do cartão aberto (Quadro encolhido)
+    if (c.crm ? c.chat_id : c.id) card.dataset.chat = c.crm ? c.chat_id : c.id;
     if (busy) card.setAttribute('aria-busy', 'true');
     const main = el('div', 'bmain');
     const side = el('div', 'bside');
@@ -14344,17 +14364,17 @@
       // Contato do CRM: nome, telefone, data em que entrou na etiqueta e 📝 se tiver nota
       const title = c.name || formatPhone(c.phone) || '—';
       const name = el('div', 'bcname', `${c.hasNote ? '📝 ' : ''}${title}`);
-      convLink(name, () => crmCardTarget(c), () => boardOpenOpts());
+      convLink(name, () => crmCardTarget(c), () => boardOpenOpts(c.id));
       name.title = c.hasNote ? `Abrir conversa · ${title} (tem nota)` : `Abrir conversa · ${title}`;
       const ph = el('div', 'bprev', c.phone ? (c.name ? formatPhone(c.phone) : '') : 'só pelo nome');
-      if (c.phone && c.name) convLink(ph, () => crmCardTarget(c), () => boardOpenOpts());
+      if (c.phone && c.name) convLink(ph, () => crmCardTarget(c), () => boardOpenOpts(c.id));
       main.append(name, ph);
       const date = el('span', 'bdate', formatChatDate(isoSeconds(c.addedAt)));
       date.title = 'Entrou nesta etiqueta CRM';
       side.append(date);
     } else {
       const name = el('div', 'bcname', c.name || '—');
-      convLink(name, () => ({ chatId: c.id, name: c.name }), () => boardOpenOpts());
+      convLink(name, () => ({ chatId: c.id, name: c.name }), () => boardOpenOpts(c.id));
       name.title = `Abrir conversa${c.name ? ` · ${c.name}` : ''}`;
       main.append(name, el('div', 'bprev', previewLine(c)));
       side.append(el('span', 'bdate', formatChatDate(c.t)));
@@ -14596,13 +14616,71 @@
   }
 
   // 2.14.4: o Quadro abre pela função única openConversation (também conversa não carregada, arquivada e @lid)
-  function boardOpenOpts() { return { notify: boardToast, onOpened: closeBoard }; }
+  // 2.16.10: abriu → o Quadro não fecha: encolhe para o lugar da lista de conversas, com este cartão destacado
+  function boardOpenOpts(cardId = null) { return { notify: boardToast, onOpened: () => compactBoard(cardId) }; }
+
+  // ── 2.16.10: Quadro encolhido ──
+  // Fica onde está a lista de conversas do WhatsApp (de 64 px até onde começa a conversa, #main), as colunas lado a
+  // lado com rolagem; a conversa aberta no meio e o painel à direita. "⤢ Expandir" volta ao Quadro grande; Fechar/Esc fecha.
+  const BOARD_LEFT = 64;
+  const BOARD_COMPACT_MIN = 200;
+  function compactWidth() {
+    const main = document.getElementById('main');
+    const left = main ? main.getBoundingClientRect().left : 0;
+    const w = Math.round(left - BOARD_LEFT);
+    if (main && w > 0) return Math.max(BOARD_COMPACT_MIN, w); // termina onde começa a conversa (nunca por cima dela, salvo lista estreitíssima)
+    return Math.max(300, Math.round(window.innerWidth * 0.3)); // sem a conversa na página: ~ a lista do WhatsApp
+  }
+  function layoutCompactBoard() {
+    if (!boardEls || !board.compact) return;
+    boardEls.root.style.right = 'auto';
+    boardEls.root.style.width = `${compactWidth()}px`;
+  }
+  function compactBoard(cardId) {
+    if (!boardEls || !board.open) return;
+    const first = !board.compact;
+    board.compact = true;
+    boardEls.root.classList.add('compact');
+    closeMoveMenu();
+    setColsMenu(false);
+    layoutCompactBoard();
+    if (first) setTimeout(layoutCompactBoard, 400); // a conversa acabou de abrir: o WhatsApp pode ajustar a largura
+    markActiveCard(cardId);
+  }
+  function expandBoard() {
+    if (!boardEls) return;
+    board.compact = false;
+    boardEls.root.classList.remove('compact');
+    boardEls.root.style.right = '';
+    boardEls.root.style.width = '';
+    boardEls.root.focus();
+  }
+  // destaca o cartão aberto (e rola até ele, se estiver fora da vista)
+  function markActiveCard(cardId) {
+    board.activeId = cardId || null;
+    if (!boardEls) return;
+    let hit = null;
+    boardEls.cols.querySelectorAll('.bcard').forEach((c) => { const on = !!cardId && c.dataset.id === cardId; c.classList.toggle('active', on); if (on && !hit) hit = c; });
+    if (hit) { try { hit.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch { /* ok */ } }
+  }
+  // a conversa aberta mudou (por outro cartão ou pelo WhatsApp): o destaque acompanha
+  function boardFollowChat(chatId) {
+    if (!board.open || !board.compact || !boardEls) return;
+    const cards = [...boardEls.cols.querySelectorAll('.bcard')];
+    const card = chatId ? cards.find((c) => c.dataset.chat === chatId) : null;
+    if (card) { markActiveCard(card.dataset.id); return; }
+    // nenhum cartão desta conversa: apaga o destaque, menos se o cartão aberto não sabe a conversa (CRM só com telefone)
+    const cur = board.activeId ? cards.find((c) => c.dataset.id === board.activeId) : null;
+    if (cur && !cur.dataset.chat) return;
+    markActiveCard(null);
+  }
+  window.addEventListener('resize', () => { try { layoutCompactBoard(); } catch { /* ok */ } });
   function crmCardTarget(c) { return { phone: c.phone, chatId: c.chat_id || null, name: c.name || null }; }
   async function openBoardChat(chatId, name = null) {
     if (board.opening) return;
     board.opening = true;
     boardStatus('');
-    try { await openConversation({ chatId, name }, boardOpenOpts()); } finally { board.opening = false; }
+    try { await openConversation({ chatId, name }, boardOpenOpts(chatId)); } finally { board.opening = false; }
   }
 
   // Cartão do CRM: abre a conversa pelo telefone do contato (carregada ou não)
@@ -14610,7 +14688,7 @@
     if (board.opening) return;
     board.opening = true;
     boardStatus('');
-    try { await openConversation(crmCardTarget(c), boardOpenOpts()); } finally { board.opening = false; }
+    try { await openConversation(crmCardTarget(c), boardOpenOpts(c.id)); } finally { board.opening = false; }
   }
 
   function setColsMenu(open) {
@@ -15340,6 +15418,7 @@
     boardEls.colsBtn.addEventListener('click', (e) => { e.stopPropagation(); setColsMenu(!board.menuOpen); });
     shadow.querySelector('.board .brefresh').addEventListener('click', () => refreshBoard());
     shadow.querySelector('.board .bclose').addEventListener('click', () => closeBoard());
+    shadow.querySelector('.board .bexpand').addEventListener('click', () => expandBoard()); // 2.16.10
     boardEls.root.addEventListener('click', (e) => {
       if (board.menuOpen && !e.composedPath().includes(boardEls.menu) && !e.composedPath().includes(boardEls.colsBtn)) setColsMenu(false);
       if (board.moveMenu && !e.composedPath().includes(board.moveMenu.menu)) closeMoveMenu();
