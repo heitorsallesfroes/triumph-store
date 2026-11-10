@@ -809,6 +809,26 @@ guardada.
 
 ## O que mudou
 
+### 2.16.13 — Parte "Produto" com o cartão do catálogo e o preço de oferta
+- **Preço de oferta**: a parte Produto passa a usar o preço **promocional** do catálogo quando houver (ex.: R$ 629,00,
+  com R$ 709,00 riscado). Antes só aparecia o cheio, porque a oferta vem em `sale_price` na leitura do produto e
+  a extensão não lia esse campo. Oferta vencida, que ainda não começou, ou igual/maior que o cheio é ignorada. A
+  prévia no painel mostra a oferta com o cheio riscado.
+- **1º caminho — cartão NATIVO**: envia o produto como o WhatsApp Web faz ao compartilhar pelo catálogo (foto
+  grande, oferta com o cheio riscado e o botão "Ver"), pela função interna que a WA-JS já expõe
+  (`WPP.whatsapp.functions.sendProductToChat`), sem mexer no vendor e sem consultar nada de fora. A ordem dos
+  parâmetros dessa função não é documentada: tenta (produto, conversa) e, se der erro, (conversa, produto). Só vale
+  se uma mensagem nova aparecer na conversa; o texto da parte vai logo depois, como mensagem separada.
+- **2º caminho — reserva automática**: se o nativo falhar, vai o link do produto com a prévia montada pela extensão.
+  Título = nome; descrição = "R$ 629,00 · de R$ 709,00"; a foto do catálogo em tamanho grande, subida pelo upload de
+  miniaturas do próprio WhatsApp (`thumbnailHQ`). Sem esse upload, vai a miniatura pequena. Se o nativo não der
+  erro mas nada aparecer em 6 s, não tenta de novo (para não mandar duas vezes) e vai a reserva.
+- Depois de enviar, o aviso "Enviado." diz por qual caminho o produto saiu: "🛍️ Produto como cartão do catálogo."
+  ou "🛍️ Produto como link com foto grande (reserva)." / "🛍️ Produto como link (reserva)."
+- Testado só com a WhatsApp/WA-JS simulada: `productcard.test.cjs` (oferta, nativo nas duas ordens, reserva com foto
+  grande, sem envio duplicado) e `chrome-real.test.cjs` (prévia com a oferta e o aviso do caminho). Ainda falta
+  conferir no WhatsApp de verdade, na conversa "Meu Numero Pessoal", qual caminho a sua versão usa.
+
 ### 2.16.12 — Sem contato duplicado "só pelo nome"; nome longo da agenda aceito
 - **Como o painel acha o contato da conversa**, sempre nesta ordem: (1) o contato com o **mesmo chat_id** da conversa
   aberta; (2) o **mesmo telefone** (do @c.us, ou do @lid pelo cache do WhatsApp Web); (3) só então pelo **nome**. Se

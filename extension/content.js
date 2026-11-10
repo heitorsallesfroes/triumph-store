@@ -1462,6 +1462,7 @@
       .rp-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
       .rp-t { font-weight: 600; font-size: var(--fs-2); overflow-wrap: anywhere; }
       .rp-s { font-size: var(--fs-1); color: var(--muted); overflow-wrap: anywhere; }
+      .rp-price { color: var(--fg); font-weight: 600; } .rp-full { color: var(--muted); font-weight: 400; }
       .rp-link { font-size: var(--fs-1); color: var(--accent); overflow-wrap: anywhere; }
       .rp-ed { display: flex; flex-direction: column; gap: var(--s-2); }
       .rp-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2); }
@@ -4881,8 +4882,9 @@
       } else th.textContent = Rich.EMOJI.produto; // produto sem foto
       card.append(th);
       line('rp-t', d.name || 'Produto do catálogo');
-      line('rp-s', d.price);
-      if (!compact) line('rp-link', 'wa.me/p/… (link do produto, com prévia)');
+      // 2.16.13: preço de oferta com o cheio riscado (como no cartão do catálogo)
+      if (d.price) { const s = el('div', 'rp-s rp-price', d.price); if (d.full_price && d.full_price !== d.price) s.append(' ', el('s', 'rp-full', d.full_price)); body.append(s); }
+      if (!compact) line('rp-link', 'cartão do catálogo (reserva: link com prévia)');
     } else if (p.type === 'localizacao') {
       card.append(ico);
       line('rp-t', d.name || 'Localização');
@@ -4952,6 +4954,9 @@
     while (seq && !seq.stop && Date.now() < end) await sleep(Math.min(200, end - Date.now()));
   }
 
+  // 2.16.13: por qual caminho o produto saiu (vai junto no aviso "Enviado" do fim do envio)
+  const PRODUCT_VIA = { nativo: '🛍️ Produto como cartão do catálogo.', 'link-grande': '🛍️ Produto como link com foto grande (reserva).', link: '🛍️ Produto como link (reserva).' };
+  let lastProductVia = null;
   const partAsItem = (p, i) => ({ id: p.id || `parte${i}`, file_url: p.file_url, file_name: p.file_name });
 
   // Envia uma parte; erros vêm com stage ('before-send', 'sending' ou 'unknown' quando não houve resposta)
@@ -4972,7 +4977,9 @@
       const text = Rich.allowsText(part.type) && part.body ? fillVars(part.body, firstName).slice(0, SEQ_TEXT_MAX) : '';
       const rich = { kind: part.type, data: part.data || {}, text };
       if (newChat) { await campaignSend(rich); return; }
-      await waRequest('sendRich', { chatId, ...rich, typingMs: typingMs || 0 }, { id: reqId, timeout: (typingMs || 0) + 60000 });
+      const res = await waRequest('sendRich', { chatId, ...rich, typingMs: typingMs || 0 }, { id: reqId, timeout: (typingMs || 0) + 60000 });
+      // 2.16.13: qual caminho o produto usou (para conferir na conversa)
+      if (part.type === 'produto' && res && res.via && PRODUCT_VIA[res.via]) lastProductVia = res.via;
       return;
     }
     if (Array.isArray(part.files) && part.files.length > 1) return sendAlbum(part, i, chatId, firstName, reqId, newChat, typingMs);
@@ -5123,7 +5130,9 @@
 
   function sequenceToast(res, total) {
     if (res.status === 'ok' && res.failedFiles && res.failedFiles.length) { toast(`Enviado, mas não consegui enviar: ${res.failedFiles.join(', ')}.`, 'warn', 10000); return; }
-    if (res.status === 'ok') { toast(total > 1 ? `Enviado: ${total} partes.` : 'Enviado.', 'ok', 4000); return; }
+    const via = lastProductVia ? ` ${PRODUCT_VIA[lastProductVia]}` : '';
+    lastProductVia = null;
+    if (res.status === 'ok') { toast(`${total > 1 ? `Enviado: ${total} partes.` : 'Enviado.'}${via}`, 'ok', via ? 6000 : 4000); return; }
     if (res.status === 'stopped') { toast(`Parado: ${res.sent} de ${total} enviada${res.sent === 1 ? '' : 's'}.`, 'warn', 6000); return; }
     if (res.stage === 'sending' && (res.code === 'pix_failed' || res.code === 'rich_failed')) {
       toast(`Parte ${res.failedAt}: ${res.message}`, 'error', 12000); // 2.9.2: erro claro do tipo novo
@@ -5921,9 +5930,9 @@
         const b = el('button', `rp-prow${p.data && p.data.product_id === x.id ? ' sel' : ''}`);
         b.type = 'button';
         b.setAttribute('aria-label', `Escolher ${x.name}${x.price ? `, ${x.price}` : ''}`);
-        b.append(richPreviewEl({ type: 'produto', data: { name: x.name, price: x.price, image_url: x.image_url } }, { compact: true }));
+        b.append(richPreviewEl({ type: 'produto', data: { name: x.name, price: x.price, full_price: x.full_price || '', image_url: x.image_url } }, { compact: true }));
         b.addEventListener('click', () => {
-          p.data = { product_id: x.id, name: x.name, price: x.price, image_url: x.image_url };
+          p.data = { product_id: x.id, name: x.name, price: x.price, image_url: x.image_url, ...(x.full_price ? { full_price: x.full_price } : {}) }; // 2.16.13: oferta + cheio
           p.picking = false;
           ctx.msg('');
           ctx.rerender();

@@ -2300,6 +2300,44 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console na 2.16.12', errors.length === 0, errors.slice(0, 8).join(' | '));
+    // 26. 2.16.13: parte "Produto" com o cartão do catálogo. Mensagem rápida com um produto em OFERTA (R$ 629,00, cheio
+    // R$ 709,00): a prévia mostra o preço de oferta com o cheio riscado; ao enviar (ponte simulada), o painel diz por
+    // qual caminho saiu — cartão nativo do catálogo ou a reserva (link com foto grande).
+    const ITEM_P = { id: 'i-teste-prod', category_id: 'c-teste', title: 'Produto em oferta', type: 'texto', body: '', file_url: null, file_name: null, file_size: null, usage_count: 0, position: 0, created_at: '2026-11-10T10:00:00Z',
+      parts: [{ id: 'pp1', item_id: 'i-teste-prod', position: 0, type: 'produto', body: 'Olha esse!', data: { product_id: '7012345678901234', name: 'Relógio S11 Mini Rose Gold', price: 'R$ 629,00', full_price: 'R$ 709,00', image_url: null },
+        file_url: null, file_name: null, file_size: null, wait_seconds: 0, typing_seconds: 0 }] };
+    await inExt(`new Promise((r) => chrome.storage.local.set({ library: ${JSON.stringify({ categories: [{ id: 'c-teste', name: 'Testes', position: 0 }], items: [ITEM_P], savedAt: '2026-11-10T10:00:00Z' })} }, () => r(true)))`);
+    await s('Page.reload', { ignoreCache: true });
+    await sleep(1500);
+    await pg(`window.__rich = []; window.__fakeBridge = { status: { ready: true, version: 'teste' }, activeChat: { kind: 'individual', chatId: '5521900000001@c.us' },
+      chatPhone: { phone: '5521900000001', name: 'Meu Numero Pessoal', via: 'numero' }, verifyChatPhone: { active: true, match: true }, richInfo: { ready: true, types: { produto: true, catalogo: true, localizacao: true, contato: true, pix: true, business: true } },
+      sendRich: (p) => { window.__rich.push(p); return { sent: true, via: window.__via || 'nativo' }; } }; return true;`);
+    let card26 = false;
+    for (const stop = Date.now() + 20000; Date.now() < stop && !card26;) {
+      card26 = await evalPage(`(() => { const sh = document.getElementById('tsp-wa-host')?.shadowRoot; const t = sh && sh.querySelector('.toggle'); if (t && !sh.querySelector('.root.open')) t.click(); return !!(sh && sh.querySelector('.card[data-id="i-teste-prod"]')); })()`).catch(() => false);
+      if (!card26) await sleep(300);
+    }
+    await q(`const m = sh.querySelector('[data-sec="mensagens"]'); if (m) { m.click(); await wait(300); } const c = sh.querySelector('.card[data-id="i-teste-prod"]'); if (!c.querySelector('.pv-send')) { c.querySelector('.info .t').click(); await wait(400); } c.scrollIntoView({ block: 'center' }); return true;`);
+    const pv26 = await q(`const c = sh.querySelector('.card[data-id="i-teste-prod"]'); const pr = c.querySelector('.rp-produto .rp-price'); const full = c.querySelector('.rp-produto .rp-full');
+      return { price: pr ? pr.firstChild.textContent : null, full: full ? full.textContent : null, struck: full ? getComputedStyle(full).textDecorationLine : '' };`);
+    check('2.16.13: prévia do Produto com o preço de OFERTA (R$ 629,00) e o cheio riscado (R$ 709,00)', card26 && !!pv26 && pv26.price === 'R$ 629,00' && pv26.full === 'R$ 709,00' && /line-through/.test(pv26.struck), JSON.stringify(pv26));
+    await shot('produto-cartao-previa.png');
+    const send26 = async (via) => {
+      await pg(`window.__via = ${JSON.stringify(via)}; return true;`);
+      await q(`sh.querySelector('.card[data-id="i-teste-prod"] .pv-send').click(); return true;`);
+      const ok = await waitFor(`return /🛍️ Produto como/.test((sh.querySelector('.toast.show') || {}).textContent || '');`, 10000);
+      if (ok && via === 'nativo') await shot('produto-cartao-enviado.png');
+      const t = await q(`return (sh.querySelector('.toast') || {}).textContent || '';`);
+      await sleep(3800);
+      return { ok, t };
+    };
+    const n26 = await send26('nativo');
+    const sent26 = await pg(`const p = window.__rich[0]; return p ? { kind: p.kind, price: p.data.price, full: p.data.full_price, text: p.text, chat: p.chatId } : null;`);
+    check('2.16.13: enviar → a ponte recebe o produto com a oferta e o cheio; o painel avisa "Enviado. 🛍️ Produto como cartão do catálogo."',
+      n26.ok && n26.t === 'Enviado. 🛍️ Produto como cartão do catálogo.' && !!sent26 && sent26.kind === 'produto' && sent26.price === 'R$ 629,00' && sent26.full === 'R$ 709,00' && sent26.text === 'Olha esse!', JSON.stringify({ n26, sent26 }));
+    const l26 = await send26('link-grande');
+    check('2.16.13: na reserva o painel avisa "Enviado. 🛍️ Produto como link com foto grande (reserva)."', l26.ok && l26.t === 'Enviado. 🛍️ Produto como link com foto grande (reserva).', JSON.stringify(l26));
+    check('nenhum erro no console na 2.16.13', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

@@ -96,7 +96,8 @@
     if (type === 'produto') {
       const id = String(d.product_id == null ? '' : d.product_id).trim();
       if (!PRODUCT_ID_RE.test(id)) fail('escolha o produto do catálogo');
-      return { product_id: id, name: str(d.name).slice(0, 200), price: str(d.price).slice(0, 40), image_url: httpsUrl(d.image_url) || null };
+      const full = str(d.full_price).slice(0, 40); // 2.16.13: preço cheio (riscado) quando o salvo é o de oferta
+      return { product_id: id, name: str(d.name).slice(0, 200), price: str(d.price).slice(0, 40), image_url: httpsUrl(d.image_url) || null, ...(full ? { full_price: full } : {}) };
     }
     if (type === 'catalogo') return {};
     if (type === 'contato') {
@@ -178,13 +179,36 @@
     if (pick(o, ['isHidden', 'is_hidden']) === true) return null;
     const name = str(String(pick(o, ['name']) || '')).slice(0, 200) || 'Produto';
     const currency = pick(o, ['currency']);
-    const sale = pick(o, ['salePriceAmount1000', 'sale_price_amount1000']);
     let amount = pick(o, ['priceAmount1000', 'price_amount1000']);
     const raw = pick(o, ['price']);
     if (amount == null && raw != null && /^\d+$/.test(String(raw))) amount = Number(raw); // a resposta do catálogo vem em milésimos
+    // 2.16.13: preço de oferta — salePriceAmount1000 (modelo do catálogo) ou sale_price { price } (getProductById/
+    // queryProduct); só vale se for menor que o cheio e estiver dentro das datas da oferta (quando houver)
+    const sale = saleAmountOf(o, amount);
+    const full = priceLabel(amount, currency);
     const price = priceLabel(sale != null ? sale : amount, currency) || (raw != null && !/^\d+$/.test(String(raw)) ? str(String(raw)).slice(0, 40) : '');
-    return { id, name, price, image_url: imageOf(o) || null };
+    return { id, name, price, full_price: sale != null && full ? full : '', image_url: imageOf(o) || null };
   }
+  const num1000 = (v) => { const n = Number(v); return v != null && v !== '' && Number.isFinite(n) && n >= 0 ? n : null; };
+  // data da oferta: segundos, milésimos ou texto ISO; sem data = sem limite
+  const whenOf = (v) => { if (v == null || v === '') return null; const n = Number(v); if (Number.isFinite(n)) return n < 1e12 ? n * 1000 : n; const t = Date.parse(String(v)); return Number.isFinite(t) ? t : null; };
+  function saleAmountOf(o, amount, now = Date.now()) {
+    let sale = num1000(pick(o, ['salePriceAmount1000', 'sale_price_amount1000']));
+    let start = whenOf(pick(o, ['salePriceStartDate', 'sale_price_start_date']));
+    let end = whenOf(pick(o, ['salePriceEndDate', 'sale_price_end_date']));
+    const sp = pick(o, ['sale_price', 'salePrice']);
+    if (sale == null && sp && typeof sp === 'object') {
+      sale = num1000(sp.price != null ? sp.price : sp.amount1000 != null ? sp.amount1000 : sp.price_amount1000);
+      start = start != null ? start : whenOf(sp.start_date != null ? sp.start_date : sp.startDate);
+      end = end != null ? end : whenOf(sp.end_date != null ? sp.end_date : sp.endDate);
+    }
+    if (sale == null) return null;
+    if (amount != null && Number(sale) >= Number(amount)) return null; // "oferta" igual ou maior não é oferta
+    if ((start != null && now < start) || (end != null && now > end)) return null; // fora das datas da oferta
+    return sale;
+  }
+  // texto do cartão de prévia (reserva): "R$ 629,00 · de R$ 709,00" quando tem oferta
+  const productDescription = (p) => (p.price ? (p.full_price && p.full_price !== p.price ? `${p.price} · de ${p.full_price}` : p.price) : 'Ver produto no WhatsApp');
 
   // ── Envio pela WA-JS (só na ponte, mundo da página) ──
   // Devolve uma função que envia (não envia nada sozinha). opts = { createChat, markIsRead } da ponte.
@@ -214,7 +238,7 @@
     };
   }
 
-  // miniatura JPEG pequena (o cartão do link do produto); falha = sem miniatura
+  // miniatura JPEG (o cartão do link do produto); falha = sem miniatura
   function thumbnail(url, size = 160) {
     return new Promise((resolve) => {
       if (!url || typeof Image === 'undefined' || typeof document === 'undefined') { resolve(null); return; }
@@ -235,6 +259,61 @@
       };
       img.src = url;
     });
+  }
+
+  const withTimeout = (p, ms) => new Promise((resolve, reject) => { const t = setTimeout(() => reject(new Error('timeout')), ms); Promise.resolve(p).then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); }); });
+  const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // 2.16.13: miniatura GRANDE da prévia, como o WhatsApp Web faz nas prévias em alta (thumbnailHQ): a foto do catálogo
+  // vira JPEG e sobe pelo upload de miniatura do próprio WhatsApp (functions.uploadThumbnail). Nenhum servidor de fora.
+  async function hqThumbnail(wpp, url) {
+    const W = wpp && wpp.whatsapp;
+    const up = W && W.functions && W.functions.uploadThumbnail;
+    const OD = W && W.OpaqueData;
+    const B64 = W && W.Base64;
+    if (typeof up !== 'function' || !OD || typeof OD.createFromBase64Jpeg !== 'function' || !B64 || typeof B64.encodeB64 !== 'function') return null;
+    const big = await thumbnail(url, 800);
+    if (!big || big.width < 300) return null;
+    const small = await thumbnail(url, 140);
+    try {
+      const data = await OD.createFromBase64Jpeg(big.data);
+      const key = new Uint8Array(32);
+      (globalThis.crypto || crypto).getRandomValues(key);
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const r = await withTimeout(up({ thumbnail: data, mediaType: 'thumbnail-link', mediaKeyInfo: { key: B64.encodeB64(key), timestamp: Math.floor(Date.now() / 1000) },
+        uploadOrigin: 1, forwardedFromWeb: false, signal: ctl ? ctl.signal : undefined, timeout: 5000, isViewOnce: false }), 10000);
+      const e = r && r.mediaEntry;
+      if (!e || !e.mediaKey || !e.directPath) return null;
+      return { thumbnail: (small || big).data, thumbnailHQ: big.data, mediaKey: e.mediaKey, mediaKeyTimestamp: e.mediaKeyTimestamp, thumbnailDirectPath: e.directPath,
+        thumbnailSha256: r.filehash, thumbnailEncSha256: e.encFilehash, thumbnailWidth: big.width, thumbnailHeight: big.height };
+    } catch { return null; }
+  }
+
+  // 2.16.13: envio NATIVO do produto (o mesmo cartão do catálogo: foto grande, preço de oferta com o cheio riscado e
+  // "Ver"), pela função que o WhatsApp Web usa ao compartilhar um produto (WPP.whatsapp.functions.sendProductToChat).
+  // Só vale se uma mensagem NOVA nossa aparecer na conversa; senão, a reserva (link com prévia) vai no lugar.
+  const mineIds = (chat) => { try { return new Set(chat.msgs.getModelsArray().filter((m) => m && m.id && m.id.fromMe).map((m) => String(m.id._serialized || m.id.id || m.id))); } catch { return new Set(); } };
+  const newMine = (chat, before) => { try { return chat.msgs.getModelsArray().filter((m) => m && m.id && m.id.fromMe && !before.has(String(m.id._serialized || m.id.id || m.id))); } catch { return []; } };
+  async function nativeProduct(wpp, chatId, productId, me) {
+    const W = wpp && wpp.whatsapp;
+    const fn = W && W.functions && W.functions.sendProductToChat;
+    if (typeof fn !== 'function') return null;
+    const modelOf = () => { try { const cat = W.CatalogStore && W.CatalogStore.get(me.wid); const col = cat && cat.productCollection; return col && typeof col.get === 'function' ? col.get(productId) || null : null; } catch { return null; } };
+    let model = modelOf();
+    if (!model && hasFn(wpp.catalog, 'getMyCatalog')) { try { await withTimeout(wpp.catalog.getMyCatalog(), 8000); } catch { /* sem catálogo carregado */ } model = modelOf(); }
+    let chat = null;
+    try { chat = (wpp.chat && wpp.chat.get(chatId)) || (W.ChatStore && W.ChatStore.get(chatId)) || null; } catch { chat = null; }
+    if (!model || !chat || !chat.msgs) return null;
+    return async (waitMs = 6000) => {
+      const before = mineIds(chat);
+      for (const args of [[model, chat], [chat, model]]) { // a ordem dos parâmetros muda entre versões do WhatsApp Web
+        let threw = false;
+        try { await withTimeout(Promise.resolve().then(() => fn(...args)), 15000); } catch { threw = true; }
+        for (let i = 0; i < (threw ? 1000 : waitMs) / 200; i++) { if (newMine(chat, before).length) return true; await sleepMs(200); }
+        if (!threw) return false; // não deu erro e nada apareceu: não tenta de novo (evita mandar duas vezes)
+      }
+      return false;
+    };
   }
 
   async function prepareSend(wpp, chatId, { kind, data, text }, opts) {
@@ -266,27 +345,40 @@
       if (av.business === false) throw preErr('catalog_unavailable', 'Catálogo só existe em conta WhatsApp Business');
       return () => wpp.chat.sendCatalogMessage(chatId, me.wid, { ...o, title: 'Catálogo no WhatsApp', description: 'Veja os nossos produtos', ...(caption ? { textMessage: caption } : {}) });
     }
-    // produto: a WA-JS 4.7.2 não tem envio de produto; vai o link do produto com o cartão de prévia
-    // (mesmo formato que a própria WA-JS usa no sendCatalogMessage)
+    // produto (2.16.13): 1) envio NATIVO do catálogo; 2) reserva automática: o link do produto com a prévia montada
+    // aqui (título = nome, descrição = "R$ 629,00 · de R$ 709,00", foto grande pelo upload do WhatsApp; sem ela, a
+    // pequena). Nos dois, o preço é o de OFERTA quando o catálogo tiver.
     if (!hasFn(wpp.chat, 'sendRawMessage')) throw preErr('rich_unavailable', 'Produto: esta versão da WA-JS não envia o link do produto');
     if (av.business === false) throw preErr('catalog_unavailable', 'Produto do catálogo só existe em conta WhatsApp Business');
     let fresh = null;
     try { fresh = hasFn(wpp.catalog, 'getProductById') ? normalizeProduct(await wpp.catalog.getProductById(String(me.wid._serialized || me.wid), d.product_id)) : null; } catch { fresh = null; }
-    const prod = { name: (fresh && fresh.name) || d.name || 'Produto', price: (fresh && fresh.price) || d.price || '', image_url: (fresh && fresh.image_url) || d.image_url };
+    const prod = fresh
+      ? { name: fresh.name || d.name || 'Produto', price: fresh.price || d.price || '', full_price: fresh.full_price || '', image_url: fresh.image_url || d.image_url }
+      : { name: d.name || 'Produto', price: d.price || '', full_price: d.full_price || '', image_url: d.image_url };
     const url = productLink(d.product_id, me.user);
-    const th = await thumbnail(prod.image_url);
-    const raw = {
-      type: 'chat', subtype: 'url', richPreviewType: 0, matchedText: url, body: caption ? `${caption}\n${url}` : url,
-      title: prod.name, description: prod.price || 'Ver produto no WhatsApp',
-      ...(th ? { thumbnail: th.data, thumbnailHeight: th.height, thumbnailWidth: th.width } : {}),
+    const native = await nativeProduct(wpp, chatId, d.product_id, me).catch(() => null);
+    const linkSend = async () => {
+      const th = (await hqThumbnail(wpp, prod.image_url).catch(() => null)) || (await thumbnail(prod.image_url).then((t) => (t ? { thumbnail: t.data, thumbnailHeight: t.height, thumbnailWidth: t.width } : null)));
+      const raw = {
+        type: 'chat', subtype: 'url', richPreviewType: 0, matchedText: url, canonicalUrl: url, body: caption ? `${caption}\n${url}` : url,
+        title: prod.name, description: productDescription(prod), ...(th || {}),
+      };
+      await wpp.chat.sendRawMessage(chatId, raw, o);
+      return { tspVia: th && th.thumbnailHQ ? 'link-grande' : 'link' };
     };
-    return () => wpp.chat.sendRawMessage(chatId, raw, o);
+    return async () => {
+      if (native && (await native().catch(() => false))) {
+        if (caption && hasFn(wpp.chat, 'sendTextMessage')) await wpp.chat.sendTextMessage(chatId, caption, o);
+        return { tspVia: 'nativo' };
+      }
+      return linkSend();
+    };
   }
 
   root.TspRich = Object.freeze({
     TYPES, LABEL, EMOJI, COLOR, PIX_KEY_TYPES,
     isRich, allowsText, empty, normalize, summary, mirrorText, fmtPhone, pixTypeLabel, normPhone,
-    parseMapsLink, placeNameFromLink, isShortMapsLink, productLink, mapsUrl, normalizeProduct, priceLabel,
+    parseMapsLink, placeNameFromLink, isShortMapsLink, productLink, mapsUrl, normalizeProduct, priceLabel, saleAmountOf, productDescription,
     availability, prepareSend,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : self);

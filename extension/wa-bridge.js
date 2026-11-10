@@ -640,12 +640,14 @@
       await typingPhase(job, chatId, typingMs);
       if (job.cancelled) throw new BridgeError('cancelled', 'Envio cancelado', 'before-send');
       job.stage = 'sending';
+      let r;
       try {
-        await send();
+        r = await send();
       } catch {
         throw onFail ? onFail() : new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
       }
-      return { sent: true };
+      // 2.16.13: por qual caminho o produto saiu (nativo / link-grande / link)
+      return r && typeof r.tspVia === 'string' ? { sent: true, via: r.tspVia } : { sent: true };
     } finally {
       jobs.delete(requestId);
     }
@@ -1823,12 +1825,14 @@
       if (!send) send = await richSendFn(p.chatId, p, newChat);
       if (job.cancelled) throw new BridgeError('cancelled', 'Envio cancelado', 'before-send');
       job.stage = 'sending';
+      let r;
       try {
-        await send();
+        r = await send();
       } catch {
         throw onFail ? onFail() : new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
       }
-      return { sent: true };
+      // 2.16.13: por qual caminho o produto saiu (nativo / link-grande / link)
+      return r && typeof r.tspVia === 'string' ? { sent: true, via: r.tspVia } : { sent: true };
     } finally {
       jobs.delete(requestId);
     }

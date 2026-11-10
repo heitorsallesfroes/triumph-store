@@ -246,7 +246,7 @@ test('content.js: manda chat_id e o telefone do @lid; "só pelo nome" só quando
   const bg = src('background.js');
   assert.match(bg, /contactLabelsMatch: \(m\) => WaApi\.contactLabelsMatch\(m\.identity\)/);
   assert.match(bg, /mergeDuplicateContacts: \(\) => WaApi\.mergeDuplicateContacts\(\)/);
-  assert.strictEqual(JSON.parse(src('manifest.json')).version, '2.16.12');
+  assert.ok(/^2\.16\.1[2-9]$/.test(JSON.parse(src('manifest.json')).version));
 });
 
 (async () => {
