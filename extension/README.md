@@ -799,6 +799,34 @@ guardada.
 
 ## O que mudou
 
+### 2.16.0 — réguas por "dia desde o primeiro contato" + entrar no meio da régua
+- **Espera desde a entrada.** Na caixa **⏳ ESPERAR** (modo "esperar um tempo") e no prazo da **❓ ESPERAR RESPOSTA**,
+  "Contar o tempo": **depois da etapa anterior** (como sempre) ou **depois que a pessoa ENTROU na automação**
+  (`from: 'entrada'` no jsonb da caixa). Ex.: Follow 3 = "até 3 dias depois de entrar"; a caixa mostra
+  **"Espera resposta até 3 dias depois de entrar · dia 3 desde a entrada"**. Um envio atrasado (fora do horário) não
+  empurra os próximos. Se o momento já passou (ex.: entrou no meio), segue na hora; se cair fora do horário de envio,
+  espera o próximo horário permitido (horário da automação e "enviar só entre" da etapa). Na ❓ "desde a entrada" o
+  "contar da MINHA última mensagem" não vale. Respondeu durante a espera → ✅ (sai da régua, como sempre).
+- **Hora da entrada** de cada percurso = `created_at` de `wa_sequence_runs` (**sem migration**): lead novo = hora da
+  **1ª mensagem do lead** (`wa_leads.first_message_at`); etiqueta = entrada na etiqueta; venda = registro da venda;
+  🔁 = inscrição. Percursos antigos: a hora em que foram criados.
+- **Entrar no meio da régua** (🔁 na conversa e "Adicionar à automação" no "⋯", a mesma tela): toda régua aparece na lista.
+  Escolhida a régua, **"Começar no:"** o começo ou **Follow 1 … Follow N** (as caixas ✉ ENVIAR na ordem do caminho de
+  quem não responde, com o dia). A pessoa entra **como se tivesse entrado há X tempo** (o tempo da etapa): o percurso
+  nasce já naquela etapa, com os ❌ anteriores marcados, e as próximas seguem a contagem normal.
+  **"Enviar esta etapa agora"** = sai assim que o horário da automação deixar; **"No horário marcado"** = passa pela
+  espera logo antes da etapa (valem o "até o próximo dia às HH:MM" e o "enviar só entre" dela).
+- Uma conversa pode estar em várias réguas; ao entrar por etapa, **"Tirar das outras réguas?"** (marcado por padrão)
+  encerra as outras (`outcome: outra_regua`). Entrar de novo na mesma régua encerra o percurso antigo (`reentrou`).
+- **Simular**: cada linha com **"dia X · data/hora prevista"** (dia 0 = o dia em que entrou).
+- Código: `engine.js` (`seqFromEntry`, `sinceEntryText`, `seqSendSteps`, `seqManualPlan`; `seqStep`/`seqSimulate` com
+  `entered_at`), `supabase-api.js` (`seqCreateRuns` grava a entrada; `seqManualEnter`), `content.js` (caixa e Simular do
+  construtor; tela "Adicionar à automação").
+- Testes: `tests/entrystep.test.cjs` (contagem desde a entrada, atraso que não acumula, já passou → segue, horário fora
+  da janela, entrada manual no Follow 4 agora / no horário marcado, respondeu → sai, lead com a hora da 1ª mensagem no
+  motor, servidor) e o passo 22 do `tests/chrome-real.test.cjs` (caixa e Simular com "dia X", "Começar no: Follow 4",
+  "Tirar das outras réguas?", percurso criado com a entrada de 5 dias atrás; nada enviado).
+
 ### 2.15.3 — exportar o catálogo do WhatsApp Business
 - Aba **Mídias** → bloco **"CATÁLOGO DO WHATSAPP"** → **"Exportar catálogo do WhatsApp"**. Só lê: **não muda o catálogo
   e não envia nada para ninguém**.

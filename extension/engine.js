@@ -938,6 +938,11 @@
   // start = { type: 'lead'|'etiqueta'|'venda'|'manual', origin: 'todos'|'anuncio'|'organico', source, label_id, wa_label_id }
   const SEQ_MAX_DEPTH = 5;
   const SEQ_UNIT_MIN = { minutos: 1, horas: 60, dias: 1440 };
+  // 2.16.0: espera contada desde a ENTRADA na automação (from: 'entrada'; ⏳ no modo tempo e ❓). Sem from = depois da
+  // etapa anterior (como sempre).
+  const seqFromEntry = (n) => !!n && n.from === 'entrada' && (n.type === 'esperar' || (n.type === 'pausa' && n.mode !== 'ate'));
+  const seqNeedMin = (n) => Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60);
+  const seqNeedMs = (n) => seqNeedMin(n) * MIN_MS;
   function seqIndex(def) {
     const map = new Map();
     const walk = (list, depth, parent) => (list || []).forEach((n, i) => {
@@ -957,7 +962,7 @@
     return (replies || []).some((t) => Number(t) > ref);
   }
   // Decide o que fazer agora com UMA conversa na sequência. Não envia nem grava nada.
-  // run = { node, wait_started_at (ms), last_sent_at (ms), skip_wait, branches }
+  // run = { node, wait_started_at (ms), last_sent_at (ms), skip_wait, branches, entered_at (ms: quando entrou na automação) }
   // → { status: 'run' (mandar send.itemId e ir para node) | 'progress' (só gravar node/espera/etiquetas) | 'wait' | 'end',
   //     node, waitStart, ops: [etiquetas], send, branches (novas), outcome, dueAt, reason }
   function seqStep({ def, run, chat, replies, now, settings }) {
@@ -969,6 +974,7 @@
     let win = null; // 2.13.2: faixa "enviar só entre" da última espera que esta decisão passou
     const waitStart = Number(run.wait_started_at) || null;
     const lastSent = Number(run.last_sent_at) || null;
+    const entered = Number(run.entered_at) || null; // 2.16.0 (sem ela: "desde a entrada" conta como "depois da anterior")
     const all = [...(run.branches || [])];
     const end = (reason) => ({ status: 'end', node: null, ops, branches, outcome: seqOutcome([...all, ...branches]), reason });
     for (let guard = 0; guard < 100; guard++) {
@@ -982,9 +988,16 @@
       if (n.type === 'enviar') return { status: 'run', node: seqNextOf(idx, id), sendNode: id, send: { itemId: n.item_id || null }, ops, branches, waitStart: null, window: win };
       // 2.13.0: ⏳ ESPERAR (só o tempo, sem caminhos): chegou agora → grava o começo; venceu → segue
       if (n.type === 'pausa') {
-        if (run.node !== id || !waitStart) return { status: 'progress', node: id, waitStart: now, ops, branches };
+        if (seqFromEntry(n) && entered) {
+          // 2.16.0: "até X depois de entrar": já passou (ex.: entrou no meio) → segue na hora
+          const due = entered + seqNeedMs(n);
+          if (now < due) {
+            if (run.node !== id || !waitStart) return { status: 'progress', node: id, waitStart: now, ops, branches };
+            return { status: 'wait', node: id, ops, branches, dueAt: due, reason: 'esperando o tempo desde a entrada' };
+          }
+        } else if (run.node !== id || !waitStart) return { status: 'progress', node: id, waitStart: now, ops, branches };
         // 2.13.2: "esperar até o próximo [dia] às HH:MM" (relógio, sem horário comercial)
-        if (n.mode === 'ate') {
+        else if (n.mode === 'ate') {
           const until = pausaUntil(waitStart, n);
           if (until == null || now < until) return { status: 'wait', node: id, ops, branches, dueAt: until, reason: 'esperando o dia e a hora' };
         } else {
@@ -1018,7 +1031,11 @@
         const need = Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60) * MIN_MS;
         let timedOut = skip;
         let dueAt = null;
-        if (!timedOut) {
+        if (!timedOut && seqFromEntry(n) && entered) {
+          // 2.16.0: prazo "até X depois de entrar" (o "contar da minha mensagem" não vale aqui); já passou → ❌ na hora
+          dueAt = entered + need;
+          timedOut = now >= dueAt;
+        } else if (!timedOut) {
           if (n.after_mine && !mine) return { status: 'wait', node: id, ops, branches, reason: 'esperando a sua mensagem', dueAt: null };
           const from = Math.max(waitStart, mine);
           timedOut = now - from >= need; // 2.14.2: tempo corrido
@@ -1473,6 +1490,8 @@
   // comercial ligado, pode levar mais. → [{ at (min), kind, text, node }]
   // 2.13.2: com startAt (ms) e settings, conta os horários de verdade: espera até o dia/hora, horário comercial das
   // esperas, faixa "enviar só entre" da etapa e o horário da automação; cada passo ganha "when" (data e hora prevista)
+  // 2.16.0: cada passo ganha "day" (dias inteiros desde a entrada: 0 = o dia em que entrou) e as esperas "desde a
+  // entrada" contam do começo (se já passou, seguem na hora)
   function seqSimulate(def, scenario = 'nunca', { itemTitle = (x) => x || '(sem mensagem)', labelName = (x) => x || '(sem etiqueta)', startAt = null, settings = null } = {}) {
     const idx = seqIndex(def);
     const out = [];
@@ -1483,9 +1502,10 @@
     let replied = false;
     let id = seqFirstOf(def && def.steps);
     const lab = (n) => (n.source === 'whatsapp' ? labelName(n.wa_label_id, 'whatsapp') : labelName(n.label_id, 'crm'));
-    const push = (ev) => out.push(real ? { ...ev, at: Math.round((tm - startAt) / MIN_MS), when: tm } : { ...ev, at });
-    const waitFor = (amount, unit) => {
+    const push = (ev) => out.push(real ? { ...ev, at: Math.round((tm - startAt) / MIN_MS), when: tm, day: Math.floor((tm - startAt) / DAY_MS) } : { ...ev, at, day: Math.floor(at / 1440) });
+    const waitFor = (amount, unit, n) => {
       const need = Math.max(1, Number(amount) || 0) * (SEQ_UNIT_MIN[unit] || 60);
+      if (seqFromEntry(n)) { if (!real) at = Math.max(at, need); else tm = Math.max(tm, startAt + need * MIN_MS); return; } // 2.16.0
       if (!real) { at += need; return; }
       tm += need * MIN_MS; // 2.14.2: tempo corrido
     };
@@ -1512,8 +1532,8 @@
           if (real) { const u = pausaUntil(tm, n); tm = u == null ? tm : u; } else at += 1440;
           push({ kind: 'pausa', text: `Esperou ${untilText(n)}`, node: n.id });
         } else {
-          waitFor(n.amount, n.unit);
-          push({ kind: 'pausa', text: `Esperou ${unitText(n.amount, n.unit)}`, node: n.id });
+          waitFor(n.amount, n.unit, n);
+          push({ kind: 'pausa', text: seqFromEntry(n) ? `Esperou até ${unitText(n.amount, n.unit)} depois de entrar` : `Esperou ${unitText(n.amount, n.unit)}`, node: n.id });
         }
         win = n.send_window || null;
       }
@@ -1526,8 +1546,8 @@
           id = seqFirstOf(n.yes);
           continue;
         }
-        waitFor(n.amount, n.unit);
-        push({ kind: 'nao', text: `❌ Não respondeu em ${unitText(n.amount, n.unit)}`, node: n.id });
+        waitFor(n.amount, n.unit, n);
+        push({ kind: 'nao', text: seqFromEntry(n) ? `❌ Não respondeu até ${unitText(n.amount, n.unit)} depois de entrar` : `❌ Não respondeu em ${unitText(n.amount, n.unit)}`, node: n.id });
         id = seqFirstOf(n.no);
         continue;
       }
@@ -1542,6 +1562,53 @@
     const h = Math.floor((min % 1440) / 60);
     const m = min % 60;
     return `+${[d ? `${d} dia${d === 1 ? '' : 's'}` : '', h ? `${h} h` : '', m ? `${m} min` : ''].filter(Boolean).join(' ')}`;
+  }
+  // 2.16.0: "dia 3 desde a entrada" / "36 h desde a entrada" (frase da caixa com from: 'entrada')
+  function sinceEntryText(n) {
+    const m = seqNeedMin(n);
+    if (m % 1440 === 0) return `dia ${m / 1440} desde a entrada`;
+    if (m % 60 === 0) return `${m / 60} h desde a entrada`;
+    return `${m} min desde a entrada`;
+  }
+  // 2.16.0: as caixas ✉ ENVIAR na ordem do caminho de quem nunca responde ("Follow 1", "Follow 2"…), cada uma com
+  // o tempo desde a entrada (minutos, sem horários), os ❌ tomados até ela, a espera logo antes (se houver) e a caixa
+  // onde o percurso recomeça para mandar já (afterNode: logo depois da última espera/envio, para as etiquetas do meio valerem)
+  function seqSendSteps(def) {
+    const evs = seqSimulate(def, 'nunca');
+    const out = [];
+    const seen = new Set();
+    let branches = [];
+    let prevWait = null;
+    let afterIdx = 1; // índice do evento logo depois da última espera/envio (o 0 é a entrada)
+    evs.forEach((ev, i) => {
+      if (ev.kind === 'nao') branches = [...branches, ev.node];
+      if (ev.kind === 'enviar' && ev.node && !seen.has(ev.node)) {
+        seen.add(ev.node);
+        const after = evs[afterIdx] && evs[afterIdx].node && evs[afterIdx].node !== 'start' ? evs[afterIdx].node : ev.node;
+        out.push({ node: ev.node, n: out.length + 1, at: ev.at, day: ev.day, branches: [...branches], prevWait, afterNode: after });
+      }
+      if (ev.kind === 'pausa' || ev.kind === 'nao') prevWait = ev.node;
+      else if (ev.kind === 'enviar') prevWait = null;
+      if (ev.kind === 'pausa' || ev.kind === 'nao' || ev.kind === 'enviar') afterIdx = i + 1;
+    });
+    return out;
+  }
+  // 2.16.0: entrar no meio da régua (manual), na caixa ✉ ENVIAR sendNode: a pessoa entra "como se tivesse entrado há
+  // X tempo" (o tempo daquela etapa), então ela sai assim que estiver no horário de envio e as próximas seguem a
+  // contagem normal. mode 'agora' = manda assim que o horário da automação deixar; 'marcado' = passa pela espera
+  // logo antes (vale o "até o próximo dia às HH:MM" e o "enviar só entre" dela; o prazo já venceu).
+  // → { node, entered_at, wait_started_at, skip_wait, branches } (para o percurso) ou null se a caixa não existe
+  function seqManualPlan(def, sendNode, { now, mode = 'agora' } = {}) {
+    const first = seqFirstOf(def && def.steps);
+    if (!sendNode) return { node: first, entered_at: now, wait_started_at: null, skip_wait: false, branches: [] };
+    const step = seqSendSteps(def).find((s) => s.node === sendNode);
+    if (!step) return null;
+    const entered = now - step.at * MIN_MS;
+    const br = (ids) => ids.map((node) => ({ node, result: 'nao', at: now }));
+    const pw = mode === 'marcado' && step.prevWait ? (seqIndex(def).get(step.prevWait) || {}).node : null;
+    if (pw && pw.type === 'esperar') return { node: pw.id, entered_at: entered, wait_started_at: now, skip_wait: true, branches: br(step.branches.slice(0, -1)) };
+    if (pw && pw.type === 'pausa') return { node: pw.id, entered_at: entered, wait_started_at: pw.mode === 'ate' ? now : now - seqNeedMs(pw), skip_wait: false, branches: br(step.branches) };
+    return { node: step.afterNode, entered_at: entered, wait_started_at: null, skip_wait: false, branches: br(step.branches) };
   }
   // minutos → { amount, unit } (o maior que dá certo)
   const seqAmountOf = (min) => {
@@ -1611,8 +1678,8 @@
     const e = seqIndex(def).get(id);
     if (!e) return 'passo removido';
     const n = e.node;
-    if (n.type === 'esperar') return `Esperando resposta (${n.amount} ${n.unit === 'minutos' ? 'min' : n.unit === 'horas' ? 'h' : n.amount === 1 ? 'dia' : 'dias'})`;
-    if (n.type === 'pausa') return n.mode === 'ate' ? `Esperando ${untilText(n)}` : `Esperando ${unitText(n.amount, n.unit)}`; // 2.13.0
+    if (n.type === 'esperar') return `Esperando resposta (${seqFromEntry(n) ? 'até ' : ''}${n.amount} ${n.unit === 'minutos' ? 'min' : n.unit === 'horas' ? 'h' : n.amount === 1 ? 'dia' : 'dias'}${seqFromEntry(n) ? ' depois de entrar' : ''})`;
+    if (n.type === 'pausa') return n.mode === 'ate' ? `Esperando ${untilText(n)}` : seqFromEntry(n) ? `Esperando até ${unitText(n.amount, n.unit)} depois de entrar` : `Esperando ${unitText(n.amount, n.unit)}`; // 2.13.0 (2.16.0: desde a entrada)
     if (n.type === 'enviar') return `Antes de mandar “${itemTitle(n.item_id)}”`;
     return n.type;
   }
@@ -2351,15 +2418,17 @@
     const seqKnown = new Set(); // entradas já criadas nesta aba (não manda de novo a cada ciclo)
     const msOf = (iso) => { const t = Date.parse(iso || ''); return Number.isFinite(t) ? t : null; };
     function seqRunState(r) {
-      return { node: r.node, wait_started_at: msOf(r.wait_started_at), last_sent_at: msOf(r.last_sent_at), skip_wait: !!r.skip_wait, branches: r.branches || [], due_at: msOf(r.due_at) };
+      // 2.16.0: entered_at = created_at do percurso (gravado com a hora de entrada: 1ª mensagem do lead, entrada na etiqueta…)
+      return { node: r.node, wait_started_at: msOf(r.wait_started_at), last_sent_at: msOf(r.last_sent_at), skip_wait: !!r.skip_wait, branches: r.branches || [], due_at: msOf(r.due_at), entered_at: msOf(r.entered_at || r.created_at) };
     }
     async function seqEnter(seqs) {
       const items = [];
-      const add = (a, chatId, key, contactId) => {
+      // 2.16.0: enteredAt = quando a pessoa ENTROU (conta o "até X depois de entrar")
+      const add = (a, chatId, key, contactId, enteredAt) => {
         if (!chatId || (a.test_chat_id && chatId !== a.test_chat_id)) return;
         const k = `${a.id}|${chatId}|${key}`;
         if (seqKnown.has(k)) return;
-        items.push({ automation_id: a.id, chat_id: chatId, entry_key: key, contact_id: contactId || null, node: seqIndexFirst(a.sequence) });
+        items.push({ automation_id: a.id, chat_id: chatId, entry_key: key, contact_id: contactId || null, node: seqIndexFirst(a.sequence), entered_at: Number.isFinite(enteredAt) ? enteredAt : null });
         seqKnown.add(k);
       };
       const since = (a) => msOf(a.activated_at); // só daqui pra frente (sem ativação: ninguém entra)
@@ -2367,7 +2436,7 @@
       if (leadSeqs.length) {
         let leads = [];
         try { leads = await api('seqLeads', { since: new Date(Math.min(...leadSeqs.map(since))).toISOString() }); } catch { leads = []; }
-        leadSeqs.forEach((a) => (leads || []).forEach((l) => { if (msOf(l.first_message_at) >= since(a) && seqStartMatches(a.sequence.start, l)) add(a, l.chat_id, 'lead'); }));
+        leadSeqs.forEach((a) => (leads || []).forEach((l) => { if (msOf(l.first_message_at) >= since(a) && seqStartMatches(a.sequence.start, l)) add(a, l.chat_id, 'lead', null, msOf(l.first_message_at)); }));
       }
       const labelSeqs = seqs.filter((a) => a.sequence.start.type === 'etiqueta' && since(a));
       if (labelSeqs.length) {
@@ -2383,7 +2452,7 @@
             const entry = automationEntry(fake, c, { ignoreEnrollment: true });
             if (!entry || !Number.isFinite(entry.at)) return;
             if (!a.include_existing && entry.at < since(a)) return;
-            add(a, chatIdOfContact(c), `lbl:${entry.key}`.slice(0, 120), c.id);
+            add(a, chatIdOfContact(c), `lbl:${entry.key}`.slice(0, 120), c.id, entry.at);
           });
         });
       }
@@ -2394,7 +2463,7 @@
         saleSeqs.forEach((a) => buyers.forEach((c) => {
           if (msOf(c.sale_at) < since(a)) return;
           if (a.sequence.start.label_id && !(c.labelIds || []).includes(a.sequence.start.label_id)) return;
-          add(a, chatIdOfContact(c), `venda@${c.sale_id}`, c.id);
+          add(a, chatIdOfContact(c), `venda@${c.sale_id}`, c.id, msOf(c.sale_at));
         }));
       }
       const manualSeqs = seqs.filter((a) => a.sequence.start.type === 'manual');
@@ -2402,7 +2471,7 @@
         let enr = [];
         try { enr = await api('activeEnrollments', { automationIds: manualSeqs.map((a) => a.id) }) || []; } catch { enr = []; }
         const byId = new Map(manualSeqs.map((a) => [a.id, a]));
-        enr.forEach((e) => { const a = byId.get(e.automation_id); if (a && e.chat_id) add(a, e.chat_id, `insc@${msOf(e.enrolled_at) || 0}`, e.contact_id); });
+        enr.forEach((e) => { const a = byId.get(e.automation_id); if (a && e.chat_id) add(a, e.chat_id, `insc@${msOf(e.enrolled_at) || 0}`, e.contact_id, msOf(e.enrolled_at)); });
       }
       for (let i = 0; i < items.length; i += 500) {
         try { await api('seqCreateRuns', { items: items.slice(i, i + 500) }); } catch { items.slice(i, i + 500).forEach((it) => seqKnown.delete(`${it.automation_id}|${it.chat_id}|${it.entry_key}`)); }
@@ -2839,7 +2908,7 @@
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
     WIZARDS, wizardToAutomations, wizardSentence, wizardMinutes, businessMinutesPerDay, validateAutomationDraft,
-    seqIndex, seqStep, seqValidate, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
+    seqIndex, seqStep, seqValidate, seqFromEntry, sinceEntryText, seqSendSteps, seqManualPlan, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
     seqNormalize, seqInsert, seqRemove, seqExcluded, seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
     itemUsageLines, itemInUse, friendlyDeleteError, // 2.13.1
     scheduleSpec, nextSendTime, pausaUntil, scheduleDailyLimit, scheduleOutsideCommon, scheduleSentence, scheduleProblems, untilText, windowText, daysText, // 2.13.2

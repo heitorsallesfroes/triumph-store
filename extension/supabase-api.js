@@ -2527,9 +2527,43 @@
     const rows = items.filter((it) => it && SCHED_CHAT_RE.test(it.chat_id || '') && RUN_KEY_RE.test(it.entry_key || '')).map((it) => ({
       automation_id: checkUuid(it.automation_id, 'Automação inválida'), chat_id: it.chat_id, entry_key: it.entry_key,
       contact_id: it.contact_id ? checkUuid(it.contact_id, 'Contato inválido') : null, node: typeof it.node === 'string' && it.node.length <= 40 ? it.node : null,
+      // 2.16.0: created_at = quando a pessoa ENTROU (1ª mensagem do lead, entrada na etiqueta, venda, inscrição); conta o
+      // "até X depois de entrar". Sem a hora (ou no futuro): agora, como antes.
+      ...(enteredIso(it.entered_at) ? { created_at: enteredIso(it.entered_at) } : {}),
     }));
     if (rows.length) await seqRest('wa_sequence_runs?on_conflict=automation_id,chat_id,entry_key', json('POST', 'resolution=ignore-duplicates,return=minimal', rows));
     return { created: rows.length };
+  }
+  const enteredIso = (ms) => { const t = Number(ms); return Number.isFinite(t) && t > 0 && t <= Date.now() + 60000 ? new Date(t).toISOString() : null; };
+  // 2.16.0: entrar à mão numa régua (🔁 / "Adicionar à automação"), no começo ou no meio (plan = E.seqManualPlan):
+  // cria o percurso já na etapa escolhida, com created_at = a entrada "de há X tempo". Quem já estava nesta régua sai
+  // (entra de novo do ponto escolhido); leaveOthers: sai também das outras réguas ativas.
+  async function seqManualEnter({ automationId, chatId, plan, leaveOthers }) {
+    checkUuid(automationId, 'Automação inválida');
+    if (!SCHED_CHAT_RE.test(chatId || '')) throw new Error('Conversa inválida');
+    const p = plan || {};
+    if (typeof p.node !== 'string' || !p.node || p.node.length > 40) throw new Error('Etapa inválida');
+    if (p.branches !== undefined && (!Array.isArray(p.branches) || p.branches.length > 50)) throw new Error('Caminhos inválidos');
+    const autos = await autoRest(`wa_automations?select=id,kind&id=eq.${automationId}`);
+    if (!autos.length || autos[0].kind !== 'sequencia') throw new Error('Automação não encontrada');
+    const runs = await seqRest(`wa_sequence_runs?select=id,automation_id,version&chat_id=eq.${encodeURIComponent(chatId)}&status=eq.ativo`);
+    let left = 0;
+    for (const r of runs) {
+      const same = r.automation_id === automationId;
+      if (!same && !leaveOthers) continue;
+      const res = await seqUpdateRun({ id: r.id, version: r.version, patch: { status: 'saiu', outcome: same ? 'reentrou' : 'outra_regua' } });
+      if (res.ok && !same) left++;
+    }
+    const found = (await contactsByChats([chatId]))[chatId];
+    const row = {
+      automation_id: automationId, chat_id: chatId, entry_key: `manual@${Date.now()}`, contact_id: found ? found.id : null,
+      node: p.node, status: 'ativo', version: 0, created_at: enteredIso(p.entered_at) || new Date().toISOString(),
+      wait_started_at: Number.isFinite(Number(p.wait_started_at)) && p.wait_started_at != null ? new Date(Number(p.wait_started_at)).toISOString() : null,
+      skip_wait: p.skip_wait === true,
+      branches: (p.branches || []).map((b) => ({ node: String(b.node).slice(0, 40), result: b.result === 'sim' ? 'sim' : 'nao', at: Number(b.at) || null })),
+    };
+    const rows = await seqRest('wa_sequence_runs', json('POST', 'return=representation', row));
+    return { ok: true, run: rows[0] || null, left };
   }
   // avança um percurso SÓ se ninguém mexeu antes (version): evita envio duplicado entre abas/PCs
   async function seqUpdateRun({ id, version, patch }) {
@@ -3882,7 +3916,7 @@
     sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
     saleFirstName, erpCatalog, createSaleFromChat, lookupCep, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
-    seqRuns, seqCreateRuns, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqRunAction, seqStats, automationSentToday,
+    seqRuns, seqCreateRuns, seqManualEnter, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqRunAction, seqStats, automationSentToday,
     automationUnreserve, applySendLabels, getContactName,
     campaignVariantStats, fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,

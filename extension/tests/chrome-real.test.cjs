@@ -1279,8 +1279,9 @@ async function main() {
     await q(`sh.querySelector('.vb .vb-tr .more-menu .vb-sim').click(); await wait(300); return true;`);
     const sim = await q(`const m = sh.querySelector('.vb .vb-modal'); const col = (c) => [...m.querySelectorAll('.' + c + ' .vb-ev')].map((r) => r.textContent);
       return { never: col('vb-sim-nunca'), first: col('vb-sim-primeiro') };`);
-    // (2.13.2: cada linha mostra a data e a hora previstas — "seg, 09/11, 13:46" — em vez de "+1 dia")
-    const DATE_RE = /^[a-zçáé]{3},? \d{2}\/\d{2},? \d{2}:\d{2}/;
+    // (2.13.2: cada linha mostra a data e a hora previstas — "seg, 09/11, 13:46" — em vez de "+1 dia"; 2.16.0: com
+    // "dia X · " na frente, o dia desde a entrada)
+    const DATE_RE = /^dia \d+ · [a-zçáé]{3},? \d{2}\/\d{2},? \d{2}:\d{2}/;
     const textsOf = (l) => l.map((x) => x.replace(DATE_RE, ''));
     check('Simular: linha do tempo (com data e hora) de quem nunca responde (Follow 1 → Oferta especial → Follow 3 → Frio) e de quem responde no 1º passo (Em atendimento)',
       sim.never.every((x) => DATE_RE.test(x)) && JSON.stringify(textsOf(sim.never)) === JSON.stringify(['Entra na automação', 'Recebe “Follow 1”', '❌ Não respondeu em 1 dia', 'Recebe “Oferta especial”', '❌ Não respondeu em 2 dias', 'Recebe “Follow 3”', '❌ Não respondeu em 3 dias', 'Entra na etiqueta “Frio”', 'Fim: sai da automação'])
@@ -1425,7 +1426,7 @@ async function main() {
     const simT = await q(`const m = sh.querySelector('.vb .vb-modal'); return [...m.querySelectorAll('.vb-sim-nunca .vb-ev')].map((r) => r.querySelector('.vb-evt').textContent + ' | ' + r.querySelector('.vb-evx').textContent);`);
     const sendsT = simT.filter((x) => /Recebe/.test(x));
     check('Simular mostra a data e a hora previstas de cada envio (dia da semana, dia/mês e hora), dentro do horário da automação',
-      sendsT.length === 3 && sendsT.every((x) => /^[a-zçáé]{3},? \d{2}\/\d{2},? (0[7-9]|1[0-7]):\d{2} \| Recebe/.test(x)) && simT.some((x) => /Esperou até o próximo dia às 10:00/.test(x)), JSON.stringify(simT));
+      sendsT.length === 3 && sendsT.every((x) => /^dia \d+ · [a-zçáé]{3},? \d{2}\/\d{2},? (0[7-9]|1[0-7]):\d{2} \| Recebe/.test(x)) && simT.some((x) => /Esperou até o próximo dia às 10:00/.test(x)), JSON.stringify(simT));
     await q(`sh.querySelector('.vb .vb-simclose').click(); await wait(150); sh.querySelector('.vb .vb-save').click(); return true;`);
     const saved16 = await waitFor(`return !sh.querySelector('.vb') && !!sh.querySelector('.fw-new');`, 15000);
     const r16 = (fake.db.wa_automations || []).find((a) => a.name === 'Régua de follow-up') || {};
@@ -1779,6 +1780,75 @@ async function main() {
     fake.generic = false;
     fake.storage = null;
     check('nenhum erro no console na exportação do catálogo', errors.length === 0, errors.slice(0, 8).join(' | '));
+    // 22. réguas por "dia desde a entrada" + entrar no meio (2.16.0): régua de 6 follows (❓ "até 1/3/5/7/10 dias
+    // depois de entrar"). No construtor: a caixa diz "dia 3 desde a entrada", o lado tem "Contar o tempo" e o Simular
+    // mostra "dia X · data". Na conversa (🔁): "Começar no: Follow 4", enviar agora, "Tirar das outras réguas?"
+    // marcado → o percurso nasce no Follow 4 com a entrada de 5 dias atrás e a outra régua sai. Nada é enviado.
+    fake.on = true;
+    fake.generic = true;
+    const CH22 = '5521966665555@c.us';
+    const REG = uuid(); const OUT22 = uuid();
+    const mk22 = (k) => {
+      const send = { id: `s${k + 1}`, type: 'enviar', item_id: itemId };
+      if (k === 5) return [send, { id: `fim${k}`, type: 'fim' }];
+      return [send, { id: `w${k + 1}`, type: 'esperar', amount: [1, 3, 5, 7, 10][k], unit: 'dias', from: 'entrada', yes: [{ id: `ok${k}`, type: 'fim' }], no: mk22(k + 1) }];
+    };
+    fake.db.wa_automations = [...(fake.db.wa_automations || []),
+      { id: REG, name: 'Régua 6 follows', kind: 'sequencia', trigger_type: 'sequencia', active: false, position: 1, sequence: { start: { type: 'lead', origin: 'todos' }, business: false, schedule: { mode: 'personalizado', week: [0, 1, 2, 3, 4, 5, 6].map(() => [{ start: '00:00', end: '23:59' }]) }, steps: mk22(0) }, test_chat_id: null, conditions: [], actions: [] },
+      { id: OUT22, name: 'Outra régua', kind: 'sequencia', trigger_type: 'sequencia', active: false, position: 2, sequence: { start: { type: 'manual' }, business: false, steps: [{ id: 'x1', type: 'enviar', item_id: itemId }, { id: 'xf', type: 'fim' }] }, test_chat_id: null, conditions: [], actions: [] }];
+    fake.db.wa_sequence_runs = [...(fake.db.wa_sequence_runs || []), { id: uuid(), automation_id: OUT22, chat_id: CH22, entry_key: 'insc@1', node: 'x1', status: 'ativo', version: 0, branches: [], skip_wait: false, created_at: new Date().toISOString() }];
+    await pg(`window.__fakeBridge = { activeChat: { kind: 'individual', chatId: ${JSON.stringify(CH22)} }, chatPhone: { phone: '5521966665555', name: 'Joana', via: 'numero' },
+      verifyChatPhone: { active: true, match: true }, recentChats: [], labels: [], chatLabels: { labelIds: [] } }; return true;`);
+    await openChat('Cliente 8');
+    await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(200); sh.querySelector('[data-sec="vendas"]').click(); await wait(200); sh.querySelector('[data-sec="follows"]').click(); await wait(300); return true;`);
+    const regCard = `[...sh.querySelectorAll('.fw-card')].find((c) => (c.querySelector('.fw-name') || {}).textContent === 'Régua 6 follows')`;
+    const regOk = await waitFor(`return !!${regCard};`, 15000);
+    await q(`const c = ${regCard}; c.querySelector('.fw-edit').click(); await wait(400); return true;`);
+    const box22 = await q(`const v = sh.querySelector('.vb'); if (!v) return null; const w = [...v.querySelectorAll('.vb-box.vb-esperar')]; const t = w.map((b) => b.querySelector('.vb-btxt').textContent);
+      w[1].click(); await wait(250); const side = v.querySelector('.vb-side');
+      return { waits: t, from: [...side.querySelectorAll('.vb-from input')].map((r) => [r.value, r.checked]), help: (side.querySelector('.vb-from-help') || {}).textContent || '', mine: /MINHA última mensagem/.test(side.textContent) };`);
+    check('construtor: ❓ "até X dias depois de entrar" com "dia X desde a entrada" na caixa; lado com "Contar o tempo" (desde a entrada marcado) e sem "da minha mensagem"',
+      regOk && !!box22 && JSON.stringify(box22.waits.slice(0, 2)) === JSON.stringify(['Espera resposta até 1 dia depois de entrar · dia 1 desde a entrada', 'Espera resposta até 3 dias depois de entrar · dia 3 desde a entrada'])
+      && JSON.stringify(box22.from) === '[["anterior",false],["entrada",true]]' && /dia 3 desde a entrada/.test(box22.help) && /segue na hora/.test(box22.help) && !box22.mine, JSON.stringify(box22));
+    // trocar para "a partir desta etapa" e voltar: a frase muda (e volta)
+    const flip22 = await q(`const v = sh.querySelector('.vb'); const pick = async (val) => { v.querySelector('.vb-side .vb-from input[value="' + val + '"]').click(); await wait(200); return v.querySelectorAll('.vb-box.vb-esperar')[1].querySelector('.vb-btxt').textContent; };
+      const a = await pick('anterior'); const b = await pick('entrada'); return [a, b];`);
+    check('construtor: "a partir desta etapa" volta à frase de sempre; "depois que a pessoa ENTROU" volta ao "dia 3"',
+      flip22[0] === 'Espera resposta por até 3 dias' && flip22[1] === 'Espera resposta até 3 dias depois de entrar · dia 3 desde a entrada', JSON.stringify(flip22));
+    await shot('regua-dia-desde-entrada.png');
+    await q(`const t = sh.querySelector('.vb .vb-tr'); t.querySelector('.more-btn').click(); await wait(150); t.querySelector('.more-menu .vb-sim').click(); await wait(300); return true;`);
+    const sim22 = await q(`const m = sh.querySelector('.vb .vb-modal'); return [...m.querySelectorAll('.vb-sim-nunca .vb-ev')].filter((r) => r.classList.contains('vb-ev-enviar')).map((r) => r.querySelector('.vb-evt').textContent);`);
+    check('Simular: cada envio com "dia X · data/hora prevista" (dia 0, 1, 3, 5, 7, 10)',
+      sim22.length === 6 && JSON.stringify(sim22.map((x) => Number((/^dia (\d+) · /.exec(x) || [])[1]))) === '[0,1,3,5,7,10]' && sim22.every((x) => DATE_RE.test(x)), JSON.stringify(sim22));
+    await shot('simular-dia-x.png');
+    await q(`sh.querySelector('.vb .vb-simclose').click(); await wait(200); sh.querySelector('.vb .vb-close').click(); await wait(300); const d = sh.querySelector('.vb .vb-discard'); if (d) d.click(); await wait(300); return true;`);
+    // 🔁 na conversa: escolher a régua e "Começar no: Follow 4"
+    await q(`sh.querySelector('.auto-quick').click(); return true;`);
+    await waitFor(`return !!sh.querySelector('.ftab select[aria-label="Automação"]') && !sh.querySelector('.ftab .loading');`, 15000);
+    await q(`const s = sh.querySelector('.ftab select[aria-label="Automação"]'); s.value = '${REG}'; s.dispatchEvent(new Event('change', { bubbles: true })); await wait(250); return true;`);
+    const steps22 = await q(`const s = sh.querySelector('.ftab .fl-add-step'); return s ? [...s.options].map((o) => o.textContent) : null;`);
+    check('Adicionar à automação: "Começar no:" com o começo e Follow 1…6 (ordem das caixas ✉, com o dia)',
+      !!steps22 && steps22.length === 7 && steps22[0] === 'o começo (entra agora)' && /^Follow 1 · “.+” \(dia 0\)$/.test(steps22[1]) && /^Follow 4 · “.+” \(dia 5\)$/.test(steps22[4]) && /^Follow 6 · “.+” \(dia 10\)$/.test(steps22[6]), JSON.stringify(steps22));
+    await q(`const s = sh.querySelector('.ftab .fl-add-step'); s.value = 's4'; s.dispatchEvent(new Event('change', { bubbles: true })); await wait(250); return true;`);
+    const opts22 = await q(`const f = sh.querySelector('.ftab'); const lv = f.querySelector('.fl-add-leave'); return { modes: [...f.querySelectorAll('.fl-add-mode input')].map((r) => [r.value, r.checked, r.parentElement.textContent.trim()]),
+      leave: lv ? lv.checked : null, leaveTxt: lv ? lv.parentElement.textContent : '', intro: [...f.querySelectorAll('.crm-intro')].map((x) => x.textContent).join(' | ') };`);
+    check('Follow 4: "como se tivesse entrado há 5 dias", "Enviar esta etapa agora" (padrão) / "No horário marcado" e "Tirar das outras réguas?" marcado',
+      JSON.stringify(opts22.modes) === JSON.stringify([['agora', true, 'Enviar esta etapa agora'], ['marcado', false, 'No horário marcado']]) && opts22.leave === true && /Tirar das outras réguas\?/.test(opts22.leaveTxt) && /como se tivesse entrado há 5 dias/.test(opts22.intro), JSON.stringify(opts22));
+    await shot('adicionar-follow-4.png');
+    const t22 = Date.now();
+    await q(`sh.querySelector('.ftab .fl-add-go').click(); return true;`);
+    await waitFor(`return /Conversa adicionada a "Régua 6 follows" no Follow 4/.test((sh.querySelector('.ftab .ed-msg') || {}).textContent || '');`, 15000);
+    const msg22 = await q(`return (sh.querySelector('.ftab .ed-msg') || {}).textContent || '';`);
+    const run22 = (fake.db.wa_sequence_runs || []).find((r) => r.automation_id === REG && r.chat_id === CH22);
+    const other22 = (fake.db.wa_sequence_runs || []).find((r) => r.automation_id === OUT22 && r.chat_id === CH22);
+    const ago22 = run22 ? (t22 - Date.parse(run22.created_at)) / 86400000 : null;
+    check('entrou no Follow 4: percurso na caixa do Follow 4, entrada "de há 5 dias", 3 ❌ já tomados; a outra régua saiu; a mensagem diz o que aconteceu',
+      !!run22 && run22.node === 's4' && run22.status === 'ativo' && Math.abs(ago22 - 5) < 0.01 && JSON.stringify((run22.branches || []).map((b) => b.node)) === '["w1","w2","w3"]' && /^manual@\d+$/.test(run22.entry_key)
+      && !!other22 && other22.status === 'saiu' && other22.outcome === 'outra_regua' && /Saiu de 1 outra régua/.test(msg22), JSON.stringify({ run22, other22: other22 && [other22.status, other22.outcome], msg22 }));
+    await pg(`window.__fakeBridge = null; return true;`);
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console nas réguas por dia desde a entrada', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

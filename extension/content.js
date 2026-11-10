@@ -273,7 +273,7 @@
   const INVALIDATED_MSG = 'A extensão foi atualizada. Recarregue o WhatsApp (F5).';
 
   // 2.4.1: pedidos que criam/ativam trabalho do motor → ele confere já (sem esperar a verificação de 2 min)
-  const ENGINE_POKE = new Set(['createSchedule', 'saveFlow', 'setFlowActive', 'saveCampaign', 'startCampaign', 'campaignAction', 'saveAutomation', 'setAutomationActive', 'updateEngineSettings', 'enrollContact', 'leaveAutomation']);
+  const ENGINE_POKE = new Set(['createSchedule', 'saveFlow', 'setFlowActive', 'saveCampaign', 'startCampaign', 'campaignAction', 'saveAutomation', 'setAutomationActive', 'updateEngineSettings', 'enrollContact', 'leaveAutomation', 'seqManualEnter']);
   let enginePoke = null;
 
   function call(type, payload = {}) {
@@ -9036,6 +9036,8 @@
     if (n.type === 'enviar') return n.item_id ? `Envia “${itemTitle(n.item_id)}”` : n.hint ? `Escolha a mensagem (sugestão: ${n.hint})` : 'Escolha a mensagem';
     // 2.13.2: "· envia só entre 14:00 e 18:00" quando a etapa tem faixa
     const wtxt = n.send_window ? ` · ${E.windowText(n.send_window)}` : '';
+    // 2.16.0: "Espera até 3 dias depois de entrar · dia 3 desde a entrada"
+    if (E.seqFromEntry(n)) return `${n.type === 'pausa' ? 'Espera' : 'Espera resposta'} até ${unitWord(n.amount, n.unit)} depois de entrar · ${E.sinceEntryText(n)}${wtxt}`;
     if (n.type === 'pausa') return `Espera ${E.seqNodeLabel({ steps: [n] }, n.id).replace(/^Esperando /, '')}${wtxt}`;
     if (n.type === 'esperar') return `Espera resposta por até ${E.seqNodeLabel({ steps: [n] }, n.id).replace(/^Esperando resposta \((.*)\)$/, '$1')}${n.after_mine ? ', contando da SUA última mensagem' : ''}${wtxt}`;
     if (n.type === 'etiqueta') {
@@ -9046,6 +9048,7 @@
     if (n.type === 'ir') return `Continua em: ${seqNodeTitle(vb.f.def, n.to)}`;
     return 'Termina a automação para essa pessoa';
   }
+  const unitWord = (amount, unit) => { const k = Number(amount) || 0; return `${k} ${unit === 'minutos' ? (k === 1 ? 'minuto' : 'minutos') : unit === 'horas' ? (k === 1 ? 'hora' : 'horas') : k === 1 ? 'dia' : 'dias'}`; };
   function vbNew(type) {
     const id = E.seqId();
     if (type === 'enviar') return { id, type, item_id: '' };
@@ -9304,6 +9307,21 @@
         unit.addEventListener('change', () => { n.unit = unit.value; vbChange(); vbRender(); });
         r.append(amount, unit);
         side.append(r);
+        // 2.16.0: contar depois da etapa anterior (como sempre) ou desde que a pessoa ENTROU na automação
+        const from = el('div', 'vb-radios vb-from');
+        [['anterior', n.type === 'pausa' ? 'depois da etapa anterior' : 'a partir desta etapa'], ['entrada', 'depois que a pessoa ENTROU na automação']].forEach(([v, txt]) => {
+          const l = el('label', 'sc-radio');
+          const r0 = el('input');
+          r0.type = 'radio';
+          r0.name = `vb-from-${n.id}`;
+          r0.value = v;
+          r0.checked = (n.from === 'entrada' ? 'entrada' : 'anterior') === v;
+          r0.addEventListener('change', () => { if (v === 'entrada') { n.from = 'entrada'; delete n.after_mine; } else delete n.from; vbChange(); vbRender(); });
+          l.append(r0, ` ${txt}`);
+          from.append(l);
+        });
+        side.append(el('div', 'vb-fl', 'Contar o tempo'), from);
+        if (n.from === 'entrada') side.append(el('div', 'vb-sub vb-from-help', `Até ${unitWord(n.amount, n.unit)} depois que a pessoa entrou (${E.sinceEntryText(n)}). Se esse momento já passou (ex.: entrou no meio da régua), segue na hora; se cair fora do horário de envio, espera o próximo horário permitido.`));
       }
       // 2.13.2: "Depois da espera, enviar só entre HH:MM e HH:MM" (fora da faixa: espera a próxima)
       const wl = el('label', 'sc-radio');
@@ -9330,7 +9348,7 @@
         side.append(r, el('div', 'vb-sub', 'Se cair fora dessa faixa, espera a próxima (e o horário da automação também vale).'));
         if (E.scheduleOutsideCommon({ steps: [n] })) side.append(el('div', 'vb-warn', '⚠ Mensagem fora do horário comum (08:00–21:00) pode incomodar.'));
       }
-      if (n.type === 'esperar') {
+      if (n.type === 'esperar' && n.from !== 'entrada') {
         const l = el('label', 'sc-radio');
         const cb = el('input');
         cb.type = 'checkbox';
@@ -9706,7 +9724,7 @@
         col.append(el('div', 'vb-fl', title));
         E.seqSimulate(E.seqNormalize(f.def), sc, opt).forEach((ev) => {
           const r = el('div', `vb-ev vb-ev-${ev.kind}`);
-          const t = el('span', 'vb-evt', ev.when != null ? whenTxt(ev.when) : E.simAtText(ev.at));
+          const t = el('span', 'vb-evt', `dia ${ev.day || 0} · ${ev.when != null ? whenTxt(ev.when) : E.simAtText(ev.at)}`); // 2.16.0: dia desde a entrada
           t.title = E.simAtText(ev.at);
           r.append(t, el('span', 'vb-evx', ev.text));
           col.append(r);
@@ -10824,17 +10842,61 @@
     const none = el('option', null, 'Escolha a automação…');
     none.value = '';
     sel.append(none);
-    [...motor.state.automations].filter((a) => (a.kind === 'sequencia' ? a.sequence && a.sequence.start && a.sequence.start.type === 'manual' : a.trigger_type !== 'venda_registrada')).sort((a, b) => (a.position || 0) - (b.position || 0)).forEach((a) => {
+    // 2.16.0: toda régua (sequência) aceita entrar à mão, no começo ou numa etapa ("começar no: Follow 4")
+    [...motor.state.automations].filter((a) => (a.kind === 'sequencia' ? a.sequence && a.sequence.start && Array.isArray(a.sequence.steps) : a.trigger_type !== 'venda_registrada')).sort((a, b) => (a.position || 0) - (b.position || 0)).forEach((a) => {
       const o = el('option', null, `${a.name}${a.active ? '' : ' (desligada)'}`);
       o.value = a.id;
       o.selected = a.id === c.pick;
       sel.append(o);
     });
-    sel.addEventListener('change', () => { c.pick = sel.value; });
-    const add = fbtn('bbtn primary', c.busy ? 'Adicionando…' : 'Adicionar', () => enrollOpenChat());
+    sel.addEventListener('change', () => { c.pick = sel.value; c.step = ''; renderFollows(); });
+    const add = fbtn('bbtn primary fl-add-go', c.busy ? 'Adicionando…' : 'Adicionar', () => enrollOpenChat());
     add.disabled = c.busy || !c.v25;
-    row.append(sel, add);
+    row.append(sel);
     sec.append(row);
+    const picked = motor.state.automations.find((x) => x.id === c.pick);
+    if (picked && picked.kind === 'sequencia') {
+      const steps = E.seqSendSteps(E.seqNormalize(picked.sequence));
+      const r2 = el('div', 'sc-row');
+      const ss = el('select', 'ed-cat fl-add-step');
+      ss.setAttribute('aria-label', 'Começar no');
+      [['', 'o começo (entra agora)'], ...steps.map((s) => {
+        const n = (E.seqIndex(picked.sequence).get(s.node) || {}).node || {};
+        return [s.node, `Follow ${s.n} · “${n.item_id ? itemTitle(n.item_id) : 'sem mensagem'}” (dia ${s.day})`];
+      })].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === (c.step || ''); ss.append(o); });
+      ss.addEventListener('change', () => { c.step = ss.value; renderFollows(); });
+      r2.append(el('span', null, 'Começar no:'), ss);
+      sec.append(r2);
+      if (c.step) {
+        const st = steps.find((s) => s.node === c.step);
+        sec.append(el('div', 'crm-intro', `Entra como se tivesse entrado há ${st ? E.simAtText(st.at).replace(/^\+/, '') : '?'} (o tempo desta etapa): ela sai assim que estiver no horário de envio e as próximas seguem a contagem normal.`));
+        const modes = el('div', 'vb-radios fl-add-mode');
+        [['agora', 'Enviar esta etapa agora'], ['marcado', 'No horário marcado']].forEach(([v, txt]) => {
+          const l = el('label', 'sc-radio');
+          const r0 = el('input');
+          r0.type = 'radio';
+          r0.name = 'fl-add-mode';
+          r0.value = v;
+          r0.checked = (c.mode || 'agora') === v;
+          r0.addEventListener('change', () => { c.mode = v; });
+          l.append(r0, ` ${txt}`);
+          modes.append(l);
+        });
+        sec.append(modes);
+        // 4. pode estar em várias réguas; entrando por etapa, pergunta (marcado por padrão)
+        const lo = el('label', 'sc-radio');
+        const cb = el('input');
+        cb.type = 'checkbox';
+        cb.className = 'fl-add-leave';
+        cb.checked = c.leaveOthers !== false;
+        cb.addEventListener('change', () => { c.leaveOthers = cb.checked; });
+        lo.append(cb, ' Tirar das outras réguas?');
+        sec.append(lo);
+      }
+    }
+    const r3 = el('div', 'sc-row');
+    r3.append(add);
+    sec.append(r3);
     if (c.msg) sec.append(el('div', `ed-msg${c.err ? ' err' : ''}`, c.msg));
     sec.append(fbtn('bbtn', 'Voltar', () => { fl.conv = null; backToList(); }));
     ftabEl.append(sec);
@@ -10849,6 +10911,24 @@
     if (!open) { c.msg = 'Abra uma conversa individual no WhatsApp.'; c.err = true; renderFollows(); return; }
     c.busy = true;
     renderFollows();
+    // 2.16.0: régua (sequência) que não começa "adicionada por mim", ou numa etapa: o percurso nasce na etapa escolhida
+    if (a.kind === 'sequencia' && (c.step || !(a.sequence.start && a.sequence.start.type === 'manual'))) {
+      try {
+        const plan = E.seqManualPlan(E.seqNormalize(a.sequence), c.step || null, { now: Date.now(), mode: c.mode || 'agora' });
+        if (!plan || !plan.node) throw new Error('essa etapa não existe mais');
+        const r = await call('seqManualEnter', { automationId: a.id, chatId: open.chatId, plan, leaveOthers: !!c.step && c.leaveOthers !== false });
+        const st = c.step ? E.seqSendSteps(E.seqNormalize(a.sequence)).find((s) => s.node === c.step) : null;
+        c.msg = `Conversa adicionada a "${a.name}"${st ? ` no Follow ${st.n}${(c.mode || 'agora') === 'agora' ? ' (sai assim que estiver no horário de envio)' : ' (no horário marcado)'}` : ' a partir de agora'}.${r && r.left ? ` Saiu de ${r.left} outra${r.left === 1 ? '' : 's'} régua${r.left === 1 ? '' : 's'}.` : ''}${a.active ? '' : ' A automação está desligada: ligue para rodar.'}`;
+        c.err = false;
+      } catch (e) {
+        c.msg = `Não consegui adicionar: ${e.message}`;
+        c.err = true;
+      }
+      c.busy = false;
+      await loadChatAutomations();
+      loadChatSequence(open.chatId);
+      return;
+    }
     try {
       const r = await call('enrollContact', { automationId: a.id, identity: open.identity, chatId: open.chatId, name: state.ctx && !state.ctx.isNumber ? state.ctx.fullName : null });
       c.msg = r.already ? `Esta conversa já está em "${a.name}".` : `Conversa adicionada a "${a.name}" a partir de agora.${a.active ? '' : ' A automação está desligada: ligue para rodar.'}`;
