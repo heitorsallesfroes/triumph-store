@@ -2242,6 +2242,64 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console na régua de 10 níveis', errors.length === 0, errors.slice(0, 8).join(' | '));
+    // 25. 2.16.12: conversa @lid sem telefone visível, com nome longo da agenda. O contato antigo (telefone + chat_id
+    // = esse @lid, Follow Up 1) é achado PELA CONVERSA: nada de "identificado só pelo nome", nenhum contato novo; a
+    // etiqueta marcada vai para ele. Nome com mais de 100 letras não dá "Identificação inválida". Mais → Manutenção →
+    // "Juntar contatos duplicados" junta o duplicado que já existia no mais antigo.
+    fake.on = true;
+    fake.generic = true;
+    const CLI12 = uuid(); const C12 = uuid(); const C13 = uuid();
+    const LID12 = '178352000000001@lid'; const LID13 = '159979000000001@lid';
+    const ANA12 = 'Cliente Ana Maria S11 Mini Rose Gold / Santa Rosa Niterói / Flashway Empresa 09/11/2026';
+    const ALE13 = `Alessandro ${'Cliente fiel Ultra 9 Preto Copacabana indicou a irmã e o primo '.repeat(3)}`.trim();
+    const nowIso = new Date().toISOString();
+    fake.db.wa_labels = [...(fake.db.wa_labels || []), { id: CLI12, name: 'Cliente 2.16.12', color: '#22c55e', position: 92, hidden: false, created_at: nowIso }];
+    fake.db.wa_contacts = [...(fake.db.wa_contacts || []),
+      { id: C12, key: 'tel:5521986611992', name: 'Ana Maria', phone: '5521986611992', chat_id: LID12, created_at: '2026-11-01T10:00:00Z' },
+      { id: C13, key: 'tel:5521981659300', name: 'Alessandro', phone: '5521981659300', chat_id: LID13, created_at: '2026-11-01T10:00:00Z' }];
+    fake.db.wa_contact_labels = [...(fake.db.wa_contact_labels || []), { contact_id: C12, label_id: VIP, created_at: '2026-11-02T10:00:00Z' }, { contact_id: C13, label_id: VIP, created_at: '2026-11-02T10:00:00Z' }]; // VIP: etiqueta que o painel já conhece
+    const openLid = async (row, name, lid, phone) => {
+      await pg(`const r = document.querySelector('[data-name="${row}"]'); r.dataset.name = ${JSON.stringify(name)}; document.querySelector('#main .msgs').innerHTML = '';
+        window.__fakeBridge = { ...window.__fakeBridge, status: { ready: true, version: 'teste' }, activeChat: { kind: 'individual', chatId: ${JSON.stringify(lid)} }, chatPhone: { phone: '${phone}', name: ${JSON.stringify(name)}, via: 'lid' } }; return true;`);
+      await openChat(name);
+    };
+    await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(300); return true;`);
+    const nC12 = fake.db.wa_contacts.length;
+    await openLid('Cliente 12', ANA12, LID12, '5521986611992');
+    const chip12 = await waitFor(`return !!sh.querySelector('.name-note').hidden && [...sh.querySelectorAll('.labels .chips .lchip')].some((c) => c.textContent === 'VIP');`, 15000);
+    const note12 = await q(`return sh.querySelector('.name-note').hidden;`);
+    check('2.16.12 caso 1: conversa @lid com o nome da agenda → acha o contato antigo pela conversa (VIP), sem "identificado só pelo nome"', chip12 && note12 === true,
+      JSON.stringify({ chip12, note12, row: await q(`return sh.querySelector('.labels').textContent;`) }));
+    // pelo menu "+": desmarca e marca a VIP de novo → as duas gravações vão para o contato antigo, sem criar outro
+    const vipItem = `[...sh.querySelectorAll('.labels .lmenu [role="menuitemcheckbox"]')].find((x) => /VIP/.test(x.textContent))`;
+    const has12 = () => (fake.db.wa_contact_labels || []).some((l) => l.contact_id === C12 && l.label_id === VIP);
+    await q(`sh.querySelector('.labels .add').click(); await wait(300); const it = ${vipItem}; if (it) it.click(); return !!it;`);
+    for (let i = 0; i < 40 && has12(); i++) await sleep(250);
+    const off12 = !has12();
+    await q(`const it = ${vipItem}; if (it) it.click(); return !!it;`);
+    for (let i = 0; i < 40 && !has12(); i++) await sleep(250);
+    const on12 = has12();
+    check('2.16.12 caso 1: desmarcar/marcar a etiqueta mexe no contato antigo e nenhum contato novo é criado', off12 && on12 && fake.db.wa_contacts.length === nC12, JSON.stringify({ off12, on12, n: fake.db.wa_contacts.length, nC12 }));
+    await q(`const m = sh.querySelector('.labels .lmenu'); if (m && !m.hidden) sh.querySelector('.labels .add').click(); await wait(150); return true;`);
+    await openLid('Cliente 13', ALE13, LID13, '5521981659300');
+    const chip13 = await waitFor(`return !!sh.querySelector('.name-note').hidden && [...sh.querySelectorAll('.labels .chips .lchip')].some((c) => c.textContent === 'VIP');`, 15000);
+    const err13 = await q(`return /Não consegui identificar|Identificação inválida/.test(sh.querySelector('.labels').textContent);`);
+    check(`2.16.12 caso 2: nome da agenda com ${ALE13.length} letras não dá "Identificação inválida" e acha o contato (VIP)`, ALE13.length > 100 && chip13 && err13 === false,
+      JSON.stringify({ chip13, err13, row: await q(`return sh.querySelector('.labels').textContent;`) }));
+    // duplicado antigo (criado "só pelo nome" pela 2.16.11): Mais → Manutenção → Juntar contatos duplicados
+    const DUP12 = uuid();
+    fake.db.wa_contacts.push({ id: DUP12, key: `nome:${ANA12.toLowerCase()}`, name: ANA12, phone: null, chat_id: LID12, created_at: '2026-11-10T10:00:00Z', notes: 'veio do duplicado' });
+    fake.db.wa_contact_labels.push({ contact_id: DUP12, label_id: CLI12, created_at: '2026-11-10T10:00:00Z' });
+    await q(`sh.querySelector('.pmore').click(); await wait(200); const b = sh.querySelector('.pmenu .pmerge'); b.click(); return true;`);
+    const toast12 = await waitFor(`return /^Juntei \\d+ contatos? duplicados?$/.test((sh.querySelector('.toast') || {}).textContent || '');`, 15000);
+    const ana12 = fake.db.wa_contacts.find((c) => c.id === C12);
+    const m12 = { toast12, dupGone: !fake.db.wa_contacts.some((c) => c.id === DUP12), vip: (fake.db.wa_contact_labels || []).some((l) => l.contact_id === C12 && l.label_id === CLI12), name: ana12 && ana12.name, notes: ana12 && ana12.notes, key: ana12 && ana12.key };
+    check('2.16.12: Mais → Manutenção → "Juntar contatos duplicados": avisa quantos juntou, apaga o duplicado e leva etiqueta, nota e nome da agenda para o mais antigo',
+      m12.toast12 && m12.dupGone && m12.vip && m12.name === ANA12.slice(0, 100) && m12.notes === 'veio do duplicado' && m12.key === 'tel:5521986611992', JSON.stringify(m12));
+    await shot('juntar-duplicados.png');
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console na 2.16.12', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

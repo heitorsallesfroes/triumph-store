@@ -209,20 +209,28 @@
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const eq = (value) => `eq.${encodeURIComponent(value)}`;
   const nameKey = (name) => `nome:${name.toLowerCase().replace(/\s+/g, ' ').trim()}`;
+  // 2.16.12: nome da agenda cortado no limite (100) ao salvar e ao comparar, em vez de recusar a identificação
+  const NAME_MAX = 100;
+  const cutName = (s) => (typeof s === 'string' && s.trim() ? s.trim().replace(/\s+/g, ' ').slice(0, NAME_MAX).trim() : null);
 
   // chatId (2.0.0): id da conversa individual, quando a extensão sabe (só é gravado se a coluna existir)
   const IDENTITY_CHAT_RE = /^[0-9]+@(c\.us|lid)$/;
   function checkIdentity(identity) {
     const { key, phone, name, chatId } = identity || {};
-    const cleanName = typeof name === 'string' && name.trim() ? name.trim().replace(/\s+/g, ' ').slice(0, 100) : null;
+    const cleanName = cutName(name);
     const chat = typeof chatId === 'string' && IDENTITY_CHAT_RE.test(chatId) ? chatId : null;
     if (typeof key !== 'string') throw new Error('Identificação inválida');
     if (key.startsWith('tel:')) {
       if (!/^\d{8,15}$/.test(phone || '') || key !== `tel:${phone}`) throw new Error('Telefone inválido');
       return { key, phone, name: cleanName, chatId: chat };
     }
-    if (!cleanName || key !== nameKey(cleanName)) throw new Error('Identificação inválida');
-    return { key, phone: null, name: cleanName, chatId: chat };
+    // 2.16.12: nome longo (agenda com mais de 100 letras): a chave e o nome valem cortados no limite
+    const keyName = key.startsWith('nome:') ? cutName(key.slice(5)) : null;
+    const nm = cleanName || keyName;
+    if (!nm || !keyName || nameKey(keyName) !== nameKey(nm)) throw new Error('Identificação inválida');
+    // telefone conhecido da conversa (@lid pelo cache do WhatsApp): só para achar o contato, nunca vira chave de nome
+    const lookupPhone = typeof phone === 'string' && /^\d{8,15}$/.test(phone) ? phone : null;
+    return { key: nameKey(nm), phone: null, name: nm, chatId: chat, lookupPhone };
   }
 
   // Coluna nova ainda não criada no banco: o PostgREST responde 400 citando o nome dela
@@ -240,13 +248,27 @@
     }
   }
 
-  // Procura pelo telefone; se não achar, um contato salvo antes só pelo mesmo nome (para promover)
+  // 2.16.12: SEMPRE nesta ordem: o mesmo chat_id → o mesmo telefone (do @c.us, ou do @lid pelo cache do WhatsApp) →
+  // só então a chave (telefone ou nome) → um contato salvo antes só pelo mesmo nome (para promover).
+  // Com chat_id ou telefone conhecido, nunca cria outro contato se já existe um com eles. by: como achou.
   async function findContact(id) {
+    const chatCol = id.chatId ? await chatIdColumn().catch(() => false) : false;
+    const ph = id.phone || id.lookupPhone || (id.chatId ? phoneOfChat(id.chatId) : null) || null;
+    if (chatCol) {
+      const byChat = await rest(`wa_contacts?select=id,key,phone,chat_id&chat_id=eq.${encodeURIComponent(id.chatId)}&order=created_at.asc&limit=5`);
+      // 2.6.3: o mesmo chat_id com o telefone de outra pessoa não vale
+      const ok = byChat.find((r) => !r.phone || !ph || r.phone === ph);
+      if (ok) return { ...ok, by: 'chat' };
+    }
+    if (ph) {
+      const byPhone = await rest(`wa_contacts?select=id,key,phone${chatCol ? ',chat_id' : ''}&phone=eq.${ph}&order=created_at.asc&limit=1`);
+      if (byPhone.length) return { ...byPhone[0], by: 'phone' };
+    }
     const rows = await rest(`wa_contacts?select=id,key,phone&key=${eq(id.key)}`);
-    if (rows.length) return rows[0];
+    if (rows.length) return { ...rows[0], by: id.key.startsWith('tel:') ? 'phone' : 'name' };
     if (id.phone && id.name) {
       const byName = await rest(`wa_contacts?select=id,key,phone&key=${eq(nameKey(id.name))}&phone=is.null`);
-      if (byName.length) return { ...byName[0], promotable: true };
+      if (byName.length) return { ...byName[0], promotable: true, by: 'name' };
     }
     return null;
   }
@@ -259,6 +281,11 @@
   async function getContactLabels(identity) {
     const contact = await findContact(checkIdentity(identity));
     return contact ? labelIdsOf(contact.id) : [];
+  }
+  // 2.16.12: as etiquetas e COMO a conversa foi reconhecida (chat / phone / name / null), para o aviso do painel
+  async function contactLabelsMatch(identity) {
+    const contact = await findContact(checkIdentity(identity));
+    return { ids: contact ? await labelIdsOf(contact.id) : [], by: contact ? contact.by || null : null };
   }
 
   // Só é chamado ao aplicar uma etiqueta: abrir a conversa não grava nada
@@ -277,9 +304,87 @@
     const rows = await rest('wa_contacts?on_conflict=key', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=representation' },
-      body: JSON.stringify({ key: id.key, name: id.name, phone: id.phone, updated_at: now }),
+      body: JSON.stringify({ key: id.key, name: cutName(id.name), phone: id.phone, updated_at: now }),
     });
     return rows[0];
+  }
+
+  // ── 2.16.12: juntar contatos duplicados (mesmo chat_id ou mesmo telefone) no mais antigo ──
+  // Move etiquetas (sem duplicar, com a data de entrada mais antiga), nota, nome (prefere o da agenda: o do contato
+  // criado pelo nome da conversa), percursos de automação, inscrições, régua, disparos e envios; depois apaga o
+  // duplicado. Contatos sem par não são tocados. Pura: groupDuplicates (testada em tests/dupmerge.test.cjs).
+  function groupDuplicates(rows) {
+    const parent = new Map(rows.map((r) => [r.id, r.id]));
+    const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+    const join = (a, b) => { const ra = find(a); const rb = find(b); if (ra !== rb) parent.set(rb, ra); };
+    const first = new Map();
+    rows.forEach((r) => {
+      const ph = r.phone ? String(r.phone).replace(/\D/g, '') : '';
+      [r.chat_id ? `c:${r.chat_id}` : null, ph.length >= 8 ? `p:${ph}` : null].filter(Boolean).forEach((k) => { if (first.has(k)) join(first.get(k), r.id); else first.set(k, r.id); });
+    });
+    const groups = new Map();
+    rows.forEach((r) => { const g = find(r.id); groups.set(g, [...(groups.get(g) || []), r]); });
+    const age = (r) => { const t = Date.parse(r.created_at || ''); return Number.isFinite(t) ? t : Infinity; };
+    return [...groups.values()].filter((l) => l.length > 1).map((l) => {
+      const sorted = [...l].sort((a, b) => age(a) - age(b) || String(a.id).localeCompare(String(b.id)));
+      return { keep: sorted[0], dups: sorted.slice(1) };
+    });
+  }
+  // o que muda no contato que fica: telefone/conversa/nota/nome que ele não tinha
+  function mergedFields(keep, dups) {
+    const all = [keep, ...dups];
+    const phone = keep.phone || (dups.find((d) => d.phone) || {}).phone || null;
+    const chatId = keep.chat_id || (dups.find((d) => d.chat_id) || {}).chat_id || null;
+    const agenda = all.find((c) => typeof c.key === 'string' && c.key.startsWith('nome:') && c.name);
+    const name = cutName((agenda && agenda.name) || keep.name || (dups.find((d) => d.name) || {}).name || null);
+    const notes = [...new Set(all.map((c) => (typeof c.notes === 'string' ? c.notes.trim() : '')).filter(Boolean))].join('\n').slice(0, 2000) || null;
+    return { phone, chat_id: chatId, name, notes, key: phone ? `tel:${phone}` : keep.key };
+  }
+  async function mergeDuplicateContacts() {
+    const hasChat = await chatIdColumn().catch(() => false);
+    const hasNotes = await hasColumn('wa_contacts', 'notes').catch(() => false);
+    const rows = await restAll(`wa_contacts?select=id,key,name,phone,created_at${hasChat ? ',chat_id' : ''}${hasNotes ? ',notes' : ''}&order=created_at.asc`);
+    const groups = groupDuplicates(rows);
+    let merged = 0;
+    const errors = [];
+    const tryRest = async (path, opt) => { try { await rest(path, opt); return true; } catch { return false; } };
+    for (const { keep, dups } of groups) {
+      try {
+        const ids = dups.map((d) => d.id);
+        // etiquetas: sem duplicar, mantendo a data de entrada mais antiga
+        const labels = await rest(`wa_contact_labels?select=contact_id,label_id,created_at&contact_id=in.(${[keep.id, ...ids].join(',')})`);
+        const best = new Map();
+        labels.forEach((l) => { const cur = best.get(l.label_id); if (!cur || String(l.created_at) < String(cur.created_at)) best.set(l.label_id, l); });
+        const keepHas = new Map(labels.filter((l) => l.contact_id === keep.id).map((l) => [l.label_id, l]));
+        for (const [labelId, l] of best) {
+          if (!keepHas.has(labelId)) {
+            await rest('wa_contact_labels?on_conflict=contact_id,label_id', json('POST', 'resolution=ignore-duplicates,return=minimal', { contact_id: keep.id, label_id: labelId, created_at: l.created_at }));
+          } else if (String(l.created_at) < String(keepHas.get(labelId).created_at)) {
+            await rest(`wa_contact_labels?contact_id=eq.${keep.id}&label_id=eq.${labelId}`, json('PATCH', 'return=minimal', { created_at: l.created_at }));
+          }
+        }
+        for (const d of ids) {
+          // percursos de automação (único por automação + contato + gatilho) e inscrições (uma ativa por automação)
+          for (const r of await rest(`wa_automation_runs?select=id,automation_id,run_key&contact_id=eq.${d}`).catch(() => [])) {
+            const clash = await rest(`wa_automation_runs?select=id&contact_id=eq.${keep.id}&automation_id=eq.${r.automation_id}&run_key=eq.${encodeURIComponent(r.run_key)}&limit=1`).catch(() => []);
+            if (!clash.length) await tryRest(`wa_automation_runs?id=eq.${r.id}`, json('PATCH', 'return=minimal', { contact_id: keep.id }));
+          }
+          for (const e of await rest(`wa_automation_enrollments?select=id,automation_id,removed_at&contact_id=eq.${d}`).catch(() => [])) {
+            const clash = e.removed_at ? [] : await rest(`wa_automation_enrollments?select=id&contact_id=eq.${keep.id}&automation_id=eq.${e.automation_id}&removed_at=is.null&limit=1`).catch(() => []);
+            if (!clash.length) await tryRest(`wa_automation_enrollments?id=eq.${e.id}`, json('PATCH', 'return=minimal', { contact_id: keep.id }));
+          }
+          for (const t of ['wa_sequence_runs', 'wa_campaign_targets', 'wa_send_log']) await tryRest(`${t}?contact_id=eq.${d}`, json('PATCH', 'return=minimal', { contact_id: keep.id }));
+        }
+        const f = mergedFields(keep, dups);
+        await rest(`wa_contacts?id=in.(${ids.join(',')})`, { method: 'DELETE' }); // antes de trocar a chave (key é única)
+        const patch = { name: f.name, phone: f.phone, key: f.key, updated_at: new Date().toISOString() };
+        if (hasChat) patch.chat_id = f.chat_id;
+        if (hasNotes) patch.notes = f.notes;
+        await rest(`wa_contacts?id=eq.${keep.id}`, json('PATCH', 'return=minimal', patch));
+        merged += ids.length;
+      } catch (e) { errors.push(String((e && e.message) || e)); }
+    }
+    return { merged, groups: groups.length, errors: errors.slice(0, 5) };
   }
 
   // Marca ou desmarca uma etiqueta; devolve as etiquetas do contato depois da mudança
@@ -4209,7 +4314,7 @@
     fetchMediaLibrary, createMediaFolder, renameMediaFolder, deleteMediaFolder, reorderMediaFolders, uploadMedia, updateMedia,
     incrementMediaUsage, mediaUsage, deleteMedia, importMediaFromItems,
     fetchLibrary, incrementUsage, fetchFile, isAllowedFileUrl, MAX_FILE_BYTES,
-    fetchLabels, getContactLabels, setContactLabel,
+    fetchLabels, getContactLabels, setContactLabel, contactLabelsMatch, mergeDuplicateContacts, groupDuplicates, mergedFields, // 2.16.12
     fetchLabelCounts, fetchLabelClients,
     PALETTE, fetchSchema, createLabel, updateLabel, deleteLabel, reorderLabels,
     getContactNote, setContactNote, bulkAddContactsToLabel, moveContactLabel, fetchAllLabelClients,

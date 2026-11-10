@@ -809,6 +809,21 @@ guardada.
 
 ## O que mudou
 
+### 2.16.12 — Sem contato duplicado "só pelo nome"; nome longo da agenda aceito
+- **Como o painel acha o contato da conversa**, sempre nesta ordem: (1) o contato com o **mesmo chat_id** da conversa
+  aberta; (2) o **mesmo telefone** (do @c.us, ou do @lid pelo cache do WhatsApp Web); (3) só então pelo **nome**. Se
+  já existe um contato com o mesmo chat_id ou telefone, **nenhum contato novo é criado**: a etiqueta vai para ele.
+  Ex.: a conversa 178352…@lid ("Cliente Ana Maria S11 Mini Rose Gold / …" na agenda) agora mostra o contato antigo
+  (Follow Up 1) e não diz mais "identificado só pelo nome".
+- **Nome longo**: nome da agenda com mais de 100 letras é cortado em 100 para salvar e comparar, em vez de dar "Não
+  consegui identificar esta conversa (Identificação inválida)". O nome nunca é a chave quando há chat_id ou telefone.
+- **Juntar contatos duplicados**: roda uma vez quando o painel abre e pelo botão **Mais → Manutenção → Juntar contatos
+  duplicados**. Contatos com o mesmo chat_id ou o mesmo telefone vão para o **mais antigo**: etiquetas (sem duplicar,
+  com a data de entrada mais antiga), nota, nome (prefere o da agenda), percursos de automação, inscrições, régua e
+  disparos; depois o duplicado é apagado e o painel mostra quantos juntou. Contatos sem par não são tocados.
+- Testes: `dupmerge.test.cjs` (os dois casos reais, a ordem chat_id → telefone → nome, nome com 150 letras e a junção
+  de etiquetas, percursos, inscrições e nota) e `chrome-real.test.cjs` (os dois casos e o botão de juntar).
+
 ### 2.16.11 — Quadro mostra o nome da agenda em vez do número
 - Os cartões do Quadro (WhatsApp e CRM, grande e encolhido) mostram, nesta ordem: o **nome salvo na sua agenda do
   WhatsApp** (o mesmo da lista de conversas), o **nome do CRM**, o **nome do perfil** com "~" na frente, e só por último

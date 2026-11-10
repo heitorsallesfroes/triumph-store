@@ -1287,6 +1287,8 @@
       .pmore { padding: var(--s-1) var(--s-2); }
       .pmenu { position: absolute; top: calc(100% + var(--s-1)); right: 0; z-index: 8; width: 200px; padding: var(--s-1); border-radius: var(--r-lg); background: var(--card); border: 1px solid var(--border); box-shadow: var(--sh-3); display: flex; flex-direction: column; gap: 2px; animation: fadeIn .12s ease both; }
       .pmenu[hidden] { display: none; }
+      .pmenu .pmaint { order: 99; margin-top: 2px; padding-top: 4px; border-top: 1px solid var(--border); }
+      .pmenu .pmaint-h { padding: 2px var(--s-3); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
       .pmenu button { display: flex; flex-direction: row; justify-content: flex-start; width: 100%; align-items: center; gap: var(--s-3); min-height: 36px; padding: 0 var(--s-3); border: none; border-radius: var(--r-md); background: transparent; color: var(--fg); font-size: var(--fs-3); font-weight: 500; text-align: left; }
       .pmenu button svg { width: 18px; height: 18px; color: var(--muted); }
       .pmenu button:hover { background: var(--hover); }
@@ -1910,6 +1912,7 @@
               <button type="button" data-sec="agendados" title="Agendados" aria-pressed="false">${svg('clock')}<span>Agendados</span></button>
               <button type="button" data-sec="disparos" title="Disparos (envio para uma etiqueta CRM)" aria-pressed="false">${svg('megaphone')}<span>Disparos</span></button>
               <button type="button" data-sec="follows" title="Automações (Quando → Se → Então)" aria-pressed="false">${svg('repeat')}<span>Automações</span></button>
+              <div class="pmaint"><div class="pmaint-h">Manutenção</div><button type="button" class="pmerge" title="Junta no mais antigo os contatos com a mesma conversa ou o mesmo telefone">${svg('repeat')}<span>Juntar contatos duplicados</span></button></div>
             </div>
           </div>
         </nav>
@@ -2393,6 +2396,28 @@
   shadow.addEventListener('click', (e) => { if (!pmenuEl.hidden && !e.composedPath().includes(pmoreBtn.parentElement)) setMoreOpen(false); });
   pmenuEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); setMoreOpen(false); pmoreBtn.focus(); } });
 
+  // 2.16.12: juntar contatos duplicados (mesmo chat_id ou mesmo telefone): uma vez ao abrir o painel e pelo botão
+  const pmergeBtn = shadow.querySelector('.pmerge');
+  let mergeBusy = false;
+  async function runMergeDuplicates(manual) {
+    if (mergeBusy) return;
+    mergeBusy = true;
+    if (manual) pmergeBtn.disabled = true;
+    try {
+      const r = await call('mergeDuplicateContacts');
+      const n = (r && r.merged) || 0;
+      if (n) { convCache.clear(); if (state.convKey) loadConvLabels(state.convKey); }
+      if (n || manual) crmToast(n ? `Juntei ${n} contato${n === 1 ? '' : 's'} duplicado${n === 1 ? '' : 's'}` : 'Nenhum contato duplicado', n ? 'ok' : 'info', 4000);
+    } catch (e) {
+      if (manual) crmToast(`Não consegui juntar os duplicados (${String((e && e.message) || e)})`, 'error', 5000);
+    } finally {
+      mergeBusy = false;
+      if (manual) pmergeBtn.disabled = false;
+    }
+  }
+  pmergeBtn.addEventListener('click', () => { setMoreOpen(false); runMergeDuplicates(true); });
+  setTimeout(() => runMergeDuplicates(false), 6000);
+
   function renderPanelNav() {
     let moreOn = false;
     navBtns.forEach((b) => {
@@ -2733,6 +2758,8 @@
     const keyChanged = key !== state.convKey;
     state.convKey = key;
     if (keyChanged) {
+      state.convMatch = null; // 2.16.12
+      if (convIdLink.key !== key) { convIdLink.key = null; convIdLink.chatId = null; convIdLink.phone = null; }
       state.convLabelIds = key && convCache.has(key) ? convCache.get(key) : [];
       state.convLoading  = !!key;
       state.convError    = false;
@@ -2746,12 +2773,35 @@
     if (keyChanged) scheduleNote();
   }
 
+  // 2.16.12: a conversa aberta (chat_id) e o telefone do @lid (cache do WhatsApp) vão junto em toda leitura/gravação
+  // de etiqueta/nota: o servidor procura o contato nesta ordem — chat_id → telefone → nome — e nunca cria outro.
+  const convIdLink = { key: null, chatId: null, phone: null };
+  async function resolveConvLink(identity) {
+    if (convIdLink.key === identity.key && convIdLink.chatId) return;
+    let chatId = null; let phone = null;
+    // 2.16.12: tenta mesmo sem o status "pronto" (a pergunta é rápida e, sem a ponte, só falha)
+    {
+      try {
+        const chat = await waRequest('activeChat', {}, { timeout: 1000 });
+        if (chat && chat.kind === 'individual' && typeof chat.chatId === 'string') chatId = chat.chatId;
+      } catch { chatId = null; }
+      if (chatId && /@lid$/.test(chatId) && !identity.phone) {
+        try { const wa = await waRequest('chatPhone', { chatId }, { timeout: 2500 }); const d = String((wa && wa.phone) || '').replace(/\D/g, ''); if (/^\d{8,15}$/.test(d)) phone = d; } catch { phone = null; }
+      }
+    }
+    if (state.convKey !== identity.key) return; // trocou de conversa no meio
+    convIdLink.key = identity.key; convIdLink.chatId = chatId; convIdLink.phone = phone;
+  }
+
   async function loadConvLabels(key) {
     const identity = state.ctx && state.ctx.identity;
     if (!canLabel(identity) || identity.key !== key) return;
     try {
+      await resolveConvLink(identity).catch(() => {});
       // 2.12.1: 3 tentativas (rede, Supabase lento, extensão reiniciando); o motivo real fica nos detalhes
-      const ids = await globalThis.TspEngine.withRetry(() => call('getContactLabels', { identity: identityPayload(identity) }));
+      const got = await globalThis.TspEngine.withRetry(() => call('contactLabelsMatch', { identity: identityPayload(identity) }));
+      const ids = (got && got.ids) || [];
+      if (state.convKey === key) state.convMatch = (got && got.by) || null;
       convCache.set(key, ids);
       // Nome do CRM para o {nome} (2.1.0)
       call('getContactName', { identity: identityPayload(identity) }).then((r) => {
@@ -2776,7 +2826,13 @@
   }
 
   function identityPayload(identity) {
-    return { key: identity.key, phone: identity.phone, name: identity.name };
+    const p = { key: identity.key, phone: identity.phone, name: identity.name };
+    // 2.16.12: com o chat_id/telefone da conversa (o nome nunca é a chave quando há chat_id ou telefone)
+    if (convIdLink.key === identity.key) {
+      if (convIdLink.chatId) p.chatId = convIdLink.chatId;
+      if (!p.phone && convIdLink.phone) p.phone = convIdLink.phone;
+    }
+    return p;
   }
 
   function textOn(hex) {
@@ -2789,7 +2845,8 @@
   function renderLabelsRow() {
     const identity = state.ctx && state.ctx.identity;
     lchipsEl.textContent = '';
-    nameNote.hidden = !(identity && identity.kind === 'name');
+    // 2.16.12: "só pelo nome" só quando o contato NÃO foi achado pela conversa nem pelo telefone
+    nameNote.hidden = !(identity && identity.kind === 'name' && state.convMatch !== 'chat' && state.convMatch !== 'phone');
 
     if (!state.ctx || !state.ctx.conv) {
       lchipsEl.append(el('span', 'none', 'Abra uma conversa para etiquetar'));
@@ -2902,7 +2959,8 @@
           if (chat && chat.kind === 'individual' && typeof chat.chatId === 'string') chatId = chat.chatId;
         } catch { chatId = undefined; }
       }
-      const ids = await call('setContactLabel', { identity: { ...identityPayload(identity), chatId }, labelId, on });
+      const payload = identityPayload(identity);
+      const ids = await call('setContactLabel', { identity: { ...payload, chatId: chatId || payload.chatId }, labelId, on });
       if (pendingLabelOps === 1) apply(ids);
       afterLabelChange();
     } catch {
@@ -3377,7 +3435,7 @@
       const b = navBtns.find((x) => tabKey(x) === k);
       if (!b) return;
       if (pz.prefs.tabs[k]) nav.insertBefore(b, pmoreWrap);
-      else pmenuEl.append(b);
+      else pmenuEl.insertBefore(b, pmenuEl.querySelector('.pmaint'));
     });
     pmoreWrap.hidden = !pmenuEl.querySelector('button');
     renderPanelNav();
