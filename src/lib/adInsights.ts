@@ -10,8 +10,8 @@
 //
 // Lucro real = faturamento − custo dos produtos − (gasto da Meta + imposto).
 // ROAS real = faturamento ÷ (gasto + imposto). Custo por venda / por conversa = (gasto + imposto) ÷ vendas / conversas.
-import { median, spDay, spWeekdayHour } from './waPanel.ts';
-import type { Conversation, TrackModel } from './waTracking.ts';
+import { median, saleTime, spDay, spWeekdayHour } from './waPanel.ts';
+import type { Conversation, TrackModel, TrackSaleRow } from './waTracking.ts';
 
 // ── Linhas da Meta (edge function) ────────────────────────────────────────
 export interface MetaDaily {
@@ -114,6 +114,67 @@ export function erpByAd(model: TrackModel, w: Pick<Window, 'from' | 'to'>): Map<
   return out;
 }
 
+// ── Vendas sem origem e modo "Estimado" (10/11) ───────────────────────────
+// O rastreio conversa → anúncio só existe desde o 1º registro de wa_ad_attribution / wa_leads com anúncio, e mesmo
+// depois várias vendas não ficam ligadas. Modo "Estimado" (padrão): as vendas do período SEM anúncio ligado (feitas a
+// partir do início do rastreio) são repartidas entre os anúncios na proporção das conversas que cada um gerou no
+// período. Anúncio sem conversa não recebe nada. Vendas antes do início do rastreio não são repartidas.
+// Modo "Só identificado": só as vendas ligadas com certeza.
+export type AttribMode = 'estimado' | 'identificado';
+export const ATTRIB_LABEL: Record<AttribMode, string> = { estimado: 'Estimado', identificado: 'Só identificado' };
+export interface PeriodSale { id: string; t: number; total: number }
+// todas as vendas do ERP no período (a carga já tira os status inválidos)
+export function periodSales(rows: Pick<TrackSaleRow, 'id' | 'sale_date' | 'created_at' | 'total_sale_price'>[], w: Pick<Window, 'from' | 'to'>): PeriodSale[] {
+  const seen = new Set<string>(); const out: PeriodSale[] = [];
+  rows.forEach((s) => {
+    const t = saleTime(s);
+    if (!Number.isFinite(t) || !inWin(t, w) || seen.has(s.id)) return;
+    seen.add(s.id); out.push({ id: s.id, t, total: Number(s.total_sale_price) || 0 });
+  });
+  return out;
+}
+export interface SalesSum { count: number; revenue: number; productCost: number; costMissing: number; ids: string[] }
+export interface AdShare { key: string; conversations: number; share: number; sales: number; revenue: number; productCost: number; costMissing: number }
+export interface Attribution {
+  all: SalesSum; identified: SalesSum; unattributed: SalesSum;
+  preTrack: SalesSum; // sem origem e antes do início do rastreio (não repartidas)
+  distributable: SalesSum; // sem origem a partir do início do rastreio (repartidas, se houver conversa de anúncio)
+  totalConversations: number; distributed: boolean; trackStart: number | null;
+  shares: Map<string, AdShare>;
+}
+const sumOf = (list: PeriodSale[], costs: Map<string, SaleCost>): SalesSum => {
+  let productCost = 0; let costMissing = 0;
+  list.forEach((s) => { const c = costs.get(s.id); if (!c || c.productCost == null) costMissing++; else productCost += c.productCost; });
+  return { count: list.length, revenue: r2(list.reduce((x, s) => x + s.total, 0)), productCost: r2(productCost), costMissing, ids: list.map((s) => s.id) };
+};
+// trackStart: início do rastreio (ms); null = ainda sem nenhum registro de anúncio → nada é repartido
+export function attributeSales(erp: Map<string, ErpAd>, sales: PeriodSale[], costs: Map<string, SaleCost>, trackStart: number | null): Attribution {
+  const linked = new Set<string>(); erp.forEach((a) => a.saleIds.forEach((id) => linked.add(id)));
+  const identified = sales.filter((s) => linked.has(s.id));
+  const unattributed = sales.filter((s) => !linked.has(s.id));
+  const before = unattributed.filter((s) => trackStart == null || s.t < trackStart);
+  const after = unattributed.filter((s) => trackStart != null && s.t >= trackStart);
+  const dist = sumOf(after, costs);
+  const totalConversations = [...erp.values()].reduce((x, a) => x + a.conversations, 0);
+  const distributed = totalConversations > 0 && dist.count > 0;
+  const shares = new Map<string, AdShare>();
+  erp.forEach((a) => {
+    if (a.conversations <= 0) return; // anúncio sem conversa no período não recebe
+    const share = a.conversations / totalConversations;
+    const k = distributed ? share : 0;
+    shares.set(a.key, { key: a.key, conversations: a.conversations, share, sales: dist.count * k, revenue: dist.revenue * k, productCost: dist.productCost * k, costMissing: dist.costMissing * k });
+  });
+  return {
+    all: sumOf(sales, costs), identified: sumOf(identified, costs), unattributed: sumOf(unattributed, costs), preTrack: sumOf(before, costs), distributable: dist,
+    totalConversations, distributed, trackStart, shares,
+  };
+}
+// o período começa antes do início do rastreio?
+export const startsBeforeTracking = (w: Pick<Window, 'fromDay'>, trackStartDay: string | null) => !!trackStartDay && w.fromDay < trackStartDay;
+export const dayBR = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+// vendas com 1 casa quando estimadas (3 · 1,8)
+export const salesTxt = (n: number) => (Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1).replace('.', ','));
+
 // ── Meta: somas por anúncio na janela ─────────────────────────────────────
 export interface MetaAgg {
   adId: string; name: string | null; campaign: string | null; adset: string | null;
@@ -207,7 +268,7 @@ export function verdictOf(x: VerdictInput, g: Goals): Verdict {
   const profitPerSale = m.sales ? m.profit / m.sales : null;
   const numbers: [string, string][] = [
     ['Gasto (com imposto)', brl(m.spendReal)], ['Faturamento', brl(m.revenue)], ['Custo dos produtos', brl(m.productCost)], ['Lucro real', brl(m.profit)],
-    ['ROAS real', x1(m.roas)], ['Vendas', String(m.sales)], ['Conversas', String(m.conversations)], ['Custo por venda', brl(m.cpa)], ['Custo por conversa', brl(m.cpc)],
+    ['ROAS real', x1(m.roas)], ['Vendas', salesTxt(m.sales)], ['Conversas', String(m.conversations)], ['Custo por venda', brl(m.cpa)], ['Custo por conversa', brl(m.cpc)],
     ['Lucro por venda', brl(profitPerSale)],
     ['Metas', `ROAS ótimo > ${x1(g.roasGreat)} · bom ≥ ${x1(g.roasGood)} · ok ≥ ${x1(g.roasOk)} · custo/venda ${brl(g.cpaTarget)} · lucro/venda ≥ ${brl(g.profitMin)}`],
   ];
@@ -261,7 +322,7 @@ export function verdictOf(x: VerdictInput, g: Goals): Verdict {
     return { category: 'ajustar', tier, reasons, action, numbers, rule: `${why} → Ajustar.` };
   }
   add(roasTxt);
-  add(`Lucro real de ${brl(m.profit)} com ${m.sales} venda${m.sales === 1 ? '' : 's'}.`);
+  add(`Lucro real de ${brl(m.profit)} com ${salesTxt(m.sales)} venda${salesTxt(m.sales) === '1' ? '' : 's'}.`);
   if (g.cpaTarget != null && m.cpa != null) add(`Custo por venda ${brl(m.cpa)}, dentro da meta (${brl(g.cpaTarget)}).`);
   return { category: 'escalar', tier, reasons, action: ACTION.escalar, numbers, rule: `ROAS real ${x1(g.roasGood)} ou mais (bom/ótimo), dentro das metas e sem desgaste → Pode render mais.` };
 }
@@ -273,12 +334,18 @@ export interface AdCard {
   responded: number; metaConversations: number; metaPurchases: number; capiPurchases: number;
   medianMinutesToSale: number | null; models: { name: string; qty: number }[]; costMissing: number;
   wear: Wear; funnel: ReturnType<typeof funnelOf>; verdict: Verdict;
+  // vendas identificadas (ligadas com certeza) e estimadas (repartição das sem origem; 0 no modo "Só identificado")
+  mode: AttribMode; identifiedSales: number; identifiedRevenue: number; estimatedSales: number; estimatedRevenue: number; share: number | null;
 }
 export interface BuildInput {
   model: TrackModel; meta: MetaDaily[]; period: MetaPeriod[]; costs: Map<string, SaleCost>; taxRate: number; goals: Goals;
+  // modo Estimado: a repartição das vendas sem origem (attributeSales). Sem isso (ou "identificado"): só as identificadas.
+  mode?: AttribMode; attribution?: Attribution;
 }
 export function buildAdCards(inp: BuildInput, w: Window): AdCard[] {
   const erp = erpByAd(inp.model, w);
+  const att = inp.attribution || null;
+  const mode: AttribMode = inp.mode === 'estimado' && att ? 'estimado' : 'identificado';
   const meta = metaByAd(inp.meta, w);
   const freq = new Map(inp.period.map((p) => [p.ad_id, p.frequency]));
   const keys = new Set<string>([...[...meta.values()].filter((m) => m.spend > 0 || m.impressions > 0).map((m) => m.adId), ...erp.keys()]);
@@ -292,8 +359,12 @@ export function buildAdCards(inp: BuildInput, w: Window): AdCard[] {
       if (!c || c.productCost == null) costMissing++; else productCost += c.productCost;
       (c ? c.models : []).forEach((x) => models.set(x.name, (models.get(x.name) || 0) + x.qty));
     });
-    const money = moneyOf(m ? m.spend : 0, inp.taxRate, e ? e.revenue : 0, productCost, e ? e.sales : 0, e ? e.conversations : 0);
+    const sh = att ? att.shares.get(key) || null : null;
+    const est = mode === 'estimado' && sh ? sh : null;
+    const idSales = e ? e.sales : 0; const idRevenue = e ? e.revenue : 0;
+    const money = moneyOf(m ? m.spend : 0, inp.taxRate, idRevenue + (est ? est.revenue : 0), productCost + (est ? est.productCost : 0), idSales + (est ? est.sales : 0), e ? e.conversations : 0);
     return {
+      mode, identifiedSales: idSales, identifiedRevenue: idRevenue, estimatedSales: est ? est.sales : 0, estimatedRevenue: est ? r2(est.revenue) : 0, share: sh ? sh.share : null,
       key, adId: m ? m.adId : e ? e.adId : null,
       name: (m && m.name) || (e && e.title) || (key === 'sem-id' ? 'Anúncio não identificado' : 'Anúncio sem nome'),
       campaign: m ? m.campaign : null, adset: m ? m.adset : null, money,
@@ -309,19 +380,42 @@ export function buildAdCards(inp: BuildInput, w: Window): AdCard[] {
   return base.map((b) => {
     const funnel = funnelOf({ impressions: b.impressions, clicks: b.clicks, conversations: b.money.conversations, responded: b.responded, sales: b.money.sales }, ref);
     const verdict = verdictOf({ money: b.money, responded: b.responded, impressions: b.impressions, clicks: b.clicks, wear: b.wear, funnelWorst: funnel.worst, funnelSteps: funnel.steps }, inp.goals);
+    verdict.numbers.splice(5, 1, ...sourceNumbers(b, att));
     return { ...b, funnel, verdict };
   }).sort((a, b) => CATEGORY_ORDER.indexOf(a.verdict.category) - CATEGORY_ORDER.indexOf(b.verdict.category) || b.money.spendReal - a.money.spendReal);
 }
 
+// "Por quê?": de onde vieram as vendas e o faturamento do anúncio
+function sourceNumbers(b: Pick<AdCard, 'mode' | 'identifiedSales' | 'identifiedRevenue' | 'estimatedSales' | 'estimatedRevenue' | 'share' | 'money'>, att: Attribution | null): [string, string][] {
+  const out: [string, string][] = [['Vendas', salesTxt(b.money.sales)], ['Vendas identificadas', `${b.identifiedSales} (${brl(b.identifiedRevenue)}): ligadas com certeza a este anúncio (conversa → venda)`]];
+  if (b.mode !== 'estimado' || !att) { out.push(['Vendas estimadas', 'modo "Só identificado": nenhuma']); return out; }
+  const u = att.distributable;
+  if (!b.share) out.push(['Vendas estimadas', 'nenhuma: o anúncio não gerou conversa no período']);
+  else if (!att.distributed) out.push(['Vendas estimadas', 'nenhuma: não há vendas sem origem para repartir no período']);
+  else out.push(['Vendas estimadas', `${salesTxt(b.estimatedSales)} (${brl(b.estimatedRevenue)}) = ${b.money.conversations} de ${att.totalConversations} conversas de anúncio (${pctTxt(b.share)}) × ${u.count} vendas sem origem (${brl(u.revenue)})`]);
+  return out;
+}
+
 // ── Topo "Como estou?" ────────────────────────────────────────────────────
 // Totais: gasto da conta inteira na Meta; vendas/conversas de TODAS as conversas de anúncio (inclusive sem ad_id).
-export function totalsOf(model: TrackModel, meta: MetaDaily[], costs: Map<string, SaleCost>, taxRate: number, w: Window): Money & { costMissing: number } {
+// Modo Estimado (com attribution): faturamento, vendas e custo dos produtos de TODAS as vendas do ERP no período.
+export function totalsOf(model: TrackModel, meta: MetaDaily[], costs: Map<string, SaleCost>, taxRate: number, w: Window, opt?: { mode: AttribMode; attribution: Attribution }): Money & { costMissing: number } {
   let revenue = 0; let sales = 0; let conversations = 0; let productCost = 0; let costMissing = 0;
   erpByAd(model, w).forEach((e) => {
     revenue += e.revenue; sales += e.sales; conversations += e.conversations;
     e.saleIds.forEach((id) => { const c = costs.get(id); if (!c || c.productCost == null) costMissing++; else productCost += c.productCost; });
   });
+  if (opt && opt.mode === 'estimado') {
+    const a = opt.attribution.all;
+    revenue = a.revenue; sales = a.count; productCost = a.productCost; costMissing = a.costMissing;
+  }
   return { ...moneyOf(metaSpendIn(meta, w), taxRate, revenue, productCost, sales, conversations), costMissing };
+}
+// Os três números de ROAS do topo
+export interface RoasTrio { general: number | null; identified: number | null; unattributed: SalesSum; preTrack: SalesSum; all: SalesSum; identifiedSum: SalesSum }
+export function roasTrio(meta: MetaDaily[], taxRate: number, w: Window, att: Attribution): RoasTrio {
+  const spend = spendReal(metaSpendIn(meta, w), taxRate);
+  return { general: div(att.all.revenue, spend), identified: div(att.identified.revenue, spend), unattributed: att.unattributed, preTrack: att.preTrack, all: att.all, identifiedSum: att.identified };
 }
 export interface CategoryBox { category: Category; count: number; spendReal: number; revenue: number; profit: number }
 export function categoryBoxes(cards: AdCard[]): CategoryBox[] {
@@ -370,10 +464,11 @@ export function replyBands(model: TrackModel, w: Pick<Window, 'from' | 'to'>): R
   return rows.map((r) => ({ ...r, rate: div(r.sold, r.conversations) }));
 }
 // "Conferir com a Meta": compras que a Meta conta × vendas reais do ERP × Purchase enviados pela nossa CAPI
-export interface CheckRow { key: string; name: string; metaPurchases: number; erpSales: number; capiPurchases: number; diff: number }
+// erpSales = vendas identificadas; estimated = estimadas (modo Estimado); diff = Meta − identificadas
+export interface CheckRow { key: string; name: string; metaPurchases: number; erpSales: number; estimated: number; capiPurchases: number; diff: number }
 export function metaCheck(cards: AdCard[]): CheckRow[] {
-  return cards.filter((c) => c.metaPurchases || c.money.sales || c.capiPurchases)
-    .map((c) => ({ key: c.key, name: c.name, metaPurchases: c.metaPurchases, erpSales: c.money.sales, capiPurchases: c.capiPurchases, diff: c.metaPurchases - c.money.sales }))
+  return cards.filter((c) => c.metaPurchases || c.identifiedSales || c.estimatedSales > 0.05 || c.capiPurchases)
+    .map((c) => ({ key: c.key, name: c.name, metaPurchases: c.metaPurchases, erpSales: c.identifiedSales, estimated: c.estimatedSales, capiPurchases: c.capiPurchases, diff: c.metaPurchases - c.identifiedSales }))
     .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || b.erpSales - a.erpSales);
 }
 // Metas sugeridas pela média dos últimos 30 dias: custo por venda médio e lucro médio por venda

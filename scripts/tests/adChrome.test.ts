@@ -67,7 +67,8 @@ function fixtures(now: number) {
     { id: '120210000000444', name: 'Relógio D', status: 'ACTIVE', thumbnail_url: SVG('#eab308'), image_url: null, is_video: false, video_url: null, preview_url: null },
   ];
   return {
-    db: { wa_leads: leads, wa_ad_attribution: [], wa_send_log: sends, wa_replies: replies, sales, sale_items: items, wa_chat_names: [], wa_conversion_events: [], wa_chat_activity: [], wa_chat_activity_days: [], wa_items: [], wa_settings: [], system_config: [{ key: 'ad_tax_rate', value: '0.1' }] },
+    // rastreio de anúncios começou há 120 dias (o 7 dias padrão não é encurtado); a conversa fica fora de todos os períodos
+    db: { wa_leads: leads, wa_ad_attribution: [{ chat_id: '5521910009000@c.us', phone: '5521910009000', contact_name: null, ad_id: '120210000000999', ad_title: 'Antigo', source_app: null, source_url: null, first_message_at: at(120, 10, now) }], wa_send_log: sends, wa_replies: replies, sales, sale_items: items, wa_chat_names: [], wa_conversion_events: [], wa_chat_activity: [], wa_chat_activity_days: [], wa_items: [], wa_settings: [], system_config: [{ key: 'ad_tax_rate', value: '0.1' }] },
     meta: { daily, period: [{ ad_id: '120210000000111', reach: 20000, frequency: 1.5, impressions: 30000 }], creatives },
   };
 }
@@ -257,6 +258,27 @@ async function main() {
     const fail = await ev(`${H} return { msg: /ad-manager precisa ser publicada/.test(document.body.textContent), fat: txt($('[data-testid="ads-kpi-faturamento"] .adx-big')) };`);
     check('Meta fora do ar / função sem a leitura nova: aviso de publicar a função e o faturamento do ERP continua', fail.msg && fail.fat === 'R$ 5.600', JSON.stringify(fail));
     await ev(`window.__META_FAIL = false; return true;`);
+
+    // ── 3 ROAS, vendas sem origem, Estimado × Só identificado, início do rastreio ──
+    // o rastreio passa a começar na 1ª conversa (há 5 dias) e entra uma venda de R$ 800 sem anúncio ligado
+    await ev(`window.__DB.wa_ad_attribution = []; window.__DB.sales.push({ id: 'vsem', sale_date: window.__DB.sales[0].sale_date, created_at: window.__DB.sales[0].created_at, total_sale_price: 800, customer_phone: '5521999990000', customer_name: 'Cliente', wa_chat_id: null, origin: null, status: 'finalizado', total_cost: 300, delivery_fee: 0, delivery_cost: 0 }); return true;`);
+    await ev(`${H} tid('ads-refresh').click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-track-warn') && $$('[data-testid="ads-card-split"]').length > 0;`, 8000);
+    const est = await ev(`${H} const a = $$('[data-testid="ads-card"]').find((c) => c.dataset.ad === '120210000000111');
+      return { warn: txt(tid('ads-track-warn')), use: txt(tid('ads-track-use')), geral: txt($('[data-testid="ads-roas-geral"] .adx-big')), ident: txt($('[data-testid="ads-roas-ident"] .adx-big')),
+        sem: txt(tid('ads-sem-origem')), split: a ? txt($('[data-testid="ads-card-split"]', a)) : null, fat: txt($('[data-testid="ads-kpi-faturamento"] .adx-big')), on: tid('ads-attrib-estimado').getAttribute('aria-pressed') };`);
+    const d5 = est.warn.match(/começou em (\d{2}\/\d{2})/);
+    // geral: 6.400 ÷ 1.122 = 5,7; identificado: 5.600 ÷ 1.122 = 5,0; A: 10 de 25 conversas × 1 venda sem origem = 0,4
+    check('topo: ROAS geral da loja, ROAS identificado e vendas sem origem; aviso do início do rastreio com "Usar desde"',
+      !!d5 && /antes disso as vendas não estão ligadas a anúncios/.test(est.warn) && est.use === `Usar desde ${d5[1]}` && est.geral === '5,7×' && est.ident === '5,0×' && /^Vendas sem origem1R\$ 800,00/.test(est.sem), JSON.stringify(est));
+    check('Estimado (padrão): faturamento de todas as vendas e cartão "3 vendas identificadas + 0,4 estimada"', est.on === 'true' && est.fat === 'R$ 6.400' && est.split === '3 vendas identificadas + 0,4 estimada', JSON.stringify(est));
+    await ev(`${H} tid('ads-attrib-identificado').click(); return true;`);
+    await waitFor(`${H} return !$('[data-testid="ads-card-split"]');`);
+    const idf = await ev(`${H} return { fat: txt($('[data-testid="ads-kpi-faturamento"] .adx-big')), split: $$('[data-testid="ads-card-split"]').length };`);
+    check('"Só identificado": só as vendas ligadas com certeza', idf.fat === 'R$ 5.600' && idf.split === 0, JSON.stringify(idf));
+    await ev(`${H} tid('ads-attrib-estimado').click(); tid('ads-track-use').click(); return true;`);
+    const used = await waitFor(`${H} return tid('ads-period-custom').getAttribute('aria-pressed') === 'true' && !tid('ads-track-warn') && $$('[data-testid="ads-card"]').length > 0;`, 8000);
+    check('"Usar desde" troca o período para o início do rastreio (o aviso some)', used);
 
     // ── Versão antiga ──
     await ev(`${H} tid('ads-old-link').click(); return true;`);

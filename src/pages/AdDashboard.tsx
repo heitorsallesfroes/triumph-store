@@ -8,13 +8,15 @@ import AdManager from './AdManager';
 import { getAdTaxRate } from '../lib/adTax';
 import { initialTab, writeTab } from '../lib/erpRoute';
 import { useErpRefresh } from '../lib/erpRefresh';
-import { buildConversations, businessHoursOf, adsManagerUrl, type TrackModel } from '../lib/waTracking';
+import { buildConversations, businessHoursOf, adsManagerUrl, type TrackModel, type TrackSaleRow } from '../lib/waTracking';
 import {
-  AD_PERIODS, CATEGORY_COLOR, CATEGORY_LABEL, CATEGORY_ORDER, DEFAULT_GOALS, TIER_COLOR, TIER_LABEL,
+  AD_PERIODS, ATTRIB_LABEL, CATEGORY_COLOR, CATEGORY_LABEL, CATEGORY_ORDER, DEFAULT_GOALS, TIER_COLOR, TIER_LABEL,
+  attributeSales, dayBR, periodSales, roasTrio, salesTxt, startsBeforeTracking,
   adRanges, buildAdCards, categoryBoxes, deltaOf, erpByAd, hourMap, metaCheck, moneySplit, replyBands, roasTier, suggestGoals, totalsOf,
-  type AdCard, type AdPeriod, type Category, type Goals, type MetaCreative, type SaleCost, type Window,
+  type AdCard, type AdPeriod, type AttribMode, type Attribution, type Category, type Goals, type MetaCreative, type RoasTrio, type SaleCost, type Window,
 } from '../lib/adInsights';
-import { loadCreatives, loadErp, loadGoals, loadMeta, loadSaleCosts, saveGoals, type MetaLoad } from '../lib/adInsightsDb';
+import { loadCreatives, loadErp, loadGoals, loadMeta, loadSaleCosts, loadTrackStart, saveGoals, type MetaLoad } from '../lib/adInsightsDb';
+import { spDay } from '../lib/waPanel';
 
 const ORANGE = '#f97316';
 const PAGE = 'ad-manager';
@@ -62,11 +64,16 @@ export default function AdDashboard() {
 
 interface Loaded {
   key: string; at: number; ranges: { cur: Window; prev: Window }; meta: MetaLoad; metaError: string | null;
-  model: TrackModel; costs: Map<string, SaleCost>; missing: string[];
+  model: TrackModel; costs: Map<string, SaleCost>; missing: string[]; sales: TrackSaleRow[];
 }
 
 function Dashboard({ onOld }: { onOld: () => void }) {
-  const [period, setPeriod] = useState<AdPeriod>(() => (store.get('ads:periodo') as AdPeriod) || '7');
+  // padrão: 7 dias, nunca antes do início do rastreio (autoClamp até escolher outro período)
+  const [period, setPeriodRaw] = useState<AdPeriod>('7');
+  const [autoClamp, setAutoClamp] = useState(true);
+  const setPeriod = (p: AdPeriod) => { setAutoClamp(false); setPeriodRaw(p); };
+  const [attrib, setAttrib] = useState<AttribMode>(() => (store.get('ads:atrib') === 'identificado' ? 'identificado' : 'estimado'));
+  const [trackStart, setTrackStart] = useState<number | null | undefined>(undefined); // undefined = carregando
   const [custom, setCustom] = useState<{ start: string; end: string }>({ start: '', end: '' });
   const [mode, setMode] = useState<'simples' | 'completo'>(() => (store.get('ads:modo') === 'completo' ? 'completo' : 'simples'));
   const [filter, setFilter] = useState<Category | null>(null);
@@ -80,10 +87,22 @@ function Dashboard({ onOld }: { onOld: () => void }) {
   const [tick, setTick] = useState(0);
   const freshRef = useRef(false);
 
-  useEffect(() => { store.set('ads:periodo', period === 'custom' ? '7' : period); }, [period]);
+  useEffect(() => { store.set('ads:atrib', attrib); }, [attrib]);
   useEffect(() => { store.set('ads:modo', mode); }, [mode]);
 
-  const ranges = useMemo(() => adRanges(period, Date.now(), custom), [period, custom, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  // início do rastreio conversa → anúncio (1º registro de wa_ad_attribution / wa_leads com anúncio)
+  useEffect(() => {
+    let alive = true;
+    loadTrackStart(tick > 0).then((t) => { if (alive) setTrackStart(t); }).catch(() => { if (alive) setTrackStart(null); });
+    return () => { alive = false; };
+  }, [tick]);
+  const trackStartDay = trackStart == null ? null : spDay(trackStart);
+  const ranges = useMemo(() => {
+    const r = adRanges(period, Date.now(), custom);
+    if (autoClamp && period === '7' && trackStartDay && startsBeforeTracking(r.cur, trackStartDay) && trackStartDay <= r.cur.toDay) return adRanges('custom', Date.now(), { start: trackStartDay, end: r.cur.toDay });
+    return r;
+  }, [period, custom, tick, autoClamp, trackStartDay]); // eslint-disable-line react-hooks/exhaustive-deps
+  const goSinceTracking = () => { if (!trackStartDay) return; setPeriod('custom'); setCustom({ start: trackStartDay, end: spDay(Date.now()) }); };
   const key = `${ranges.cur.fromDay}|${ranges.cur.toDay}`;
   const customReady = period !== 'custom' || (!!custom.start && !!custom.end);
 
@@ -96,7 +115,7 @@ function Dashboard({ onOld }: { onOld: () => void }) {
 
   // carga: topo primeiro (Meta + ERP + custos), depois os cartões e as miniaturas
   useEffect(() => {
-    if (!customReady) return;
+    if (!customReady || trackStart === undefined) return;
     let alive = true;
     const fresh = freshRef.current; freshRef.current = false;
     setLoading(true); setError(null); setCardsReady(false);
@@ -107,15 +126,17 @@ function Dashboard({ onOld }: { onOld: () => void }) {
         loadErp(ranges, fresh),
       ]);
       const model = buildConversations(erp.input, businessHoursOf(erp.settings));
-      const ids = [...erpByAd(model, ranges.cur).values(), ...erpByAd(model, ranges.prev).values()].flatMap((a) => a.saleIds);
+      // custo: das vendas ligadas a anúncio e de TODAS as vendas do período (modo Estimado / ROAS geral)
+      const ids = [...erpByAd(model, ranges.cur).values(), ...erpByAd(model, ranges.prev).values()].flatMap((a) => a.saleIds)
+        .concat(periodSales(erp.input.sales, ranges.cur).map((s) => s.id), periodSales(erp.input.sales, ranges.prev).map((s) => s.id));
       const costs = await loadSaleCosts(ids).catch(() => new Map<string, SaleCost>());
       if (!alive) return;
-      setData({ key, at: Date.now(), ranges, meta, metaError, model, costs, missing: erp.missing });
+      setData({ key, at: Date.now(), ranges, meta, metaError, model, costs, missing: erp.missing, sales: erp.input.sales });
       setLoading(false);
       setTimeout(() => { if (alive) setCardsReady(true); }, 0);
     })().catch((e: Error) => { if (alive) { setError(e.message || 'Não consegui carregar'); setLoading(false); } });
     return () => { alive = false; };
-  }, [key, customReady, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [key, customReady, tick, trackStart === undefined]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = () => { freshRef.current = true; setTick((t) => t + 1); };
   useErpRefresh(refresh);
@@ -138,8 +159,18 @@ function Dashboard({ onOld }: { onOld: () => void }) {
   const goals = goalsState ? goalsState.goals : DEFAULT_GOALS;
   const taxRate = getAdTaxRate();
   const ready = !!data && data.key === key;
-  const totals = useMemo(() => (ready && data ? { cur: totalsOf(data.model, data.meta.daily, data.costs, taxRate, data.ranges.cur), prev: totalsOf(data.model, data.meta.daily, data.costs, taxRate, data.ranges.prev) } : null), [ready, data, taxRate]);
-  const cards = useMemo(() => (ready && data && cardsReady ? buildAdCards({ model: data.model, meta: data.meta.daily, period: data.meta.period, costs: data.costs, taxRate, goals }, data.ranges.cur) : null), [ready, data, cardsReady, taxRate, goals]);
+  // vendas sem origem repartidas pelas conversas de cada anúncio (modo Estimado)
+  const att = useMemo(() => {
+    if (!ready || !data) return null;
+    const of = (w: Window): Attribution => attributeSales(erpByAd(data.model, w), periodSales(data.sales, w), data.costs, trackStart ?? null);
+    return { cur: of(data.ranges.cur), prev: of(data.ranges.prev) };
+  }, [ready, data, trackStart]);
+  const totals = useMemo(() => (ready && data && att ? {
+    cur: totalsOf(data.model, data.meta.daily, data.costs, taxRate, data.ranges.cur, { mode: attrib, attribution: att.cur }),
+    prev: totalsOf(data.model, data.meta.daily, data.costs, taxRate, data.ranges.prev, { mode: attrib, attribution: att.prev }),
+  } : null), [ready, data, taxRate, att, attrib]);
+  const trio = useMemo(() => (ready && data && att ? { cur: roasTrio(data.meta.daily, taxRate, data.ranges.cur, att.cur), prev: roasTrio(data.meta.daily, taxRate, data.ranges.prev, att.prev) } : null), [ready, data, taxRate, att]);
+  const cards = useMemo(() => (ready && data && cardsReady && att ? buildAdCards({ model: data.model, meta: data.meta.daily, period: data.meta.period, costs: data.costs, taxRate, goals, mode: attrib, attribution: att.cur }, data.ranges.cur) : null), [ready, data, cardsReady, taxRate, goals, att, attrib]);
 
   // miniaturas / vídeos / prévia dos anúncios do período
   const adIds = useMemo(() => (cards ? cards.map((c) => c.adId).filter((id): id is string => !!id && /^\d+$/.test(id)).sort().join(',') : ''), [cards]);
@@ -165,6 +196,15 @@ function Dashboard({ onOld }: { onOld: () => void }) {
               <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)} data-testid={`ads-mode-${m}`}
                 style={{ padding: '6px 12px', border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: mode === m ? ORANGE : 'transparent', color: mode === m ? '#fff' : 'var(--text-primary)' }}>
                 {m === 'simples' ? 'Simples' : 'Completo'}
+              </button>
+            ))}
+          </div>
+          <div role="group" aria-label="Vendas" style={{ display: 'inline-flex', border: '1px solid var(--border-main)', borderRadius: 999, overflow: 'hidden' }}
+            title="Estimado: reparte as vendas sem origem entre os anúncios pelas conversas de cada um. Só identificado: só as vendas ligadas com certeza.">
+            {(['estimado', 'identificado'] as const).map((m) => (
+              <button key={m} type="button" aria-pressed={attrib === m} onClick={() => setAttrib(m)} data-testid={`ads-attrib-${m}`}
+                style={{ padding: '6px 12px', border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: attrib === m ? '#3b82f6' : 'transparent', color: attrib === m ? '#fff' : 'var(--text-primary)' }}>
+                {ATTRIB_LABEL[m]}
               </button>
             ))}
           </div>
@@ -197,9 +237,16 @@ function Dashboard({ onOld }: { onOld: () => void }) {
           {/ação|Nível inválido|404|not found/i.test(data.metaError) ? ' A função ad-manager precisa ser publicada de novo com a leitura do painel (supabase functions deploy ad-manager).' : ''}
         </Banner>
       )}
+      {ready && data && trackStartDay && startsBeforeTracking(data.ranges.cur, trackStartDay) && (
+        <Banner kind="warn">
+          <span data-testid="ads-track-warn">O rastreio de anúncios começou em {dayBR(trackStartDay)} — antes disso as vendas não estão ligadas a anúncios.</span>{' '}
+          <button type="button" style={{ ...btn, padding: '4px 10px', marginLeft: 6 }} onClick={goSinceTracking} data-testid="ads-track-use">Usar desde {dayBR(trackStartDay)}</button>
+        </Banner>
+      )}
       {ready && data && data.missing.length > 0 && <Banner kind="info">Ainda sem: {data.missing.join(', ')}. O resto já funciona.</Banner>}
 
-      <Top totals={totals} loading={!ready} />
+      <RoasRow trio={trio} loading={!ready || !trio} />
+      <Top totals={totals} loading={!ready || !totals} attrib={attrib} />
 
       {cards ? (
         <>
@@ -245,15 +292,56 @@ function Delta({ cur, prev, goodUp = true }: { cur: number | null; prev: number 
   const c = good ? '#16a34a' : '#ef4444';
   return <span title="Comparado com o período anterior" style={{ fontSize: 12, fontWeight: 700, color: c, background: `${c}1f`, padding: '2px 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{up ? '▲' : '▼'} {fmtPct(Math.abs(d))}</span>;
 }
-function Top({ totals, loading }: { totals: { cur: ReturnType<typeof totalsOf>; prev: ReturnType<typeof totalsOf> } | null; loading: boolean }) {
+// três números de ROAS lado a lado: geral da loja × identificado × vendas sem origem
+function RoasRow({ trio, loading }: { trio: { cur: RoasTrio; prev: RoasTrio } | null; loading: boolean }) {
+  const t = trio;
+  const gTier = t ? roasTier(t.cur.general) : null; const iTier = t ? roasTier(t.cur.identified) : null;
+  return (
+    <section aria-label="ROAS" data-testid="ads-roas-trio">
+      <div className="adx-trio">
+        {loading || !t ? [0, 1, 2].map((i) => <div key={i} className="adx-skel" style={{ height: 96 }} />) : (
+          <>
+            <div style={{ ...box, display: 'flex', flexDirection: 'column', gap: 4 }} data-testid="ads-roas-geral">
+              <span style={eyebrow}>ROAS geral da loja</span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span className="adx-big" style={{ color: gTier ? TIER_COLOR[gTier] : 'var(--text-primary)' }}>{fmtX(t.cur.general)}</span>
+                <Delta cur={t.cur.general} prev={t.prev.general} />
+              </div>
+              <span style={muted}>Faturamento de TODAS as vendas do ERP no período ({fmtInt(t.cur.all.count)} · {fmtMoney(t.cur.all.revenue)}) ÷ gasto com imposto.</span>
+            </div>
+            <div style={{ ...box, display: 'flex', flexDirection: 'column', gap: 4 }} data-testid="ads-roas-ident">
+              <span style={eyebrow}>ROAS identificado</span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span className="adx-big" style={{ color: iTier ? TIER_COLOR[iTier] : 'var(--text-primary)' }}>{fmtX(t.cur.identified)}</span>
+                <Delta cur={t.cur.identified} prev={t.prev.identified} />
+              </div>
+              <span style={muted}>Só as vendas ligadas com certeza a um anúncio ({fmtInt(t.cur.identifiedSum.count)} · {fmtMoney(t.cur.identifiedSum.revenue)}) ÷ gasto com imposto.</span>
+            </div>
+            <div style={{ ...box, display: 'flex', flexDirection: 'column', gap: 4 }} data-testid="ads-sem-origem">
+              <span style={eyebrow}>Vendas sem origem</span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span className="adx-big" style={{ color: 'var(--text-primary)' }}>{fmtInt(t.cur.unattributed.count)}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)' }}>{fmtMoney(t.cur.unattributed.revenue)}</span>
+              </div>
+              <span style={muted}>Vendas do período sem anúncio ligado{t.cur.preTrack.count ? ` (${fmtInt(t.cur.preTrack.count)} antes do início do rastreio, não repartidas)` : ''}; no modo Estimado são repartidas pelas conversas de cada anúncio.</span>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function Top({ totals, loading, attrib }: { totals: { cur: ReturnType<typeof totalsOf>; prev: ReturnType<typeof totalsOf> } | null; loading: boolean; attrib: AttribMode }) {
   const t = totals;
+  const est = attrib === 'estimado';
   const tier = t ? roasTier(t.cur.roas) : null;
   const items: { k: string; label: string; value: string; cur: number | null; prev: number | null; goodUp: boolean; sub?: string; color?: string; info: string }[] = t ? [
     { k: 'gasto', label: 'Gasto', value: fmtMoney(t.cur.spendReal), cur: t.cur.spendReal, prev: t.prev.spendReal, goodUp: false, sub: `${fmtMoney(t.cur.spend)} na Meta + ${fmtMoney(t.cur.tax)} de imposto`, info: 'Gasto da conta na Meta no período + imposto do anúncio (Configurações).' },
-    { k: 'faturamento', label: 'Faturamento', value: fmtMoney(t.cur.revenue), cur: t.cur.revenue, prev: t.prev.revenue, goodUp: true, sub: `${fmtInt(t.cur.sales)} vendas de anúncio`, info: 'Vendas do ERP no período ligadas a conversas que vieram de anúncio (💰, 📈 ou telefone).' },
+    { k: 'faturamento', label: 'Faturamento', value: fmtMoney(t.cur.revenue), cur: t.cur.revenue, prev: t.prev.revenue, goodUp: true, sub: est ? `${fmtInt(t.cur.sales)} vendas do período (todas)` : `${fmtInt(t.cur.sales)} vendas de anúncio`, info: est ? 'Modo Estimado: todas as vendas do ERP no período (as ligadas a anúncio + as sem origem).' : 'Vendas do ERP no período ligadas com certeza a conversas que vieram de anúncio (💰, 📈 ou telefone).' },
     { k: 'lucro', label: 'Lucro real', value: fmtMoney(t.cur.profit), cur: t.cur.profit, prev: t.prev.profit, goodUp: true, color: t.cur.profit < 0 ? '#ef4444' : undefined, sub: `− ${fmtMoney(t.cur.productCost)} de produtos${t.cur.costMissing ? ` · ${t.cur.costMissing} sem custo` : ''}`, info: 'Faturamento − custo dos produtos − (gasto + imposto).' },
-    { k: 'roas', label: 'ROAS real', value: fmtX(t.cur.roas), cur: t.cur.roas, prev: t.prev.roas, goodUp: true, color: tier ? TIER_COLOR[tier] : undefined, sub: tier ? `faixa: ${TIER_LABEL[tier]}` : undefined, info: 'Faturamento ÷ (gasto + imposto). Faixas: acima de 7 ótimo, 6 a 7 bom, 4 a 6 ok, abaixo de 4 ruim.' },
-    { k: 'cpv', label: 'Custo por venda', value: fmtMoney(t.cur.cpa), cur: t.cur.cpa, prev: t.prev.cpa, goodUp: false, info: '(Gasto + imposto) ÷ vendas de anúncio.' },
+    { k: 'roas', label: est ? 'ROAS real (estimado)' : 'ROAS real (identificado)', value: fmtX(t.cur.roas), cur: t.cur.roas, prev: t.prev.roas, goodUp: true, color: tier ? TIER_COLOR[tier] : undefined, sub: tier ? `faixa: ${TIER_LABEL[tier]}` : undefined, info: 'Faturamento ÷ (gasto + imposto). Faixas: acima de 7 ótimo, 6 a 7 bom, 4 a 6 ok, abaixo de 4 ruim.' },
+    { k: 'cpv', label: 'Custo por venda', value: fmtMoney(t.cur.cpa), cur: t.cur.cpa, prev: t.prev.cpa, goodUp: false, info: est ? '(Gasto + imposto) ÷ todas as vendas do período.' : '(Gasto + imposto) ÷ vendas ligadas a anúncio.' },
     { k: 'cpc', label: 'Custo por conversa', value: fmtMoney(t.cur.cpc), cur: t.cur.cpc, prev: t.prev.cpc, goodUp: false, sub: `${fmtInt(t.cur.conversations)} conversas de anúncio`, info: '(Gasto + imposto) ÷ conversas que começaram por anúncio no período.' },
   ] : [];
   return (
@@ -390,11 +478,17 @@ function AdCardView({ c, cr }: { c: AdCard; cr: MetaCreative | null }) {
       <div className="adx-metrics" style={{ padding: '0 14px' }}>
         <Metric label="Gasto" value={fmtMoney(c.money.spendReal)} />
         <Metric label="Conversas" value={fmtInt(c.money.conversations)} />
-        <Metric label="Vendas" value={fmtInt(c.money.sales)} />
+        <Metric label="Vendas" value={salesTxt(c.money.sales)} testId="ads-card-sales" />
         <Metric label="Custo/venda" value={fmtMoney(c.money.cpa)} />
         <Metric label="Lucro" value={fmtMoney(c.money.profit)} color={c.money.profit < 0 ? '#ef4444' : c.money.profit > 0 ? '#16a34a' : undefined} />
         <Metric label="ROAS real" value={fmtX(c.money.roas)} color={tier ? tierColor : undefined} testId="ads-card-roas" />
       </div>
+
+      {c.mode === 'estimado' && (
+        <div style={{ padding: '6px 14px 0', ...muted }} data-testid="ads-card-split">
+          {c.identifiedSales} venda{c.identifiedSales === 1 ? '' : 's'} identificada{c.identifiedSales === 1 ? '' : 's'} + {salesTxt(c.estimatedSales)} estimada{c.estimatedSales < 1.95 ? '' : 's'}
+        </div>
+      )}
 
       <div style={{ padding: '12px 14px 0' }}>
         <div style={{ ...eyebrow, marginBottom: 6 }}>Funil</div>
@@ -473,16 +567,16 @@ function MetaCheck({ cards }: { cards: AdCard[] }) {
   return (
     <section style={box} aria-label="Conferir com a Meta" data-testid="ads-check">
       <h2 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>Conferir com a Meta</h2>
-      <p style={{ ...muted, margin: '0 0 10px' }}>Compras que a Meta conta × vendas reais do ERP × compras que a nossa API de conversões (📈) enviou.</p>
+      <p style={{ ...muted, margin: '0 0 10px' }}>Compras que a Meta atribuiu (actions purchase do insight) × vendas identificadas no ERP × vendas estimadas (repartição das sem origem) × compras que a nossa API de conversões (📈) enviou.</p>
       {!rows.length ? <span style={muted}>Nenhuma compra no período.</span> : (
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
-            <thead><tr><th style={{ ...th, textAlign: 'left' }}>Anúncio</th><th style={th}>Meta diz</th><th style={th}>Vendas reais (ERP)</th><th style={th}>Enviadas (CAPI)</th><th style={th}>Diferença</th></tr></thead>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
+            <thead><tr><th style={{ ...th, textAlign: 'left' }}>Anúncio</th><th style={th}>Compras que a Meta atribuiu</th><th style={th}>Vendas identificadas</th><th style={th}>Vendas estimadas</th><th style={th}>Enviadas (CAPI)</th><th style={th}>Diferença (Meta × identificadas)</th></tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.key}>
                   <td style={{ ...td, textAlign: 'left', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.name}>{r.name}</td>
-                  <td style={td}>{fmtInt(r.metaPurchases)}</td><td style={{ ...td, fontWeight: 700 }}>{fmtInt(r.erpSales)}</td><td style={td}>{fmtInt(r.capiPurchases)}</td>
+                  <td style={td}>{fmtInt(r.metaPurchases)}</td><td style={{ ...td, fontWeight: 700 }}>{fmtInt(r.erpSales)}</td><td style={td}>{r.estimated > 0.05 ? salesTxt(r.estimated) : '—'}</td><td style={td}>{fmtInt(r.capiPurchases)}</td>
                   <td style={{ ...td, color: r.diff === 0 ? 'var(--text-muted)' : r.diff > 0 ? ORANGE : '#3b82f6' }}>{r.diff > 0 ? `Meta +${r.diff}` : r.diff < 0 ? `ERP +${-r.diff}` : 'igual'}</td>
                 </tr>
               ))}
@@ -536,7 +630,7 @@ function TimeToSale({ cards, model, w }: { cards: AdCard[]; model: TrackModel; w
         {!withSales.length ? <span style={muted}>Sem vendas no período.</span> : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}><tbody>
             {withSales.sort((a, b) => (a.medianMinutesToSale ?? 0) - (b.medianMinutesToSale ?? 0)).map((c) => (
-              <tr key={c.key}><td style={{ ...td, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</td><td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{fmtMinutes(c.medianMinutesToSale)}</td><td style={{ ...td, textAlign: 'right', ...muted }}>{c.money.sales} venda{c.money.sales === 1 ? '' : 's'}</td></tr>
+              <tr key={c.key}><td style={{ ...td, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</td><td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{fmtMinutes(c.medianMinutesToSale)}</td><td style={{ ...td, textAlign: 'right', ...muted }}>{c.identifiedSales} venda{c.identifiedSales === 1 ? '' : 's'}</td></tr>
             ))}
           </tbody></table>
         )}
@@ -605,6 +699,7 @@ function GoalsDialog({ value, saved, onClose, onSaved }: { value: Goals; saved: 
 
 const CSS = `
 .adx .adx-top{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+.adx .adx-trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .adx .adx-dec{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .adx .adx-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
 .adx .adx-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 12px}
@@ -615,6 +710,6 @@ const CSS = `
 @keyframes adxSk{0%{background-position:-200px 0}100%{background-position:calc(200px + 100%) 0}}
 @media (prefers-reduced-motion: reduce){.adx .adx-skel{animation:none}}
 @media (max-width:1180px){.adx .adx-top{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (max-width:760px){.adx .adx-top,.adx .adx-dec{grid-template-columns:repeat(2,minmax(0,1fr))}.adx .adx-two{grid-template-columns:1fr}.adx .adx-cards{grid-template-columns:1fr}.adx .adx-big{font-size:21px}}
+@media (max-width:760px){.adx .adx-top,.adx .adx-dec{grid-template-columns:repeat(2,minmax(0,1fr))}.adx .adx-two,.adx .adx-trio{grid-template-columns:1fr}.adx .adx-cards{grid-template-columns:1fr}.adx .adx-big{font-size:21px}}
 `;
 

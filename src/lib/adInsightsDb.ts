@@ -52,6 +52,28 @@ export function loadErp(r: { cur: Window; prev: Window }, fresh = false): Promis
   return cached(`erp|${w.fromDay}|${w.toDay}`, fresh, () => loadTracking(w));
 }
 
+// ── Início do rastreio conversa → anúncio: o 1º registro de wa_ad_attribution / wa_leads com anúncio (só leitura) ──
+let trackStartCache: { at: number; value: number | null } | null = null;
+export async function loadTrackStart(fresh = false): Promise<number | null> {
+  if (!fresh && trackStartCache && Date.now() - trackStartCache.at < CACHE_MS) return trackStartCache.value;
+  const first = async (run: () => PromiseLike<{ data: unknown; error: unknown }>): Promise<number | null> => {
+    try {
+      const { data, error } = await run();
+      const row = !error && Array.isArray(data) ? (data[0] as { first_message_at?: string | null } | undefined) : undefined;
+      const t = row && row.first_message_at ? Date.parse(row.first_message_at) : NaN;
+      return Number.isFinite(t) ? t : null;
+    } catch { return null; }
+  };
+  const [attr, lead] = await Promise.all([
+    first(() => supabase.from('wa_ad_attribution').select('first_message_at').not('first_message_at', 'is', null).order('first_message_at', { ascending: true }).limit(1)),
+    first(() => supabase.from('wa_leads').select('first_message_at').eq('origin', 'anuncio').not('first_message_at', 'is', null).order('first_message_at', { ascending: true }).limit(1)),
+  ]);
+  const list = [attr, lead].filter((t): t is number => t != null);
+  const value = list.length ? Math.min(...list) : null;
+  trackStartCache = { at: Date.now(), value };
+  return value;
+}
+
 // custo do produto (total_cost − entrega) e modelos vendidos de cada venda, em lotes
 export async function loadSaleCosts(ids: string[]): Promise<Map<string, SaleCost>> {
   const out = new Map<string, SaleCost>();

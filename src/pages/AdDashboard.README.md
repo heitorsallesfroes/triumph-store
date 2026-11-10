@@ -19,6 +19,24 @@ A única gravação é a das suas metas, em `system_config`, chave `ads_goals`.
 **Lucro real** = faturamento − produtos − (gasto + imposto).
 **ROAS real** = faturamento ÷ (gasto + imposto).
 
+## Início do rastreio e vendas sem origem (10/11)
+- **Início do rastreio**: a data do 1º registro de anúncio (`wa_ad_attribution` / `wa_leads` com `origin = anuncio`).
+  Antes disso nenhuma venda tem anúncio. Se o período começa antes, o topo avisa ("O rastreio de anúncios começou
+  em DD/MM…") com o botão **Usar desde DD/MM**. A página abre em **7 dias**, nunca antes do início do rastreio.
+- **Três números no topo**:
+  - **ROAS geral da loja** = faturamento de TODAS as vendas do ERP no período ÷ (gasto + imposto);
+  - **ROAS identificado** = só as vendas ligadas com certeza a um anúncio ÷ (gasto + imposto);
+  - **Vendas sem origem** = quantidade e R$ das vendas do período sem anúncio ligado.
+- **Estimado** (padrão) × **Só identificado** (botão no topo):
+  - no Estimado, as vendas sem origem (a partir do início do rastreio) são repartidas entre os anúncios na
+    proporção das conversas que cada anúncio gerou no período (cartão: "3 vendas identificadas + 1,8 estimada");
+  - anúncio sem conversa no período não recebe nada; vendas antes do início do rastreio não são repartidas;
+  - lucro, ROAS, custo por venda, categorias e cores dos cartões seguem o modo escolhido;
+  - no topo, o Estimado usa o faturamento (e o custo dos produtos) de TODAS as vendas do período;
+  - "Por quê?" mostra as vendas identificadas e a conta da estimada (conversas do anúncio ÷ total × vendas sem origem).
+- **Conferir com a Meta**: compras que a Meta atribuiu (actions purchase do insight) × vendas identificadas ×
+  vendas estimadas × compras enviadas pela CAPI.
+
 ## Regras (`src/lib/adInsights.ts`, todas visíveis em "Por quê?")
 - **Faixas de ROAS real** (padrão, ajustáveis em Metas): acima de 7 é **ótimo** (verde forte); de 6 a 7, **bom**
   (verde); de 4 a 6, **ok** (amarelo); abaixo de 4, **ruim** (vermelho).
@@ -45,6 +63,6 @@ Tempo até a venda.
 Sem isso, a página avisa e mostra só os números do ERP.
 
 ## Testes
-- `node scripts/tests/adInsights.test.ts`: regras, com dados de exemplo.
+- `node scripts/tests/adInsights.test.ts`: regras, com dados de exemplo (inclui a repartição do modo Estimado).
 - `node scripts/tests/adChrome.test.ts`: a página no Chrome real.
 - `node scripts/tests/adInsightsReal.test.ts`: confere com os dados reais, só lendo (GET/HEAD).

@@ -10,6 +10,7 @@ import { buildConversations, type TrackInput } from '../../src/lib/waTracking.ts
 import {
   ACTION, DEFAULT_GOALS, adRanges, buildAdCards, categoryBoxes, erpByAd, funnelOf, goalsJson, hourMap, metaCheck, metaFetchWindow, moneyOf,
   moneySplit, parseGoals, replyBands, roasTier, suggestGoals, totalsOf, verdictOf, wearOf, windowOf,
+  attributeSales, dayBR, periodSales, roasTrio, salesTxt, startsBeforeTracking,
   type MetaDaily, type SaleCost, type Goals,
 } from '../../src/lib/adInsights.ts';
 
@@ -235,6 +236,80 @@ test('períodos: 7 dias, anterior do mesmo tamanho, janela da Meta com 14 dias p
   const c = adRanges('custom', NOW, { start: '2026-11-08', end: '2026-12-31' });
   assert.deepEqual([c.cur.fromDay, c.cur.toDay], ['2026-11-08', '2026-11-10'], 'não passa de hoje');
   assert.equal(windowOf('2026-11-01', '2026-11-01').days, 1);
+});
+
+// ── Modo "Estimado": repartição das vendas sem origem (10/11) ──
+// No período: 5 vendas identificadas (A 3, B 1, D 1 = R$ 5.600) + 2 sem origem (orgânica R$ 900 em 06/11 e a venda
+// antes do 1º contato R$ 700 em 04/11). Conversas de anúncio: A 11, B 8, C 1, D 6 = 26.
+const near = (a: number, b: number, msg?: string) => assert.ok(Math.abs(a - b) < 0.02, `${msg || ''} ${a} ≠ ${b}`);
+const pSales = periodSales(input().sales, R.cur);
+const erpCur = erpByAd(model, R.cur);
+const T0 = Date.parse('2026-11-04T00:00:00-03:00');
+
+test('estimado: soma das vendas estimadas = vendas sem origem (quantidade e R$)', () => {
+  const a = attributeSales(erpCur, pSales, costs(), T0);
+  assert.equal(a.all.count, 7); near(a.all.revenue, 7200);
+  assert.equal(a.identified.count, 5); near(a.identified.revenue, 5600);
+  assert.equal(a.unattributed.count, 2); near(a.unattributed.revenue, 1600);
+  assert.equal(a.totalConversations, 26); assert.ok(a.distributed);
+  const sh = [...a.shares.values()];
+  near(sh.reduce((x, s) => x + s.sales, 0), a.unattributed.count, 'vendas');
+  near(sh.reduce((x, s) => x + s.revenue, 0), a.unattributed.revenue, 'R$');
+  near(sh.reduce((x, s) => x + s.share, 0), 1, 'partes');
+  near(a.shares.get('111')!.sales, 2 * 11 / 26, 'A pela proporção das conversas');
+  // cartões no modo Estimado: identificadas + estimada; soma do faturamento = identificado + repartido
+  const est = buildAdCards({ model, meta: metaRows(), period: [], costs: costs(), taxRate: TAX, goals, mode: 'estimado', attribution: a }, R.cur);
+  const cA = est.find((c) => c.key === '111')!;
+  assert.equal(cA.identifiedSales, 3); near(cA.estimatedSales, 2 * 11 / 26); near(cA.money.sales, 3 + 2 * 11 / 26);
+  near(est.reduce((x, c) => x + c.money.revenue, 0), 5600 + 1600, 'faturamento dos cartões');
+  assert.ok(cA.verdict.numbers.some(([k, v]) => k === 'Vendas estimadas' && /11 de 26 conversas/.test(v)), '"Por quê?" explica a estimada');
+  // "Só identificado": nada estimado
+  const ident = buildAdCards({ model, meta: metaRows(), period: [], costs: costs(), taxRate: TAX, goals, mode: 'identificado', attribution: a }, R.cur);
+  assert.ok(ident.every((c) => c.estimatedSales === 0 && c.money.sales === c.identifiedSales));
+  // topo: Estimado usa TODAS as vendas do período; identificado, só as ligadas
+  const tE = totalsOf(model, metaRows(), costs(), TAX, R.cur, { mode: 'estimado', attribution: a });
+  const tI = totalsOf(model, metaRows(), costs(), TAX, R.cur, { mode: 'identificado', attribution: a });
+  near(tE.revenue, 7200); assert.equal(tE.sales, 7); near(tI.revenue, 5600);
+  const trio = roasTrio(metaRows(), TAX, R.cur, a);
+  near(trio.general!, 7200 / 1122); near(trio.identified!, 5600 / 1122); assert.equal(trio.unattributed.count, 2);
+  // Conferir com a Meta: coluna das estimadas ao lado das identificadas
+  const chk = metaCheck(est).find((r) => r.key === '111')!;
+  assert.deepEqual([chk.metaPurchases, chk.erpSales], [7, 3]); near(chk.estimated, 2 * 11 / 26);
+});
+
+test('estimado: anúncio sem conversa no período não recebe venda estimada', () => {
+  const erp = new Map(erpCur);
+  erp.set('999', { key: '999', adId: '999', title: 'Antigo', conversations: 0, responded: 0, sales: 0, revenue: 0, saleIds: [], capiPurchases: 0, minutesToSale: [] });
+  const a = attributeSales(erp, pSales, costs(), T0);
+  assert.equal(a.shares.has('999'), false);
+  near([...a.shares.values()].reduce((x, s) => x + s.sales, 0), 2);
+  // anúncio só com gasto na Meta (sem conversa): cartão sem estimada
+  const est = buildAdCards({ model, meta: [...metaRows(), ...spread('555', 'Relógio E', 210, 9000, 90)], period: [], costs: costs(), taxRate: TAX, goals, mode: 'estimado', attribution: attributeSales(erpCur, pSales, costs(), T0) }, R.cur);
+  const e = est.find((c) => c.key === '555')!;
+  assert.equal(e.estimatedSales, 0); assert.equal(e.money.sales, 0); assert.equal(e.share, null);
+  // sem nenhuma conversa de anúncio: nada é repartido
+  const none = attributeSales(new Map(), pSales, costs(), T0);
+  assert.equal(none.distributed, false); assert.equal(none.shares.size, 0); assert.equal(none.unattributed.count, 7);
+});
+
+test('estimado: período antes do início do rastreio', () => {
+  // rastreio começou em 05/11: a venda sem origem de 04/11 fica fora da repartição (antes do rastreio)
+  const a = attributeSales(erpCur, pSales, costs(), Date.parse('2026-11-05T00:00:00-03:00'));
+  assert.equal(a.preTrack.count, 1); near(a.preTrack.revenue, 700);
+  assert.equal(a.distributable.count, 1); near([...a.shares.values()].reduce((x, s) => x + s.sales, 0), 1);
+  assert.equal(a.unattributed.count, 2, 'continua contando como sem origem');
+  // período inteiro antes do rastreio: nada repartido
+  const late = attributeSales(erpCur, pSales, costs(), Date.parse('2026-11-20T00:00:00-03:00'));
+  assert.equal(late.distributed, false); assert.equal(late.preTrack.count, 2);
+  assert.ok([...late.shares.values()].every((s) => s.sales === 0 && s.revenue === 0));
+  // sem nenhum registro de anúncio ainda (null): nada repartido
+  assert.equal(attributeSales(erpCur, pSales, costs(), null).distributed, false);
+  // aviso no topo
+  assert.equal(startsBeforeTracking(R.cur, '2026-11-05'), true);
+  assert.equal(startsBeforeTracking(R.cur, '2026-11-04'), false);
+  assert.equal(startsBeforeTracking(R.cur, null), false);
+  assert.equal(dayBR('2026-11-04'), '04/11');
+  assert.deepEqual([salesTxt(3), salesTxt(1.8), salesTxt(2.999)], ['3', '1,8', '3']);
 });
 
 let failed = 0;
