@@ -8,7 +8,7 @@
 //   - custo do produto: sales.total_cost − delivery_fee − delivery_cost (igual ao Relatório mensal);
 //   - imposto do anúncio: system_config.ad_tax_rate (src/lib/adTax.ts) sobre o gasto da Meta.
 //
-// Lucro real = faturamento − custo dos produtos − (gasto da Meta + imposto).
+// FASE 2 (10/11): sem "lucro" — categorias e cores usam só o ROAS (faixas) e o custo por venda.
 // ROAS real = faturamento ÷ (gasto + imposto). Custo por venda / por conversa = (gasto + imposto) ÷ vendas / conversas.
 import { median, saleTime, spDay, spWeekdayHour } from './waPanel.ts';
 import type { Conversation, TrackModel, TrackSaleRow } from './waTracking.ts';
@@ -30,13 +30,13 @@ export interface Window { from: number; to: number; fromDay: string; toDay: stri
 
 // ── Metas (system_config "ads_goals") ─────────────────────────────────────
 // Faixas de ROAS real (padrão pedido em 10/11): acima de 7 ótimo (verde forte), 6 a 7 bom (verde), 4 a 6 ok (amarelo),
-// abaixo de 4 ruim (vermelho). cpaTarget/profitMin: null = ainda sem meta (sugestão pela média dos últimos 30 dias).
+// abaixo de 4 ruim (vermelho). cpaTarget: null = ainda sem meta (sugestão pela média dos últimos 30 dias).
 export interface Goals {
   roasGreat: number; roasGood: number; roasOk: number;
-  cpaTarget: number | null; profitMin: number | null;
+  cpaTarget: number | null;
   minSpend: number; minConversations: number;
 }
-export const DEFAULT_GOALS: Goals = { roasGreat: 7, roasGood: 6, roasOk: 4, cpaTarget: null, profitMin: null, minSpend: 30, minConversations: 5 };
+export const DEFAULT_GOALS: Goals = { roasGreat: 7, roasGood: 6, roasOk: 4, cpaTarget: null, minSpend: 30, minConversations: 5 };
 const posNum = (v: unknown): number | null => { const n = Number(v); return v != null && v !== '' && Number.isFinite(n) && n >= 0 ? n : null; };
 export function parseGoals(raw: string | null | undefined): Goals {
   let o: Record<string, unknown> = {};
@@ -44,13 +44,12 @@ export function parseGoals(raw: string | null | undefined): Goals {
   const g: Goals = { ...DEFAULT_GOALS };
   (['roasGreat', 'roasGood', 'roasOk', 'minSpend', 'minConversations'] as const).forEach((k) => { const v = posNum(o[k]); if (v != null) g[k] = v; });
   g.cpaTarget = posNum(o.cpaTarget);
-  g.profitMin = o.profitMin == null || o.profitMin === '' || !Number.isFinite(Number(o.profitMin)) ? null : Number(o.profitMin);
   // faixas sempre em ordem (ótimo ≥ bom ≥ ok)
   if (!(g.roasGreat >= g.roasGood && g.roasGood >= g.roasOk)) { g.roasGreat = DEFAULT_GOALS.roasGreat; g.roasGood = DEFAULT_GOALS.roasGood; g.roasOk = DEFAULT_GOALS.roasOk; }
   return g;
 }
 export const goalsJson = (g: Goals) => JSON.stringify({
-  roasGreat: g.roasGreat, roasGood: g.roasGood, roasOk: g.roasOk, cpaTarget: g.cpaTarget, profitMin: g.profitMin, minSpend: g.minSpend, minConversations: g.minConversations,
+  roasGreat: g.roasGreat, roasGood: g.roasGood, roasOk: g.roasOk, cpaTarget: g.cpaTarget, minSpend: g.minSpend, minConversations: g.minConversations,
 });
 
 export type RoasTier = 'otimo' | 'bom' | 'ok' | 'ruim';
@@ -68,12 +67,12 @@ export function roasTier(roas: number | null, g: Pick<Goals, 'roasGreat' | 'roas
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const div = (a: number, b: number): number | null => (b > 0 ? a / b : null);
 export const spendReal = (bruto: number, taxRate: number) => bruto * (1 + (Number.isFinite(taxRate) && taxRate > 0 ? taxRate : 0));
-export interface Money { spend: number; tax: number; spendReal: number; revenue: number; productCost: number; profit: number; roas: number | null; sales: number; conversations: number; cpa: number | null; cpc: number | null }
+export interface Money { spend: number; tax: number; spendReal: number; revenue: number; productCost: number; roas: number | null; sales: number; conversations: number; cpa: number | null; cpc: number | null }
 export function moneyOf(spendBruto: number, taxRate: number, revenue: number, productCost: number, sales: number, conversations: number): Money {
   const real = spendReal(spendBruto, taxRate);
   return {
     spend: r2(spendBruto), tax: r2(real - spendBruto), spendReal: r2(real), revenue: r2(revenue), productCost: r2(productCost),
-    profit: r2(revenue - productCost - real), roas: div(revenue, real), sales, conversations, cpa: div(real, sales), cpc: div(real, conversations),
+    roas: div(revenue, real), sales, conversations, cpa: div(real, sales), cpc: div(real, conversations),
   };
 }
 export const deltaOf = (cur: number | null, prev: number | null): number | null => (cur == null || prev == null ? null : prev === 0 ? (cur === 0 ? 0 : null) : (cur - prev) / Math.abs(prev));
@@ -177,7 +176,7 @@ export const salesTxt = (n: number) => (Math.abs(n - Math.round(n)) < 0.05 ? Str
 
 // ── Meta: somas por anúncio na janela ─────────────────────────────────────
 export interface MetaAgg {
-  adId: string; name: string | null; campaign: string | null; adset: string | null;
+  adId: string; name: string | null; campaign: string | null; adset: string | null; campaignId: string | null; adsetId: string | null;
   spend: number; impressions: number; clicks: number; conversations: number; purchases: number;
   days: { date: string; spend: number; impressions: number; clicks: number; frequency: number; ctr: number | null; cpm: number | null }[];
 }
@@ -185,8 +184,8 @@ export function metaByAd(rows: MetaDaily[], w: Pick<Window, 'fromDay' | 'toDay'>
   const out = new Map<string, MetaAgg>();
   rows.forEach((r) => {
     let a = out.get(r.ad_id);
-    if (!a) { a = { adId: r.ad_id, name: r.ad_name, campaign: r.campaign_name, adset: r.adset_name, spend: 0, impressions: 0, clicks: 0, conversations: 0, purchases: 0, days: [] }; out.set(r.ad_id, a); }
-    a.name = a.name || r.ad_name; a.campaign = a.campaign || r.campaign_name; a.adset = a.adset || r.adset_name;
+    if (!a) { a = { adId: r.ad_id, name: r.ad_name, campaign: r.campaign_name, adset: r.adset_name, campaignId: r.campaign_id, adsetId: r.adset_id, spend: 0, impressions: 0, clicks: 0, conversations: 0, purchases: 0, days: [] }; out.set(r.ad_id, a); }
+    a.name = a.name || r.ad_name; a.campaign = a.campaign || r.campaign_name; a.adset = a.adset || r.adset_name; a.campaignId = a.campaignId || r.campaign_id; a.adsetId = a.adsetId || r.adset_id;
     a.days.push({ date: r.date, spend: r.spend, impressions: r.impressions, clicks: r.clicks, frequency: r.frequency, ctr: div(r.clicks * 100, r.impressions), cpm: div(r.spend * 1000, r.impressions) });
     if (r.date < w.fromDay || r.date > w.toDay) return;
     a.spend += r.spend; a.impressions += r.impressions; a.clicks += r.clicks; a.conversations += r.conversations; a.purchases += r.purchases;
@@ -248,7 +247,7 @@ export const CATEGORY_ORDER: Category[] = ['resolver', 'ajustar', 'escalar', 'ac
 export const CATEGORY_LABEL: Record<Category, string> = { resolver: 'Resolver agora', ajustar: 'Ajustar', escalar: 'Pode render mais', acompanhar: 'Acompanhar' };
 export const CATEGORY_COLOR: Record<Category, string> = { resolver: '#ef4444', ajustar: '#f97316', escalar: '#22c55e', acompanhar: '#3b82f6' };
 // "Para onde foi o seu dinheiro"
-export const MONEY_LABEL: Record<Category, string> = { escalar: 'Dando resultado', ajustar: 'Atenção', acompanhar: 'Poucos dados', resolver: 'Prejuízo' };
+export const MONEY_LABEL: Record<Category, string> = { escalar: 'Dando resultado', ajustar: 'Atenção', acompanhar: 'Poucos dados', resolver: 'ROAS ruim' };
 export const ACTION = {
   esperar: '→ Esperar mais dados', criativo: '→ Preparar criativo novo', escalar: '→ Pode subir orçamento 20%', oferta: '→ Revisar oferta/atendimento',
 } as const;
@@ -265,12 +264,10 @@ export interface VerdictInput {
 export function verdictOf(x: VerdictInput, g: Goals): Verdict {
   const m = x.money;
   const tier = m.sales > 0 || m.spendReal > 0 ? roasTier(m.roas ?? 0, g) : null;
-  const profitPerSale = m.sales ? m.profit / m.sales : null;
   const numbers: [string, string][] = [
-    ['Gasto (com imposto)', brl(m.spendReal)], ['Faturamento', brl(m.revenue)], ['Custo dos produtos', brl(m.productCost)], ['Lucro real', brl(m.profit)],
+    ['Gasto (com imposto)', brl(m.spendReal)], ['Faturamento', brl(m.revenue)],
     ['ROAS real', x1(m.roas)], ['Vendas', salesTxt(m.sales)], ['Conversas', String(m.conversations)], ['Custo por venda', brl(m.cpa)], ['Custo por conversa', brl(m.cpc)],
-    ['Lucro por venda', brl(profitPerSale)],
-    ['Metas', `ROAS ótimo > ${x1(g.roasGreat)} · bom ≥ ${x1(g.roasGood)} · ok ≥ ${x1(g.roasOk)} · custo/venda ${brl(g.cpaTarget)} · lucro/venda ≥ ${brl(g.profitMin)}`],
+    ['Metas', `ROAS ótimo > ${x1(g.roasGreat)} · bom ≥ ${x1(g.roasGood)} · ok ≥ ${x1(g.roasOk)} · custo/venda ${brl(g.cpaTarget)}`],
   ];
   const funnelTxt = (): string | null => {
     const s = x.funnelSteps.find((f) => f.key === x.funnelWorst);
@@ -299,37 +296,34 @@ export function verdictOf(x: VerdictInput, g: Goals): Verdict {
   const reasons: string[] = [];
   const add = (s: string | null) => { if (s && reasons.length < 3 && !reasons.includes(s)) reasons.push(s); };
   const cpaHigh = g.cpaTarget != null && m.cpa != null && m.cpa > g.cpaTarget * 1.2;
-  const profitLow = g.profitMin != null && profitPerSale != null && profitPerSale < g.profitMin;
   const roasTxt = `ROAS real ${x1(m.roas ?? 0)} (${TIER_LABEL[tier || 'ruim']}).`;
 
   if (tier === 'ruim') {
     add(m.sales ? roasTxt : `Gastou ${brl(m.spendReal)} e não vendeu nada.`);
-    if (m.profit < 0) add(`Prejuízo de ${brl(-m.profit)} no período.`);
+    if (cpaHigh) add(`Custo por venda ${brl(m.cpa)}, acima da meta (${brl(g.cpaTarget)}).`);
     if (x.wear.tired) add(x.wear.text);
     add(funnelTxt());
     const action = x.wear.tired || creativeLoss ? ACTION.criativo : ACTION.oferta;
     return { category: 'resolver', tier, reasons, action, numbers, rule: `ROAS real abaixo de ${x1(g.roasOk)} (ruim) → Resolver agora. Recomendação: ${action === ACTION.criativo ? 'a perda maior está no anúncio (clique/conversa) ou o criativo cansou' : 'a perda maior está depois da conversa (resposta/venda)'}.` };
   }
-  if (tier === 'ok' || cpaHigh || profitLow || x.wear.tired) {
+  if (tier === 'ok' || cpaHigh || x.wear.tired) {
     add(roasTxt);
     if (cpaHigh) add(`Custo por venda ${brl(m.cpa)}, acima da meta (${brl(g.cpaTarget)}).`);
-    if (profitLow) add(`Lucro por venda ${brl(profitPerSale)}, abaixo do mínimo (${brl(g.profitMin)}).`);
     if (x.wear.tired) add(x.wear.text);
     add(funnelTxt());
     const action = x.wear.tired || creativeLoss ? ACTION.criativo : ACTION.oferta;
-    const why = [tier === 'ok' ? `ROAS real entre ${x1(g.roasOk)} e ${x1(g.roasGood)} (ok)` : null, cpaHigh ? 'custo por venda mais de 20% acima da meta' : null,
-      profitLow ? 'lucro por venda abaixo do mínimo' : null, x.wear.tired ? 'CTR caiu 20%+ com a frequência subindo 10%+' : null].filter(Boolean).join('; ');
+    const why = [tier === 'ok' ? `ROAS real entre ${x1(g.roasOk)} e ${x1(g.roasGood)} (ok)` : null, cpaHigh ? 'custo por venda mais de 20% acima da meta' : null, x.wear.tired ? 'CTR caiu 20%+ com a frequência subindo 10%+' : null].filter(Boolean).join('; ');
     return { category: 'ajustar', tier, reasons, action, numbers, rule: `${why} → Ajustar.` };
   }
   add(roasTxt);
-  add(`Lucro real de ${brl(m.profit)} com ${salesTxt(m.sales)} venda${salesTxt(m.sales) === '1' ? '' : 's'}.`);
+  add(`Faturou ${brl(m.revenue)} com ${salesTxt(m.sales)} venda${salesTxt(m.sales) === '1' ? '' : 's'}.`);
   if (g.cpaTarget != null && m.cpa != null) add(`Custo por venda ${brl(m.cpa)}, dentro da meta (${brl(g.cpaTarget)}).`);
   return { category: 'escalar', tier, reasons, action: ACTION.escalar, numbers, rule: `ROAS real ${x1(g.roasGood)} ou mais (bom/ótimo), dentro das metas e sem desgaste → Pode render mais.` };
 }
 
 // ── Montagem por anúncio ──────────────────────────────────────────────────
 export interface AdCard {
-  key: string; adId: string | null; name: string; campaign: string | null; adset: string | null;
+  key: string; adId: string | null; name: string; campaign: string | null; adset: string | null; campaignId: string | null; adsetId: string | null;
   money: Money; impressions: number; clicks: number; ctr: number | null; cpm: number | null; frequency: number | null;
   responded: number; metaConversations: number; metaPurchases: number; capiPurchases: number;
   medianMinutesToSale: number | null; models: { name: string; qty: number }[]; costMissing: number;
@@ -367,7 +361,7 @@ export function buildAdCards(inp: BuildInput, w: Window): AdCard[] {
       mode, identifiedSales: idSales, identifiedRevenue: idRevenue, estimatedSales: est ? est.sales : 0, estimatedRevenue: est ? r2(est.revenue) : 0, share: sh ? sh.share : null,
       key, adId: m ? m.adId : e ? e.adId : null,
       name: (m && m.name) || (e && e.title) || (key === 'sem-id' ? 'Anúncio não identificado' : 'Anúncio sem nome'),
-      campaign: m ? m.campaign : null, adset: m ? m.adset : null, money,
+      campaign: m ? m.campaign : null, adset: m ? m.adset : null, campaignId: m ? m.campaignId : null, adsetId: m ? m.adsetId : null, money,
       impressions: m ? m.impressions : 0, clicks: m ? m.clicks : 0,
       ctr: m ? div(m.clicks * 100, m.impressions) : null, cpm: m ? div(m.spend * 1000, m.impressions) : null, frequency: freq.get(key) ?? null,
       responded: e ? e.responded : 0, metaConversations: m ? m.conversations : 0, metaPurchases: m ? m.purchases : 0, capiPurchases: e ? e.capiPurchases : 0,
@@ -380,7 +374,8 @@ export function buildAdCards(inp: BuildInput, w: Window): AdCard[] {
   return base.map((b) => {
     const funnel = funnelOf({ impressions: b.impressions, clicks: b.clicks, conversations: b.money.conversations, responded: b.responded, sales: b.money.sales }, ref);
     const verdict = verdictOf({ money: b.money, responded: b.responded, impressions: b.impressions, clicks: b.clicks, wear: b.wear, funnelWorst: funnel.worst, funnelSteps: funnel.steps }, inp.goals);
-    verdict.numbers.splice(5, 1, ...sourceNumbers(b, att));
+    const vi = verdict.numbers.findIndex(([k]) => k === 'Vendas');
+    verdict.numbers.splice(vi < 0 ? verdict.numbers.length : vi, vi < 0 ? 0 : 1, ...sourceNumbers(b, att));
     return { ...b, funnel, verdict };
   }).sort((a, b) => CATEGORY_ORDER.indexOf(a.verdict.category) - CATEGORY_ORDER.indexOf(b.verdict.category) || b.money.spendReal - a.money.spendReal);
 }
@@ -417,11 +412,11 @@ export function roasTrio(meta: MetaDaily[], taxRate: number, w: Window, att: Att
   const spend = spendReal(metaSpendIn(meta, w), taxRate);
   return { general: div(att.all.revenue, spend), identified: div(att.identified.revenue, spend), unattributed: att.unattributed, preTrack: att.preTrack, all: att.all, identifiedSum: att.identified };
 }
-export interface CategoryBox { category: Category; count: number; spendReal: number; revenue: number; profit: number }
+export interface CategoryBox { category: Category; count: number; spendReal: number; revenue: number }
 export function categoryBoxes(cards: AdCard[]): CategoryBox[] {
   return CATEGORY_ORDER.map((category) => {
     const l = cards.filter((c) => c.verdict.category === category);
-    return { category, count: l.length, spendReal: r2(l.reduce((s, c) => s + c.money.spendReal, 0)), revenue: r2(l.reduce((s, c) => s + c.money.revenue, 0)), profit: r2(l.reduce((s, c) => s + c.money.profit, 0)) };
+    return { category, count: l.length, spendReal: r2(l.reduce((s, c) => s + c.money.spendReal, 0)), revenue: r2(l.reduce((s, c) => s + c.money.revenue, 0)) };
   });
 }
 export interface MoneySlice { category: Category; label: string; spendReal: number; pct: number }
@@ -471,12 +466,11 @@ export function metaCheck(cards: AdCard[]): CheckRow[] {
     .map((c) => ({ key: c.key, name: c.name, metaPurchases: c.metaPurchases, erpSales: c.identifiedSales, estimated: c.estimatedSales, capiPurchases: c.capiPurchases, diff: c.metaPurchases - c.identifiedSales }))
     .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || b.erpSales - a.erpSales);
 }
-// Metas sugeridas pela média dos últimos 30 dias: custo por venda médio e lucro médio por venda
-export function suggestGoals(t: Pick<Money, 'sales' | 'cpa' | 'profit'>, cur: Goals): Goals {
+// Metas sugeridas pela média dos últimos 30 dias: custo por venda médio
+export function suggestGoals(t: Pick<Money, 'sales' | 'cpa'>, cur: Goals): Goals {
   return {
     ...cur,
     cpaTarget: cur.cpaTarget ?? (t.cpa != null ? Math.round(t.cpa) : null),
-    profitMin: cur.profitMin ?? (t.sales ? Math.round(t.profit / t.sales) : null),
   };
 }
 

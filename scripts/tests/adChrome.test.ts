@@ -56,8 +56,13 @@ function fixtures(now: number) {
   conv('120210000000333', 'Relógio C', '5521910003000', 1, 10, false);
   for (let i = 0; i < 6; i++) { const ph = `55219100040${String(i).padStart(2, '0')}`; const c = conv('120210000000444', 'Relógio D', ph, 3, 9 + i, i < 3); if (!i) sale('vd0', 1100, 500, c, ph, 2, 'W10'); }
   const daily: any[] = [];
+  // FASE 2: A e B na campanha CBO (R$ 200/dia); C e D na campanha ABO, cada um no seu conjunto (R$ 30 e R$ 50/dia)
+  const OWN: Record<string, [string, string, string, string]> = {
+    '120210000000111': ['120210000000901', 'Mensagens WhatsApp', '120210000000801', 'Conjunto Brasil'], '120210000000222': ['120210000000901', 'Mensagens WhatsApp', '120210000000801', 'Conjunto Brasil'],
+    '120210000000333': ['120210000000902', 'ABO TESTES', '120210000000803', 'Conjunto C'], '120210000000444': ['120210000000902', 'ABO TESTES', '120210000000804', 'Conjunto D'],
+  };
   const spread = (ad: string, name: string, spend: number, imp: number, clk: number, purchases = 0) => {
-    for (let d = 0; d < 7; d++) daily.push({ ad_id: ad, ad_name: name, adset_id: 's1', adset_name: 'Conjunto Brasil', campaign_id: 'c1', campaign_name: 'Mensagens WhatsApp', date: spDay(now - d * DAY), spend: spend / 7, impressions: imp / 7, clicks: clk / 7, reach: imp / 10, frequency: 1.4 + d * 0.01, conversations: 1, purchases: d === 0 ? purchases : 0 });
+    for (let d = 0; d < 7; d++) daily.push({ ad_id: ad, ad_name: name, adset_id: OWN[ad][2], adset_name: OWN[ad][3], campaign_id: OWN[ad][0], campaign_name: OWN[ad][1], date: spDay(now - d * DAY), spend: spend / 7, impressions: imp / 7, clicks: clk / 7, reach: imp / 10, frequency: 1.4 + d * 0.01, conversations: 1, purchases: d === 0 ? purchases : 0 });
   };
   spread('120210000000111', 'Relógio A', 300, 30000, 600, 4); spread('120210000000222', 'Relógio B', 500, 50000, 1000); spread('120210000000333', 'Relógio C', 20, 2000, 30); spread('120210000000444', 'Relógio D', 200, 20000, 400);
   const creatives = [
@@ -69,7 +74,12 @@ function fixtures(now: number) {
   return {
     // rastreio de anúncios começou há 120 dias (o 7 dias padrão não é encurtado); a conversa fica fora de todos os períodos
     db: { wa_leads: leads, wa_ad_attribution: [{ chat_id: '5521910009000@c.us', phone: '5521910009000', contact_name: null, ad_id: '120210000000999', ad_title: 'Antigo', source_app: null, source_url: null, first_message_at: at(120, 10, now) }], wa_send_log: sends, wa_replies: replies, sales, sale_items: items, wa_chat_names: [], wa_conversion_events: [], wa_chat_activity: [], wa_chat_activity_days: [], wa_items: [], wa_settings: [], system_config: [{ key: 'ad_tax_rate', value: '0.1' }] },
-    meta: { daily, period: [{ ad_id: '120210000000111', reach: 20000, frequency: 1.5, impressions: 30000 }], creatives },
+    meta: {
+      daily, period: [{ ad_id: '120210000000111', reach: 20000, frequency: 1.5, impressions: 30000 }], creatives,
+      // leitura antiga da função (level campaign / adset): daily_budget em reais, como a função devolve
+      campaigns: [{ id: '120210000000901', name: 'CBO VENDAS WPP', status: 'ACTIVE', daily_budget: '200.00', lifetime_budget: null }, { id: '120210000000902', name: 'ABO TESTES', status: 'ACTIVE', daily_budget: null, lifetime_budget: null }],
+      adsets: [{ id: '120210000000803', parent: '120210000000902', name: 'Conjunto C', daily_budget: '30.00', lifetime_budget: null }, { id: '120210000000804', parent: '120210000000902', name: 'Conjunto D', daily_budget: '50.00', lifetime_budget: null }],
+    },
   };
 }
 
@@ -158,20 +168,20 @@ async function main() {
       const txt = (e) => (e ? e.textContent.replace(/\\s+/g, ' ').trim() : ''); const tid = (t) => $('[data-testid="' + t + '"]');`;
 
     // ── topo ──
-    const topOk = await waitFor(`${H} return $$('[data-testid^="ads-kpi-"]').length === 6 && !!tid('ads-cards');`, 20000);
+    const topOk = await waitFor(`${H} return $$('[data-testid^="ads-kpi-"]').length === 5 && !!tid('ads-cards');`, 20000);
     const top = await ev(`${H} const v = (k) => txt($('[data-testid="ads-kpi-' + k + '"] .adx-big'));
-      return { gasto: v('gasto'), fat: v('faturamento'), lucro: v('lucro'), roas: v('roas'), cpv: v('cpv'), cpc: v('cpc'), deltas: $$('[data-testid^="ads-kpi-"]').map((e) => /▲|▼|—|= 0%/.test(txt(e))).every(Boolean),
+      return { gasto: v('gasto'), fat: v('faturamento'), lucro: !!tid('ads-kpi-lucro') || /lucro/i.test(txt(tid('ads-top'))), roas: v('roas'), cpv: v('cpv'), cpc: v('cpc'), deltas: $$('[data-testid^="ads-kpi-"]').map((e) => /▲|▼|—|= 0%/.test(txt(e))).every(Boolean),
         roasColor: getComputedStyle($('[data-testid="ads-kpi-roas"] .adx-big')).color, updated: txt(tid('ads-updated')) };`);
-    // gasto 1.020 + 10% = 1.122; faturamento 3.000 + 1.500 + 1.100 = 5.600; produtos 1.200 + 700 + 500 = 2.400; lucro 2.078; ROAS 4,99
-    check('topo "Como estou?": gasto com imposto, faturamento, lucro real, ROAS real, custo por venda e por conversa, todos com ▲▼',
-      topOk && top.gasto === 'R$ 1.122' && top.fat === 'R$ 5.600' && top.lucro === 'R$ 2.078' && top.roas === '5,0×' && top.cpv === 'R$ 224,40' && top.cpc === 'R$ 44,88' && top.deltas, JSON.stringify(top));
+    // gasto 1.020 + 10% = 1.122; faturamento 3.000 + 1.500 + 1.100 = 5.600; ROAS 4,99 (FASE 2: sem lucro)
+    check('topo "Como estou?": gasto com imposto, faturamento, ROAS, custo por venda e por conversa, todos com ▲▼ (sem lucro)',
+      topOk && top.gasto === 'R$ 1.122' && top.fat === 'R$ 5.600' && top.lucro === false && top.roas === '5,0×' && top.cpv === 'R$ 224,40' && top.cpc === 'R$ 44,88' && top.deltas, JSON.stringify(top));
     check('ROAS real do topo na cor da faixa "ok" (4 a 6: amarelo)', top.roasColor === 'rgb(234, 179, 8)', top.roasColor);
     check('"Atualizado às HH:MM"', /^Atualizado às \d{2}:\d{2}$/.test(top.updated), top.updated);
 
     // ── decisões + dinheiro ──
     const dec = await ev(`${H} return { cards: ['resolver','ajustar','escalar','acompanhar'].map((k) => txt(tid('ads-dec-' + k))), bar: txt(tid('ads-moneybar')) };`);
     check('4 cartões de decisão com quantidade e R$', dec.cards[0].startsWith('Resolver agora1 anúncio') && dec.cards[1].startsWith('Ajustar1 anúncio') && dec.cards[2].startsWith('Pode render mais1 anúncio') && dec.cards[3].startsWith('Acompanhar1 anúncio') && dec.cards[0].includes('R$ 550,00 gastos'), JSON.stringify(dec.cards));
-    check('"Para onde foi o seu dinheiro": Dando resultado / Atenção / Poucos dados / Prejuízo com % e R$', ['Dando resultado', 'Atenção', 'Poucos dados', 'Prejuízo'].every((l) => dec.bar.includes(l)) && dec.bar.includes('Prejuízo 49%'), dec.bar);
+    check('"Para onde foi o seu dinheiro": Dando resultado / Atenção / Poucos dados / ROAS ruim com % e R$', ['Dando resultado', 'Atenção', 'Poucos dados', 'ROAS ruim'].every((l) => dec.bar.includes(l)) && dec.bar.includes('ROAS ruim 49%'), dec.bar);
 
     // ── cartões ──
     await waitFor(`${H} const i = $('[data-testid="ads-card"] [data-testid="ads-thumb"]'); return !!i && i.complete && i.naturalWidth > 0;`, 5000);
@@ -191,7 +201,7 @@ async function main() {
     await ev(`${H} $('[data-ad="120210000000222"] [data-testid="ads-why"]').click(); return true;`);
     await sleep(200);
     const why = await ev(`${H} return txt($('[data-ad="120210000000222"] [data-testid="ads-why-box"]'));`);
-    check('"Por quê?" mostra a regra e os números', why.includes('Regra: ROAS real abaixo de 4,0') && why.includes('ROAS real') && why.includes('Lucro real') && why.includes('Custo por venda'), why.slice(0, 200));
+    check('"Por quê?" mostra a regra e os números (sem lucro)', why.includes('Regra: ROAS real abaixo de 4,0') && why.includes('ROAS real') && !/lucro/i.test(why) && why.includes('Custo por venda') && why.includes('Vendas identificadas'), why.slice(0, 200));
     await shot('anuncios-simples.png');
 
     // ── filtro pelas decisões ──
@@ -214,8 +224,8 @@ async function main() {
     // ── Metas: só system_config "ads_goals" ──
     await ev(`${H} tid('ads-goals-btn').click(); return true;`);
     await waitFor(`${H} return !!tid('ads-goals');`);
-    const g0 = await ev(`${H} return { cpa: tid('ads-goal-cpaTarget').value, profit: tid('ads-goal-profitMin').value, great: tid('ads-goal-roasGreat').value, good: tid('ads-goal-roasGood').value, ok: tid('ads-goal-roasOk').value };`);
-    check('Metas: faixas padrão 7 / 6 / 4 e custo/lucro sugeridos pela média de 30 dias', g0.great === '7' && g0.good === '6' && g0.ok === '4' && g0.cpa !== '' && g0.profit !== '', JSON.stringify(g0));
+    const g0 = await ev(`${H} return { cpa: tid('ads-goal-cpaTarget').value, profit: !!tid('ads-goal-profitMin'), great: tid('ads-goal-roasGreat').value, good: tid('ads-goal-roasGood').value, ok: tid('ads-goal-roasOk').value };`);
+    check('Metas: faixas padrão 7 / 6 / 4 e custo por venda sugerido pela média de 30 dias (sem lucro mínimo)', g0.great === '7' && g0.good === '6' && g0.ok === '4' && g0.cpa !== '' && g0.profit === false, JSON.stringify(g0));
     await ev(`${H} const set = (el, v) => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); };
       set(tid('ads-goal-roasOk'), '5,5'); return true;`);
     await sleep(100);
@@ -239,8 +249,8 @@ async function main() {
     await waitFor(`return window.__META_CALLS.filter((b) => b.part === 'metrics').length > ${calls1};`, 8000);
     const calls2 = await ev(`return window.__META_CALLS.filter((b) => b.part === 'metrics').length;`);
     check('cache de 5 min por período (voltar para 7 dias não busca de novo; 30 dias já veio da sugestão de metas) e Atualizar busca de novo', calls1 === calls0 && calls2 === calls1 + 1, JSON.stringify({ calls0, calls1, calls2 }));
-    const onlyRead = await ev(`return window.__META_CALLS.every((b) => b.action === 'dashboard');`);
-    check('a página nova só chama a leitura "dashboard" da edge function (nada de toggle/update_budget)', onlyRead === true);
+    const onlyRead = await ev(`return window.__META_CALLS.every((b) => b.action === 'dashboard' || (!b.action && (b.level === 'campaign' || b.level === 'adset')));`);
+    check('sem confirmar nada, a página só LÊ da edge function (dashboard + orçamentos; nada de toggle/update_budget)', onlyRead === true);
 
     // ── celular ──
     await s('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
@@ -280,6 +290,110 @@ async function main() {
     const used = await waitFor(`${H} return tid('ads-period-custom').getAttribute('aria-pressed') === 'true' && !tid('ads-track-warn') && $$('[data-testid="ads-card"]').length > 0;`, 8000);
     check('"Usar desde" troca o período para o início do rastreio (o aviso some)', used);
 
+    // ── FASE 2: ações na Meta SIMULADA (o harness responde toggle/update_budget; nada sai do Chrome) ──
+    const card = (ad: string) => `$('[data-ad="${ad}"]')`;
+    const A1 = '120210000000111'; const B1 = '120210000000222'; const C1 = '120210000000333'; const D1 = '120210000000444';
+    const acts = () => ev(`return (window.__META_ACTIONS || []).length;`);
+    const dlg = () => ev(`${H} const d = tid('ads-confirm'); return d ? { lines: $$('[data-testid="ads-confirm-lines"] li', d).map(txt), warn: $$('[data-testid="ads-confirm-warn"]', d).map(txt), blocked: txt($('[data-testid="ads-confirm-blocked"]', d)),
+      ok: !tid('ads-confirm-ok') ? null : !tid('ads-confirm-ok').disabled, results: $$('[data-testid="ads-result"]', d).map((r) => ({ ok: r.dataset.ok, t: txt(r) })) } : null;`);
+    const setVal = (sel: string, v: string) => ev(`${H} const el = ${sel}; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(v)}); el.dispatchEvent(new Event('input', { bubbles: true })); return true;`);
+    const cancel = async () => { await ev(`${H} tid('ads-confirm-cancel').click(); return true;`); await waitFor(`${H} return !tid('ads-confirm');`); };
+    const budgetOk = await waitFor(`${H} return txt($('[data-testid="ads-budget-value"]', ${card(A1)})) !== '' && txt($('[data-testid="ads-budget-value"]', ${card(C1)})) !== '';`, 8000);
+    const bud = await ev(`${H} return { a: txt($('[data-testid="ads-budget"]', ${card(A1)})), c: txt($('[data-testid="ads-budget"]', ${card(C1)})), aBtn: txt($('[data-testid="ads-toggle"]', ${card(A1)})), cBtn: txt($('[data-testid="ads-toggle"]', ${card(C1)})) };`);
+    check('cartão: Pausar/Ativar e "Orçamento da campanha: R$ X/dia (CBO)" ou "do conjunto", com −20/−10/+10/+20% e Definir valor',
+      budgetOk && /^Orçamento da campanha: R\$\s200\/dia \(CBO\)$/.test(bud.a) && /^Orçamento do conjunto: R\$\s30\/dia$/.test(bud.c) && bud.aBtn === 'Pausar anúncio' && bud.cBtn === 'Ativar anúncio'
+      && await ev(`${H} return ['menos20', 'menos10', 'mais10', 'mais20', 'set'].every((k) => !!$('[data-testid="ads-budget-' + k + '"]', ${card(A1)}));`), JSON.stringify(bud));
+
+    // 1. confirmação SEMPRE: abrir e cancelar não envia nada
+    await ev(`${H} $('[data-testid="ads-budget-mais20"]', ${card(A1)}).click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-confirm');`);
+    const d1 = await dlg();
+    await cancel();
+    check('janela de confirmação com a lista exata ("Campanha CBO VENDAS WPP: R$ 200/dia → R$ 240/dia"); Cancelar não envia nada',
+      !!d1 && d1.lines.length === 1 && /^Campanha CBO VENDAS WPP: R\$\s200\/dia → R\$\s240\/dia$/.test(d1.lines[0]) && d1.warn.length === 0 && d1.ok === true && (await acts()) === 0, JSON.stringify(d1));
+
+    // 2. seleção em massa: A + B (mesma campanha CBO) → UMA mudança de orçamento; Confirmar → ✅ e o orçamento recarrega
+    await ev(`${H} $('[data-testid="ads-card-select"]', ${card(A1)}).click(); $('[data-testid="ads-card-select"]', ${card(B1)}).click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-bulk');`);
+    const bulkCount = await ev(`${H} return txt(tid('ads-bulk-count'));`);
+    await ev(`${H} tid('ads-bulk-plus').click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-confirm');`);
+    const d2 = await dlg();
+    await ev(`${H} tid('ads-confirm-ok').click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-confirm-close');`, 8000);
+    const d2r = await dlg();
+    const sent2 = await ev(`return window.__META_ACTIONS;`);
+    await ev(`${H} tid('ads-confirm-close').click(); return true;`);
+    const reload2 = await waitFor(`${H} return /R\\$\\s220\\/dia/.test(txt($('[data-testid="ads-budget-value"]', ${card(A1)})));`, 8000);
+    check('em massa: 2 anúncios da mesma campanha → uma mudança só (+10%), enviada só depois do Confirmar; ✅ e orçamento recarregado',
+      bulkCount === '2 selecionados' && !!d2 && d2.lines.length === 1 && /R\$\s200\/dia → R\$\s220\/dia/.test(d2.lines[0]) && !!d2r && d2r.results.length === 1 && d2r.results[0].ok === '1' && d2r.results[0].t.startsWith('✅')
+      && sent2.length === 1 && sent2[0].action === 'update_budget' && sent2[0].objectId === '120210000000901' && sent2[0].dailyBudget === 220 && reload2, JSON.stringify({ bulkCount, d2, d2r, sent2 }));
+
+    // 3. mesma campanha em menos de 1 minuto: fica de fora e o Confirmar não envia
+    await ev(`${H} $('[data-testid="ads-budget-mais10"]', ${card(B1)}).click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-confirm');`);
+    const d3 = await dlg();
+    await cancel();
+    check('proteção: outra ação na mesma campanha em menos de 1 minuto fica de fora (Confirmar desabilitado)', !!d3 && d3.lines.length === 0 && /menos de 1 minuto/.test(d3.blocked) && d3.ok === false && (await acts()) === 1, JSON.stringify(d3));
+
+    // 4. limites: mínimo R$ 10/dia, no máximo ±50%, aviso acima de +20%
+    const defineC = async (v: string) => {
+      await ev(`${H} $('[data-testid="ads-budget-set"]', ${card(C1)}).click(); return true;`);
+      await waitFor(`${H} return !!$('[data-testid="ads-budget-input"]', ${card(C1)});`);
+      await setVal(`$('[data-testid="ads-budget-input"]', ${card(C1)})`, v);
+      await ev(`${H} $('[data-testid="ads-budget-review"]', ${card(C1)}).click(); return true;`);
+      await waitFor(`${H} return !!tid('ads-confirm');`);
+      const d = await dlg(); await cancel(); return d;
+    };
+    const lMin = await defineC('5'); const lMax = await defineC('80'); const lWarn = await defineC('40');
+    check('proteções: abaixo de R$ 10/dia e acima de +50% ficam de fora; +33% avisa "pode reiniciar o aprendizado da Meta"',
+      !!lMin && /mínimo de R\$\s10,00/.test(lMin.blocked) && lMin.ok === false && !!lMax && /máximo é \+50%/.test(lMax.blocked) && lMax.ok === false
+      && !!lWarn && lWarn.ok === true && lWarn.warn.length === 1 && /aprendizado da Meta/.test(lWarn.warn[0]) && (await acts()) === 1, JSON.stringify({ lMin, lMax, lWarn }));
+
+    // 5. "Selecionar todos desta categoria" + Pausar selecionados: quem já está pausado fica de fora; ✅ e o status recarrega
+    await ev(`${H} tid('ads-bulk-clear').click(); return true;`);
+    await waitFor(`${H} return !tid('ads-bulk');`);
+    const catD = await ev(`${H} return ${card(D1)}.dataset.category;`);
+    await ev(`${H} tid('ads-select-${catD}').click(); return true;`);
+    await waitFor(`${H} return $('[data-testid="ads-card-select"]', ${card(D1)}).checked;`);
+    await ev(`${H} $('[data-testid="ads-card-select"]', ${card(C1)}).click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-bulk');`);
+    const sel5 = await ev(`${H} return { count: txt(tid('ads-bulk-count')), d: $('[data-testid="ads-card-select"]', ${card(D1)}).checked, c: $('[data-testid="ads-card-select"]', ${card(C1)}).checked };`);
+    await ev(`${H} tid('ads-bulk-pause').click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-confirm');`);
+    const dP = await dlg();
+    await ev(`${H} tid('ads-confirm-ok').click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-confirm-close');`, 8000);
+    const d5r = await dlg();
+    await ev(`${H} tid('ads-confirm-close').click(); return true;`);
+    const reload5 = await waitFor(`${H} return txt($('[data-testid="ads-toggle"]', ${card(D1)})) === 'Ativar anúncio';`, 8000);
+    const sent5 = await ev(`return window.__META_ACTIONS[1] || null;`);
+    check('"Selecionar todos desta categoria" + Pausar selecionados: "Pausar 1 anúncio: Relógio D" (C já pausado fica de fora); ✅ e o status recarrega',
+      sel5.d && sel5.c && !!dP && dP.lines.length === 1 && dP.lines[0] === 'Pausar 1 anúncio: Relógio D' && /Relógio C: já está pausado/.test(dP.blocked) && !!d5r && d5r.results[0].ok === '1'
+      && !!sent5 && sent5.action === 'toggle' && sent5.objectId === D1 && sent5.targetStatus === 'PAUSED' && reload5, JSON.stringify({ sel5, dP, d5r, sent5 }));
+
+    // 6. erro da Meta (depois de 1 minuto): ❌ com a mensagem da Meta
+    await ev(`${H} tid('ads-bulk-clear').click(); const n0 = Date.now.bind(Date); Date.now = () => n0() + 61000; window.__META_ERR_IDS = ['120210000000901']; return true;`);
+    await ev(`${H} $('[data-testid="ads-budget-menos10"]', ${card(A1)}).click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-confirm');`);
+    const d6 = await dlg();
+    await ev(`${H} tid('ads-confirm-ok').click(); return true;`);
+    await waitFor(`${H} return !!tid('ads-confirm-close');`, 8000);
+    const d6r = await dlg();
+    await ev(`${H} tid('ads-confirm-close').click(); window.__META_ERR_IDS = []; return true;`);
+    check('depois de 1 minuto a campanha libera; erro da Meta aparece item por item (❌ com a mensagem)',
+      !!d6 && d6.ok === true && /R\$\s220\/dia → R\$\s198\/dia/.test(d6.lines[0] || '') && !!d6r && d6r.results[0].ok === '0' && /Erro da Meta: \(#100\) Simulado: orçamento inválido/.test(d6r.results[0].t), JSON.stringify({ d6, d6r }));
+
+    // 7. Histórico de ações: system_config "ads_actions_log" (quem, quando, o quê, antes → depois, resultado)
+    await ev(`${H} tid('ads-tab-historico').click(); return true;`);
+    await waitFor(`${H} return $$('[data-testid="ads-log-row"]').length === 3;`, 5000);
+    const hist = await ev(`${H} const row = (window.__DB.system_config || []).find((r) => r.key === 'ads_actions_log'); return { rows: $$('[data-testid="ads-log-row"]').map(txt), saved: row ? JSON.parse(row.value) : null };`);
+    await ev(`${H} tid('ads-tab-painel').click(); return true;`);
+    await waitFor(`${H} return $$('[data-testid="ads-card"]').length > 0;`);
+    check('aba "Histórico de ações": quem, quando, o quê, antes → depois e resultado (gravado em system_config "ads_actions_log")',
+      hist.rows.length === 3 && /❌/.test(hist.rows[0]) && /Orçamento · Campanha CBO VENDAS WPP/.test(hist.rows[0]) && /Pausar · Relógio D.*ativo → pausado.*✅ feito/.test(hist.rows[1]) && /usuário do ERP/.test(hist.rows[2])
+      && !!hist.saved && hist.saved.length === 3 && hist.saved.every((e: any) => e.at && e.who && e.before && e.after && typeof e.ok === 'boolean'), JSON.stringify(hist));
+
     // ── Versão antiga ──
     await ev(`${H} tid('ads-old-link').click(); return true;`);
     await waitFor(`${H} return !!tid('ads-new-link');`);
@@ -288,8 +402,11 @@ async function main() {
     const back = await waitFor(`${H} return !!tid('ads-top');`);
     check('"Versão antiga" abre a página antiga (com volta para a nova)', old.back && old.newGone && back, JSON.stringify(old));
 
-    const writesEnd = await ev(`return window.__WRITES.length;`);
-    check('nenhuma gravação além da meta salva', writesEnd === 1, String(writesEnd));
+    const writesEnd = await ev(`return window.__WRITES.map((w) => w.table + ':' + w.op + ':' + (w.data && w.data.key));`);
+    check('nenhuma gravação no ERP além de system_config "ads_goals" (metas) e "ads_actions_log" (histórico, 1 por envio)',
+      writesEnd.length === 4 && writesEnd[0] === 'system_config:upsert:ads_goals' && writesEnd.slice(1).every((w: string) => w === 'system_config:upsert:ads_actions_log'), JSON.stringify(writesEnd));
+    const allActs = await ev(`return (window.__META_ACTIONS || []).length;`);
+    check('a Meta (simulada) recebeu exatamente as 3 ações confirmadas', allActs === 3, String(allActs));
     check('nenhum erro no console', errors.length === 0, errors.slice(0, 6).join(' | '));
   } catch (e) {
     check('teste rodou até o fim', false, e instanceof Error ? e.message : String(e));

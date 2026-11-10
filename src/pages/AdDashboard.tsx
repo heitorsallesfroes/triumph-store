@@ -1,9 +1,11 @@
-// Gerenciador de Anúncios novo (FASE 1, SÓ LEITURA): painel de decisão com a venda REAL do ERP ligada ao anúncio
-// (conversa → anúncio → venda) e o lucro real (custo do produto + imposto do anúncio). Nenhum botão pausa, ativa ou
-// muda orçamento. A versão antiga (src/pages/AdManager.tsx) continua em "Versão antiga" (?pagina=anuncios&aba=antiga).
+// Gerenciador de Anúncios novo: painel de decisão com a venda REAL do ERP ligada ao anúncio (conversa → anúncio → venda).
+// FASE 2: sem "lucro" (categorias e cores pelo ROAS e custo por venda) e ações na Meta — Pausar/Ativar anúncio e
+// orçamento da campanha (CBO) ou do conjunto — só pelas actions já publicadas "toggle" e "update_budget" da edge
+// function, SEMPRE depois do "Confirmar" na janela com a lista exata do que vai mudar (regras: src/lib/adActions.ts).
+// Histórico em system_config "ads_actions_log". A versão antiga (src/pages/AdManager.tsx) continua em "Versão antiga" (?pagina=anuncios&aba=antiga).
 // Regras: src/lib/adInsights.ts · leitura: src/lib/adInsightsDb.ts · README: src/pages/AdDashboard.README.md
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink, Play, RefreshCw, Settings2, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink, Pause, Play, RefreshCw, Settings2, X } from 'lucide-react';
 import AdManager from './AdManager';
 import { getAdTaxRate } from '../lib/adTax';
 import { initialTab, writeTab } from '../lib/erpRoute';
@@ -15,7 +17,14 @@ import {
   adRanges, buildAdCards, categoryBoxes, deltaOf, erpByAd, hourMap, metaCheck, moneySplit, replyBands, roasTier, suggestGoals, totalsOf,
   type AdCard, type AdPeriod, type AttribMode, type Attribution, type Category, type Goals, type MetaCreative, type RoasTrio, type SaleCost, type Window,
 } from '../lib/adInsights';
-import { loadCreatives, loadErp, loadGoals, loadMeta, loadSaleCosts, loadTrackStart, saveGoals, type MetaLoad } from '../lib/adInsightsDb';
+import {
+  appendActionsLog, loadActionsLog, loadBudgets, loadCreatives, loadErp, loadGoals, loadMeta, loadSaleCosts, loadTrackStart, saveGoals, sendPlanItem, whoAmI,
+  type Budgets, type MetaLoad,
+} from '../lib/adInsightsDb';
+import {
+  BUDGET_STEPS, KIND_LABEL, MIN_BUDGET, appendLog, budgetOwnerOf, logOf, planBudget, planToggle, uniqueOwners,
+  type AdRef, type BudgetOwner, type LogEntry, type Plan,
+} from '../lib/adActions';
 import { spDay } from '../lib/waPanel';
 
 const ORANGE = '#f97316';
@@ -86,6 +95,16 @@ function Dashboard({ onOld }: { onOld: () => void }) {
   const [creatives, setCreatives] = useState<Map<string, MetaCreative>>(new Map());
   const [tick, setTick] = useState(0);
   const freshRef = useRef(false);
+  // FASE 2: ações
+  const [tab, setTab] = useState<'painel' | 'historico'>('painel');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [budgets, setBudgets] = useState<Budgets | null>(null);
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [sending, setSending] = useState(false);
+  const [results, setResults] = useState<Record<string, { ok: boolean; error: string | null }> | null>(null);
+  const [logError, setLogError] = useState<string | null>(null);
+  const [metaTick, setMetaTick] = useState(0); // recarrega status e orçamento depois de enviar
 
   useEffect(() => { store.set('ads:atrib', attrib); }, [attrib]);
   useEffect(() => { store.set('ads:modo', mode); }, [mode]);
@@ -177,9 +196,47 @@ function Dashboard({ onOld }: { onOld: () => void }) {
   useEffect(() => {
     if (!adIds) return;
     let alive = true;
-    loadCreatives(adIds.split(',')).then((l) => { if (alive) setCreatives(new Map(l.map((c) => [c.id, c]))); }).catch(() => {});
+    loadCreatives(adIds.split(','), metaTick > 0).then((l) => { if (alive) setCreatives(new Map(l.map((c) => [c.id, c]))); }).catch(() => {});
     return () => { alive = false; };
-  }, [adIds]);
+  }, [adIds, metaTick]);
+
+  // orçamentos: campanha (CBO) ou conjunto dono de cada anúncio
+  const campaignIds = useMemo(() => (cards ? [...new Set(cards.map((c) => c.campaignId).filter((id): id is string => !!id))].sort().join(',') : ''), [cards]);
+  useEffect(() => {
+    if (!campaignIds || !data) return;
+    let alive = true;
+    loadBudgets(data.ranges.cur, campaignIds.split(','), metaTick > 0).then((b) => { if (alive) setBudgets(b); }).catch(() => { if (alive) setBudgets({ campaigns: new Map(), adsets: new Map() }); });
+    return () => { alive = false; };
+  }, [campaignIds, metaTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { let alive = true; loadActionsLog().then((l) => { if (alive) setLog(l); }); return () => { alive = false; }; }, []);
+
+  const ownerOf = (c: AdCard): BudgetOwner | null => (budgets ? budgetOwnerOf(c, budgets.campaigns, budgets.adsets) : null);
+  const refOf = (c: AdCard): AdRef => ({ adId: c.adId || '', name: c.name, campaignId: c.campaignId, status: (c.adId && creatives.get(c.adId)?.status) || null });
+  const pickCards = (keys: Set<string>) => (cards || []).filter((c) => keys.has(c.key));
+  const ask = (p: Plan) => { setResults(null); setPlan(p); };
+  const act = {
+    toggle: (list: AdCard[], target: 'ACTIVE' | 'PAUSED') => ask(planToggle(list.map(refOf), target, log)),
+    pct: (owners: (BudgetOwner | null)[], pct: number) => ask(planBudget(uniqueOwners(owners), { pct }, log)),
+    set: (owner: BudgetOwner, value: number) => ask(planBudget([owner], { value }, log)),
+  };
+  // envio: SÓ depois do "Confirmar"; um item por vez; resultado item por item; histórico; recarrega status/orçamento
+  const confirmPlan = async () => {
+    if (!plan || sending || !plan.ready.length) return;
+    setSending(true);
+    const out: Record<string, { ok: boolean; error: string | null }> = {};
+    const who = await whoAmI();
+    const entries: LogEntry[] = [];
+    for (const it of plan.ready) {
+      const at = new Date().toISOString();
+      try { await sendPlanItem(it); out[it.key] = { ok: true, error: null }; } catch (e) { out[it.key] = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+      entries.push(logOf(it, who, at, out[it.key].ok, out[it.key].error));
+      setResults({ ...out });
+    }
+    setLog((cur) => appendLog(cur, entries));
+    try { setLog(await appendActionsLog(entries)); setLogError(null); } catch (e) { setLogError(e instanceof Error ? e.message : 'não consegui gravar o histórico'); }
+    setSending(false);
+    setMetaTick((t) => t + 1);
+  };
 
   return (
     <div className="adx" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 1400, margin: '0 auto' }}>
@@ -187,7 +244,7 @@ function Dashboard({ onOld }: { onOld: () => void }) {
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ minWidth: 0 }}>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>Gerenciador de Anúncios</h1>
-          <p style={{ margin: '4px 0 0', ...muted, fontSize: 13 }}>Venda real do ERP ligada a cada anúncio · só leitura (nada aqui muda os anúncios)</p>
+          <p style={{ margin: '4px 0 0', ...muted, fontSize: 13 }}>Venda real do ERP ligada a cada anúncio · ações na Meta só depois de você confirmar</p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <button type="button" style={{ ...btn, borderColor: 'transparent', background: 'transparent', color: 'var(--text-muted)', textDecoration: 'underline' }} onClick={onOld} data-testid="ads-old-link">Versão antiga</button>
@@ -244,6 +301,14 @@ function Dashboard({ onOld }: { onOld: () => void }) {
         </Banner>
       )}
       {ready && data && data.missing.length > 0 && <Banner kind="info">Ainda sem: {data.missing.join(', ')}. O resto já funciona.</Banner>}
+      {logError && <Banner kind="warn">As ações foram enviadas, mas não consegui gravar o histórico ({logError}).</Banner>}
+
+      <div role="tablist" aria-label="Abas" style={{ display: 'flex', gap: 6 }}>
+        <button type="button" role="tab" aria-selected={tab === 'painel'} style={chip(tab === 'painel')} onClick={() => setTab('painel')} data-testid="ads-tab-painel">Painel</button>
+        <button type="button" role="tab" aria-selected={tab === 'historico'} style={chip(tab === 'historico')} onClick={() => setTab('historico')} data-testid="ads-tab-historico">Histórico de ações{log.length ? ` (${log.length})` : ''}</button>
+      </div>
+
+      {tab === 'historico' ? <ActionsLog log={log} /> : (<>
 
       <RoasRow trio={trio} loading={!ready || !trio} />
       <Top totals={totals} loading={!ready || !totals} attrib={attrib} />
@@ -252,7 +317,8 @@ function Dashboard({ onOld }: { onOld: () => void }) {
         <>
           <Decisions cards={cards} filter={filter} setFilter={setFilter} />
           <MoneyBar cards={cards} />
-          <CardsList cards={cards} filter={filter} setFilter={setFilter} creatives={creatives} />
+          <CardsList cards={cards} filter={filter} setFilter={setFilter} creatives={creatives}
+            selected={selected} setSelected={setSelected} ownerOf={ownerOf} budgetsReady={!!budgets} busy={sending || !!plan} act={act} />
           {mode === 'completo' && data && (
             <>
               <MetaCheck cards={cards} />
@@ -266,6 +332,13 @@ function Dashboard({ onOld }: { onOld: () => void }) {
           {[0, 1, 2, 3].map((i) => <div key={i} className="adx-skel" style={{ height: 96 }} />)}
         </div>
       )}
+      </>)}
+
+      {cards && selected.size > 0 && tab === 'painel' && (
+        <BulkBar count={pickCards(selected).length} busy={sending || !!plan} onClear={() => setSelected(new Set())}
+          onToggle={(t) => act.toggle(pickCards(selected), t)} onPct={(p) => act.pct(pickCards(selected).map(ownerOf), p)} />
+      )}
+      {plan && <ConfirmDialog plan={plan} sending={sending} results={results} onConfirm={confirmPlan} onClose={() => { if (!sending) { setPlan(null); setResults(null); } }} />}
 
       {showGoals && goalsState && (
         <GoalsDialog value={goalsState.goals} saved={goalsState.saved} onClose={() => setShowGoals(false)}
@@ -339,7 +412,6 @@ function Top({ totals, loading, attrib }: { totals: { cur: ReturnType<typeof tot
   const items: { k: string; label: string; value: string; cur: number | null; prev: number | null; goodUp: boolean; sub?: string; color?: string; info: string }[] = t ? [
     { k: 'gasto', label: 'Gasto', value: fmtMoney(t.cur.spendReal), cur: t.cur.spendReal, prev: t.prev.spendReal, goodUp: false, sub: `${fmtMoney(t.cur.spend)} na Meta + ${fmtMoney(t.cur.tax)} de imposto`, info: 'Gasto da conta na Meta no período + imposto do anúncio (Configurações).' },
     { k: 'faturamento', label: 'Faturamento', value: fmtMoney(t.cur.revenue), cur: t.cur.revenue, prev: t.prev.revenue, goodUp: true, sub: est ? `${fmtInt(t.cur.sales)} vendas do período (todas)` : `${fmtInt(t.cur.sales)} vendas de anúncio`, info: est ? 'Modo Estimado: todas as vendas do ERP no período (as ligadas a anúncio + as sem origem).' : 'Vendas do ERP no período ligadas com certeza a conversas que vieram de anúncio (💰, 📈 ou telefone).' },
-    { k: 'lucro', label: 'Lucro real', value: fmtMoney(t.cur.profit), cur: t.cur.profit, prev: t.prev.profit, goodUp: true, color: t.cur.profit < 0 ? '#ef4444' : undefined, sub: `− ${fmtMoney(t.cur.productCost)} de produtos${t.cur.costMissing ? ` · ${t.cur.costMissing} sem custo` : ''}`, info: 'Faturamento − custo dos produtos − (gasto + imposto).' },
     { k: 'roas', label: est ? 'ROAS real (estimado)' : 'ROAS real (identificado)', value: fmtX(t.cur.roas), cur: t.cur.roas, prev: t.prev.roas, goodUp: true, color: tier ? TIER_COLOR[tier] : undefined, sub: tier ? `faixa: ${TIER_LABEL[tier]}` : undefined, info: 'Faturamento ÷ (gasto + imposto). Faixas: acima de 7 ótimo, 6 a 7 bom, 4 a 6 ok, abaixo de 4 ruim.' },
     { k: 'cpv', label: 'Custo por venda', value: fmtMoney(t.cur.cpa), cur: t.cur.cpa, prev: t.prev.cpa, goodUp: false, info: est ? '(Gasto + imposto) ÷ todas as vendas do período.' : '(Gasto + imposto) ÷ vendas ligadas a anúncio.' },
     { k: 'cpc', label: 'Custo por conversa', value: fmtMoney(t.cur.cpc), cur: t.cur.cpc, prev: t.prev.cpc, goodUp: false, sub: `${fmtInt(t.cur.conversations)} conversas de anúncio`, info: '(Gasto + imposto) ÷ conversas que começaram por anúncio no período.' },
@@ -348,7 +420,7 @@ function Top({ totals, loading, attrib }: { totals: { cur: ReturnType<typeof tot
     <section aria-label="Como estou?" data-testid="ads-top">
       <h2 style={{ ...eyebrow, margin: '0 0 8px' }}>Como estou?</h2>
       <div className="adx-top">
-        {loading || !t ? [0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="adx-skel" style={{ height: 104 }} />) : items.map((it) => (
+        {loading || !t ? [0, 1, 2, 3, 4].map((i) => <div key={i} className="adx-skel" style={{ height: 104 }} />) : items.map((it) => (
           <div key={it.k} style={{ ...box, display: 'flex', flexDirection: 'column', gap: 4 }} data-testid={`ads-kpi-${it.k}`} title={it.info}>
             <span style={eyebrow}>{it.label}</span>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
@@ -408,7 +480,17 @@ function MoneyBar({ cards }: { cards: AdCard[] }) {
 }
 
 // ── Cartões por criativo ──────────────────────────────────────────────────
-function CardsList({ cards, filter, setFilter, creatives }: { cards: AdCard[]; filter: Category | null; setFilter: (c: Category | null) => void; creatives: Map<string, MetaCreative> }) {
+interface Act {
+  toggle: (list: AdCard[], target: 'ACTIVE' | 'PAUSED') => void;
+  pct: (owners: (BudgetOwner | null)[], pct: number) => void;
+  set: (owner: BudgetOwner, value: number) => void;
+}
+interface CardsListProps {
+  cards: AdCard[]; filter: Category | null; setFilter: (c: Category | null) => void; creatives: Map<string, MetaCreative>;
+  selected: Set<string>; setSelected: (s: Set<string>) => void; ownerOf: (c: AdCard) => BudgetOwner | null; budgetsReady: boolean; busy: boolean; act: Act;
+}
+function CardsList({ cards, filter, setFilter, creatives, selected, setSelected, ownerOf, budgetsReady, busy, act }: CardsListProps) {
+  const flip = (keys: string[], on: boolean) => { const s = new Set(selected); keys.forEach((k) => (on ? s.add(k) : s.delete(k))); setSelected(s); };
   const cats = filter ? [filter] : CATEGORY_ORDER;
   if (!cards.length) return <div style={{ ...box, textAlign: 'center', ...muted }}>Nenhum anúncio com gasto ou venda neste período.</div>;
   return (
@@ -421,8 +503,16 @@ function CardsList({ cards, filter, setFilter, creatives }: { cards: AdCard[]; f
           <section key={cat} aria-label={CATEGORY_LABEL[cat]} data-testid={`ads-group-${cat}`}>
             <h2 style={{ margin: '0 0 10px', fontSize: 16, fontWeight: 800, color: CATEGORY_COLOR[cat], display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ width: 10, height: 10, borderRadius: 999, background: CATEGORY_COLOR[cat] }} />{CATEGORY_LABEL[cat]} <span style={{ ...muted, fontWeight: 600 }}>({list.length})</span>
+              {(() => { const all = list.every((c) => selected.has(c.key)); return (
+                <button type="button" style={{ ...btn, padding: '4px 10px', fontSize: 12, marginLeft: 'auto' }} onClick={() => flip(list.map((c) => c.key), !all)} data-testid={`ads-select-${cat}`}>
+                  {all ? 'Desmarcar desta categoria' : 'Selecionar todos desta categoria'}
+                </button>
+              ); })()}
             </h2>
-            <div className="adx-cards">{list.map((c) => <AdCardView key={c.key} c={c} cr={c.adId ? creatives.get(c.adId) || null : null} />)}</div>
+            <div className="adx-cards">{list.map((c) => (
+              <AdCardView key={c.key} c={c} cr={c.adId ? creatives.get(c.adId) || null : null} selected={selected.has(c.key)} onSelect={(on) => flip([c.key], on)}
+                owner={ownerOf(c)} budgetsReady={budgetsReady} busy={busy} act={act} />
+            ))}</div>
           </section>
         );
       })}
@@ -439,7 +529,9 @@ function Spark({ values, color, label }: { values: (number | null)[]; color: str
   return <svg width={W} height={H} role="img" aria-label={label} style={{ display: 'block' }}><polyline points={pts} fill="none" stroke={color} strokeWidth={1.8} strokeLinejoin="round" strokeLinecap="round" /></svg>;
 }
 
-function AdCardView({ c, cr }: { c: AdCard; cr: MetaCreative | null }) {
+function AdCardView({ c, cr, selected, onSelect, owner, budgetsReady, busy, act }: {
+  c: AdCard; cr: MetaCreative | null; selected: boolean; onSelect: (on: boolean) => void; owner: BudgetOwner | null; budgetsReady: boolean; busy: boolean; act: Act;
+}) {
   const [why, setWhy] = useState(false);
   const [play, setPlay] = useState(false);
   const [imgOk, setImgOk] = useState(true);
@@ -466,7 +558,10 @@ function AdCardView({ c, cr }: { c: AdCard; cr: MetaCreative | null }) {
           )}
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--text-primary)', lineHeight: 1.25, wordBreak: 'break-word' }} data-testid="ads-card-name">{c.name}</div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
+            <input type="checkbox" checked={selected} onChange={(e) => onSelect(e.target.checked)} aria-label={`Selecionar ${c.name}`} data-testid="ads-card-select" style={{ marginTop: 3, width: 16, height: 16, accentColor: ORANGE }} />
+            <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--text-primary)', lineHeight: 1.25, wordBreak: 'break-word' }} data-testid="ads-card-name">{c.name}</div>
+          </label>
           {(c.campaign || c.adset) && <div style={{ ...muted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${c.campaign || ''} › ${c.adset || ''}`}>{c.campaign || '—'} › {c.adset || '—'}</div>}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
             {status && <span style={pill(active ? '#22c55e' : '#94a3b8')}>{status}</span>}
@@ -480,7 +575,7 @@ function AdCardView({ c, cr }: { c: AdCard; cr: MetaCreative | null }) {
         <Metric label="Conversas" value={fmtInt(c.money.conversations)} />
         <Metric label="Vendas" value={salesTxt(c.money.sales)} testId="ads-card-sales" />
         <Metric label="Custo/venda" value={fmtMoney(c.money.cpa)} />
-        <Metric label="Lucro" value={fmtMoney(c.money.profit)} color={c.money.profit < 0 ? '#ef4444' : c.money.profit > 0 ? '#16a34a' : undefined} />
+        <Metric label="Faturamento" value={fmtMoney(c.money.revenue)} />
         <Metric label="ROAS real" value={fmtX(c.money.roas)} color={tier ? tierColor : undefined} testId="ads-card-roas" />
       </div>
 
@@ -534,6 +629,8 @@ function AdCardView({ c, cr }: { c: AdCard; cr: MetaCreative | null }) {
         </div>
       )}
 
+      <CardActions c={c} cr={cr} owner={owner} budgetsReady={budgetsReady} busy={busy} act={act} />
+
       <div style={{ display: 'flex', gap: 8, padding: 14, marginTop: 'auto', flexWrap: 'wrap' }}>
         <button type="button" style={btn} aria-expanded={why} onClick={() => setWhy((w) => !w)} data-testid="ads-why">{why ? <ChevronUp size={14} /> : <ChevronDown size={14} />} Por quê?</button>
         {link && <a href={link} target="_blank" rel="noopener noreferrer" style={{ ...btn, textDecoration: 'none' }} data-testid="ads-view"><ExternalLink size={14} /> Ver anúncio</a>}
@@ -543,13 +640,171 @@ function AdCardView({ c, cr }: { c: AdCard; cr: MetaCreative | null }) {
           <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>Regra: {c.verdict.rule}</div>
           <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '3px 10px', margin: 0 }}>
             {c.verdict.numbers.map(([k, v]) => <Fragment2 key={k} k={k} v={v} />)}
-            {c.costMissing > 0 && <Fragment2 k="Vendas sem custo" v={`${c.costMissing} (contadas com custo 0)`} />}
           </dl>
         </div>
       )}
     </article>
   );
 }
+// ── FASE 2: ações (nada é enviado daqui: os botões só montam o plano; quem envia é o "Confirmar") ────
+const fmtBudget = (n: number | null) => (n == null ? '—' : `${n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })}/dia`);
+function CardActions({ c, cr, owner, budgetsReady, busy, act }: { c: AdCard; cr: MetaCreative | null; owner: BudgetOwner | null; budgetsReady: boolean; busy: boolean; act: Act }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState('');
+  const st = cr ? cr.status : null;
+  const canToggle = !!c.adId && /^\d{5,25}$/.test(c.adId) && st !== 'ARCHIVED' && st !== 'DELETED';
+  const paused = st === 'PAUSED';
+  const where = owner ? (owner.level === 'campaign' ? 'da campanha' : 'do conjunto') : '';
+  const num = Number(value.replace(/\./g, '').replace(',', '.'));
+  const small: React.CSSProperties = { ...btn, padding: '5px 9px', fontSize: 12 };
+  return (
+    <div style={{ margin: '12px 14px 0', padding: 10, borderRadius: 12, background: 'var(--bg-inner)', display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="ads-card-actions">
+      {canToggle && (
+        <div>
+          <button type="button" disabled={busy || !cr} onClick={() => act.toggle([c], paused ? 'ACTIVE' : 'PAUSED')} data-testid="ads-toggle"
+            style={{ ...small, ...(paused ? { background: '#16a34a', borderColor: '#16a34a', color: '#fff' } : {}) }}>
+            {paused ? <><Play size={13} /> Ativar anúncio</> : <><Pause size={13} /> Pausar anúncio</>}
+          </button>
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }} data-testid="ads-budget">
+        {!budgetsReady ? 'Orçamento: carregando…'
+          : !owner ? 'Orçamento: não encontrado na Meta'
+            : owner.daily == null ? <>Orçamento total {where}: <b>{fmtMoney(owner.lifetime)}</b> (vitalício: mude na Meta)</>
+              : <>Orçamento {where}: <b style={{ color: 'var(--text-primary)' }} data-testid="ads-budget-value">{fmtBudget(owner.daily)}</b>{owner.level === 'campaign' ? ' (CBO)' : ''}</>}
+      </div>
+      {owner && owner.daily != null && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          {BUDGET_STEPS.map((p) => (
+            <button key={p} type="button" style={small} disabled={busy} onClick={() => act.pct([owner], p)} data-testid={`ads-budget-${p > 0 ? 'mais' : 'menos'}${Math.abs(p)}`}>{p > 0 ? '+' : '−'}{Math.abs(p)}%</button>
+          ))}
+          {!editing ? <button type="button" style={small} disabled={busy} onClick={() => { setValue(String(owner.daily).replace('.', ',')); setEditing(true); }} data-testid="ads-budget-set">Definir valor</button> : (
+            <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+              <span style={muted}>R$</span>
+              <input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} aria-label="Novo orçamento por dia" style={{ ...dateInput, width: 84 }} data-testid="ads-budget-input" />
+              <button type="button" style={{ ...small, background: ORANGE, borderColor: ORANGE, color: '#fff' }} disabled={busy || !Number.isFinite(num) || num <= 0}
+                onClick={() => { act.set(owner, num); setEditing(false); }} data-testid="ads-budget-review">Revisar</button>
+              <button type="button" style={small} onClick={() => setEditing(false)} aria-label="Cancelar">✕</button>
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BulkBar({ count, busy, onClear, onToggle, onPct }: { count: number; busy: boolean; onClear: () => void; onToggle: (t: 'ACTIVE' | 'PAUSED') => void; onPct: (p: number) => void }) {
+  const [x, setX] = useState('10');
+  const n = Math.round(Number(x.replace(',', '.')));
+  const ok = Number.isFinite(n) && n > 0 && n <= 50;
+  const small: React.CSSProperties = { ...btn, padding: '6px 10px', fontSize: 12 };
+  return (
+    <div className="adx-bulk" role="region" aria-label="Ações nos selecionados" data-testid="ads-bulk">
+      <b style={{ fontSize: 13, color: 'var(--text-primary)' }} data-testid="ads-bulk-count">{count} selecionado{count === 1 ? '' : 's'}</b>
+      <button type="button" style={small} disabled={busy} onClick={() => onToggle('PAUSED')} data-testid="ads-bulk-pause"><Pause size={13} /> Pausar selecionados</button>
+      <button type="button" style={small} disabled={busy} onClick={() => onToggle('ACTIVE')} data-testid="ads-bulk-activate"><Play size={13} /> Ativar selecionados</button>
+      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+        <span style={muted}>Orçamento</span>
+        <button type="button" style={small} disabled={busy || !ok} onClick={() => onPct(-n)} data-testid="ads-bulk-minus">−{ok ? n : 'X'}%</button>
+        <input inputMode="numeric" value={x} onChange={(e) => setX(e.target.value)} aria-label="Porcentagem do orçamento" style={{ ...dateInput, width: 52, textAlign: 'center' }} data-testid="ads-bulk-pct" />
+        <button type="button" style={small} disabled={busy || !ok} onClick={() => onPct(n)} data-testid="ads-bulk-plus">+{ok ? n : 'X'}%</button>
+      </span>
+      {!ok && <span style={{ ...muted, color: '#ef4444' }}>de 1% a 50%</span>}
+      <button type="button" style={{ ...small, marginLeft: 'auto' }} onClick={onClear} data-testid="ads-bulk-clear"><X size={13} /> Limpar seleção</button>
+    </div>
+  );
+}
+
+// janela de confirmação: a lista exata do que vai mudar; nada é enviado sem o "Confirmar"
+function ConfirmDialog({ plan, sending, results, onConfirm, onClose }: {
+  plan: Plan; sending: boolean; results: Record<string, { ok: boolean; error: string | null }> | null; onConfirm: () => void; onClose: () => void;
+}) {
+  const done = !!results && !sending && plan.ready.every((i) => results[i.key]);
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Confirmar ação na Meta" style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', padding: 16 }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} data-testid="ads-confirm">
+      <div style={{ ...box, width: 'min(600px, 100%)', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>{done ? 'Resultado' : `${plan.title} — confirme`}</h2>
+          <button type="button" style={{ ...btn, padding: 6 }} onClick={onClose} disabled={sending} aria-label="Fechar"><X size={16} /></button>
+        </div>
+        {!results && (
+          <>
+            {plan.ready.length ? (
+              <div>
+                <div style={{ ...eyebrow, marginBottom: 6 }}>Vai mudar na Meta</div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.5 }} data-testid="ads-confirm-lines">
+                  {plan.lines.map((l) => <li key={l}>{l}</li>)}
+                </ul>
+              </div>
+            ) : <p style={{ margin: 0, fontSize: 14, color: 'var(--text-primary)' }} data-testid="ads-confirm-empty">Nada para enviar.</p>}
+            {plan.warnings.map((w) => <Banner key={w} kind="warn"><span data-testid="ads-confirm-warn">⚠ {w}</span></Banner>)}
+            {plan.blocked.length > 0 && (
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }} data-testid="ads-confirm-blocked">
+                <div style={{ ...eyebrow, marginBottom: 4 }}>Fica de fora</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>{plan.blocked.map((i) => <li key={i.key}>{i.name}: {i.blocked}</li>)}</ul>
+              </div>
+            )}
+          </>
+        )}
+        {results && (
+          <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', fontSize: 14, display: 'flex', flexDirection: 'column', gap: 6 }} data-testid="ads-results">
+            {plan.ready.map((i) => {
+              const r = results[i.key];
+              return (
+                <li key={i.key} data-testid="ads-result" data-ok={r ? (r.ok ? '1' : '0') : ''} style={{ color: 'var(--text-primary)' }}>
+                  {!r ? '⏳' : r.ok ? '✅' : '❌'} {i.kind === 'orcamento' ? `${i.name}: ${i.before} → ${i.after}` : `${KIND_LABEL[i.kind]} ${i.name}`}
+                  {r && !r.ok && <div style={{ fontSize: 12, color: '#ef4444', marginLeft: 22 }}>Erro da Meta: {r.error}</div>}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          {done ? <button type="button" style={btn} onClick={onClose} data-testid="ads-confirm-close">Fechar</button> : (
+            <>
+              <button type="button" style={btn} onClick={onClose} disabled={sending} data-testid="ads-confirm-cancel">Cancelar</button>
+              <button type="button" style={{ ...btn, background: ORANGE, borderColor: ORANGE, color: '#fff', opacity: sending || !plan.ready.length ? 0.6 : 1 }} onClick={onConfirm}
+                disabled={sending || !plan.ready.length || !!results} data-testid="ads-confirm-ok">{sending ? 'Enviando…' : 'Confirmar'}</button>
+            </>
+          )}
+        </div>
+        <p style={{ ...muted, margin: 0 }}>Proteções: orçamento mínimo de {fmtMoney(MIN_BUDGET)}/dia, no máximo ±50% por ação e nada na mesma campanha em menos de 1 minuto.</p>
+      </div>
+    </div>
+  );
+}
+
+// aba "Histórico de ações": system_config "ads_actions_log" (últimas 300)
+function ActionsLog({ log }: { log: LogEntry[] }) {
+  const th: React.CSSProperties = { ...eyebrow, textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid var(--border-main)', whiteSpace: 'nowrap' };
+  const td: React.CSSProperties = { padding: '8px 10px', fontSize: 13, borderBottom: '1px solid var(--border-main)', color: 'var(--text-primary)', verticalAlign: 'top' };
+  return (
+    <section style={box} aria-label="Histórico de ações" data-testid="ads-log">
+      <h2 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>Histórico de ações</h2>
+      <p style={{ ...muted, margin: '0 0 10px' }}>Tudo o que foi enviado à Meta por esta página (últimas 300).</p>
+      {!log.length ? <span style={muted}>Nenhuma ação ainda.</span> : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+            <thead><tr><th style={th}>Quando</th><th style={th}>Quem</th><th style={th}>O quê</th><th style={th}>Antes → depois</th><th style={th}>Resultado</th></tr></thead>
+            <tbody>
+              {log.map((e, i) => (
+                <tr key={`${e.at}-${e.objectId}-${i}`} data-testid="ads-log-row">
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{new Date(e.at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                  <td style={td}>{e.who}</td>
+                  <td style={td}>{KIND_LABEL[e.kind] || e.kind} · {e.name}</td>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{e.before} → {e.after}</td>
+                  <td style={{ ...td, color: e.ok ? '#16a34a' : '#ef4444' }}>{e.ok ? '✅ feito' : `❌ ${e.error || 'erro'}`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 const Fragment2 = ({ k, v }: { k: string; v: string }) => (<><dt style={{ color: 'var(--text-muted)' }}>{k}</dt><dd style={{ margin: 0, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{v}</dd></>);
 const pill = (c: string): React.CSSProperties => ({ fontSize: 11, fontWeight: 700, color: c, background: `${c}1f`, padding: '2px 8px', borderRadius: 999 });
 function Metric({ label, value, color, testId }: { label: string; value: string; color?: string; testId?: string }) {
@@ -651,14 +906,14 @@ function TimeToSale({ cards, model, w }: { cards: AdCard[]; model: TrackModel; w
 // ── Metas (engrenagem): grava SÓ system_config "ads_goals" ────────────────
 function GoalsDialog({ value, saved, onClose, onSaved }: { value: Goals; saved: boolean; onClose: () => void; onSaved: (g: Goals) => void }) {
   const [f, setF] = useState(() => ({
-    cpaTarget: value.cpaTarget == null ? '' : String(value.cpaTarget), profitMin: value.profitMin == null ? '' : String(value.profitMin),
+    cpaTarget: value.cpaTarget == null ? '' : String(value.cpaTarget),
     roasGreat: String(value.roasGreat), roasGood: String(value.roasGood), roasOk: String(value.roasOk),
   }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const num = (s: string) => { const n = Number(String(s).replace(',', '.')); return s.trim() === '' || !Number.isFinite(n) ? null : n; };
   const save = async () => {
-    const g: Goals = { ...value, cpaTarget: num(f.cpaTarget), profitMin: num(f.profitMin), roasGreat: num(f.roasGreat) ?? DEFAULT_GOALS.roasGreat, roasGood: num(f.roasGood) ?? DEFAULT_GOALS.roasGood, roasOk: num(f.roasOk) ?? DEFAULT_GOALS.roasOk };
+    const g: Goals = { ...value, cpaTarget: num(f.cpaTarget), roasGreat: num(f.roasGreat) ?? DEFAULT_GOALS.roasGreat, roasGood: num(f.roasGood) ?? DEFAULT_GOALS.roasGood, roasOk: num(f.roasOk) ?? DEFAULT_GOALS.roasOk };
     if (!(g.roasGreat >= g.roasGood && g.roasGood >= g.roasOk)) { setErr('As faixas de ROAS precisam estar em ordem: ótimo ≥ bom ≥ ok.'); return; }
     setBusy(true); setErr(null);
     try { await saveGoals(g); onSaved(g); } catch (e) { setErr(e instanceof Error ? e.message : 'Não consegui salvar'); setBusy(false); }
@@ -677,9 +932,8 @@ function GoalsDialog({ value, saved, onClose, onSaved }: { value: Goals; saved: 
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Metas</h2>
           <button type="button" style={{ ...btn, padding: 6 }} onClick={onClose} aria-label="Fechar"><X size={16} /></button>
         </div>
-        {!saved && <p style={{ ...muted, margin: 0 }}>Ainda sem metas salvas: custo por venda e lucro vêm sugeridos pela média dos últimos 30 dias.</p>}
+        {!saved && <p style={{ ...muted, margin: 0 }}>Ainda sem metas salvas: o custo por venda vem sugerido pela média dos últimos 30 dias.</p>}
         {field('cpaTarget', 'Custo por venda alvo (R$)', 'Acima disso (+20%) o anúncio vai para "Ajustar".')}
-        {field('profitMin', 'Lucro mínimo por venda (R$)', 'Abaixo disso o anúncio vai para "Ajustar".')}
         <div style={{ ...eyebrow, marginTop: 4 }}>Faixas de ROAS real</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
           {field('roasGreat', 'Ótimo acima de', 'verde forte')}
@@ -698,7 +952,8 @@ function GoalsDialog({ value, saved, onClose, onSaved }: { value: Goals; saved: 
 }
 
 const CSS = `
-.adx .adx-top{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+.adx .adx-top{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.adx .adx-bulk{position:sticky;bottom:12px;z-index:40;display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 14px;border-radius:14px;background:var(--bg-card);border:2px solid #f97316;box-shadow:0 8px 24px rgba(0,0,0,0.18)}
 .adx .adx-trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .adx .adx-dec{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .adx .adx-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}

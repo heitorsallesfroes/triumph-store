@@ -3,8 +3,8 @@
 //   cliente realReadOnly.ts (só GET/HEAD; insert/update/upsert/delete dão erro na hora);
 // - a Meta pela edge function publicada (action "dashboard", só leitura). Se a função ainda não tiver a leitura nova,
 //   avisa que precisa publicar e confere só o ERP;
-// - confere: ligação conversa → anúncio → venda sem venda repetida e só de conversas de anúncio, lucro = faturamento −
-//   produtos − (gasto + imposto), categorias com as faixas de ROAS, nenhuma escrita. Não mostra nomes nem telefones.
+// - confere: ligação conversa → anúncio → venda sem venda repetida e só de conversas de anúncio, ROAS =
+//   faturamento ÷ (gasto + imposto), categorias com as faixas de ROAS, nenhuma escrita. Não mostra nomes nem telefones.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -69,11 +69,11 @@ try {
 const cards = A.buildAdCards({ model, meta: meta.daily, period: meta.period, costs, taxRate: tax, goals: A.DEFAULT_GOALS }, r.cur);
 const t = A.totalsOf(model, meta.daily, costs, tax, r.cur);
 const p = A.totalsOf(model, meta.daily, costs, tax, r.prev);
-assert.equal(Math.round((t.revenue - t.productCost - t.spendReal) * 100) / 100, t.profit, 'lucro = faturamento − produtos − (gasto + imposto)');
+if (t.spendReal > 0) assert.ok(Math.abs((t.roas ?? 0) - t.revenue / t.spendReal) < 1e-9, 'ROAS = faturamento ÷ (gasto + imposto)');
 console.log(`\nComo estou? (30 dias${metaOk ? '' : ', sem a Meta'})`);
-console.log(`  Gasto ${money(t.spendReal)} (${money(t.spend)} + ${money(t.tax)} imposto) · Faturamento ${money(t.revenue)} · Produtos ${money(t.productCost)} · Lucro real ${money(t.profit)}`);
+console.log(`  Gasto ${money(t.spendReal)} (${money(t.spend)} + ${money(t.tax)} imposto) · Faturamento ${money(t.revenue)}`);
 console.log(`  ROAS real ${t.roas == null ? '—' : t.roas.toFixed(2)} (${A.roasTier(t.roas) || '—'}) · Custo/venda ${money(t.cpa)} · Custo/conversa ${money(t.cpc)} · ${t.sales} vendas · ${t.conversations} conversas`);
-console.log(`  anterior: gasto ${money(p.spendReal)} · faturamento ${money(p.revenue)} · lucro ${money(p.profit)}`);
+console.log(`  anterior: gasto ${money(p.spendReal)} · faturamento ${money(p.revenue)}`);
 const boxes = A.categoryBoxes(cards);
 console.log(`\nDecisões: ${boxes.map((b) => `${A.CATEGORY_LABEL[b.category]} ${b.count} (${money(b.spendReal)})`).join(' · ')}`);
 console.log(`Dinheiro: ${A.moneySplit(cards).map((s) => `${s.label} ${(s.pct * 100).toFixed(0)}%`).join(' · ')}`);

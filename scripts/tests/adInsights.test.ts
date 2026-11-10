@@ -1,6 +1,6 @@
 // Testes das regras do Gerenciador de Anúncios novo (src/lib/adInsights.ts), com dados de exemplo.
 // Sem dependências: node scripts/tests/adInsights.test.ts
-// - lucro real, ROAS real, custo por venda/conversa (com o imposto do anúncio)
+// - ROAS real, custo por venda/conversa (com o imposto do anúncio); FASE 2: sem "lucro" em nenhum lugar
 // - faixas de ROAS: acima de 7 ótimo, 6 a 7 bom, 4 a 6 ok, abaixo de 4 ruim
 // - categorias (Resolver / Ajustar / Pode render mais / Acompanhar), diagnóstico (máx. 3 frases) e recomendação
 // - ligação conversa → anúncio → venda do ERP (💰, telefone, @lid), sem contar venda orgânica nem antes do contato
@@ -96,7 +96,7 @@ const costs = (): Map<string, SaleCost> => new Map([
   ['vd0', { id: 'vd0', productCost: 500, models: [{ name: 'W10 - Preto', qty: 1 }] }],
   ['vprev', { id: 'vprev', productCost: 400, models: [] }],
 ]);
-const goals: Goals = { ...DEFAULT_GOALS, cpaTarget: 200, profitMin: 100 };
+const goals: Goals = { ...DEFAULT_GOALS, cpaTarget: 200 };
 const model = buildConversations(input());
 const cards = buildAdCards({ model, meta: metaRows(), period: [{ ad_id: '111', reach: 20000, frequency: 1.5, impressions: 30000 }], costs: costs(), taxRate: TAX, goals }, R.cur);
 const card = (k: string) => { const c = cards.find((x) => x.key === k); assert.ok(c, `cartão ${k}`); return c!; };
@@ -107,9 +107,10 @@ test('faixas de ROAS: acima de 7 ótimo, 6 a 7 bom, 4 a 6 ok, abaixo de 4 ruim',
   assert.deepEqual([DEFAULT_GOALS.roasGreat, DEFAULT_GOALS.roasGood, DEFAULT_GOALS.roasOk], [7, 6, 4]);
 });
 
-test('lucro real, ROAS real e custos com o imposto do anúncio', () => {
+test('ROAS real e custos com o imposto do anúncio (sem lucro)', () => {
   const m = moneyOf(300, 0.1, 3000, 1200, 3, 10);
-  assert.deepEqual([m.spendReal, m.tax, m.profit, m.sales, m.conversations], [330, 30, 1470, 3, 10]);
+  assert.deepEqual([m.spendReal, m.tax, m.sales, m.conversations], [330, 30, 3, 10]);
+  assert.equal('profit' in m, false, 'sem lucro');
   assert.equal(m.roas!.toFixed(4), (3000 / 330).toFixed(4));
   assert.equal(m.cpa, 110);
   assert.equal(m.cpc, 33);
@@ -132,7 +133,7 @@ test('ligação conversa → anúncio → venda: 💰, telefone e @lid contam; o
 test('cartões: categorias, ROAS por anúncio e modelos vendidos', () => {
   const a = card('111'); const b = card('222'); const c = card('333'); const d = card('444');
   assert.equal(a.verdict.category, 'escalar'); assert.equal(a.verdict.tier, 'otimo'); assert.equal(a.verdict.action, ACTION.escalar);
-  assert.equal(a.money.profit, 1470);
+  assert.ok(cards.every((x) => x.verdict.numbers.every(([k]) => !/lucro/i.test(k)) && x.verdict.reasons.every((r) => !/lucro|prejuízo/i.test(r))), '"Por quê?" e diagnóstico sem lucro');
   assert.deepEqual(a.models, [{ name: 'W10 - Preto', qty: 2 }, { name: 'W10 - Rosa', qty: 1 }]);
   assert.equal(b.verdict.category, 'resolver'); assert.equal(b.verdict.tier, 'ruim');
   assert.equal(c.verdict.category, 'acompanhar'); assert.equal(c.verdict.action, ACTION.esperar);
@@ -157,12 +158,12 @@ test('pouco dado (< R$ 30 ou < 5 conversas sem venda) → Acompanhar, sem julgam
   assert.ok(v.reasons[0].includes('não vendeu nada'), v.reasons[0]);
 });
 
-test('bom ROAS mas acima da meta de custo por venda ou abaixo do lucro mínimo → Ajustar', () => {
+test('bom ROAS mas acima da meta de custo por venda → Ajustar (sem lucro mínimo)', () => {
   const base = { responded: 5, impressions: 10000, clicks: 200, wear: { tired: false, text: null }, funnelWorst: null, funnelSteps: [] };
-  const m = moneyOf(300, 0, 2000, 1500, 1, 10); // ROAS 6,7 (bom), custo/venda 300, lucro 200/venda
+  const m = moneyOf(300, 0, 2000, 1500, 1, 10); // ROAS 6,7 (bom), custo/venda 300 (custo alto dos produtos não muda nada)
   assert.equal(verdictOf({ ...base, money: m }, DEFAULT_GOALS).category, 'escalar');
   assert.equal(verdictOf({ ...base, money: m }, { ...DEFAULT_GOALS, cpaTarget: 200 }).category, 'ajustar');
-  assert.equal(verdictOf({ ...base, money: m }, { ...DEFAULT_GOALS, profitMin: 500 }).category, 'ajustar');
+  assert.equal(verdictOf({ ...base, money: m }, { ...DEFAULT_GOALS, profitMin: 500 } as Goals).category, 'escalar', 'lucro mínimo antigo é ignorado');
   const tired = verdictOf({ ...base, money: m, wear: { tired: true, text: 'CTR caiu' } }, DEFAULT_GOALS);
   assert.deepEqual([tired.category, tired.action], ['ajustar', ACTION.criativo]);
 });
@@ -187,7 +188,6 @@ test('topo: totais da conta e ▲▼ vs período anterior', () => {
   const t = totalsOf(model, metaRows(), costs(), TAX, R.cur);
   assert.equal(t.spend, 1020); assert.equal(t.spendReal, 1122);
   assert.deepEqual([t.revenue, t.sales, t.productCost], [5600, 5, 2400]);
-  assert.equal(t.profit, 5600 - 2400 - 1122);
   assert.equal(t.conversations, 11 + 8 + 1 + 6);
   const p = totalsOf(model, metaRows(), costs(), TAX, R.prev);
   assert.deepEqual([p.spend, p.revenue, p.sales, p.conversations], [150, 1000, 1, 2]);
@@ -198,7 +198,7 @@ test('decisões e "Para onde foi o seu dinheiro"', () => {
   assert.deepEqual(boxes.map((b) => [b.category, b.count]), [['resolver', 1], ['ajustar', 1], ['escalar', 1], ['acompanhar', 1]]);
   assert.equal(boxes[0].spendReal, 550);
   const split = moneySplit(cards);
-  assert.deepEqual(split.map((s) => s.label), ['Dando resultado', 'Atenção', 'Poucos dados', 'Prejuízo']);
+  assert.deepEqual(split.map((s) => s.label), ['Dando resultado', 'Atenção', 'Poucos dados', 'ROAS ruim']);
   assert.equal(Math.round(split.reduce((s, x) => s + x.pct, 0) * 1000) / 1000, 1);
 });
 
@@ -217,12 +217,14 @@ test('extras: horários, tempo da 1ª resposta, Conferir com a Meta', () => {
 test('metas: padrão, leitura segura, sugestão pela média de 30 dias', () => {
   assert.deepEqual(parseGoals(null), DEFAULT_GOALS);
   assert.deepEqual(parseGoals('lixo'), DEFAULT_GOALS);
-  const g = parseGoals(goalsJson({ ...DEFAULT_GOALS, cpaTarget: 150, profitMin: 80, roasOk: 3 }));
-  assert.deepEqual([g.cpaTarget, g.profitMin, g.roasOk, g.roasGood, g.roasGreat], [150, 80, 3, 6, 7]);
+  const g = parseGoals(goalsJson({ ...DEFAULT_GOALS, cpaTarget: 150, roasOk: 3 }));
+  assert.deepEqual([g.cpaTarget, g.roasOk, g.roasGood, g.roasGreat], [150, 3, 6, 7]);
+  assert.equal('profitMin' in parseGoals('{"profitMin":80}'), false, 'metas antigas: lucro mínimo some');
+  assert.equal(/profitMin/.test(goalsJson(DEFAULT_GOALS)), false);
   assert.deepEqual(parseGoals('{"roasGreat":3,"roasGood":6,"roasOk":4}').roasGreat, 7, 'faixas fora de ordem voltam ao padrão');
-  const s = suggestGoals({ sales: 4, cpa: 123.4, profit: 1000 }, DEFAULT_GOALS);
-  assert.deepEqual([s.cpaTarget, s.profitMin], [123, 250]);
-  assert.equal(suggestGoals({ sales: 4, cpa: 123.4, profit: 1000 }, { ...DEFAULT_GOALS, cpaTarget: 99 }).cpaTarget, 99, 'meta salva não é trocada');
+  const s = suggestGoals({ sales: 4, cpa: 123.4 }, DEFAULT_GOALS);
+  assert.equal(s.cpaTarget, 123);
+  assert.equal(suggestGoals({ sales: 4, cpa: 123.4 }, { ...DEFAULT_GOALS, cpaTarget: 99 }).cpaTarget, 99, 'meta salva não é trocada');
 });
 
 test('períodos: 7 dias, anterior do mesmo tamanho, janela da Meta com 14 dias para o desgaste', () => {

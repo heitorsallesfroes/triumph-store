@@ -1,9 +1,11 @@
-// Leitura do Gerenciador de Anúncios novo (FASE 1, SÓ LEITURA). Nada aqui grava no ERP, exceto as suas metas na chave
-// "ads_goals" de system_config (só essa chave). O token da Meta fica na edge function ad-manager (action "dashboard").
+// Leitura do Gerenciador de Anúncios novo. Nada aqui grava no ERP, exceto as metas (system_config "ads_goals") e o
+// histórico de ações (system_config "ads_actions_log"). O token da Meta fica na edge function ad-manager.
+// FASE 2: ações na Meta só pelas actions já publicadas "toggle" e "update_budget", e só depois do "Confirmar".
 // Cache de 5 minutos por período (o botão Atualizar ignora o cache).
 import { supabase } from './supabase';
 import { loadTracking, type TrackLoad } from './waTrackingDb';
 import { DEFAULT_GOALS, goalsJson, metaFetchWindow, parseGoals, type Goals, type MetaCreative, type MetaDaily, type MetaPeriod, type SaleCost, type Window } from './adInsights';
+import { LOG_KEY, appendLog, parseLog, type BudgetEntity, type LogEntry, type PlanItem } from './adActions';
 
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
 const SUPABASE_URL = env.VITE_SUPABASE_URL || '';
@@ -113,4 +115,58 @@ export async function loadGoals(): Promise<{ goals: Goals; saved: boolean }> {
 export async function saveGoals(g: Goals): Promise<void> {
   const { error } = await supabase.from('system_config').upsert({ key: GOALS_KEY, value: goalsJson(g), updated_at: new Date().toISOString() }, { onConflict: 'key' });
   if (error) throw new Error(error.message);
+}
+
+// ── FASE 2: ações na Meta (só as actions já publicadas: "toggle" e "update_budget") ──
+// Orçamentos pela leitura antiga da função (level "campaign" / "adset"): campanha com daily_budget = CBO; sem
+// orçamento na campanha, os conjuntos dela (os que tiveram gasto no período).
+export interface Budgets { campaigns: Map<string, BudgetEntity>; adsets: Map<string, BudgetEntity> }
+type ListRow = { id: string; name?: string | null; daily_budget?: string | null; lifetime_budget?: string | null };
+const entityOf = (r: ListRow): BudgetEntity => {
+  const n = (v: string | null | undefined) => { const x = v == null ? NaN : Number(v); return Number.isFinite(x) && x > 0 ? x : null; };
+  return { id: String(r.id), name: r.name || '', daily: n(r.daily_budget), lifetime: n(r.lifetime_budget) };
+};
+export function loadBudgets(w: Window, campaignIds: string[], fresh = false): Promise<Budgets> {
+  const ids = [...new Set(campaignIds.filter((id) => /^\d{5,25}$/.test(id)))].sort();
+  return cached(`orcamentos|${w.fromDay}|${w.toDay}|${ids.join(',')}`, fresh, async () => {
+    const dateRange = { since: w.fromDay, until: w.toDay };
+    const camp = await callAdManager<{ data: ListRow[] }>({ level: 'campaign', dateRange, parentId: null, statusFilter: 'all' });
+    const campaigns = new Map((camp.data || []).map((r) => [String(r.id), entityOf(r)]));
+    const adsets = new Map<string, BudgetEntity>();
+    const noBudget = ids.filter((id) => { const c = campaigns.get(id); return !c || (c.daily == null && c.lifetime == null); });
+    await Promise.all(noBudget.map(async (id) => {
+      try {
+        const s = await callAdManager<{ data: ListRow[] }>({ level: 'adset', dateRange, parentId: id, statusFilter: 'all' });
+        (s.data || []).forEach((r) => adsets.set(String(r.id), entityOf(r)));
+      } catch { /* sem conjuntos: o cartão mostra "orçamento não encontrado" */ }
+    }));
+    return { campaigns, adsets };
+  });
+}
+// envia UM item já confirmado; erro da Meta → Error com a mensagem dela
+export async function sendPlanItem(it: PlanItem): Promise<void> {
+  if (it.kind === 'orcamento') {
+    if (it.budget == null) throw new Error('sem valor');
+    await callAdManager({ action: 'update_budget', objectId: it.objectId, dailyBudget: it.budget });
+  } else {
+    await callAdManager({ action: 'toggle', objectId: it.objectId, targetStatus: it.status });
+  }
+}
+// quem está logado (e-mail do Supabase Auth)
+export async function whoAmI(): Promise<string> {
+  try { const { data } = await supabase.auth.getSession(); return (data && data.session && data.session.user && data.session.user.email) || 'usuário do ERP'; } catch { return 'usuário do ERP'; }
+}
+// histórico: system_config "ads_actions_log" (lê e grava SÓ essa chave; últimas 300)
+export async function loadActionsLog(): Promise<LogEntry[]> {
+  try {
+    const { data } = await supabase.from('system_config').select('key, value').eq('key', LOG_KEY).maybeSingle();
+    return parseLog(data && (data as { value?: string }).value);
+  } catch { return []; }
+}
+export async function appendActionsLog(add: LogEntry[]): Promise<LogEntry[]> {
+  const cur = await loadActionsLog(); // relê antes de gravar (outra aba pode ter gravado)
+  const next = appendLog(cur, add);
+  const { error } = await supabase.from('system_config').upsert({ key: LOG_KEY, value: JSON.stringify(next), updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+  return next;
 }
