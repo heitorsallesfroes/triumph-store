@@ -8974,9 +8974,9 @@
     etiqueta: { icon: '🏷', title: 'ETIQUETA' }, fim: { icon: '⏹', title: 'FIM' }, ir: { icon: '↪', title: 'CONTINUAR EM' },
   };
   const VB_TEMPLATES = [
-    ['followup3', 'Régua de follow-up (3 etapas)', 'Entra na etiqueta Follow Up 1 → Follow 1 → espera resposta 1 dia → ✅ Em atendimento / ❌ Follow 2 → 2 dias → ❌ Follow 3 → 3 dias → ❌ Frio.'],
-    ['posvenda', 'Pós-venda', 'Venda registrada (💰) → espera 7 dias → envia o pedido de avaliação → fim.'],
-    ['lead_sumiu', 'Lead novo que sumiu', 'Lead novo chamou, você respondeu e ele sumiu por 1 dia → envia "ainda tem interesse?" → 2 dias → ✅ Em atendimento / ❌ Frio.'],
+    ['followup3', 'Régua de follow-up (3 etapas)', 'Entra na etiqueta Follow Up 1 → Follow 1 → espera resposta até o dia 1 desde a entrada → ✅ Em atendimento / ❌ Follow 2 → até o dia 3 → ❌ Follow 3 → até o dia 6 → ❌ Frio.'],
+    ['posvenda', 'Pós-venda', 'Venda registrada (💰) → espera até o dia 7 desde a entrada → envia o pedido de avaliação → fim.'],
+    ['lead_sumiu', 'Lead novo que sumiu', 'Lead novo chamou, você respondeu e ele sumiu por 1 dia → envia "ainda tem interesse?" → até o dia 3 desde a entrada → ✅ Em atendimento / ❌ Frio.'],
     ['vazio', 'Em branco', 'Só o COMEÇA e o FIM: monte do seu jeito com o "+".'],
   ];
   const VB_TPL_NAME = { followup3: 'Régua de follow-up', posvenda: 'Pós-venda', lead_sumiu: 'Lead novo que sumiu', vazio: 'Nova automação' };
@@ -9052,8 +9052,9 @@
   function vbNew(type) {
     const id = E.seqId();
     if (type === 'enviar') return { id, type, item_id: '' };
-    if (type === 'pausa') return { id, type, amount: 1, unit: 'dias' };
-    if (type === 'esperar') return { id, type, amount: 1, unit: 'dias', yes: [], no: [] };
+    // 2.16.2: caixa nova conta desde a ENTRADA (as já salvas, sem from, continuam "depois da etapa anterior")
+    if (type === 'pausa') return { id, type, amount: 1, unit: 'dias', from: 'entrada' };
+    if (type === 'esperar') return { id, type, amount: 1, unit: 'dias', from: 'entrada', yes: [], no: [] };
     if (type === 'etiqueta') return { id, type, op: 'colocar', source: 'crm', label_id: '' };
     return { id, type: 'fim' };
   }
@@ -9154,6 +9155,8 @@
     box.append(legacy);
     return box;
   }
+  // 2.16.2: aviso amarelo (sempre visível, não impede salvar): espera "desde a entrada" que não passa da anterior
+  const vbOrderWarn = (f, id) => E.seqEntryOrderWarnings(f && f.def).filter((w) => w.node === id).map((w) => w.msg);
   // caixa (cartão) do desenho
   function vbCard(f, { id, kind, title, icon, text, extra = [], sel }) {
     const c = el('div', `vb-box vb-${kind}${sel ? ' vb-sel' : ''}`);
@@ -9166,6 +9169,7 @@
     extra.forEach((x) => c.append(el('div', 'vb-bx', x)));
     const bad = vbBad(f, id);
     if (bad.length) { c.classList.add('vb-bad'); c.append(el('div', 'vb-berr', bad.join(' '))); }
+    vbOrderWarn(f, id).forEach((m) => c.append(el('div', 'vb-warn vb-order-warn', m)));
     const pick = () => { f.sel = id; f.insert = null; vbRender(); };
     c.addEventListener('click', pick);
     c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
@@ -9260,6 +9264,7 @@
     side.append(el('div', 'vb-sh', `${t.icon} ${t.title}`));
     const bad = vbBad(f, n.id);
     if (bad.length) side.append(el('div', 'vb-sub vb-red', bad.join(' ')));
+    vbOrderWarn(f, n.id).forEach((m) => side.append(el('div', 'vb-warn vb-order-warn vb-side-warn', m)));
     if (n.type === 'enviar') vbSideSend(f, n, side);
     else if (n.type === 'pausa' || n.type === 'esperar') {
       side.append(el('div', 'vb-sub', n.type === 'pausa' ? 'Espera e segue para a próxima caixa (responda ou não).' : 'Espera até esse tempo. Se o cliente mandar qualquer mensagem, segue por ✅; se não, por ❌.'));
@@ -9392,6 +9397,14 @@
   function vbRefreshBox(f, n) {
     const box = vb.el && vb.el.querySelector(`.vb-box[data-node="${n.id}"] .vb-btxt`);
     if (box) box.textContent = vbSentence(n);
+    // 2.16.2: o tempo mudou → os avisos "seguiria na hora" desta e das próximas caixas também
+    if (!vb.el) return;
+    vb.el.querySelectorAll('.vb-order-warn').forEach((x) => x.remove());
+    const warns = E.seqEntryOrderWarnings(f.def);
+    warns.forEach((w) => { const c = vb.el.querySelector(`.vb-box[data-node="${w.node}"]`); if (c) c.append(el('div', 'vb-warn vb-order-warn', w.msg)); });
+    const sw = warns.filter((w) => w.node === n.id);
+    const head = vb.el.querySelector('.vb-side .vb-sh');
+    if (head && f.sel === n.id) sw.slice().reverse().forEach((w) => { const x = el('div', 'vb-warn vb-order-warn vb-side-warn', w.msg); const red = head.nextElementSibling && head.nextElementSibling.classList.contains('vb-red') ? head.nextElementSibling : head; red.after(x); });
   }
   // etiqueta CRM ou do WhatsApp (a que entra, a da caixa ETIQUETA e as de "Nunca para quem tem")
   function vbLabelField(o, label, onDone, { idKey = 'label_id', waKey = 'wa_label_id' } = {}) {
@@ -9829,7 +9842,7 @@
     });
     // 2.12.0: sequências (respondeu / não respondeu)
     [['seq_blank', 'Sequência (respondeu / não respondeu)', 'Monte uma receita de cima para baixo: manda, espera a resposta e segue por ✅ Respondeu ou ❌ Não respondeu (pode repetir).'],
-      ['lead_followup', 'Follow-up de lead novo', 'Lead novo chamou → você responde → se não responder em 2h, Follow 1 → 1 dia → Follow 2 → 2 dias → Follow 3. Respondeu: "Em atendimento".']].forEach(([key, title, help]) => {
+      ['lead_followup', 'Follow-up de lead novo', 'Lead novo chamou → você responde → se não responder em 2h, Follow 1 → até o dia 1 desde a entrada → Follow 2 → até o dia 3 → Follow 3. Respondeu: "Em atendimento".']].forEach(([key, title, help]) => {
       const card = el('button', 'fw-card fw-model fw-seq');
       card.type = 'button';
       card.dataset.seq = key;

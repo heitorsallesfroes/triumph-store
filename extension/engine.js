@@ -1570,6 +1570,32 @@
     if (m % 60 === 0) return `${m / 60} h desde a entrada`;
     return `${m} min desde a entrada`;
   }
+  // 2.16.2: espera "desde a entrada" com tempo MENOR ou IGUAL ao que o caminho já garante (a espera anterior) segue na
+  // hora — aviso amarelo (não impede salvar). Conta o mínimo garantido desde a entrada ao chegar em cada caixa:
+  // ⏳ e ❌ (não respondeu) = o prazo da espera; ✅ (respondeu) = o que havia antes dela (pode ter respondido logo);
+  // ⏳ "até o próximo dia às" e "Continuar em" não somam nada.
+  const entryPoint = (min) => (min % 1440 === 0 ? `dia ${min / 1440}` : min % 60 === 0 ? `${min / 60} h` : `${min} min`);
+  function seqEntryOrderWarnings(def) {
+    const out = [];
+    const walk = (list, cum, depth) => {
+      if (depth > SEQ_MAX_DEPTH + 2) return;
+      for (const n of list || []) {
+        if (!n || !n.id) continue;
+        const timed = n.type === 'esperar' || (n.type === 'pausa' && n.mode !== 'ate');
+        if (!timed) continue;
+        const need = seqNeedMin(n);
+        let end = cum + need;
+        if (seqFromEntry(n)) {
+          if (cum > 0 && need <= cum) out.push({ node: n.id, at: need, prev: cum, msg: `⚠ Conta desde a entrada (${entryPoint(need)}), mas a espera anterior já vai até ${entryPoint(cum)} desde a entrada: esta seguiria na hora. Aumente o tempo (ex.: ${entryPoint(cum + (n.unit === 'dias' ? 1440 : n.unit === 'horas' ? 60 : 1))}).` });
+          end = Math.max(cum, need);
+        }
+        if (n.type === 'esperar') { walk(n.yes, cum, depth + 1); walk(n.no, end, depth + 1); }
+        else cum = end;
+      }
+    };
+    walk(def && def.steps, 0, 1);
+    return out;
+  }
   // 2.16.0: as caixas ✉ ENVIAR na ordem do caminho de quem nunca responde ("Follow 1", "Follow 2"…), cada uma com
   // o tempo desde a entrada (minutos, sem horários), os ❌ tomados até ela, a espera logo antes (se houver) e a caixa
   // onde o percurso recomeça para mandar já (afterNode: logo depois da última espera/envio, para as etiquetas do meio valerem)
@@ -1691,25 +1717,26 @@
     const tag = (name) => ({ id: seqId(), type: 'etiqueta', op: 'colocar', source: 'crm', label_id: `new:${name}` });
     const send = (hint) => ({ id: seqId(), type: 'enviar', item_id: '', hint });
     // 2.13.0: modelos do construtor visual (já desenhados; só trocar as mensagens)
+    // 2.16.2: as esperas dos modelos contam desde a ENTRADA (from: 'entrada'), nos mesmos momentos de antes
     if (kind === 'followup3') {
       const ok = () => [tag('Em atendimento'), fim()];
       return {
         start: { type: 'etiqueta', source: 'crm', label_id: 'new:Follow Up 1' }, business: false,
-        steps: [send('Follow 1'), { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', yes: ok(), no: [
-          send('Follow 2'), { id: seqId(), type: 'esperar', amount: 2, unit: 'dias', yes: ok(), no: [
-            send('Follow 3'), { id: seqId(), type: 'esperar', amount: 3, unit: 'dias', yes: ok(), no: [tag('Frio'), fim()] },
+        steps: [send('Follow 1'), { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', from: 'entrada', yes: ok(), no: [
+          send('Follow 2'), { id: seqId(), type: 'esperar', amount: 3, unit: 'dias', from: 'entrada', yes: ok(), no: [
+            send('Follow 3'), { id: seqId(), type: 'esperar', amount: 6, unit: 'dias', from: 'entrada', yes: ok(), no: [tag('Frio'), fim()] },
           ] },
         ] }],
       };
     }
     if (kind === 'posvenda') {
-      return { start: { type: 'venda' }, business: false, steps: [{ id: seqId(), type: 'pausa', amount: 7, unit: 'dias' }, send('pedido de avaliação'), fim()] };
+      return { start: { type: 'venda' }, business: false, steps: [{ id: seqId(), type: 'pausa', amount: 7, unit: 'dias', from: 'entrada' }, send('pedido de avaliação'), fim()] };
     }
     if (kind === 'lead_sumiu') {
       return {
         start: { type: 'lead', origin: 'todos' }, business: false,
         steps: [{ id: seqId(), type: 'esperar', amount: 1, unit: 'dias', after_mine: true, yes: [fim()], no: [
-          send('ainda tem interesse?'), { id: seqId(), type: 'esperar', amount: 2, unit: 'dias', yes: [tag('Em atendimento'), fim()], no: [tag('Frio'), fim()] },
+          send('ainda tem interesse?'), { id: seqId(), type: 'esperar', amount: 3, unit: 'dias', from: 'entrada', yes: [tag('Em atendimento'), fim()], no: [tag('Frio'), fim()] },
         ] }],
       };
     }
@@ -1720,16 +1747,16 @@
         start: { type: 'lead', origin: 'todos' }, business: false,
         steps: [{ id: seqId(), type: 'esperar', amount: 2, unit: 'horas', after_mine: true, yes: [tag()], no: [
           { id: seqId(), type: 'enviar', item_id: '', hint: 'Follow 1' },
-          { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', yes: [tag()], no: [
+          { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', from: 'entrada', yes: [tag()], no: [
             { id: seqId(), type: 'enviar', item_id: '', hint: 'Follow 2' },
-            { id: seqId(), type: 'esperar', amount: 2, unit: 'dias', yes: [tag()], no: [
+            { id: seqId(), type: 'esperar', amount: 3, unit: 'dias', from: 'entrada', yes: [tag()], no: [
               { id: seqId(), type: 'enviar', item_id: '', hint: 'Follow 3' },
             ] },
           ] },
         ] }],
       };
     }
-    return { start: { type: 'lead', origin: 'todos' }, business: false, steps: [{ id: seqId(), type: 'enviar', item_id: '' }, { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', yes: [], no: [] }] };
+    return { start: { type: 'lead', origin: 'todos' }, business: false, steps: [{ id: seqId(), type: 'enviar', item_id: '' }, { id: seqId(), type: 'esperar', amount: 1, unit: 'dias', from: 'entrada', yes: [], no: [] }] };
   }
 
   // ── 2.11.0: modelos com passo a passo (Quem → Quando → O quê) ──
@@ -2908,7 +2935,7 @@
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
     WIZARDS, wizardToAutomations, wizardSentence, wizardMinutes, businessMinutesPerDay, validateAutomationDraft,
-    seqIndex, seqStep, seqValidate, seqFromEntry, sinceEntryText, seqSendSteps, seqManualPlan, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
+    seqIndex, seqStep, seqValidate, seqFromEntry, sinceEntryText, seqEntryOrderWarnings, seqSendSteps, seqManualPlan, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
     seqNormalize, seqInsert, seqRemove, seqExcluded, seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
     itemUsageLines, itemInUse, friendlyDeleteError, // 2.13.1
     scheduleSpec, nextSendTime, pausaUntil, scheduleDailyLimit, scheduleOutsideCommon, scheduleSentence, scheduleProblems, untilText, windowText, daysText, // 2.13.2

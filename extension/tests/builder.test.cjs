@@ -29,14 +29,18 @@ const FU1 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3';
 const T0 = Date.parse('2026-11-02T10:00:00-03:00'); // segunda, 10h
 
 // régua de 3 etapas com as mensagens trocadas e as etiquetas criadas; horário corrido para contas simples
-function regua({ business = false } = {}) {
+// 2.16.2: o modelo agora conta desde a entrada (dia 1, 3, 6); a régua dos testes do motor é a SALVA antes disso
+// (sem from: 1, 2 e 3 dias depois da etapa anterior), que continua igual (caixa salva não muda sozinha)
+function regua({ business = false, entrada = false } = {}) {
   const def = plain(E.seqTemplate('followup3'));
   def.business = business;
   def.start.label_id = FU1;
   let k = 0;
+  let w = 0;
   E.seqIndex(def).forEach(({ node: n }) => {
     if (n.type === 'enviar') { n.item_id = F[k++]; delete n.hint; }
     if (n.type === 'etiqueta') n.label_id = n.label_id === 'new:Frio' ? FRIO : ATEND;
+    if (n.type === 'esperar' && !entrada) { delete n.from; n.amount = [1, 2, 3][w++]; }
   });
   return def;
 }
@@ -74,16 +78,18 @@ function runner(def) {
 const labelsOf = (ops) => ops.map((o) => `${o.op}:${o.label_id === ATEND ? 'Em atendimento' : o.label_id === FRIO ? 'Frio' : o.label_id}`);
 
 // ── modelos ──
-test('modelo "Régua de follow-up (3 etapas)": Follow Up 1 → Follow 1 → resposta 1 dia → ✅ Em atendimento / ❌ Follow 2 → 2 dias → ❌ Follow 3 → 3 dias → ❌ Frio', () => {
+test('modelo "Régua de follow-up (3 etapas)" (2.16.2: desde a entrada): Follow 1 → até o dia 1 → ✅ Em atendimento / ❌ Follow 2 → até o dia 3 → ❌ Follow 3 → até o dia 6 → ❌ Frio', () => {
   const def = plain(E.seqTemplate('followup3'));
   assert.deepStrictEqual(def.start, { type: 'etiqueta', source: 'crm', label_id: 'new:Follow Up 1' });
   const [s1, w1] = def.steps;
-  assert.deepStrictEqual([s1.type, s1.hint, w1.type, w1.amount, w1.unit], ['enviar', 'Follow 1', 'esperar', 1, 'dias']);
+  assert.deepStrictEqual([s1.type, s1.hint, w1.type, w1.amount, w1.unit, w1.from], ['enviar', 'Follow 1', 'esperar', 1, 'dias', 'entrada']);
   assert.deepStrictEqual(w1.yes.map((n) => n.type), ['etiqueta', 'fim']);
   assert.strictEqual(w1.yes[0].label_id, 'new:Em atendimento');
   const w2 = w1.no[1];
   const w3 = w2.no[1];
-  assert.deepStrictEqual([w1.no[0].hint, w2.amount, w2.no[0].hint, w3.amount], ['Follow 2', 2, 'Follow 3', 3]);
+  assert.deepStrictEqual([w1.no[0].hint, w2.amount, w2.from, w2.no[0].hint, w3.amount, w3.from], ['Follow 2', 3, 'entrada', 'Follow 3', 6, 'entrada']);
+  assert.deepStrictEqual([w1, w2, w3].map((n) => E.sinceEntryText(n)), ['dia 1 desde a entrada', 'dia 3 desde a entrada', 'dia 6 desde a entrada']);
+  assert.deepStrictEqual(plain(E.seqEntryOrderWarnings(def)), [], 'o modelo não tem espera que seguiria na hora');
   assert.deepStrictEqual(w3.no.map((n) => [n.type, n.label_id || null]), [['etiqueta', 'new:Frio'], ['fim', null]]);
   assert.deepStrictEqual(plain(E.seqValidate(regua())), []);
   // só falta trocar as mensagens: sem elas, as 3 caixas de envio ficam vermelhas
@@ -92,9 +98,11 @@ test('modelo "Régua de follow-up (3 etapas)": Follow Up 1 → Follow 1 → resp
 });
 test('modelos "Pós-venda" (venda → ⏳ 7 dias → avaliação → fim), "Lead novo que sumiu" e "Em branco"', () => {
   const p = plain(E.seqTemplate('posvenda'));
-  assert.deepStrictEqual([p.start.type, p.steps.map((n) => n.type), p.steps[0].amount, p.steps[0].unit], ['venda', ['pausa', 'enviar', 'fim'], 7, 'dias']);
+  assert.deepStrictEqual([p.start.type, p.steps.map((n) => n.type), p.steps[0].amount, p.steps[0].unit, p.steps[0].from], ['venda', ['pausa', 'enviar', 'fim'], 7, 'dias', 'entrada']);
   const l = plain(E.seqTemplate('lead_sumiu'));
-  assert.deepStrictEqual([l.start.type, l.start.origin, l.steps[0].type, l.steps[0].after_mine], ['lead', 'todos', 'esperar', true]);
+  assert.deepStrictEqual([l.start.type, l.start.origin, l.steps[0].type, l.steps[0].after_mine, l.steps[0].from], ['lead', 'todos', 'esperar', true, undefined]); // conta da SUA mensagem
+  assert.deepStrictEqual([l.steps[0].no[1].amount, l.steps[0].no[1].from], [3, 'entrada']);
+  assert.deepStrictEqual(plain(E.seqEntryOrderWarnings(l)), []);
   const v = plain(E.seqTemplate('vazio'));
   assert.deepStrictEqual([v.start.type, v.steps.map((n) => n.type)], ['etiqueta', ['fim']]);
   assert.ok(plain(E.seqValidate(v)).some((x) => x.node === 'start'), 'em branco: falta escolher a etiqueta e uma caixa que faça algo');
@@ -244,6 +252,43 @@ test('"+" entre duas caixas: insere ali; ❓ no meio leva o que vinha embaixo pa
   E.seqRemove(def, 'w');
   assert.deepStrictEqual(plain(def.steps.map((n) => n.id)), ['a', 'p']);
 });
+// ── 2.16.2: "desde a entrada" como padrão + aviso de espera que seguiria na hora ──
+test('2.16.2: modelo novo (desde a entrada) no motor: Follow 2 no dia 1 e Follow 3 no dia 3 desde a entrada, não somando', () => {
+  const s = runner(regua({ entrada: true }));
+  s.run.entered_at = T0;
+  s.tick(T0); // Follow 1
+  assert.strictEqual(s.tick(T0 + DAY - MIN).status, 'wait');
+  s.tick(T0 + DAY + MIN); // Follow 2 (dia 1)
+  assert.strictEqual(s.tick(T0 + 3 * DAY - MIN).status, 'wait');
+  s.tick(T0 + 3 * DAY + MIN); // Follow 3 (dia 3 desde a entrada, não dia 1 + 3)
+  assert.deepStrictEqual(s.log.sends, [F[0], F[1], F[2]]);
+});
+test('2.16.2: caixa nova = desde a entrada; caixa salva sem from continua "depois da etapa anterior"', () => {
+  const c = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
+  assert.ok(/if \(type === 'pausa'\) return \{ id, type, amount: 1, unit: 'dias', from: 'entrada' \};/.test(c));
+  assert.ok(/if \(type === 'esperar'\) return \{ id, type, amount: 1, unit: 'dias', from: 'entrada', yes: \[\], no: \[\] \};/.test(c));
+  assert.strictEqual(E.seqFromEntry({ type: 'esperar', amount: 1, unit: 'dias' }), false);
+  assert.strictEqual(E.seqFromEntry({ type: 'pausa', amount: 1, unit: 'dias', from: 'entrada' }), true);
+  assert.strictEqual(E.sinceEntryText({ type: 'pausa', amount: 36, unit: 'horas', from: 'entrada' }), '36 h desde a entrada');
+  assert.strictEqual(E.sinceEntryText({ type: 'pausa', amount: 3, unit: 'horas', from: 'entrada' }), '3 h desde a entrada');
+});
+test('2.16.2: aviso amarelo quando a espera desde a entrada é ≤ à anterior no mesmo caminho (seguiria na hora)', () => {
+  const send = (id) => ({ id, type: 'enviar', item_id: F[0] });
+  const def = { start: { type: 'manual' }, steps: [send('s1'),
+    { id: 'w1', type: 'esperar', amount: 3, unit: 'dias', from: 'entrada', yes: [{ id: 'y', type: 'pausa', amount: 1, unit: 'dias', from: 'entrada' }], no: [send('s2'),
+      { id: 'w2', type: 'esperar', amount: 1, unit: 'dias', from: 'entrada', yes: [], no: [send('s3'),
+        { id: 'w3', type: 'pausa', amount: 3, unit: 'dias', from: 'entrada' }, // igual = também segue na hora
+        { id: 'w4', type: 'pausa', amount: 12, unit: 'horas' }, // depois da anterior: soma, sem aviso
+        { id: 'w5', type: 'pausa', amount: 4, unit: 'dias', from: 'entrada' }, // 3 d + 12 h já passaram → dia 4 ok
+        { id: 'w6', type: 'pausa', amount: 84, unit: 'horas', from: 'entrada' }, // 84 h ≤ dia 4 → aviso
+      ] }] }] };
+  const w = plain(E.seqEntryOrderWarnings(def));
+  assert.deepStrictEqual(w.map((x) => [x.node, x.at, x.prev]), [['w2', 1440, 4320], ['w3', 4320, 4320], ['w6', 5040, 5760]]);
+  assert.strictEqual(w[0].msg, '⚠ Conta desde a entrada (dia 1), mas a espera anterior já vai até dia 3 desde a entrada: esta seguiria na hora. Aumente o tempo (ex.: dia 4).');
+  assert.ok(!w.some((x) => x.node === 'y'), '✅ respondeu pode ter sido logo: sem aviso');
+  assert.deepStrictEqual(plain(E.seqValidate({ ...def })).filter((x) => /seguiria/.test(x.msg)), [], 'é só aviso: não impede salvar');
+});
+
 test('Simular: quem nunca responde passa por tudo (Frio); quem responde no 1º passo vai para Em atendimento', () => {
   const opt = { itemTitle: (id) => ({ [F[0]]: 'Follow 1', [F[1]]: 'Follow 2', [F[2]]: 'Follow 3' }[id]), labelName: (id) => (id === ATEND ? 'Em atendimento' : id === FRIO ? 'Frio' : id) };
   const never = plain(E.seqSimulate(E.seqNormalize(regua()), 'nunca', opt));

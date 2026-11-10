@@ -799,6 +799,23 @@ guardada.
 
 ## O que mudou
 
+### 2.16.2 — "depois que a pessoa ENTROU" como padrão
+- **Caixa nova** ⏳ ESPERAR (modo "esperar um tempo") e ❓ ESPERAR RESPOSTA já vem com "Contar o tempo" =
+  **depois que a pessoa ENTROU na automação** (`from: 'entrada'`).
+- **Modelos prontos** contam desde a entrada, nos mesmos momentos de antes: Régua de follow-up = até o dia 1, 3 e 6;
+  Pós-venda = dia 7; Lead novo que sumiu = 1 dia depois da SUA mensagem e depois até o dia 3; Follow-up de lead novo =
+  2 h depois da SUA mensagem, depois até o dia 1 e o dia 3. (A espera "contando da MINHA última mensagem" continua
+  "depois da etapa anterior".)
+- **Caixas já salvas não mudam**: sem `from` continua "depois da etapa anterior".
+- Na caixa "desde a entrada" aparece sempre **"dia X desde a entrada"** (ou **"X h desde a entrada"**).
+- **Aviso amarelo** (não impede salvar), na caixa e no lado: espera "desde a entrada" com tempo **menor ou igual** ao
+  que a espera anterior do mesmo caminho já garante, ex.: Follow 2 em "1 dia" depois de um Follow 1 até o dia 3 →
+  "⚠ Conta desde a entrada (dia 1), mas a espera anterior já vai até dia 3 desde a entrada: esta seguiria na hora.
+  Aumente o tempo (ex.: dia 4)." Pelo ❌ (não respondeu) e depois de ⏳ conta o prazo inteiro; pelo ✅ só o que havia antes
+  (pode ter respondido logo). Atualiza enquanto você digita o tempo.
+- Testes: `builder.test.cjs` (modelos, motor com régua nova e com régua salva antiga, aviso), `sequence.test.cjs` e o
+  Chrome real (passo 22: aviso amarelo e ⏳ nova pelo "+" já "desde a entrada").
+
 ### 2.16.1 — catálogo exportado com as fotos em tamanho cheio
 - **Antes:** as fotos exportadas vinham em miniatura (100x133 px): a lista da WA-JS (`getProducts`) pede o catálogo
   em 100x100 e a exportação pegava a URL `requested` (`stp=dst-jpg_p100x100`).

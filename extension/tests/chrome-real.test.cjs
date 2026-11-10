@@ -1247,7 +1247,7 @@ async function main() {
         btns: [...v.querySelectorAll('.vb-tr button:not(.more-item)')].map((b) => b.textContent), side: v.querySelector('.vb-side .vb-sh').textContent };`);
     check('modelo "Régua de follow-up (3 etapas)" desenhado em cascata: COMEÇA (Follow Up 1) → Follow 1/2/3 já escolhidas → 3 esperas de resposta com ✅ / ❌ → Em atendimento / Frio, todo caminho em FIM; "+" entre as caixas; botões no topo',
       drawn.name === 'Régua de follow-up' && /etiqueta “Follow Up 1”/.test(drawn.start) && JSON.stringify(drawn.sends) === '["Envia “Follow 1”","Envia “Follow 2”","Envia “Follow 3”"]'
-      && JSON.stringify(drawn.waits) === '["Espera resposta por até 1 dia","Espera resposta por até 2 dias","Espera resposta por até 3 dias"]'
+      && JSON.stringify(drawn.waits) === '["Espera resposta até 1 dia depois de entrar · dia 1 desde a entrada","Espera resposta até 3 dias depois de entrar · dia 3 desde a entrada","Espera resposta até 6 dias depois de entrar · dia 6 desde a entrada"]' // 2.16.2
       && drawn.tags.filter((x) => /Em atendimento/.test(x)).length === 3 && drawn.tags.filter((x) => /Frio/.test(x)).length === 1 && drawn.fims === 4 && drawn.yes === 3 && drawn.no === 3 && drawn.plus >= 10
       && JSON.stringify(drawn.btns) === '["Salvar desligada","Salvar e ligar","Fechar","⋯"]' && drawn.side === '▶ COMEÇA', JSON.stringify(drawn));
     await shot('regua-3-etapas.png');
@@ -1284,7 +1284,7 @@ async function main() {
     const DATE_RE = /^dia \d+ · [a-zçáé]{3},? \d{2}\/\d{2},? \d{2}:\d{2}/;
     const textsOf = (l) => l.map((x) => x.replace(DATE_RE, ''));
     check('Simular: linha do tempo (com data e hora) de quem nunca responde (Follow 1 → Oferta especial → Follow 3 → Frio) e de quem responde no 1º passo (Em atendimento)',
-      sim.never.every((x) => DATE_RE.test(x)) && JSON.stringify(textsOf(sim.never)) === JSON.stringify(['Entra na automação', 'Recebe “Follow 1”', '❌ Não respondeu em 1 dia', 'Recebe “Oferta especial”', '❌ Não respondeu em 2 dias', 'Recebe “Follow 3”', '❌ Não respondeu em 3 dias', 'Entra na etiqueta “Frio”', 'Fim: sai da automação'])
+      sim.never.every((x) => DATE_RE.test(x)) && JSON.stringify(textsOf(sim.never)) === JSON.stringify(['Entra na automação', 'Recebe “Follow 1”', '❌ Não respondeu até 1 dia depois de entrar', 'Recebe “Oferta especial”', '❌ Não respondeu até 3 dias depois de entrar', 'Recebe “Follow 3”', '❌ Não respondeu até 6 dias depois de entrar', 'Entra na etiqueta “Frio”', 'Fim: sai da automação'])
       && sim.first.some((x) => /✅ Respondeu/.test(x)) && sim.first.some((x) => /Entra na etiqueta “Em atendimento”/.test(x)) && !sim.first.some((x) => /Oferta/.test(x)),
       JSON.stringify(sim));
     await shot('simulacao.png');
@@ -1821,6 +1821,27 @@ async function main() {
     check('construtor: "a partir desta etapa" volta à frase de sempre; "depois que a pessoa ENTROU" volta ao "dia 3"',
       flip22[0] === 'Espera resposta por até 3 dias' && flip22[1] === 'Espera resposta até 3 dias depois de entrar · dia 3 desde a entrada', JSON.stringify(flip22));
     await shot('regua-dia-desde-entrada.png');
+    // 2.16.2: Follow 3 com "2 dias desde a entrada" depois de uma espera até o dia 3 → aviso amarelo na caixa e no lado
+    // (só aviso: some ao voltar para 5); caixa ⏳ nova pelo "+" já vem "depois que a pessoa ENTROU" (dia 1)
+    const warn22 = await q(`const v = sh.querySelector('.vb'); v.querySelectorAll('.vb-box.vb-esperar')[2].click(); await wait(250);
+      const i = v.querySelector('.vb-side input[aria-label="Esperar resposta por até"]'); i.value = '2'; i.dispatchEvent(new Event('input', { bubbles: true })); await wait(200);
+      const box = v.querySelectorAll('.vb-box.vb-esperar')[2]; const bw = box.querySelector('.vb-order-warn'); const sw = v.querySelector('.vb-side .vb-side-warn');
+      const r = { txt: box.querySelector('.vb-btxt').textContent, box: bw ? bw.textContent : '', bg: bw ? getComputedStyle(bw).backgroundColor : '', side: sw ? sw.textContent : '', n: v.querySelectorAll('.vb-box .vb-order-warn').length };
+      i.value = '5'; i.dispatchEvent(new Event('input', { bubbles: true })); await wait(200); r.after = v.querySelectorAll('.vb-order-warn').length; return r;`);
+    const W22 = '⚠ Conta desde a entrada (dia 2), mas a espera anterior já vai até dia 3 desde a entrada: esta seguiria na hora. Aumente o tempo (ex.: dia 4).';
+    check('2.16.2: espera desde a entrada ≤ a anterior (Follow 3 em "2 dias" depois do dia 3) → aviso amarelo na caixa e no lado; some ao corrigir',
+      warn22.txt === 'Espera resposta até 2 dias depois de entrar · dia 2 desde a entrada' && warn22.box === W22 && warn22.side === W22 && warn22.bg === 'rgb(254, 249, 195)' && warn22.n === 1 && warn22.after === 0, JSON.stringify(warn22));
+    await q(`const v = sh.querySelector('.vb'); v.querySelectorAll('.vb-box.vb-esperar')[2].click(); await wait(200); const i = v.querySelector('.vb-side input[aria-label="Esperar resposta por até"]'); i.value = '2'; i.dispatchEvent(new Event('input', { bubbles: true })); await wait(200); return true;`);
+    await shot('aviso-desde-entrada.png');
+    await q(`const v = sh.querySelector('.vb'); v.querySelectorAll('.vb-box.vb-esperar')[2].click(); await wait(200); const i = v.querySelector('.vb-side input[aria-label="Esperar resposta por até"]'); i.value = '5'; i.dispatchEvent(new Event('input', { bubbles: true })); await wait(200); return true;`);
+    const new22 = await q(`const v = sh.querySelector('.vb'); v.querySelector('.vb-plus').click(); await wait(150); v.querySelector('.vb-menu .vb-mi-pausa').click(); await wait(250);
+      const side = v.querySelector('.vb-side'); const p = v.querySelector('.vb-box.vb-pausa');
+      const r = { from: [...side.querySelectorAll('.vb-from input')].map((x) => [x.value, x.checked]), txt: p ? p.querySelector('.vb-btxt').textContent : '',
+        w1: ((v.querySelectorAll('.vb-box.vb-esperar')[0] || document.body).querySelector('.vb-order-warn') || {}).textContent || '' };
+      side.querySelector('.vb-del').click(); await wait(200); r.gone = !v.querySelector('.vb-box.vb-pausa') && !v.querySelector('.vb-order-warn'); return r;`);
+    check('2.16.2: ⏳ ESPERAR nova pelo "+" já vem "depois que a pessoa ENTROU" (dia 1 desde a entrada); a ❓ do dia 1 logo depois ganha o aviso',
+      JSON.stringify(new22.from) === '[["anterior",false],["entrada",true]]' && new22.txt === 'Espera até 1 dia depois de entrar · dia 1 desde a entrada'
+      && /^⚠ Conta desde a entrada \(dia 1\), mas a espera anterior já vai até dia 1 desde a entrada/.test(new22.w1) && new22.gone, JSON.stringify(new22));
     await q(`const t = sh.querySelector('.vb .vb-tr'); t.querySelector('.more-btn').click(); await wait(150); t.querySelector('.more-menu .vb-sim').click(); await wait(300); return true;`);
     const sim22 = await q(`const m = sh.querySelector('.vb .vb-modal'); return [...m.querySelectorAll('.vb-sim-nunca .vb-ev')].filter((r) => r.classList.contains('vb-ev-enviar')).map((r) => r.querySelector('.vb-evt').textContent);`);
     check('Simular: cada envio com "dia X · data/hora prevista" (dia 0, 1, 3, 5, 7, 10)',

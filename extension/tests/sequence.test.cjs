@@ -36,6 +36,11 @@ function leadFollowup({ business = false } = {}) {
     if (n.type === 'esperar') { fill(n.yes); fill(n.no); }
   });
   fill(def.steps);
+  // 2.16.2: o modelo agora conta desde a entrada; os testes do motor usam a régua SALVA antes (1 e 2 dias depois da
+  // etapa anterior), que não muda sozinha
+  const w2 = def.steps[0].no[1];
+  delete w2.from; w2.amount = 1;
+  delete w2.no[1].from; w2.no[1].amount = 2;
   return def;
 }
 // Simulador: aplica as decisões como o motor faz (envio = grava o próximo passo e a hora do envio)
@@ -74,13 +79,14 @@ function runner(def, { business = false } = {}) {
 
 const T0 = Date.parse('2026-11-02T10:00:00-03:00'); // segunda, 10h
 
-test('modelo "Follow-up de lead novo": espera 2h depois da SUA mensagem → F1 → 1 dia → F2 → 2 dias → F3; ✅ = "Em atendimento"', () => {
+test('modelo "Follow-up de lead novo" (2.16.2): espera 2h depois da SUA mensagem → F1 → até o dia 1 desde a entrada → F2 → até o dia 3 → F3; ✅ = "Em atendimento"', () => {
   const def = plain(E.seqTemplate('lead_followup'));
   assert.deepStrictEqual(def.start, { type: 'lead', origin: 'todos' });
   const w = def.steps[0];
   assert.deepStrictEqual([w.type, w.amount, w.unit, w.after_mine, w.yes[0].type, w.yes[0].label_id], ['esperar', 2, 'horas', true, 'etiqueta', 'new:Em atendimento']);
   assert.deepStrictEqual(w.no.map((n) => n.type), ['enviar', 'esperar']);
-  assert.deepStrictEqual([w.no[1].amount, w.no[1].unit, w.no[1].no[1].amount, w.no[1].no[1].unit], [1, 'dias', 2, 'dias']);
+  assert.deepStrictEqual([w.from, w.no[1].amount, w.no[1].unit, w.no[1].from, w.no[1].no[1].amount, w.no[1].no[1].unit, w.no[1].no[1].from], [undefined, 1, 'dias', 'entrada', 3, 'dias', 'entrada']);
+  assert.deepStrictEqual(plain(E.seqEntryOrderWarnings(def)), []);
   assert.deepStrictEqual(plain(E.seqValidate(leadFollowup())), []);
 });
 test('respondeu no 1º passo: lead chamou, você respondeu, o cliente respondeu → coloca "Em atendimento" e Fim (nada enviado)', () => {
