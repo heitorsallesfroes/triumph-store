@@ -55,7 +55,7 @@ function fixtures(now: number) {
     wa_sequence_runs: [
       run('r1', '5521987650001@c.us', { contact_id: 'c1', created_at: iso(now - 1 * H) }),
       run('r2', '5521987650002@c.us', { created_at: iso(now - 96 * H) }), // ❓ 3 h venceu há 4 dias: atrasado (a qualquer hora do dia)
-      run('r3', '900000000003@lid', { node: W[1], created_at: iso(now - 5 * H), branches: [{ node: W[0], result: 'nao', at: now - 2 * H }] }),
+      run('r3', '900000000003@lid', { node: W[1], skip_wait: true, created_at: iso(now - 5 * H), branches: [{ node: W[0], result: 'nao', at: now - 2 * H }] }), // extensão 2.16.8: "Pular espera" clicado
       run('r4', '5521987650004@c.us', { status: 'fim', outcome: 'respondeu', node: null, created_at: iso(now - 30 * H), ended_at: iso(now - 26 * H), updated_at: iso(now - 26 * H), branches: [{ node: W[0], result: 'nao', at: now - 27 * H }, { node: W[1], result: 'sim', at: now - 26 * H }] }),
       run('r5', '5521987650005@c.us', { status: 'saiu', outcome: 'manual', created_at: iso(now - 30 * H), ended_at: null, updated_at: iso(now - 20 * H) }),
     ],
@@ -218,9 +218,12 @@ async function main() {
       const ppl = await ev(`${H} return $$('[data-testid="wa-auto-person-row"]').map((r) => ({ t: txt(r), red: getComputedStyle(r.cells[4].querySelector('span') || r.cells[4]).color }));`);
       check('Pessoas: 3 em andamento, telefone mascarado, etapa, "há X h" e o próximo passo; o atrasado em vermelho e primeiro (ordem pelo próximo)',
         ppl.length === 3 && /Bruno Lima/.test(ppl[0].t) && /atrasado/.test(ppl[0].t) && ppl[0].red === 'rgb(239, 68, 68)' && /21 9\*\*\*\*-0003/.test(ppl.map((x: { t: string }) => x.t).join()) && /há 4 dias/.test(ppl[0].t) && ppl.every((x: { t: string }) => /Recebe Follow Padrão/.test(x.t)), JSON.stringify(ppl));
+      // extensão 2.16.8: quem teve a espera pulada (skip_wait) leva o selo "⏩ pulou a espera"; os outros não
+      const sk = await ev(`${H} return $$('[data-testid="wa-auto-person-row"]').map((r) => [/-0003/.test(txt(r)), (r.querySelector('[data-testid="wa-auto-skipped"]') || {}).textContent || '']);`);
+      check('Pessoas: selo "⏩ pulou a espera" só na pessoa com a espera pulada', sk.filter((x: [boolean, string]) => x[1]).length === 1 && sk.every((x: [boolean, string]) => (x[1] === '⏩ pulou a espera') === x[0]), JSON.stringify(sk));
       await step('Pessoas: ordenar e filtrar', async () => {
         await ev(`${H} btn('Nome').click(); return true;`); await sleep(150);
-        const byName = await ev(`${H} return $$('[data-testid="wa-auto-person-row"]').map((r) => txt(r.cells[0]));`);
+        const byName = await ev(`${H} return $$('[data-testid="wa-auto-person-row"]').map((r) => txt(r.cells[0].firstChild));`); // só o nome (2.16.8: o selo fica embaixo)
         await ev(`${H} const s = document.querySelector('select[aria-label="Filtrar por etapa"]'); s.value = '${W[1]}'; s.dispatchEvent(new Event('change', { bubbles: true })); return true;`); await sleep(150);
         const f = await ev(`${H} return $$('[data-testid="wa-auto-person-row"]').length;`);
         await ev(`${H} const s = document.querySelector('select[aria-label="Filtrar por etapa"]'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); return true;`); await sleep(150);
@@ -229,7 +232,8 @@ async function main() {
       await step('linha do tempo da pessoa', async () => {
         await ev(`${H} $$('[data-testid="wa-auto-person-row"]').find((r) => /21 9\\*{4}-0003/.test(txt(r))).click(); return true;`);
         await waitFor(`${H} return $$('[data-testid="wa-auto-timeline"] li').length > 3;`);
-        const tl = await ev(`${H} const d = document.querySelector('[data-testid="wa-auto-drawer"]'); return { done: $$('li[data-done="1"]', d).map(txt), next: $$('li[data-done="0"]', d).map(txt).slice(0, 3), link: (d.querySelector('a') || {}).href || '' };`);
+        const tl = await ev(`${H} const d = document.querySelector('[data-testid="wa-auto-drawer"]'); return { done: $$('li[data-done="1"]', d).map(txt), next: $$('li[data-done="0"]', d).map(txt).slice(0, 3), link: (d.querySelector('a') || {}).href || '', skipped: !!d.querySelector('[data-testid="wa-auto-skipped"]') };`);
+        check('linha do tempo: selo "⏩ pulou a espera" junto do "Agora:" (extensão 2.16.8)', tl.skipped === true, JSON.stringify(tl));
         check('linha do tempo: feito ✓ (entrou, ❌ 3 h, recebeu Follow Padrão 1) com data real; previsto em cinza; "Abrir no WhatsApp" com o telefone do @lid',
           tl.done.length === 3 && /Entrou na automação/.test(tl.done[0]) && /Não respondeu até 3 horas/.test(tl.done[1]) && /Recebeu Follow Padrão 1/.test(tl.done[2]) && /previsto/.test(tl.next.join()) && /Recebe Follow Padrão 2/.test(tl.next.join()) && tl.link === 'https://web.whatsapp.com/send?phone=5521987650003', JSON.stringify(tl));
         await shot('pessoa.png');

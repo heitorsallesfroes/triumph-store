@@ -799,6 +799,22 @@ guardada.
 
 ## O que mudou
 
+### 2.16.8 — mostra que o "Pular espera" já foi clicado
+- No painel da conversa ("🔁 Na automação … · passo: esperando resposta"), com a espera pulada (`skip_wait` no
+  percurso) o botão **Pular espera** some e aparece o selo **"⏩ Espera pulada às 12:28 · na fila de envio"** (a hora é
+  a da gravação no banco, `updated_at`). Embaixo, a previsão (`E.seqSkipForecast`, as mesmas regras do motor):
+  - na fila: **"na fila: 5º · sai por volta de 12:40"**: lugar aproximado (percursos ativos prontos para mandar —
+    espera pulada ou prazo vencido —, na ordem em que o motor lê) × o intervalo médio entre contatos, a partir do
+    último envio; se não couber no limite desta hora, depois que ele liberar;
+  - parado: **"limite por hora — volta às 13:00"** (quando o envio mais antigo da última hora completar 1 h),
+    **"limite do dia — volta amanhã 09:00"** (geral ou o limite próprio da régua), **"fora do horário — amanhã 09:00"**
+    (horário da automação e a faixa "enviar só entre" da espera) ou "pausado".
+- Vem do banco (`seqChatRuns` + `seqSkipInfo`): igual ao reabrir a conversa e em qualquer computador.
+- ERP (⚡ Automações → Pessoas): o selo **"⏩ pulou a espera"** na pessoa (ver `src/components/whatsapp/WaAutomations.README.md`).
+- Nada muda no envio. Sem migration. Testes: `skipwait.test.cjs` (previsões, servidor, envio igual) e
+  `chrome-real.test.cjs` (botão → selo, previsão e o mesmo selo ao voltar na conversa); ERP:
+  `scripts/tests/waAutomations.test.ts` e `scripts/tests/waAutomationsChrome.test.ts`.
+
 ### 2.16.7 — mesma pessoa com dois @lid diferentes: etiqueta da régua e percurso duplicado
 - **O problema (10/11)**: o contato 5521997520054 tinha `wa_contacts.chat_id = 80685…@lid`, mas a conversa aberta era
   `196980…@lid` (o mesmo número com outro @lid). Na Régua de follow-up, o percurso adicionado à mão na 196980…@lid

@@ -2721,6 +2721,32 @@
     await rest(`wa_contacts?id=eq.${c.id}`, json('PATCH', 'return=minimal', { chat_id: chatId }));
     return { changed: true, contactId: c.id, from: c.chat_id || null };
   }
+  // 2.16.8: "Pular espera" clicado: dados do banco (iguais em qualquer computador) para a previsão do envio
+  // (E.seqSkipForecast): lugar aproximado na fila (percursos ativos prontos para mandar — espera pulada ou prazo
+  // vencido —, na ordem em que o motor lê: id), envios automáticos na última hora e hoje, o último envio e o mais
+  // antigo da última hora (quando o limite por hora libera) e os envios de hoje desta régua (limite próprio).
+  async function seqSkipInfo({ runId, automationId, hourSince, daySince }) {
+    checkUuid(runId, 'Percurso inválido');
+    checkUuid(automationId, 'Automação inválida');
+    const h = Date.parse(hourSince || '');
+    const d = Date.parse(daySince || '');
+    if (!Number.isFinite(h) || !Number.isFinite(d)) throw new Error('Data inválida');
+    const nowIso = encodeURIComponent(new Date().toISOString());
+    const ready = await restAll(`wa_sequence_runs?select=id&status=eq.ativo&or=(skip_wait.eq.true,due_at.lte.${nowIso})&order=id.asc`);
+    const i = ready.findIndex((r) => r.id === runId);
+    const base = `wa_send_log?${AUTO_SOURCES}&status=neq.pulado&created_at=gte.`;
+    const hIso = encodeURIComponent(new Date(h).toISOString());
+    const [hour, day, last, oldest, seq] = await Promise.all([
+      countRows2(base + hIso), countRows2(base + encodeURIComponent(new Date(d).toISOString())), lastSendAt(),
+      engineRest(`wa_send_log?select=created_at&${AUTO_SOURCES}&status=neq.pulado&created_at=gte.${hIso}&order=created_at.asc&limit=1`),
+      automationSentToday({ automationId, since: new Date(d).toISOString() }),
+    ]);
+    return {
+      position: i >= 0 ? i + 1 : ready.length + 1, ready: ready.length, counts: { hour, day },
+      lastSentAt: Date.parse((last && last.at) || '') || null, oldestHourAt: oldest.length ? Date.parse(oldest[0].created_at) || null : null,
+      sentTodaySeq: seq ? seq.count : null,
+    };
+  }
   async function seqRunAction({ id, action }) {
     checkUuid(id, 'Percurso inválido');
     const rows = await seqRest(`wa_sequence_runs?select=id,version&id=eq.${id}&status=eq.ativo`);
@@ -4169,7 +4195,7 @@
     sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
     saleFirstName, erpCatalog, createSaleFromChat, lookupCep, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
-    seqRuns, seqCreateRuns, seqManualEnter, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqLabelWarnings, adoptChatId, seqRunAction, seqStats, automationSentToday,
+    seqRuns, seqCreateRuns, seqManualEnter, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqLabelWarnings, adoptChatId, seqSkipInfo, seqRunAction, seqStats, automationSentToday,
     automationUnreserve, applySendLabels, getContactName,
     campaignVariantStats, fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,

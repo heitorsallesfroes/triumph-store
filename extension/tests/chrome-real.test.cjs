@@ -1909,6 +1909,37 @@ async function main() {
     check('2.16.7: painel da conversa: "⚠ Régua 6 follows: etiqueta não aplicada (contato não encontrado) · dd/mm hh:mm" (amarelo)',
       typeof warn27 === 'string' && /^⚠ Régua 6 follows: etiqueta não aplicada \(contato não encontrado\) · \d{2}\/\d{2} \d{2}:\d{2}$/.test(warn27) && warnCss27 === 'rgb(254, 249, 195)', JSON.stringify({ warn27, warnCss27 }));
     await shot('aviso-etiqueta-nao-aplicada.png');
+    // 2.16.8: "Pular espera" já clicado. Percurso na ❓ da 196980…@lid: o botão aparece; clicar grava skip_wait no
+    // banco e troca o botão pelo selo "⏩ Espera pulada às HH:MM · na fila de envio" com a previsão embaixo; ao sair e
+    // voltar na conversa (relido do banco) continua igual.
+    const RUN28 = uuid();
+    fake.db.wa_sequence_runs = [...(fake.db.wa_sequence_runs || []), { id: RUN28, automation_id: REG, chat_id: LIDB, contact_id: C27, entry_key: 'manual@28', node: 'w1', status: 'ativo', version: 0, branches: [], skip_wait: false, wait_started_at: new Date(Date.now() - 3600000).toISOString(), created_at: new Date(Date.now() - 3600000).toISOString(), updated_at: new Date(Date.now() - 3600000).toISOString() }];
+    const reopen28 = async () => {
+      await pg(`window.__fakeBridge = { ...window.__fakeBridge, activeChat: { kind: 'individual', chatId: ${JSON.stringify(CH22)} } }; return true;`);
+      await new Promise((r) => setTimeout(r, 1500));
+      await pg(`window.__fakeBridge = { ...window.__fakeBridge, activeChat: { kind: 'individual', chatId: ${JSON.stringify(LIDB)} } }; return true;`);
+    };
+    await reopen28();
+    // (o aviso amarelo só existe na 196980…@lid: garante que o painel já trocou de conversa)
+    const onLidB = `!!sh.querySelector('.cseq .cseq-warn')`;
+    const btn28 = await waitFor(`return ${onLidB} && [...sh.querySelectorAll('.cseq .cseq-line')].some((l) => /Régua 6 follows/.test(l.textContent) && l.querySelector('.cseq-skip'));`, 15000);
+    check('2.16.8: antes de clicar, a ❓ mostra "Pular espera" e nenhum selo', btn28 && !(await q(`return !!sh.querySelector('.cseq .cseq-skipped');`)), String(btn28));
+    const t28 = Date.now();
+    await q(`[...sh.querySelectorAll('.cseq .cseq-skip')][0].click(); return true;`); // a única ❓ desta conversa
+    await waitFor(`return !!sh.querySelector('.cseq .cseq-skipped');`, 15000);
+    const sk28 = await q(`const s = sh.querySelector('.cseq .cseq-skipped'); return s ? { badge: s.querySelector('.cseq-skip-badge').textContent, eta: s.querySelector('.cseq-eta').textContent, btn: !!sh.querySelector('.cseq .cseq-skip'), bg: getComputedStyle(s).backgroundColor } : null;`);
+    const db28 = (fake.db.wa_sequence_runs || []).find((r) => r.id === RUN28);
+    const hm28 = (() => { const d = new Date(Date.parse(db28 && db28.updated_at)); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; })();
+    const ETA_RE = /^(na fila: \d+º · sai por volta de .+|fora do horário — .+|limite por hora — volta .+|limite do dia — volta .+|pausado .+)$/;
+    check('2.16.8: clicou → skip_wait no banco; o botão vira o selo "⏩ Espera pulada às HH:MM · na fila de envio" e a previsão embaixo',
+      !!sk28 && !!db28 && db28.skip_wait === true && Math.abs(Date.parse(db28.updated_at) - t28) < 10000 && sk28.badge === `⏩ Espera pulada às ${hm28} · na fila de envio` && ETA_RE.test(sk28.eta) && !sk28.btn && sk28.bg === 'rgb(224, 242, 254)', JSON.stringify({ sk28, db28: db28 && [db28.skip_wait, db28.updated_at] }));
+    await shot('espera-pulada.png');
+    // "outro computador": o painel desta aba esquece e relê do banco ao voltar na conversa
+    await reopen28();
+    await waitFor(`return ${onLidB} && !!sh.querySelector('.cseq .cseq-skipped');`, 15000);
+    const again28 = await q(`const s = sh.querySelector('.cseq .cseq-skipped'); return s ? { badge: s.querySelector('.cseq-skip-badge').textContent, btn: !!sh.querySelector('.cseq .cseq-skip') } : null;`);
+    check('2.16.8: sair e voltar na conversa: o mesmo selo (vem do banco), sem o botão de pular', !!again28 && again28.badge === sk28.badge && !again28.btn, JSON.stringify(again28));
+    check('nenhum erro no console no "Pular espera"', errors.length === 0, errors.slice(0, 8).join(' | '));
     await pg(`window.__fakeBridge = null; return true;`);
     fake.on = false;
     fake.generic = false;

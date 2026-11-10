@@ -1643,6 +1643,13 @@
       .cseq-line { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); flex-wrap: wrap; padding: var(--s-1) var(--s-2); border-radius: var(--r-md); background: var(--accent-soft); font-size: var(--fs-1); font-weight: 600; }
       .cseq-btns { display: inline-flex; gap: var(--s-1); }
       .cseq-warn { background: #fef9c3; color: #854d0e; } /* 2.16.7: etiqueta da régua não aplicada */
+      /* 2.16.8: espera já pulada */
+      .cseq-skipped { display: flex; flex-direction: column; gap: 2px; padding: var(--s-1) var(--s-2); border-radius: var(--r-md); background: #e0f2fe; color: #075985; font-size: var(--fs-1); }
+      .cseq-skip-badge { font-weight: 700; }
+      .cseq-eta.held { color: #9a3412; font-weight: 600; }
+      .root.dark .cseq-skipped { background: rgba(56,189,248,.14); color: #7dd3fc; }
+      .root.dark .cseq-eta.held { color: #fdba74; }
+      .root.dark .cseq-warn { background: var(--warn-soft); color: var(--warn); }
       .cdel { margin: 0 var(--s-3) var(--s-2); display: flex; flex-direction: column; gap: 2px; padding: var(--s-1) var(--s-2); border-radius: var(--r-md); background: var(--bg2); font-size: var(--fs-1); }
       .cdel[hidden] { display: none; }
       .cdel-t { font-weight: 700; color: var(--muted); }
@@ -8808,6 +8815,13 @@
     let warns = [];
     try { runs = await call('seqChatRuns', { chatId }); } catch { runs = []; }
     try { warns = await call('seqLabelWarnings', { chatId }); } catch { warns = []; } // 2.16.7
+    // 2.16.8: espera já pulada (skip_wait, do banco): fila, limites e horário para a previsão
+    const t0 = Date.now();
+    const midnight = new Date(t0); midnight.setHours(0, 0, 0, 0);
+    for (const r of Array.isArray(runs) ? runs : []) {
+      if (r.skip_wait !== true) continue;
+      try { r.skipInfo = await call('seqSkipInfo', { runId: r.id, automationId: r.automation_id, hourSince: new Date(t0 - 3600 * 1000).toISOString(), daySince: midnight.toISOString() }); } catch { r.skipInfo = null; }
+    }
     if (cseq.chatId !== chatId) return;
     cseq.runs = Array.isArray(runs) ? runs : [];
     cseq.warns = Array.isArray(warns) ? warns : [];
@@ -8833,10 +8847,24 @@
       const btns = el('span', 'cseq-btns');
       const out = fbtn('ed-mini cseq-out', 'Tirar da automação', () => chatSeqAction(r, 'sair'));
       btns.append(out);
-      if (e && e.node.type === 'esperar') btns.append(fbtn('ed-mini cseq-skip', 'Pular espera', () => chatSeqAction(r, 'pular')));
+      const skipped = r.skip_wait === true; // 2.16.8: já clicou (vem do banco: igual em qualquer computador)
+      if (e && e.node.type === 'esperar' && !skipped) btns.append(fbtn('ed-mini cseq-skip', 'Pular espera', () => chatSeqAction(r, 'pular')));
       btns.querySelectorAll('button').forEach((b) => { b.disabled = cseq.busy; });
       line.append(btns);
       box.append(line);
+      if (skipped) {
+        const at = Date.parse(r.updated_at || '');
+        const d = new Date(at);
+        const hm = Number.isFinite(at) ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
+        const sameDay = Number.isFinite(at) && new Date().toDateString() === d.toDateString();
+        const when = !hm ? '' : sameDay ? ` às ${hm}` : ` em ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} às ${hm}`;
+        const sk = el('div', 'cseq-skipped');
+        sk.append(el('span', 'cseq-skip-badge', `⏩ Espera pulada${when} · na fila de envio`));
+        const info = r.skipInfo;
+        const f = info ? E.seqSkipForecast({ def, window: e && e.node.send_window, settings: motor.state.settings, now: Date.now(), position: info.position, counts: info.counts || {}, lastSentAt: info.lastSentAt, oldestHourAt: info.oldestHourAt, sentTodaySeq: info.sentTodaySeq }) : null;
+        sk.append(el('span', `cseq-eta${f && f.kind !== 'fila' ? ' held' : ''}`, f ? f.text : 'na fila (sem a previsão agora)'));
+        box.append(sk);
+      }
     });
   }
   async function chatSeqAction(r, action) {

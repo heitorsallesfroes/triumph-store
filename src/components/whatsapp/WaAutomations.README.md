@@ -14,6 +14,8 @@ extensão no WhatsApp Web.
     e "👥 N pessoas aqui agora" (clicar abre a lista).
   - **Pessoas**: todos em andamento: nome, telefone mascarado (21 9****-1234), etapa, entrou em / há quanto tempo e o
     próximo passo com data e hora prevista ("hoje" em destaque, atrasado em vermelho). Ordenar, filtrar por etapa e buscar.
+    Quem teve o **"Pular espera"** clicado no painel da conversa da extensão (`skip_wait` no percurso) leva o selo
+    **"⏩ pulou a espera"** (também na lista do 👥 da etapa e no "Agora:" da linha do tempo).
   - **Histórico**: últimos 200 encerrados (7, 30 ou 90 dias) com o motivo traduzido e "responderam depois de cada mensagem".
   - **Envios**: o registro de envios da automação (enviado / pulado / erro com o motivo).
 - **Linha do tempo da pessoa** (painel lateral): o que já aconteceu (✓ com a hora real, do registro de envios e do

@@ -504,6 +504,10 @@ export function personTimeline(def: SeqDef, run: RunRow, sends: SendLogRow[], no
   return [...done, ...fut];
 }
 
+// extensão 2.16.8: "Pular espera" já clicado no painel da conversa (skip_wait no banco): o próximo envio está na fila
+export const SKIPPED_WAIT_TEXT = '⏩ pulou a espera';
+export const skippedWait = (run: RunRow): boolean => run.status === 'ativo' && run.skip_wait === true;
+
 // ── Saídas ──
 // quando terminou (quem foi encerrado direto no banco pode não ter ended_at: vale a última mudança)
 export const endedAt = (run: RunRow) => msOf(run.ended_at) ?? msOf(run.updated_at);

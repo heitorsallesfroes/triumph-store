@@ -10,7 +10,7 @@ import { makeAutomationsDb, type AutoStats, type Overview, type Person } from '.
 import {
   BOX_STYLE, boxKind, boxText, conversionBySend, endedAt, fmtAgo, fmtDateTime, fmtTime, fmtWhen, funnel, mainPath, maskPhone, matchesPerson, msOf,
   nextStep, OUTCOME_KEYS, outcomeGroup, outcomeText, parkingNode, personTimeline, phoneOfChat, previewLines, scheduleSummary, seqDescribe, seqIndex,
-  seqNodeLabel, seqSendSteps, startText, statusOf, stopText, waLink, yesSummary,
+  seqNodeLabel, seqSendSteps, SKIPPED_WAIT_TEXT, skippedWait, startText, statusOf, stopText, waLink, yesSummary,
   type AutomationRow, type ItemRow, type Names, type RunRow, type SendLogRow, type SeqDef, type SeqNode, type TimelineEvent,
 } from '../../lib/waAutomations';
 import { btn, input, muted, ORANGE } from './shared';
@@ -18,6 +18,12 @@ import { EmptyState, eyebrow, GREEN, panel, RED, Skeleton, SkeletonStyle, SLATE 
 
 const db = makeAutomationsDb(supabase);
 const PURPLE = '#8b5cf6';
+// extensão 2.16.8: "Pular espera" já clicado (o próximo envio está na fila)
+const SKY = '#0284c7';
+function SkippedBadge({ run }: { run: RunRow }) {
+  if (!skippedWait(run)) return null;
+  return <span data-testid="wa-auto-skipped" style={{ fontSize: 11, fontWeight: 700, color: SKY, background: 'rgba(2,132,199,0.12)', border: '1px solid rgba(2,132,199,0.3)', borderRadius: 999, padding: '1px 8px', whiteSpace: 'nowrap' }}>{SKIPPED_WAIT_TEXT}</span>;
+}
 const AMBER = '#eab308';
 const REFRESH_MS = 60 * 1000;
 
@@ -279,6 +285,7 @@ function PeopleMini({ def, runs, people, now, names, onPerson }: { def: SeqDef; 
             <b>{personName(people[r.chat_id], r.chat_id)}</b>
             <span style={muted}>{maskPhone(personPhone(people[r.chat_id], r.chat_id))}</span>
             <span style={muted}>entrou {fmtAgo(msOf(r.created_at), now)}</span>
+            <SkippedBadge run={r} />
             {nx && <span style={{ color: nx.late ? RED : 'var(--text-muted)' }}>→ {nx.text} {fmtWhen(nx.when, now)}</span>}
           </button>
         );
@@ -404,7 +411,7 @@ function PessoasTab({ def, names, active, now, onPerson }: { def: SeqDef; names:
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {sorted.slice(0, 300).map((r) => (
             <button key={r.run.id} type="button" onClick={() => onPerson(r.run, active.people[r.run.chat_id])} style={{ ...panel, padding: 12, textAlign: 'left', font: 'inherit', color: 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 3 }}>
-              <b style={{ color: 'var(--text-primary)' }}>{r.name} <span style={{ ...muted, fontWeight: 400 }}>{maskPhone(r.phone)}</span></b>
+              <b style={{ color: 'var(--text-primary)' }}>{r.name} <span style={{ ...muted, fontWeight: 400 }}>{maskPhone(r.phone)}</span> <SkippedBadge run={r.run} /></b>
               <span style={{ fontSize: 12 }}>{BOX_STYLE[r.kind as keyof typeof BOX_STYLE]?.icon} {r.step}</span>
               <span style={muted}>Entrou {fmtDateTime(r.entered)} ({fmtAgo(r.entered, now)})</span>
               {r.next && <span style={{ fontSize: 12 }}>→ {r.next.text} · {when(r)}</span>}
@@ -423,7 +430,7 @@ function PessoasTab({ def, names, active, now, onPerson }: { def: SeqDef; names:
             ))}</tr></thead>
             <tbody>{sorted.slice(0, 500).map((r) => (
               <tr key={r.run.id} onClick={() => onPerson(r.run, active.people[r.run.chat_id])} style={{ cursor: 'pointer' }} data-testid="wa-auto-person-row">
-                <td style={tdS}>{r.hasName ? <b>{r.name}</b> : <span style={muted}>Sem nome</span>}</td>
+                <td style={tdS}>{r.hasName ? <b>{r.name}</b> : <span style={muted}>Sem nome</span>}{skippedWait(r.run) && <div style={{ marginTop: 3 }}><SkippedBadge run={r.run} /></div>}</td>
                 <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{maskPhone(r.phone)}</td>
                 <td style={tdS}>{BOX_STYLE[r.kind as keyof typeof BOX_STYLE]?.icon} {r.step}</td>
                 <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{fmtDateTime(r.entered)}<div style={muted}>{fmtAgo(r.entered, now)}</div></td>
@@ -597,7 +604,7 @@ function PersonDrawer({ a, run, person, names, now, tick, onClose }: { a: Automa
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{personName(person, run.chat_id)}</div>
             <div style={muted}>{maskPhone(phone)} · {a.name}</div>
-            <div style={{ fontSize: 12, marginTop: 4, color: run.status === 'ativo' ? ORANGE : 'var(--text-muted)' }}>{run.status === 'ativo' ? `Agora: ${seqDescribe(def, run, now, names)}` : `Encerrado: ${outcomeText(run.outcome)}`}</div>
+            <div style={{ fontSize: 12, marginTop: 4, color: run.status === 'ativo' ? ORANGE : 'var(--text-muted)' }}>{run.status === 'ativo' ? `Agora: ${seqDescribe(def, run, now, names)}` : `Encerrado: ${outcomeText(run.outcome)}`} <SkippedBadge run={run} /></div>
           </div>
           <button type="button" style={{ ...btn, padding: '4px 10px', alignSelf: 'flex-start' }} onClick={onClose}>✕</button>
         </div>

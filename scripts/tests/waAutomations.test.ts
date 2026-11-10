@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   mainPath, boxText, yesSummary, scheduleSummary, seqSendSteps, seqSimulate, seqNodeLabel, sinceEntryText, nextStep, futureOf,
   personTimeline, seqDescribe, currentDue, funnel, conversionBySend, maskPhone, fmtWhen, fmtAgo, fmtDateTime, startText, statusOf,
-  outcomeText, outcomeGroup, stopText, matchesPerson, previewLines, simAtText, nextSendTime, weekSummary, weekOf,
+  outcomeText, outcomeGroup, stopText, matchesPerson, previewLines, simAtText, nextSendTime, weekSummary, weekOf, skippedWait, SKIPPED_WAIT_TEXT,
   type SeqDef, type Names, type RunRow, type AutomationRow,
 } from '../../src/lib/waAutomations.ts';
 
@@ -154,6 +154,15 @@ test('formatos: telefone mascarado, datas, busca e prévia', () => {
   assert.equal(fmtDateTime(spT('2026-11-09T23:55')), '09/11 às 23:55');
   assert.ok(matchesPerson('joao', 'João Silva', null) && matchesPerson('8765', null, '5521987651234') && !matchesPerson('maria', 'João', '55'));
   assert.deepEqual(previewLines('Oi!\nTudo bem?\nTerceira linha'), { text: 'Oi!\nTudo bem?', more: true });
+});
+
+test('extensão 2.16.8: selo "⏩ pulou a espera" só para percurso ativo com skip_wait', () => {
+  const base: RunRow = { id: 'x', automation_id: 'a', chat_id: '5521900000000@c.us', node: 'w', status: 'ativo', created_at: new Date().toISOString() };
+  assert.equal(SKIPPED_WAIT_TEXT, '⏩ pulou a espera');
+  assert.equal(skippedWait({ ...base, skip_wait: true }), true);
+  assert.equal(skippedWait({ ...base, skip_wait: false }), false);
+  assert.equal(skippedWait({ ...base, skip_wait: null }), false);
+  assert.equal(skippedWait({ ...base, skip_wait: true, status: 'fim' }), false);
 });
 
 let ok = 0;

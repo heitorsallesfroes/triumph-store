@@ -1165,6 +1165,46 @@
     }
     return null;
   }
+  // 2.16.8: "Pular espera" já clicado (skip_wait): quando o envio deve sair, com as mesmas regras do motor — faixa da
+  // etapa + horário da automação (nextSendTime), "Pausar tudo", limite do dia (geral e o da régua), limite por hora
+  // (janela de 60 min: volta quando o envio mais antigo dela completar 1 h) e o intervalo médio entre contatos.
+  // position = lugar aproximado na fila de envio (1 = o próximo). Não manda nada.
+  // → { kind: 'fila' | 'horario' | 'hora' | 'dia' | 'pausado' | 'nunca', at, position, text }
+  const WEEKDAY_SHORT = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+  function seqSkipForecast({ def, window = null, settings, now, position = 1, counts = {}, lastSentAt = null, oldestHourAt = null, sentTodaySeq = null } = {}) {
+    const s = ns(settings);
+    const HOUR = 60 * MIN_MS;
+    const pad = (n) => String(n).padStart(2, '0');
+    const hm = (ms) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+    const day = (ms) => {
+      const d = midnightOf(ms);
+      if (d === midnightOf(now)) return `hoje ${hm(ms)}`;
+      if (d === nextMidnight(midnightOf(now))) return `amanhã ${hm(ms)}`;
+      const x = new Date(ms);
+      return `${WEEKDAY_SHORT[x.getDay()]} ${pad(x.getDate())}/${pad(x.getMonth() + 1)} ${hm(ms)}`;
+    };
+    const back = (ms) => (midnightOf(ms) === midnightOf(now) ? `volta às ${hm(ms)}` : `volta ${day(ms)}`);
+    const pos = Math.max(1, Math.floor(Number(position) || 1));
+    if (s.paused) return { kind: 'pausado', at: null, position: pos, text: 'pausado ("Pausar tudo" ligado)' };
+    const open = nextSendTime(now, def, window, settings);
+    if (open == null) return { kind: 'nunca', at: null, position: pos, text: 'sem horário possível para enviar (confira os horários)' };
+    const lim = scheduleDailyLimit(def);
+    if ((Number(counts.day) || 0) >= s.maxDay || (lim && Number(sentTodaySeq) >= lim)) {
+      const at = nextSendTime(nextMidnight(now), def, window, settings);
+      return { kind: 'dia', at, position: pos, text: `limite do dia — ${at ? back(at) : 'volta amanhã'}` };
+    }
+    if (open > now) return { kind: 'horario', at: open, position: pos, text: `fora do horário — ${day(open)}` };
+    const hourFree = Number.isFinite(Number(oldestHourAt)) && oldestHourAt ? Number(oldestHourAt) + HOUR : now + HOUR;
+    if ((Number(counts.hour) || 0) >= s.maxHour) {
+      const at = nextSendTime(Math.max(now, hourFree), def, window, settings) || hourFree;
+      return { kind: 'hora', at, position: pos, text: `limite por hora — ${back(at)}` };
+    }
+    const avg = ((s.minGapS + s.maxGapS) / 2) * 1000;
+    let eta = Math.max(now, lastSentAt ? Number(lastSentAt) + avg : now) + (pos - 1) * avg;
+    if (pos > s.maxHour - (Number(counts.hour) || 0)) eta = Math.max(eta, hourFree); // não cabe nesta hora
+    eta = nextSendTime(eta, def, window, settings) || eta;
+    return { kind: 'fila', at: eta, position: pos, text: `na fila: ${pos}º · sai por volta de ${midnightOf(eta) === midnightOf(now) ? hm(eta) : day(eta)}` };
+  }
   // ⏳ "Esperar até o próximo [dia] às HH:MM": a próxima vez, DEPOIS do começo da espera
   function pausaUntil(waitStart, n) {
     const m = minOf(n && n.until_time);
@@ -3003,7 +3043,7 @@
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
     WIZARDS, wizardToAutomations, wizardSentence, wizardMinutes, businessMinutesPerDay, validateAutomationDraft,
-    seqIndex, seqStep, seqValidate, seqFromEntry, sinceEntryText, seqEntryOrderWarnings, seqSendSteps, seqManualPlan, seqManualForecast, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
+    seqIndex, seqStep, seqValidate, seqFromEntry, sinceEntryText, seqEntryOrderWarnings, seqSendSteps, seqManualPlan, seqManualForecast, seqSkipForecast, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
     seqNormalize, seqInsert, seqRemove, seqExcluded, seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
     itemUsageLines, itemInUse, friendlyDeleteError, // 2.13.1
     scheduleSpec, nextSendTime, pausaUntil, scheduleDailyLimit, scheduleOutsideCommon, scheduleSentence, scheduleProblems, untilText, windowText, daysText, // 2.13.2
