@@ -2204,7 +2204,7 @@
           const unit = ['minutos', 'horas', 'dias'].includes(n.unit) ? n.unit : 'horas';
           const out = n.mode === 'ate'
             ? { id: n.id, type: 'pausa', mode: 'ate', until_day: n.until_day === 'qualquer' || n.until_day == null || n.until_day === '' ? 'qualquer' : intIn(Number(n.until_day), 0, 6, `${w}: dia da semana`), until_time: checkHM(n.until_time, `${w}: a hora (HH:MM)`) }
-            : { id: n.id, type: 'pausa', amount: intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`), unit };
+            : { id: n.id, type: 'pausa', amount: intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`), unit, ...(n.from === 'entrada' ? { from: 'entrada' } : {}) }; // 2.16.0: desde a entrada
           if (n.send_window) out.send_window = checkWindow(n.send_window, `${w}: "enviar só entre"`);
           return out;
         }
@@ -2213,7 +2213,8 @@
           if (depth > 5) throw new Error('Sequência: no máximo 5 esperas uma dentro da outra');
           const unit = ['minutos', 'horas', 'dias'].includes(n.unit) ? n.unit : 'horas';
           const amount = intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`);
-          return { id: n.id, type: 'esperar', amount, unit, ...(n.after_mine === true ? { after_mine: true } : {}),
+          // 2.16.0: "desde a entrada" (from) fica guardado; com ele não vale "da minha última mensagem"
+          return { id: n.id, type: 'esperar', amount, unit, ...(n.from === 'entrada' ? { from: 'entrada' } : n.after_mine === true ? { after_mine: true } : {}),
             ...(n.send_window ? { send_window: checkWindow(n.send_window, `${w}: "enviar só entre"`) } : {}), // 2.13.2
             yes: walk(n.yes || [], depth + 1, `${w} (respondeu)`), no: walk(n.no || [], depth + 1, `${w} (não respondeu)`) };
         }

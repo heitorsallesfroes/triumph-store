@@ -313,6 +313,20 @@ test('servidor: a sequência do modelo salva (kind "sequencia"); passo sem mensa
   bad.steps[0].no[0].item_id = '';
   await assert.rejects(a.saveAutomation({ automation: { ...row, sequence: bad } }), /escolha a mensagem/);
 });
+test('servidor: "desde a entrada" (from) fica guardado ao salvar (⏳ e ❓); sem from continua "depois da anterior"', async () => {
+  const { a, calls } = api();
+  const def = JSON.parse(JSON.stringify(E.seqTemplate('lead_followup')));
+  const fill = (list) => list.forEach((n) => { if (n.type === 'enviar') n.item_id = F1; if (n.type === 'etiqueta') n.label_id = TAG; if (n.type === 'esperar') { fill(n.yes); fill(n.no); } });
+  fill(def.steps);
+  def.steps[0].no.push({ id: 'pz', type: 'pausa', amount: 5, unit: 'dias', from: 'entrada' }, { id: 'px', type: 'pausa', amount: 1, unit: 'dias' });
+  def.steps[0].no[1].after_mine = true; // com from, "da minha mensagem" não vale
+  await a.saveAutomation({ automation: { kind: 'sequencia', name: 'Lead', sequence: def } });
+  const seq = calls.find((x) => x.method === 'POST' && x.path === 'wa_automations').body.sequence;
+  const w1 = seq.steps[0];
+  const w2 = w1.no[1];
+  assert.deepStrictEqual([w1.from, w1.after_mine, w2.from, w2.after_mine, w2.no[1].from], [undefined, true, 'entrada', undefined, 'entrada']);
+  assert.deepStrictEqual(w1.no.slice(2).map((n) => [n.id, n.from || null]), [['pz', 'entrada'], ['px', null]]);
+});
 
 (async () => {
   let ok = 0;
