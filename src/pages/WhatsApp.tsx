@@ -4,6 +4,7 @@ import { MessageCircle } from 'lucide-react';
 import WaPanel from '../components/whatsapp/WaPanel';
 import WaTracking from '../components/whatsapp/WaTracking';
 import WaResults from '../components/whatsapp/WaResults';
+import WaAutomations from '../components/whatsapp/WaAutomations';
 
 // Página WhatsApp do ERP: só os resultados. Mensagens, etiquetas, clientes no CRM, automações (inclusive o
 // pós-venda) e conversões ficam na extensão do WhatsApp Web. As tabelas e os dados das telas antigas
@@ -11,8 +12,9 @@ import WaResults from '../components/whatsapp/WaResults';
 const ORANGE = '#f97316';
 // ERP 09/11: cada aba responde uma pergunta — Painel (como estou?), Rastreamento (de onde vêm e onde estão as
 // conversas, como o Tintim) e Resultados (meus follow-ups funcionam?)
-type PageTab = 'painel' | 'rastreamento' | 'resultados';
-const PAGE_TABS: [PageTab, string][] = [['painel', 'Painel'], ['rastreamento', 'Rastreamento'], ['resultados', 'Resultados']];
+// ⚡ Automações (só leitura): cada automação, cada etapa e quem está em cada etapa
+type PageTab = 'painel' | 'rastreamento' | 'resultados' | 'automacoes';
+const PAGE_TABS: [PageTab, string][] = [['painel', 'Painel'], ['rastreamento', 'Rastreamento'], ['resultados', 'Resultados'], ['automacoes', '⚡ Automações']];
 
 export default function WhatsApp() {
   // sub-aba no endereço (?aba=rastreamento): o F5 volta para ela
@@ -41,6 +43,7 @@ export default function WhatsApp() {
         {pageTab === 'painel' && <WaPanel />}
         {pageTab === 'rastreamento' && <WaTracking />}
         {pageTab === 'resultados' && <WaResults />}
+        {pageTab === 'automacoes' && <WaAutomations />}
       </div>
     </div>
   );

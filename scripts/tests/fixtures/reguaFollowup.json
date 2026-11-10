@@ -1,0 +1,288 @@
+{
+ "start": {
+  "type": "etiqueta",
+  "source": "crm",
+  "label_id": "f9a864ef-e036-498e-b106-d8f70ad95758"
+ },
+ "steps": [
+  {
+   "id": "nmw9zkl491o",
+   "no": [
+    {
+     "id": "nmw9zeafm1a",
+     "type": "enviar",
+     "item_id": "2f564cdb-5bc5-48c9-9681-6a32336d3f41"
+    },
+    {
+     "id": "nmw9zu4pv1t",
+     "op": "colocar",
+     "type": "etiqueta",
+     "source": "crm",
+     "label_id": "29d65d49-92e5-4025-95eb-307165282306",
+     "remove_others": true
+    },
+    {
+     "id": "nmw9zeafm1b",
+     "no": [
+      {
+       "id": "nmw9zeafm1e",
+       "type": "enviar",
+       "item_id": "21119a80-55a6-4099-a797-23d325e5df6f"
+      },
+      {
+       "id": "nmw9zz0sf2x",
+       "op": "colocar",
+       "type": "etiqueta",
+       "source": "crm",
+       "label_id": "e9f9cde1-722a-4dbb-8c02-0c3b50b8bc25",
+       "remove_others": true
+      },
+      {
+       "id": "nmw9zeafm1f",
+       "no": [
+        {
+         "id": "nmw9zeafm1i",
+         "type": "enviar",
+         "item_id": "f29ef1c7-cbfa-470c-847d-324859dca399"
+        },
+        {
+         "id": "nmwa00avk35",
+         "op": "colocar",
+         "type": "etiqueta",
+         "source": "crm",
+         "label_id": "fb75baf1-0c8c-4ebc-b689-f56184b83896",
+         "remove_others": true
+        },
+        {
+         "id": "nmw9zeafm1j",
+         "no": [
+          {
+           "id": "nmwa01sqm3l",
+           "type": "enviar",
+           "item_id": "c9dd1cc8-2082-4f16-8d24-422d5ac5b17e"
+          },
+          {
+           "id": "nmw9zeafm1m",
+           "op": "colocar",
+           "type": "etiqueta",
+           "source": "crm",
+           "label_id": "151434f5-15d2-432f-9236-4ad2dcb520d8",
+           "remove_others": true
+          },
+          {
+           "id": "nmwa02hkt3u",
+           "no": [
+            {
+             "id": "nmwa04nmt59",
+             "type": "enviar",
+             "item_id": "0daca7d3-23c7-4b0e-9cf5-ef2400f7c01d"
+            },
+            {
+             "id": "nmwa05ho95p",
+             "op": "colocar",
+             "type": "etiqueta",
+             "source": "crm",
+             "label_id": "9a2fbfce-d57d-40e9-9310-66dd78b2461e",
+             "remove_others": true
+            },
+            {
+             "id": "nmwa2z7tk0",
+             "no": [
+              {
+               "id": "nmwa31rbt1",
+               "type": "enviar",
+               "item_id": "28a7ad8e-a8fe-4e9d-86b3-bfa29326850d"
+              },
+              {
+               "id": "nmwa329cq3",
+               "no": [
+                {
+                 "id": "nmwa32jdd4",
+                 "op": "colocar",
+                 "type": "etiqueta",
+                 "source": "crm",
+                 "label_id": "f95c8d90-6eac-4e2b-81e7-3eaca0da8af3",
+                 "remove_others": true
+                },
+                {
+                 "id": "nmwa33xwyf",
+                 "type": "fim"
+                }
+               ],
+               "yes": [
+                {
+                 "id": "nmwa32xyb6",
+                 "op": "colocar",
+                 "type": "etiqueta",
+                 "source": "crm",
+                 "label_id": "7383a110-8d09-474a-80d3-573a2c2d1998"
+                },
+                {
+                 "id": "nmwa33xwye",
+                 "type": "fim"
+                }
+               ],
+               "from": "entrada",
+               "type": "esperar",
+               "unit": "dias",
+               "amount": 30
+              }
+             ],
+             "yes": [
+              {
+               "id": "nmwa32sg75",
+               "op": "colocar",
+               "type": "etiqueta",
+               "source": "crm",
+               "label_id": "7383a110-8d09-474a-80d3-573a2c2d1998"
+              },
+              {
+               "id": "nmwa33xwyd",
+               "type": "fim"
+              }
+             ],
+             "from": "entrada",
+             "type": "esperar",
+             "unit": "dias",
+             "amount": 25
+            }
+           ],
+           "yes": [
+            {
+             "id": "nmwa02zdb44",
+             "op": "colocar",
+             "type": "etiqueta",
+             "source": "crm",
+             "label_id": "7383a110-8d09-474a-80d3-573a2c2d1998"
+            },
+            {
+             "id": "nmwa0cgbg6f",
+             "type": "fim"
+            }
+           ],
+           "from": "entrada",
+           "type": "esperar",
+           "unit": "dias",
+           "amount": 15
+          }
+         ],
+         "yes": [
+          {
+           "id": "nmw9zeafm1k",
+           "op": "colocar",
+           "type": "etiqueta",
+           "source": "crm",
+           "label_id": "7383a110-8d09-474a-80d3-573a2c2d1998"
+          },
+          {
+           "id": "nmw9zeafm1l",
+           "type": "fim"
+          }
+         ],
+         "from": "entrada",
+         "type": "esperar",
+         "unit": "dias",
+         "amount": 7
+        }
+       ],
+       "yes": [
+        {
+         "id": "nmw9zeafm1g",
+         "op": "colocar",
+         "type": "etiqueta",
+         "source": "crm",
+         "label_id": "7383a110-8d09-474a-80d3-573a2c2d1998"
+        },
+        {
+         "id": "nmw9zeafm1h",
+         "type": "fim"
+        }
+       ],
+       "from": "entrada",
+       "type": "esperar",
+       "unit": "dias",
+       "amount": 3
+      }
+     ],
+     "yes": [
+      {
+       "id": "nmw9zeafm1c",
+       "op": "colocar",
+       "type": "etiqueta",
+       "source": "crm",
+       "label_id": "7383a110-8d09-474a-80d3-573a2c2d1998"
+      },
+      {
+       "id": "nmw9zeafm1d",
+       "type": "fim"
+      }
+     ],
+     "from": "entrada",
+     "type": "esperar",
+     "unit": "dias",
+     "amount": 1
+    }
+   ],
+   "yes": [
+    {
+     "id": "nmw9zvzs128",
+     "op": "colocar",
+     "type": "etiqueta",
+     "source": "crm",
+     "label_id": "7383a110-8d09-474a-80d3-573a2c2d1998"
+    },
+    {
+     "id": "nmwa0cgbg6e",
+     "type": "fim"
+    }
+   ],
+   "from": "entrada",
+   "type": "esperar",
+   "unit": "horas",
+   "amount": 3
+  }
+ ],
+ "business": false,
+ "schedule": {
+  "mode": "personalizado",
+  "week": [
+   [],
+   [
+    {
+     "end": "18:00",
+     "start": "09:00"
+    }
+   ],
+   [
+    {
+     "end": "18:00",
+     "start": "09:00"
+    }
+   ],
+   [
+    {
+     "end": "18:00",
+     "start": "09:00"
+    }
+   ],
+   [
+    {
+     "end": "18:00",
+     "start": "09:00"
+    }
+   ],
+   [
+    {
+     "end": "18:00",
+     "start": "09:00"
+    }
+   ],
+   [
+    {
+     "end": "14:00",
+     "start": "09:00"
+    }
+   ]
+  ]
+ }
+}
