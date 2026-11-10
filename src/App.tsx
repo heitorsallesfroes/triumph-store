@@ -8,7 +8,7 @@ import SalesHistory from './pages/SalesHistory';
 import Motoboys from './pages/Motoboys';
 import Logistics from './pages/Logistics';
 import Marketing from './pages/Marketing';
-import AdManager from './pages/AdManager';
+import AdDashboard from './pages/AdDashboard'; // Gerenciador novo (a versão antiga fica dentro dele)
 import WhatsApp from './pages/WhatsApp';
 import Settings from './pages/Settings';
 import OperationalCosts from './pages/OperationalCosts';
@@ -109,7 +109,7 @@ function App() {
       case 'marketing':
         return <Marketing />;
       case 'ad-manager':
-        return <AdManager />;
+        return <AdDashboard />;
       case 'whatsapp':
         return <WhatsApp />;
       case 'costs':

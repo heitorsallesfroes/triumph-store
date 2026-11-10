@@ -1,0 +1,94 @@
+// Leitura do Gerenciador de Anúncios novo (FASE 1, SÓ LEITURA). Nada aqui grava no ERP, exceto as suas metas na chave
+// "ads_goals" de system_config (só essa chave). O token da Meta fica na edge function ad-manager (action "dashboard").
+// Cache de 5 minutos por período (o botão Atualizar ignora o cache).
+import { supabase } from './supabase';
+import { loadTracking, type TrackLoad } from './waTrackingDb';
+import { DEFAULT_GOALS, goalsJson, metaFetchWindow, parseGoals, type Goals, type MetaCreative, type MetaDaily, type MetaPeriod, type SaleCost, type Window } from './adInsights';
+
+const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
+const SUPABASE_URL = env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = env.VITE_SUPABASE_ANON_KEY || '';
+export const CACHE_MS = 5 * 60 * 1000;
+export const GOALS_KEY = 'ads_goals';
+
+async function callAdManager<T>(body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/ad-manager`, {
+    method: 'POST', headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  let data: { success?: boolean; error?: string } & Record<string, unknown>;
+  try { data = await res.json(); } catch { throw new Error('A função ad-manager não respondeu'); }
+  if (!data || !data.success) throw new Error((data && data.error) || 'Erro ao ler a Meta');
+  return data as unknown as T;
+}
+
+const cache = new Map<string, { at: number; value: unknown }>();
+async function cached<T>(key: string, fresh: boolean, run: () => Promise<T>): Promise<T> {
+  const hit = cache.get(key);
+  if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.value as T;
+  const value = await run();
+  cache.set(key, { at: Date.now(), value });
+  return value;
+}
+export const cacheAge = (key: string): number | null => { const h = cache.get(key); return h ? h.at : null; };
+
+// ── Meta ──
+export interface MetaLoad { daily: MetaDaily[]; period: MetaPeriod[] }
+export function loadMeta(r: { cur: Window; prev: Window }, fresh = false): Promise<MetaLoad> {
+  const w = metaFetchWindow(r);
+  return cached(`meta|${w.since}|${w.until}|${w.periodSince}`, fresh, async () => {
+    const d = await callAdManager<{ daily: MetaDaily[]; period: MetaPeriod[] }>({ action: 'dashboard', part: 'metrics', ...w });
+    return { daily: d.daily || [], period: d.period || [] };
+  });
+}
+export function loadCreatives(ids: string[], fresh = false): Promise<MetaCreative[]> {
+  const list = [...new Set(ids.filter((id) => /^\d{5,25}$/.test(id)))].sort();
+  if (!list.length) return Promise.resolve([]);
+  return cached(`criativos|${list.join(',')}`, fresh, async () => (await callAdManager<{ ads: MetaCreative[] }>({ action: 'dashboard', part: 'creatives', ids: list })).ads || []);
+}
+
+// ── ERP: conversas/vendas (a carga do Rastreamento) do período anterior até o fim do atual ──
+export function loadErp(r: { cur: Window; prev: Window }, fresh = false): Promise<TrackLoad> {
+  const w = { from: r.prev.from, to: r.cur.to, fromDay: r.prev.fromDay, toDay: r.cur.toDay, days: r.prev.days + r.cur.days };
+  return cached(`erp|${w.fromDay}|${w.toDay}`, fresh, () => loadTracking(w));
+}
+
+// custo do produto (total_cost − entrega) e modelos vendidos de cada venda, em lotes
+export async function loadSaleCosts(ids: string[]): Promise<Map<string, SaleCost>> {
+  const out = new Map<string, SaleCost>();
+  const list = [...new Set(ids.filter(Boolean))];
+  for (let i = 0; i < list.length; i += 150) {
+    const part = list.slice(i, i + 150);
+    const [salesRes, itemsRes] = await Promise.all([
+      supabase.from('sales').select('id, total_cost, delivery_fee, delivery_cost').in('id', part),
+      supabase.from('sale_items').select('sale_id, quantity, products(model, color, category)').in('sale_id', part),
+    ]);
+    const items = (itemsRes.data || []) as unknown as { sale_id: string; quantity: number; products: { model?: string; color?: string; category?: string } | null }[];
+    ((salesRes.data || []) as unknown as { id: string; total_cost: number | null; delivery_fee: number | null; delivery_cost: number | null }[]).forEach((s) => {
+      const n = (v: unknown) => Number(v || 0);
+      const cost = s.total_cost == null ? null : Math.max(0, n(s.total_cost) - n(s.delivery_fee) - n(s.delivery_cost));
+      out.set(s.id, { id: s.id, productCost: cost, models: [] });
+    });
+    items.forEach((it) => {
+      const s = out.get(it.sale_id);
+      const p = it.products;
+      if (!s || !p || (p.category && p.category !== 'smartwatch')) return;
+      const name = [p.model, p.color].filter(Boolean).join(' - ') || 'Produto';
+      const cur = s.models.find((m) => m.name === name);
+      if (cur) cur.qty += Number(it.quantity) || 1; else s.models.push({ name, qty: Number(it.quantity) || 1 });
+    });
+  }
+  return out;
+}
+
+// ── Metas (system_config "ads_goals": lê e grava SÓ essa chave) ──
+export async function loadGoals(): Promise<{ goals: Goals; saved: boolean }> {
+  try {
+    const { data } = await supabase.from('system_config').select('key, value').eq('key', GOALS_KEY).maybeSingle();
+    const raw = data && (data as { value?: string }).value;
+    return raw ? { goals: parseGoals(raw), saved: true } : { goals: { ...DEFAULT_GOALS }, saved: false };
+  } catch { return { goals: { ...DEFAULT_GOALS }, saved: false }; }
+}
+export async function saveGoals(g: Goals): Promise<void> {
+  const { error } = await supabase.from('system_config').upsert({ key: GOALS_KEY, value: goalsJson(g), updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+}

@@ -33,6 +33,83 @@ Deno.serve(async (req: Request) => {
       return ok({ success: true, permissions: permData, object: objData });
     }
 
+    // ── DASHBOARD (Gerenciador novo, FASE 1: SÓ LEITURA, só GET na Meta) ───────
+    // part "metrics": insights por anúncio da conta inteira, um por dia (time_increment=1), + alcance/frequência do
+    // período. part "creatives": nome, status, miniatura, vídeo e link de prévia dos anúncios pedidos.
+    if (action === "dashboard") {
+      const DAY = /^\d{4}-\d{2}-\d{2}$/;
+      const getAll = async (url: string, maxPages = 40): Promise<any[]> => {
+        const out: any[] = [];
+        let next: string | null = url;
+        for (let i = 0; next && i < maxPages; i++) {
+          const r = await fetch(next);
+          const d = await r.json();
+          if (d.error) throw new Error(d.error.message);
+          out.push(...(d.data || []));
+          next = d.paging && d.paging.next ? d.paging.next : null;
+        }
+        return out;
+      };
+      const num = (v: unknown) => { const n = parseFloat(String(v ?? "0")); return Number.isFinite(n) ? n : 0; };
+      const act = (arr: any[] | undefined, types: string[]) => Math.max(0, ...(arr || []).filter((a: any) => types.includes(a.action_type)).map((a: any) => num(a.value)));
+      const CONVERSA = ["onsite_conversion.messaging_conversation_started_7d"];
+      const COMPRA = ["purchase", "offsite_conversion.fb_pixel_purchase", "omni_purchase", "onsite_web_purchase"];
+
+      if (body.part === "creatives") {
+        const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).filter((id: string) => /^\d{5,25}$/.test(id)).slice(0, 300);
+        const ads: any[] = [];
+        const videos = new Map<string, string>();
+        const fields = "id,name,effective_status,preview_shareable_link,creative.thumbnail_width(480).thumbnail_height(480){thumbnail_url,image_url,video_id,object_type}";
+        for (let i = 0; i < ids.length; i += 50) {
+          const r = await fetch(`${BASE}/?ids=${ids.slice(i, i + 50).join(",")}&fields=${encodeURIComponent(fields)}&access_token=${FB_TOKEN}`);
+          const d = await r.json();
+          if (d.error) throw new Error(d.error.message);
+          Object.values(d || {}).forEach((a: any) => ads.push(a));
+        }
+        // vídeo: o link do arquivo (sem token); sem permissão para ler o vídeo, fica só a miniatura
+        const vids = [...new Set(ads.map((a) => a.creative && a.creative.video_id).filter(Boolean))].slice(0, 100);
+        for (let i = 0; i < vids.length; i += 50) {
+          try {
+            const r = await fetch(`${BASE}/?ids=${vids.slice(i, i + 50).join(",")}&fields=source&access_token=${FB_TOKEN}`);
+            const d = await r.json();
+            if (!d.error) Object.values(d || {}).forEach((v: any) => { if (v && v.id && v.source) videos.set(String(v.id), String(v.source)); });
+          } catch { /* sem vídeo */ }
+        }
+        return ok({
+          success: true,
+          ads: ads.map((a) => {
+            const cr = a.creative || {};
+            return {
+              id: String(a.id), name: a.name || null, status: a.effective_status || null,
+              thumbnail_url: cr.thumbnail_url || null, image_url: cr.image_url || null,
+              is_video: !!cr.video_id || cr.object_type === "VIDEO", video_url: cr.video_id ? videos.get(String(cr.video_id)) || null : null,
+              preview_url: a.preview_shareable_link || null,
+            };
+          }),
+        });
+      }
+
+      const { since, until, periodSince } = body as { since: string; until: string; periodSince?: string };
+      if (!DAY.test(since || "") || !DAY.test(until || "") || since > until) throw new Error("Período inválido");
+      const pSince = periodSince && DAY.test(periodSince) && periodSince >= since ? periodSince : since;
+      const fieldsDaily = "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,reach,frequency,cpm,ctr,actions";
+      const tr = (a: string, b: string) => encodeURIComponent(JSON.stringify({ since: a, until: b }));
+      const [daily, period] = await Promise.all([
+        getAll(`${BASE}/${FB_ACCOUNT}/insights?level=ad&time_increment=1&fields=${fieldsDaily}&time_range=${tr(since, until)}&limit=500&access_token=${FB_TOKEN}`),
+        getAll(`${BASE}/${FB_ACCOUNT}/insights?level=ad&fields=ad_id,reach,frequency,impressions&time_range=${tr(pSince, until)}&limit=500&access_token=${FB_TOKEN}`),
+      ]);
+      return ok({
+        success: true, since, until, periodSince: pSince,
+        daily: daily.map((r: any) => ({
+          ad_id: String(r.ad_id), ad_name: r.ad_name || null, adset_id: r.adset_id || null, adset_name: r.adset_name || null,
+          campaign_id: r.campaign_id || null, campaign_name: r.campaign_name || null, date: r.date_start,
+          spend: num(r.spend), impressions: num(r.impressions), clicks: num(r.inline_link_clicks || r.clicks), reach: num(r.reach),
+          frequency: num(r.frequency), conversations: act(r.actions, CONVERSA), purchases: act(r.actions, COMPRA),
+        })),
+        period: period.map((r: any) => ({ ad_id: String(r.ad_id), reach: num(r.reach), frequency: num(r.frequency), impressions: num(r.impressions) })),
+      });
+    }
+
     // ── TOGGLE STATUS ──────────────────────────────────────────────────────────
     if (action === "toggle") {
       const { objectId, targetStatus } = body as { objectId: string; targetStatus: "ACTIVE" | "PAUSED" };
