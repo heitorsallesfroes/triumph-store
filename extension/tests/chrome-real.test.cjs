@@ -1263,7 +1263,7 @@ async function main() {
     const red = await q(`const v = sh.querySelector('.vb'); const b = v.querySelector('.vb-box.vb-bad'); return { bad: v.querySelectorAll('.vb-box.vb-bad').length, txt: b ? b.querySelector('.vb-berr').textContent : '', border: b ? getComputedStyle(b).borderTopColor : '',
       msg: (v.querySelector('.vb-msg.err') || {}).textContent || '', modal: !!v.querySelector('.vb-modal') };`);
     check('caixa incompleta: borda vermelha e "Escolha ou crie a mensagem."; não abre a confirmação de ligar',
-      red.bad === 1 && red.txt === 'Escolha ou crie a mensagem.' && /rgb\(220, 38, 38\)/.test(red.border) && /Escolha ou crie a mensagem/.test(red.msg) && !red.modal && (fake.db.wa_automations || []).length === nAutos, JSON.stringify(red));
+      red.bad === 1 && red.txt === 'Escolha ou crie a mensagem.' && /rgb\(220, 38, 38\)/.test(red.border) && /^Para ligar, falta 1 item:.*: escolha ou crie a mensagem$/.test(red.msg) /* 2.16.3: lista do que falta */ && !red.modal && (fake.db.wa_automations || []).length === nAutos, JSON.stringify(red));
     await shot('caixa-incompleta.png');
     await q(`sh.querySelector('.vb .vb-side .vb-del').click(); await wait(200); return true;`);
     // 2.14.1: no topo só Salvar desligada · Salvar e ligar · Fechar (+ "⋯"); Simular e Testar comigo no "⋯"
@@ -1875,6 +1875,74 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console nas réguas por dia desde a entrada', errors.length === 0, errors.slice(0, 8).join(' | '));
+    // 23. rascunho (2.16.3): régua com uma ✉ sem mensagem. "Salvar e ligar" e "Testar comigo" mostram a lista do que
+    // falta (e não ligam); "Fechar" pergunta Salvar como rascunho / Descartar / Continuar editando; o rascunho salva
+    // desligado, a lista mostra "RASCUNHO · falta 1 item" com o interruptor bloqueado e a dica; abrir de novo já mostra
+    // a caixa em vermelho; "Salvar desligada" salva de novo; Descartar não muda nada.
+    fake.on = true;
+    fake.generic = true;
+    const NM23 = 'Rascunho do teste 23';
+    const row23 = () => (fake.db.wa_automations || []).filter((a) => a.name === NM23);
+    await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(200); sh.querySelector('[data-sec="vendas"]').click(); await wait(200); sh.querySelector('[data-sec="follows"]').click(); await wait(300); return true;`);
+    await waitFor(`return !!sh.querySelector('.fw-new');`, 15000);
+    await q(`sh.querySelector('.fw-new').click(); await wait(300); sh.querySelector('.vb [data-tpl="followup3"]').click(); await wait(300);
+      const n = sh.querySelector('.vb .vb-name'); n.value = '${NM23}'; n.dispatchEvent(new Event('input', { bubbles: true }));
+      sh.querySelector('.vb .vb-plus').click(); await wait(150); sh.querySelector('.vb .vb-menu .vb-mi-enviar').click(); await wait(200);
+      sh.querySelector('.vb .vb-save-on').click(); await wait(300); return true;`);
+    const on23 = await q(`const v = sh.querySelector('.vb'); const m = v.querySelector('.vb-msg.err');
+      return { msg: m ? m.firstChild.textContent : '', items: [...v.querySelectorAll('.vb-msg.err .vb-missing li')].map((x) => x.textContent), bad: v.querySelectorAll('.vb-box.vb-bad').length,
+        side: v.querySelector('.vb-side .vb-sh').textContent, modal: !!v.querySelector('.vb-modal'), seen: (() => { const b = v.querySelector('.vb-box.vb-bad'); const c = v.querySelector('.vb-canvas'); if (!b || !c) return false; const r = b.getBoundingClientRect(); const k = c.getBoundingClientRect(); return r.top >= k.top - 1 && r.bottom <= k.bottom + 1; })() };`);
+    check('2.16.3: "Salvar e ligar" incompleta: "Para ligar, falta 1 item:" com a lista ("Mensagem N: escolha ou crie a mensagem"), rola até a caixa vermelha e não liga',
+      on23.msg === 'Para ligar, falta 1 item:' && on23.items.length === 1 && /^Mensagem \d: escolha ou crie a mensagem$/.test(on23.items[0]) && on23.bad === 1 && on23.side === '✉ ENVIAR MENSAGEM' && !on23.modal && on23.seen && row23().length === 0,
+      JSON.stringify(on23));
+    await shot('rascunho-falta.png');
+    await q(`const t = sh.querySelector('.vb .vb-tr'); t.querySelector('.more-btn').click(); await wait(150); t.querySelector('.more-menu .vb-test').click(); await wait(300); return true;`);
+    const test23 = await q(`const v = sh.querySelector('.vb'); const m = v.querySelector('.vb-msg.err'); return { msg: m ? m.firstChild.textContent : '', n: v.querySelectorAll('.vb-missing li').length, modal: !!v.querySelector('.vb-modal') };`);
+    check('2.16.3: "Testar comigo" incompleta: "Para testar, falta 1 item:" e não abre o teste', test23.msg === 'Para testar, falta 1 item:' && test23.n === 1 && !test23.modal, JSON.stringify(test23));
+    await q(`sh.querySelector('.vb .vb-close').click(); await wait(250); return true;`);
+    const close23 = await q(`const m = sh.querySelector('.vb .vb-m-close'); return m ? { head: m.querySelector('.vb-sh').textContent, btns: [...m.querySelectorAll('button')].map((b) => b.textContent) } : null;`);
+    check('2.16.3: "Fechar" com alterações pergunta "Salvar como rascunho / Descartar / Continuar editando"',
+      !!close23 && close23.head === 'Você tem alterações não salvas' && JSON.stringify(close23.btns) === '["Salvar como rascunho","Descartar","Continuar editando"]', JSON.stringify(close23));
+    await shot('rascunho-fechar.png');
+    await q(`sh.querySelector('.vb .vb-close-keep').click(); await wait(200); return true;`);
+    const kept23 = await q(`return !!sh.querySelector('.vb') && !sh.querySelector('.vb .vb-modal');`);
+    await q(`sh.querySelector('.vb .vb-close').click(); await wait(250); sh.querySelector('.vb .vb-close-save').click(); return true;`);
+    await waitFor(`return !sh.querySelector('.vb');`, 15000);
+    const r23 = row23();
+    const flat23 = [];
+    const walk23 = (list) => (list || []).forEach((n) => { flat23.push(n); if (n.type === 'esperar') { walk23(n.yes); walk23(n.no); } });
+    walk23(r23[0] && r23[0].sequence && r23[0].sequence.steps);
+    check('2.16.3: "Salvar como rascunho" salva desligada mesmo incompleta (a ✉ sem mensagem fica vazia; as outras e o "desde a entrada" ficam)',
+      kept23 && r23.length === 1 && r23[0].active === false && flat23.filter((n) => n.type === 'enviar' && !n.item_id).length === 1 && flat23.filter((n) => n.type === 'enviar' && n.item_id).length === 3
+      && flat23.filter((n) => n.type === 'esperar').every((n) => n.from === 'entrada'), JSON.stringify({ kept23, rows: r23.length, active: r23[0] && r23[0].active, flat: flat23.map((n) => [n.type, n.item_id || n.from || null]) }));
+    const card23 = `[...sh.querySelectorAll('.fw-card')].find((c) => (c.querySelector('.fw-name') || {}).textContent === '${NM23}')`;
+    await waitFor(`return !!${card23};`, 15000);
+    const list23 = await q(`const c = ${card23}; const sw = c.querySelector('.fw-switch'); const badge = c.querySelector('.fw-badge'); const tip = c.querySelector('.fw-draft-tip');
+      const r = { badge: badge.textContent, bg: getComputedStyle(badge).backgroundColor, dis: sw.disabled, title: sw.title, tip: tip ? tip.textContent : '' };
+      sw.click(); await wait(300); r.activating = !!c.querySelector('.fw-activation, .act-box') || /Ligar agora|Confirmar/.test(c.textContent); return r;`);
+    check('2.16.3: lista: selo "RASCUNHO · falta 1 item", interruptor bloqueado com a dica do que falta (e não liga)',
+      list23.badge === 'RASCUNHO · falta 1 item' && list23.bg === 'rgb(254, 249, 195)' && list23.dis && /^Complete antes de ligar: Mensagem \d: escolha ou crie a mensagem$/.test(list23.title)
+      && /^Para ligar, complete: Mensagem \d: escolha ou crie a mensagem\. Toque em Editar\.$/.test(list23.tip) && !list23.activating && row23()[0].active === false, JSON.stringify(list23));
+    await shot('rascunho-lista.png');
+    await q(`const c = ${card23}; c.querySelector('.fw-edit').click(); await wait(400); return true;`);
+    const reopen23 = await q(`const v = sh.querySelector('.vb'); return v ? { bad: v.querySelectorAll('.vb-box.vb-bad').length, txt: ((v.querySelector('.vb-box.vb-bad .vb-berr') || {}).textContent || '') } : null;`);
+    check('2.16.3: abrir o rascunho de novo: a caixa incompleta já aparece com borda vermelha', !!reopen23 && reopen23.bad === 1 && reopen23.txt === 'Escolha ou crie a mensagem.', JSON.stringify(reopen23));
+    const nm23b = `${NM23} v2`;
+    await q(`const n = sh.querySelector('.vb .vb-name'); n.value = '${nm23b}'; n.dispatchEvent(new Event('input', { bubbles: true })); sh.querySelector('.vb .vb-save-off').click(); return true;`);
+    await waitFor(`return !sh.querySelector('.vb');`, 15000);
+    const saved23 = (fake.db.wa_automations || []).filter((a) => a.name === nm23b);
+    const flash23 = await q(`return [...sh.querySelectorAll('.flash, .toast, .ed-msg')].map((x) => x.textContent).join(' | ');`);
+    check('2.16.3: "Salvar desligada" com caixa incompleta salva (rascunho, a mesma automação) e avisa quantos itens faltam',
+      saved23.length === 1 && saved23[0].id === r23[0].id && saved23[0].active === false && row23().length === 0 && /Rascunho salvo \(desligado\): falta 1 item para poder ligar\./.test(flash23), JSON.stringify({ n: saved23.length, flash23 }));
+    const card23b = `[...sh.querySelectorAll('.fw-card')].find((c) => (c.querySelector('.fw-name') || {}).textContent === '${nm23b}')`;
+    await waitFor(`return !!${card23b};`, 15000);
+    await q(`const c = ${card23b}; c.querySelector('.fw-edit').click(); await wait(400); const n = sh.querySelector('.vb .vb-name'); n.value = 'Outro nome'; n.dispatchEvent(new Event('input', { bubbles: true }));
+      sh.querySelector('.vb .vb-close').click(); await wait(250); sh.querySelector('.vb .vb-discard').click(); await wait(300); return true;`);
+    const disc23 = { open: await q(`return !!sh.querySelector('.vb');`), names: (fake.db.wa_automations || []).filter((a) => a.id === r23[0].id).map((a) => a.name) };
+    check('2.16.3: "Descartar" fecha sem salvar (o nome não muda)', !disc23.open && JSON.stringify(disc23.names) === JSON.stringify([nm23b]), JSON.stringify(disc23));
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console no rascunho', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

@@ -302,7 +302,7 @@ test('painel: "Pular espera" e "Tirar da automação" gravam só com a versão a
   assert.deepStrictEqual([p[0].body.skip_wait, p[0].body.version], [true, 4]);
   assert.deepStrictEqual([p[1].body.status, p[1].body.outcome, !!p[1].body.ended_at], ['saiu', 'manual', true]);
 });
-test('servidor: a sequência do modelo salva (kind "sequencia"); passo sem mensagem é recusado', async () => {
+test('servidor: a sequência do modelo salva (kind "sequencia"); passo sem mensagem: desligada vira rascunho, ligada é recusada (2.16.3)', async () => {
   const { a, calls } = api();
   const def = leadFollowup();
   const row = { kind: 'sequencia', name: 'Lead', sequence: def };
@@ -311,7 +311,44 @@ test('servidor: a sequência do modelo salva (kind "sequencia"); passo sem mensa
   assert.deepStrictEqual([post.kind, post.trigger_type, post.active, post.sequence.start.type, post.sequence.steps[0].after_mine], ['sequencia', 'sequencia', false, 'lead', true]);
   const bad = JSON.parse(JSON.stringify(def));
   bad.steps[0].no[0].item_id = '';
-  await assert.rejects(a.saveAutomation({ automation: { ...row, sequence: bad } }), /escolha a mensagem/);
+  await assert.rejects(a.saveAutomation({ automation: { ...row, active: true, sequence: bad } }), /escolha a mensagem/);
+  await assert.rejects(a.saveAutomation({ automation: { ...row, test_chat_id: '5511999990000@c.us', sequence: bad } }), /escolha a mensagem/, 'em teste = ligada');
+  // 2.16.3: desligada = rascunho: salva com a mensagem vazia (e nome "Rascunho" se vier sem nome)
+  const before = calls.length;
+  await a.saveAutomation({ automation: { ...row, name: '  ', sequence: bad } });
+  const draft = calls.slice(before).find((x) => x.method === 'POST' && x.path === 'wa_automations').body;
+  assert.deepStrictEqual([draft.active, draft.name, draft.sequence.steps[0].no[0].item_id], [false, 'Rascunho', '']);
+  // o formato continua conferido mesmo no rascunho
+  const broken = JSON.parse(JSON.stringify(bad));
+  broken.steps[0].no[0].type = 'xpto';
+  await assert.rejects(a.saveAutomation({ automation: { ...row, sequence: broken } }), /tipo inválido/);
+});
+test('servidor (2.16.3): ligar pelo interruptor um rascunho incompleto é recusado; completo liga', async () => {
+  const ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const incomplete = JSON.parse(JSON.stringify(leadFollowup()));
+  incomplete.steps[0].no[0].item_id = '';
+  let stored = incomplete;
+  const patches = [];
+  const res = (status, body) => ({ ok: status < 300, status, json: async () => body, text: async () => JSON.stringify(body) });
+  const fetch = async (url, init = {}) => {
+    const p = url.replace('https://x.supabase.co/rest/v1/', '');
+    const method = init.method || 'GET';
+    if (method === 'GET' && p.startsWith(`wa_automations?select=*&id=eq.${ID}`)) return res(200, [{ id: ID, kind: 'sequencia', sequence: stored }]);
+    if (method === 'PATCH' && p.startsWith('wa_automations')) { patches.push(JSON.parse(init.body)); return res(200, [{ id: ID, active: true }]); }
+    if (method === 'GET' && /select=activated_at|limit=0|select=id,activated_at/.test(p)) return res(200, []);
+    return res(200, []);
+  };
+  const c = vm.createContext({ console, setTimeout, clearTimeout, Intl, URL, Promise, fetch, WA_CONFIG: { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_ANON_KEY: 'k' } });
+  vm.runInContext(src('rich-parts.js'), c);
+  vm.runInContext(src('supabase-api.js'), c);
+  await assert.rejects(c.WaApi.setAutomationActive({ id: ID, active: true }), /Complete a automação antes de ligar \(.*escolha a mensagem\)/);
+  assert.strictEqual(patches.length, 0, 'não ligou');
+  stored = leadFollowup();
+  const r = await c.WaApi.setAutomationActive({ id: ID, active: true });
+  assert.deepStrictEqual([r.active, patches.length, patches[0].active], [true, 1, true]);
+  stored = incomplete;
+  await c.WaApi.setAutomationActive({ id: ID, active: false }); // desligar nunca é bloqueado
+  assert.strictEqual(patches.length, 2);
 });
 test('servidor: "desde a entrada" (from) fica guardado ao salvar (⏳ e ❓); sem from continua "depois da anterior"', async () => {
   const { a, calls } = api();

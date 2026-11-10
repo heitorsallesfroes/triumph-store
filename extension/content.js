@@ -1402,6 +1402,10 @@
       .cv-dup { border: 1px solid var(--warn); }
       /* ═══ 2.8.8: automações só daqui pra frente ═══ */
       .fw-badge.test { background: var(--warn-soft); color: var(--warn); }
+      .fw-badge.draft { background: #fef9c3; color: #854d0e; } /* 2.16.3 */
+      .fw-switch:disabled { opacity: .45; cursor: not-allowed; }
+      .fw-draft-tip { color: #854d0e; }
+      .vb-missing { margin: 4px 0 0; padding-left: 18px; font-weight: 600; }
       .act-box { gap: var(--s-2); border-color: var(--accent); }
       .act-count { font-weight: 600; color: var(--fg); }
       /* 2.12.6: ligar/desligar mais simples */
@@ -8218,9 +8222,20 @@
     sw.setAttribute('aria-label', `${a.active ? 'Desligar' : 'Ligar'} ${a.name}`);
     sw.title = a.active ? 'Desligar' : 'Ligar';
     sw.addEventListener('click', () => toggleAutomation(a));
-    head.append(sw, el('span', 'fw-name', a.name), el('span', `fw-badge${a.active ? ' on' : ''}`, a.active ? 'LIGADA' : 'DESLIGADA'));
+    // 2.16.3: rascunho incompleto (desligado): selo "RASCUNHO · faltam N itens" e o interruptor não liga
+    const missing = !a.active && a.kind === 'sequencia' ? vbMissing({ def: a.sequence || {}, name: a.name }) : [];
+    if (missing.length) {
+      sw.disabled = true;
+      sw.classList.add('fw-switch-off');
+      sw.title = `Complete antes de ligar: ${missing.join('; ')}`;
+      sw.setAttribute('aria-label', `${a.name}: rascunho, complete antes de ligar`);
+    }
+    head.append(sw, el('span', 'fw-name', a.name), missing.length
+      ? el('span', 'fw-badge draft', `RASCUNHO · falta${missing.length === 1 ? '' : 'm'} ${missing.length} ite${missing.length === 1 ? 'm' : 'ns'}`)
+      : el('span', `fw-badge${a.active ? ' on' : ''}`, a.active ? 'LIGADA' : 'DESLIGADA'));
     if (a.test_chat_id) head.append(el('span', 'fw-badge test', 'EM TESTE')); // 2.8.8
     card.append(head);
+    if (missing.length) card.append(el('div', 'crm-intro fw-draft-tip', `Para ligar, complete: ${missing.join('; ')}. Toque em Editar.`));
     if (a.test_chat_id) card.append(el('div', 'crm-intro', `Em teste: roda só para ${testChatLabel(a.test_chat_id)}; ignora todos os outros.`));
     const ign = fl.stats && fl.stats.ignored ? fl.stats.ignored[a.id] : null; // 2.12.5
     if (Number.isFinite(ign)) card.append(el('div', 'crm-intro fw-ignored', `Ignorados por já estarem na etiqueta: ${ign}`));
@@ -9008,6 +9023,7 @@
       wasActive: !!(a && a.id && a.active), testOn: !!(a && a.test_chat_id), test_chat_id: (a && a.test_chat_id) || '', include: !!(a && a.include_existing),
       sel: def ? 'start' : null, zoom: 1, insert: null, triedSave: false, invalid: [], msg: '', err: false, existing: null, existingKey: '', modal: null, dirty: false, saving: false,
     };
+    if (a && !a.active && def && vbProblems(vb.f).length) vb.f.showErrors = true; // 2.16.3: rascunho continua em vermelho
     if (!Array.isArray(state.waLabels)) refreshBar().then(() => { if (vb.f) vbRender(); }).catch(() => {});
     vbRender();
   }
@@ -9028,7 +9044,23 @@
     return out;
   }
   const vbBad = (f, id) => (f.triedSave || f.showErrors ? (f.invalid || []).filter((x) => x.node === id).map((x) => x.msg) : []);
-  function vbStartText(st) {
+  // 2.16.3: "Follow 3: escolha ou crie a mensagem" — nome da caixa (a sugestão do modelo, "Mensagem 2"…) + o que falta
+  function vbMissing(f, probs) {
+    const def = f.def || {};
+    const list = probs || vbProblems(f);
+    const sends = [...E.seqIndex(def).values()].filter((e) => e.node.type === 'enviar').map((e) => e.node.id);
+    const titleOf = (id) => {
+      if (id === 'name') return 'Nome';
+      if (id === 'start') return 'COMEÇA';
+      const e = E.seqIndex(def).get(id);
+      if (!e) return 'Caixa';
+      const n = e.node;
+      if (n.type === 'enviar') return n.hint || (n.item_id ? itemTitle(n.item_id) : `Mensagem ${sends.indexOf(n.id) + 1}`);
+      return (VB_TYPES[n.type] || { title: n.type }).title;
+    };
+    const low = (t) => String(t).charAt(0).toLowerCase() + String(t).slice(1).replace(/\.$/, '');
+    return list.map((x) => `${titleOf(x.node)}: ${low(x.msg)}`);
+  }  function vbStartText(st) {
     if (!st || !st.type) return 'Escolha quando começa';
     return `Começa ${seqStartText(st)}`;
   }
@@ -9134,7 +9166,11 @@
     top.append(left, right);
     const wrap = el('div', 'vb-topwrap');
     wrap.append(top);
-    if (f.msg) wrap.append(el('div', `vb-msg${f.err ? ' err' : ''}`, f.msg));
+    if (f.msg) {
+      const m = el('div', `vb-msg${f.err ? ' err' : ''}`, f.msg);
+      if (f.err && f.missing && f.missing.length) { const ul = el('ul', 'vb-missing'); f.missing.forEach((t) => ul.append(el('li', null, t))); m.append(ul); }
+      wrap.append(m);
+    }
     return wrap;
   }
   function vbTemplatesEl(f) {
@@ -9682,9 +9718,11 @@
   function vbCheck(f) {
     f.showErrors = true;
     f.invalid = vbProblems(f);
-    if (!f.invalid.length) { f.msg = ''; f.err = false; return true; }
+    if (!f.invalid.length) { f.msg = ''; f.err = false; f.missing = null; return true; }
     const n = f.invalid.length;
-    f.msg = n === 1 ? f.invalid[0].msg : `${f.invalid[0].msg} (e mais ${n - 1} marcado${n === 2 ? '' : 's'} em vermelho)`;
+    // 2.16.3: a lista do que falta ("Follow 3: escolha ou crie a mensagem"); a 1ª caixa vermelha fica à vista
+    f.missing = vbMissing(f, f.invalid);
+    f.msg = `Para ${f.checkFor || 'ligar'}, falta${n === 1 ? '' : 'm'} ${n} ite${n === 1 ? 'm' : 'ns'}:`;
     f.err = true;
     const firstNode = f.invalid.find((x) => x.node !== 'name');
     if (firstNode) f.sel = firstNode.node;
@@ -9695,6 +9733,7 @@
   }
   function vbAskOn(mode) {
     const f = vb.f;
+    f.checkFor = 'ligar';
     if (!vbCheck(f)) return;
     f.modal = { kind: 'on', mode };
     vbRender();
@@ -9703,6 +9742,7 @@
   }
   async function vbAskTest() {
     const f = vb.f;
+    f.checkFor = 'testar';
     if (!vbCheck(f)) return;
     f.modal = { kind: 'test' };
     vbRender();
@@ -9722,9 +9762,13 @@
     const close = () => { f.modal = null; vbRender(); };
     back.addEventListener('click', (e) => { if (e.target === back && !f.saving) close(); });
     if (f.modal.kind === 'close') {
-      m.append(el('div', 'vb-sh', 'Fechar sem salvar?'), el('div', 'vb-sub', 'As mudanças que você fez aqui vão se perder.'));
+      // 2.16.3: salvar como rascunho (desligada, mesmo incompleta) · descartar · continuar editando
+      m.append(el('div', 'vb-sh', 'Você tem alterações não salvas'), el('div', 'vb-sub', f.wasActive
+        ? 'Salve para manter (ela continua ligada; precisa estar completa) ou descarte as mudanças.'
+        : 'Salve como rascunho (fica desligada, mesmo incompleta, e você termina depois) ou descarte as mudanças.'));
       const row = el('div', 'ed-add');
-      row.append(fbtn('bbtn primary vb-discard', 'Fechar sem salvar', () => vbClose(true)), fbtn('bbtn', 'Continuar editando', close));
+      row.append(fbtn('bbtn primary vb-close-save', f.wasActive ? 'Salvar (continua ligada)' : 'Salvar como rascunho', () => vbSave(f.wasActive ? 'keep' : 'off')),
+        fbtn('bbtn vb-discard', 'Descartar', () => vbClose(true)), fbtn('bbtn vb-close-keep', 'Continuar editando', close));
       m.append(row);
     } else if (f.modal.kind === 'sim') {
       m.append(el('div', 'vb-sh', 'Simular'), el('div', 'vb-sub', `O que aconteceria com uma pessoa que entra agora, com a data e a hora previstas de cada envio (horário da automação, faixas das etapas e esperas). ${E.scheduleSentence(f.def, motor.state.settings)}. Os limites gerais podem atrasar um pouco. Nada é enviado.`));
@@ -9784,7 +9828,18 @@
   async function vbSave(mode) {
     const f = vb.f;
     if (!f || f.saving) return;
-    if (!vbCheck(f)) { if (f.modal && f.modal.kind !== 'close') f.modal = null; vbRender(); return; }
+    // 2.16.3: "Salvar desligada" / "Salvar e desligar" / "Salvar como rascunho" sempre salvam (rascunho)
+    const draft = mode === 'off' || (mode === 'keep' && !f.wasActive);
+    let missingN = 0;
+    if (draft) {
+      f.showErrors = true;
+      f.invalid = vbProblems(f);
+      missingN = f.invalid.length;
+      if (f.modal && f.modal.kind === 'close') f.modal = null;
+    } else {
+      f.checkFor = mode === 'test' ? 'testar' : mode === 'keep' ? 'salvar ligada' : 'ligar';
+      if (!vbCheck(f)) { if (f.modal) f.modal = null; vbRender(); return; }
+    }
     let active = f.wasActive;
     let testOn = f.testOn;
     if (mode === 'off') active = false;
@@ -9803,12 +9858,12 @@
       if (def.start.label_id) def.start.label_id = fake[0].trigger_label_id;
       E.seqIndex(def).forEach(({ node: n }) => { if (n.hint) delete n.hint; });
       const base = active && !testOn ? await baselineWaLabel({ kind: 'sequencia', sequence: def }).catch(() => null) : null; // 2.12.5
-      const saved = await call('saveAutomation', { id: f.id || undefined, automation: { kind: 'sequencia', name: f.name.trim(), active, sequence: def, test_chat_id: testOn ? f.test_chat_id : null }, includeExisting: include });
+      const saved = await call('saveAutomation', { id: f.id || undefined, automation: { kind: 'sequencia', name: f.name.trim() || (draft ? 'Rascunho' : ''), active, sequence: def, test_chat_id: testOn ? f.test_chat_id : null }, includeExisting: include });
       if (mode === 'todos') await call('setAutomationActive', { id: (saved && saved.id) || f.id, active: true, includeExisting: include });
       await motor.loadAutomations();
       fl.statsAt = 0;
       flash({
-        off: 'Automação salva (desligada).', test: 'Ligada EM TESTE: só a conversa escolhida recebe.',
+        off: missingN ? `Rascunho salvo (desligado): falta${missingN === 1 ? '' : 'm'} ${missingN} ite${missingN === 1 ? 'm' : 'ns'} para poder ligar.` : 'Automação salva (desligada).', test: 'Ligada EM TESTE: só a conversa escolhida recebe.',
         on: include ? 'Automação ligada (incluindo quem já estava na etiqueta).' : `Automação ligada: vale para quem se encaixar daqui pra frente.${baselineText(base)}`,
         todos: include ? 'Ligada para todos (incluindo quem já estava na etiqueta).' : `Ligada para todos: vale daqui pra frente.${baselineText(base)}`,
         keep: active ? 'Automação salva (continua ligada).' : 'Automação salva.',

@@ -799,6 +799,24 @@ guardada.
 
 ## O que mudou
 
+### 2.16.3 — salvar automação incompleta como rascunho
+- **"Salvar desligada" sempre salva**, mesmo com caixas incompletas (ex.: ✉ ENVIAR MENSAGEM sem mensagem): vira
+  **rascunho** desligado. As caixas incompletas continuam com borda vermelha (também ao abrir o rascunho de novo).
+  Sem nome, salva como "Rascunho". O aviso diz quantos itens faltam.
+- **Ligar exige tudo completo**: "Salvar e ligar", "Testar comigo" e "Salvar" de uma automação ligada mostram
+  **"Para ligar, faltam N itens:"** com a lista ("Follow 3: escolha ou crie a mensagem") e rolam até a 1ª caixa vermelha.
+- **Lista de automações**: rascunho incompleto mostra o selo **"RASCUNHO · faltam N itens"**, o interruptor fica
+  bloqueado (a dica mostra o que falta) e aparece "Para ligar, complete: …".
+- **"Fechar" com alterações não salvas** pergunta **Salvar como rascunho / Descartar / Continuar editando** (numa
+  automação ligada: "Salvar (continua ligada)", que precisa estar completa).
+- **Servidor**: sequência desligada (e sem conversa de teste) aceita o que falta escolher vazio (mensagem, etiqueta,
+  destino, tempo); o formato continua conferido. Ligar pelo interruptor confere a sequência guardada e recusa
+  rascunho incompleto ("Complete a automação antes de ligar (…)").
+- Também nesta leva (correção da 2.16.0): ao salvar, o `from: 'entrada'` das caixas ⏳/❓ agora fica guardado (antes o
+  servidor descartava e a régua voltava a contar "depois da etapa anterior").
+- Testes: `sequence.test.cjs` (rascunho aceito desligado, recusado ligado/em teste, ligar rascunho recusado) e o
+  Chrome real (passo 23).
+
 ### 2.16.2 — "depois que a pessoa ENTROU" como padrão
 - **Caixa nova** ⏳ ESPERAR (modo "esperar um tempo") e ❓ ESPERAR RESPOSTA já vem com "Contar o tempo" =
   **depois que a pessoa ENTROU na automação** (`from: 'entrada'`).

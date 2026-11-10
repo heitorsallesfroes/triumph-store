@@ -2161,7 +2161,10 @@
 
   // ── 2.12.0: validação da sequência (o painel valida antes; aqui é a última barreira) ──
   const SEQ_ID_RE = /^[a-z0-9]{1,40}$/i;
-  function checkSequence(seq) {
+  // 2.16.3: draft = rascunho DESLIGADO: o que falta escolher (mensagem, etiqueta, destino do "Continuar em", tempo)
+  // fica vazio em vez de recusar; o formato (ids, tipos, limites) continua conferido. Ligar exige tudo completo.
+  function checkSequence(seq, { draft = false } = {}) {
+    const opt = (fn, empty) => { if (!draft) return fn(); try { return fn(); } catch { return empty; } };
     const q = seq && typeof seq === 'object' ? seq : {};
     const st = q.start && typeof q.start === 'object' ? q.start : {};
     if (!['lead', 'etiqueta', 'venda', 'manual'].includes(st.type)) throw new Error('Sequência: escolha quem entra');
@@ -2169,15 +2172,15 @@
     if (st.type === 'lead') start.origin = ['todos', 'anuncio', 'organico'].includes(st.origin) ? st.origin : 'todos';
     if (st.type === 'etiqueta' || (st.type === 'venda' && st.label_id)) {
       start.source = st.source === 'whatsapp' && st.type === 'etiqueta' ? 'whatsapp' : 'crm';
-      if (start.source === 'whatsapp') start.wa_label_id = checkWaLabel(st.wa_label_id, 'Sequência: escolha a etiqueta do WhatsApp de quem entra');
-      else start.label_id = checkUuid(st.label_id, 'Sequência: escolha a etiqueta de quem entra');
+      if (start.source === 'whatsapp') start.wa_label_id = opt(() => checkWaLabel(st.wa_label_id, 'Sequência: escolha a etiqueta do WhatsApp de quem entra'), '');
+      else start.label_id = opt(() => checkUuid(st.label_id, 'Sequência: escolha a etiqueta de quem entra'), '');
     }
     // 2.13.0: "Nunca para quem tem a etiqueta" (o Não enviar vale sempre, não precisa estar aqui)
     if (Array.isArray(st.exclude) && st.exclude.length) {
       if (st.exclude.length > 20) throw new Error('Sequência: no máximo 20 etiquetas em "Nunca para quem tem"');
       start.exclude = st.exclude.map((x) => (x && x.source === 'whatsapp'
-        ? { source: 'whatsapp', wa_label_id: checkWaLabel(x.wa_label_id, 'Sequência: escolha a etiqueta do WhatsApp de "Nunca para quem tem"') }
-        : { source: 'crm', label_id: checkUuid(x && x.label_id, 'Sequência: escolha a etiqueta de "Nunca para quem tem"') }));
+        ? { source: 'whatsapp', wa_label_id: opt(() => checkWaLabel(x.wa_label_id, 'Sequência: escolha a etiqueta do WhatsApp de "Nunca para quem tem"'), '') }
+        : { source: 'crm', label_id: opt(() => checkUuid(x && x.label_id, 'Sequência: escolha a etiqueta de "Nunca para quem tem"'), '') }));
     }
     const ids = new Set();
     let count = 0;
@@ -2189,13 +2192,13 @@
         const w = `${what}, passo ${i + 1}`;
         if (!n || typeof n !== 'object' || typeof n.id !== 'string' || !SEQ_ID_RE.test(n.id) || ids.has(n.id)) throw new Error(`${w}: identificador inválido`);
         ids.add(n.id);
-        if (n.type === 'enviar') return { id: n.id, type: 'enviar', item_id: checkUuid(n.item_id, `${w}: escolha a mensagem`) };
+        if (n.type === 'enviar') return { id: n.id, type: 'enviar', item_id: opt(() => checkUuid(n.item_id, `${w}: escolha a mensagem`), '') };
         if (n.type === 'etiqueta') {
           const op = n.op === 'tirar' ? 'tirar' : 'colocar';
           const source = n.source === 'whatsapp' ? 'whatsapp' : 'crm';
           const out = { id: n.id, type: 'etiqueta', op, source };
-          if (source === 'whatsapp') out.wa_label_id = checkWaLabel(n.wa_label_id, `${w}: escolha a etiqueta do WhatsApp`);
-          else out.label_id = checkUuid(n.label_id, `${w}: escolha a etiqueta`);
+          if (source === 'whatsapp') out.wa_label_id = opt(() => checkWaLabel(n.wa_label_id, `${w}: escolha a etiqueta do WhatsApp`), '');
+          else out.label_id = opt(() => checkUuid(n.label_id, `${w}: escolha a etiqueta`), '');
           if (op === 'colocar' && n.remove_others === true) out.remove_others = true;
           return out;
         }
@@ -2204,7 +2207,7 @@
           const unit = ['minutos', 'horas', 'dias'].includes(n.unit) ? n.unit : 'horas';
           const out = n.mode === 'ate'
             ? { id: n.id, type: 'pausa', mode: 'ate', until_day: n.until_day === 'qualquer' || n.until_day == null || n.until_day === '' ? 'qualquer' : intIn(Number(n.until_day), 0, 6, `${w}: dia da semana`), until_time: checkHM(n.until_time, `${w}: a hora (HH:MM)`) }
-            : { id: n.id, type: 'pausa', amount: intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`), unit, ...(n.from === 'entrada' ? { from: 'entrada' } : {}) }; // 2.16.0: desde a entrada
+            : { id: n.id, type: 'pausa', amount: opt(() => intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`), 0), unit, ...(n.from === 'entrada' ? { from: 'entrada' } : {}) }; // 2.16.0: desde a entrada
           if (n.send_window) out.send_window = checkWindow(n.send_window, `${w}: "enviar só entre"`);
           return out;
         }
@@ -2212,7 +2215,7 @@
           // até 5 "esperar resposta" um dentro do outro (o 5º ainda pode ter caixas nos caminhos)
           if (depth > 5) throw new Error('Sequência: no máximo 5 esperas uma dentro da outra');
           const unit = ['minutos', 'horas', 'dias'].includes(n.unit) ? n.unit : 'horas';
-          const amount = intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`);
+          const amount = opt(() => intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`), 0);
           // 2.16.0: "desde a entrada" (from) fica guardado; com ele não vale "da minha última mensagem"
           return { id: n.id, type: 'esperar', amount, unit, ...(n.from === 'entrada' ? { from: 'entrada' } : n.after_mine === true ? { after_mine: true } : {}),
             ...(n.send_window ? { send_window: checkWindow(n.send_window, `${w}: "enviar só entre"`) } : {}), // 2.13.2
@@ -2224,8 +2227,8 @@
       });
     };
     const steps = walk(q.steps, 1, 'Sequência');
-    if (!steps.length) throw new Error('Sequência: adicione pelo menos um passo');
-    gotos.forEach(([to, w]) => { if (!ids.has(to)) throw new Error(`${w}: escolha para onde continuar`); });
+    if (!steps.length && !draft) throw new Error('Sequência: adicione pelo menos um passo');
+    if (!draft) gotos.forEach(([to, w]) => { if (!ids.has(to)) throw new Error(`${w}: escolha para onde continuar`); });
     // 2.13.2: horário de envio da automação (geral ou personalizado) e limite próprio por dia
     const sc = q.schedule && typeof q.schedule === 'object' ? q.schedule : null;
     let schedule;
@@ -2372,9 +2375,11 @@
     const a = input || {};
     // 2.12.0: sequência (trigger 'sequencia'; os passos ficam em sequence)
     if (a.kind === 'sequencia') {
-      const sequence = checkSequence(a.sequence);
+      // 2.16.3: desligada e sem conversa de teste = pode ser rascunho incompleto (ligar confere tudo)
+      const draft = a.active !== true && (a.test_chat_id == null || a.test_chat_id === '');
+      const sequence = checkSequence(a.sequence, { draft });
       return {
-        name: cleanText(a.name, 60, 'Nome da automação'), active: a.active === true, kind: 'sequencia', sequence,
+        name: draft && !String(a.name || '').trim() ? 'Rascunho' : cleanText(a.name, 60, 'Nome da automação'), active: a.active === true, kind: 'sequencia', sequence,
         trigger_type: 'sequencia', trigger_label_source: 'crm', trigger_wa_label_id: null, trigger_label_id: null,
         wait_minutes: null, schedule_days: null, schedule_time: null, ignore_older_days: 15, conditions: [], actions: [],
         test_chat_id: a.test_chat_id == null || a.test_chat_id === '' ? null : (typeof a.test_chat_id === 'string' && SCHED_CHAT_RE.test(a.test_chat_id) ? a.test_chat_id : (() => { throw new Error('Escolha a conversa de teste'); })()),
@@ -2471,6 +2476,13 @@
     if (typeof active !== 'boolean') throw new Error('Valor inválido');
     // 2.8.8: ligar = vale daqui pra frente (sem as colunas novas, não deixa ligar)
     if (active && !(await automationsV288())) throw new Error(ENGINE_MISSING);
+    // 2.16.3: rascunho incompleto não liga (o painel já bloqueia; aqui é a última barreira)
+    if (active) {
+      const cur = await autoRest(`wa_automations?select=*&id=eq.${id}`);
+      if (cur.length && cur[0].kind === 'sequencia') {
+        try { checkSequence(cur[0].sequence); } catch (e) { throw new Error(`Complete a automação antes de ligar (${String(e.message).replace(/^Sequência: /, '')})`); }
+      }
+    }
     const patchRow = active ? { active, activated_at: new Date().toISOString(), include_existing: includeExisting === true } : { active };
     const rows = await autoRest(`wa_automations?id=eq.${id}`, json('PATCH', 'return=representation', patchRow));
     return { active: rows.length ? rows[0].active : null };

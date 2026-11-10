@@ -350,7 +350,11 @@ test('servidor: salva a régua normalizada, com ⏳, "Nunca para quem tem" e at�
   const deep = (d) => [{ id: `w${d}`, type: 'esperar', amount: 1, unit: 'horas', yes: [{ id: `y${d}`, type: 'etiqueta', op: 'colocar', source: 'crm', label_id: ATEND }], no: d > 1 ? deep(d - 1) : [{ id: 'last', type: 'enviar', item_id: F[0] }] }];
   await a.saveAutomation({ automation: { kind: 'sequencia', name: '5 níveis', sequence: { start: { type: 'lead' }, steps: deep(5) } } }); // o 5º ainda tem caixas nos caminhos
   await assert.rejects(a.saveAutomation({ automation: { kind: 'sequencia', name: '6', sequence: { start: { type: 'lead' }, steps: deep(6) } } }), /no máximo 5/);
-  await assert.rejects(a.saveAutomation({ automation: { kind: 'sequencia', name: 'x', sequence: { ...def, start: { ...def.start, exclude: [{ source: 'crm', label_id: '' }] } } } }), /Nunca para quem tem/);
+  await assert.rejects(a.saveAutomation({ automation: { kind: 'sequencia', name: 'x', active: true, sequence: { ...def, start: { ...def.start, exclude: [{ source: 'crm', label_id: '' }] } } } }), /Nunca para quem tem/);
+  // 2.16.3: desligada = rascunho: a etiqueta de "Nunca para quem tem" ainda não escolhida fica vazia
+  await a.saveAutomation({ automation: { kind: 'sequencia', name: 'x', sequence: { ...def, start: { ...def.start, exclude: [{ source: 'crm', label_id: '' }] } } } });
+  const draft = calls.filter((x) => x.method === 'POST' && x.path === 'wa_automations').pop().body;
+  assert.deepStrictEqual([draft.active, draft.sequence.start.exclude], [false, [{ source: 'crm', label_id: '' }]]);
 });
 
 (async () => {
