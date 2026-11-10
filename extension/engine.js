@@ -2496,11 +2496,12 @@
     async function seqEnter(seqs) {
       const items = [];
       // 2.16.0: enteredAt = quando a pessoa ENTROU (conta o "até X depois de entrar")
-      const add = (a, chatId, key, contactId, enteredAt) => {
+      // 2.16.7: + o telefone (o servidor não cria outro percurso para a mesma pessoa em outra conversa)
+      const add = (a, chatId, key, contactId, enteredAt, phone = null) => {
         if (!chatId || (a.test_chat_id && chatId !== a.test_chat_id)) return;
         const k = `${a.id}|${chatId}|${key}`;
         if (seqKnown.has(k)) return;
-        items.push({ automation_id: a.id, chat_id: chatId, entry_key: key, contact_id: contactId || null, node: seqIndexFirst(a.sequence), entered_at: Number.isFinite(enteredAt) ? enteredAt : null });
+        items.push({ automation_id: a.id, chat_id: chatId, entry_key: key, contact_id: contactId || null, node: seqIndexFirst(a.sequence), entered_at: Number.isFinite(enteredAt) ? enteredAt : null, ...(typeof phone === 'string' && phone ? { phone } : {}) });
         seqKnown.add(k);
       };
       const since = (a) => msOf(a.activated_at); // só daqui pra frente (sem ativação: ninguém entra)
@@ -2508,7 +2509,7 @@
       if (leadSeqs.length) {
         let leads = [];
         try { leads = await api('seqLeads', { since: new Date(Math.min(...leadSeqs.map(since))).toISOString() }); } catch { leads = []; }
-        leadSeqs.forEach((a) => (leads || []).forEach((l) => { if (msOf(l.first_message_at) >= since(a) && seqStartMatches(a.sequence.start, l)) add(a, l.chat_id, 'lead', null, msOf(l.first_message_at)); }));
+        leadSeqs.forEach((a) => (leads || []).forEach((l) => { if (msOf(l.first_message_at) >= since(a) && seqStartMatches(a.sequence.start, l)) add(a, l.chat_id, 'lead', null, msOf(l.first_message_at), l.phone || null); }));
       }
       const labelSeqs = seqs.filter((a) => a.sequence.start.type === 'etiqueta' && since(a));
       if (labelSeqs.length) {
@@ -2524,7 +2525,7 @@
             const entry = automationEntry(fake, c, { ignoreEnrollment: true });
             if (!entry || !Number.isFinite(entry.at)) return;
             if (!a.include_existing && entry.at < since(a)) return;
-            add(a, chatIdOfContact(c), `lbl:${entry.key}`.slice(0, 120), c.id, entry.at);
+            add(a, chatIdOfContact(c), `lbl:${entry.key}`.slice(0, 120), c.id, entry.at, c.phone || null);
           });
         });
       }
@@ -2535,7 +2536,7 @@
         saleSeqs.forEach((a) => buyers.forEach((c) => {
           if (msOf(c.sale_at) < since(a)) return;
           if (a.sequence.start.label_id && !(c.labelIds || []).includes(a.sequence.start.label_id)) return;
-          add(a, chatIdOfContact(c), `venda@${c.sale_id}`, c.id, msOf(c.sale_at));
+          add(a, chatIdOfContact(c), `venda@${c.sale_id}`, c.id, msOf(c.sale_at), c.phone || null);
         }));
       }
       const manualSeqs = seqs.filter((a) => a.sequence.start.type === 'manual');
@@ -2568,7 +2569,29 @@
       return r && r.ok ? r.run : null;
     }
     // etiquetas da sequência (CRM pelo banco, cria o contato se preciso; WhatsApp pela ponte)
-    async function seqLabelOps(run, ops) {
+    // 2.16.7: CRM pelo contato do PERCURSO (contact_id) primeiro; sem ele, o servidor procura pelo chat_id e pelo
+    // telefone (do @lid: o do cache do WhatsApp). Não achou ninguém → "pulado" no log da automação (não some calado).
+    const LABEL_MISS = 'etiqueta não aplicada: contato não encontrado';
+    async function seqRunPhone(run) {
+      if (run.contact && run.contact.phone) return run.contact.phone;
+      const m = /^(\d{8,15})@c\.us$/.exec(run.chat_id || '');
+      if (m) return m[1];
+      if (!/@lid$/.test(run.chat_id || '') || !deps.wa || typeof deps.wa.chatPhone !== 'function') return null;
+      try { const r = await deps.wa.chatPhone({ chatId: run.chat_id }); return (r && r.phone) || null; } catch { return null; }
+    }
+    async function seqLabelOps(run, ops, automation = null) {
+      let who = null; // { contactId, name, phone }: uma vez por chamada
+      let missLogged = false;
+      const crmCall = async (payload) => {
+        if (!who) who = { contactId: run.contact_id || (run.contact && run.contact.id) || null, name: (run.contact && run.contact.name) || null, phone: await seqRunPhone(run) };
+        const r = await api('saleContactLabels', { chatId: run.chat_id, name: who.name, phone: who.phone, contactId: who.contactId, ...payload });
+        if (r && r.contactId) { who.contactId = r.contactId; return r; }
+        if (!missLogged) {
+          missLogged = true;
+          await logSkip({ source: 'follow', source_id: automation ? automation.id : run.automation_id || null, contact_id: null, chat_id: run.chat_id, item_id: null }, LABEL_MISS);
+        }
+        return null;
+      };
       for (const op of ops || []) {
         try {
           if (op.source === 'whatsapp') {
@@ -2583,12 +2606,11 @@
             }
             continue;
           }
-          const name = run.contact && run.contact.name;
-          if (op.op === 'tirar') { await api('saleContactLabels', { chatId: run.chat_id, name, removeLabelIds: [op.label_id] }); continue; }
-          const r = await api('saleContactLabels', { chatId: run.chat_id, name, addLabelId: op.label_id, removeLabelIds: [] });
+          if (op.op === 'tirar') { await crmCall({ removeLabelIds: [op.label_id] }); continue; }
+          const r = await crmCall({ addLabelId: op.label_id, removeLabelIds: [] });
           if (op.remove_others && r && Array.isArray(r.labelIds)) {
             const others = r.labelIds.filter((l) => l !== op.label_id && l !== st.noSendLabelId);
-            if (others.length) await api('saleContactLabels', { chatId: run.chat_id, name, removeLabelIds: others });
+            if (others.length) await crmCall({ removeLabelIds: others });
           }
         } catch { /* segue: etiqueta não impede o resto */ }
       }
@@ -2662,7 +2684,7 @@
         if (res.status === 'progress') Object.assign(patch, { node: res.node, wait_started_at: res.waitStart, due_at: null });
         else Object.assign(patch, { status: 'fim', outcome: res.outcome, node: null, due_at: null });
         const saved = await seqPatch(r, patch);
-        if (saved) await seqLabelOps(r, res.ops);
+        if (saved) await seqLabelOps(r, res.ops, a);
       }
     }
     async function sequenceJob() {
@@ -2679,7 +2701,7 @@
       const claimed = await seqPatch(run, { node: res.node, wait_started_at: nextIsWait ? t : null, due_at: null, skip_wait: false, branches, last_sent_at: t,
         ...(res.node ? {} : { status: 'fim', outcome: seqOutcome(branches) }) });
       if (!claimed) return;
-      await seqLabelOps(run, res.ops);
+      await seqLabelOps(run, res.ops, automation);
       const entry = { source: 'follow', source_id: automation.id, contact_id: run.contact ? run.contact.id : null, chat_id: run.chat_id, item_id: res.send.itemId };
       const item = res.send.itemId ? await deps.itemById(res.send.itemId) : null;
       if (!item) { await logSkip(entry, 'sem mensagem'); if (res.node) await seqPatch(claimed, { status: 'fim', outcome: 'sem_mensagem' }); return; }

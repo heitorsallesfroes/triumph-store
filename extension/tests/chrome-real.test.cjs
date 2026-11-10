@@ -1891,6 +1891,24 @@ async function main() {
     check('2.16.6: percurso na espera antes do Follow 4 (w3) começando agora, entrada "de há 3 dias", 2 ❌ já tomados; o percurso anterior saiu (reentrou)',
       !!act22b && act22b.node === 'w3' && Math.abs(ago22b - 3) < 0.01 && Math.abs(Date.parse(act22b.wait_started_at) - t22b) < 60000 && act22b.skip_wait === false
       && JSON.stringify((act22b.branches || []).map((b) => b.node)) === '["w1","w2"]' && runs22b.some((r) => r.status === 'saiu' && r.outcome === 'reentrou'), JSON.stringify(runs22b));
+    // 2.16.7: a mesma pessoa com dois @lid. O contato do CRM aponta para 80685…@lid; a conversa aberta é 196980…@lid
+    // (mesmo telefone pelo cache do WhatsApp) → o contato passa para a conversa atual (sem duplicar) e o painel da
+    // conversa mostra o aviso da régua "etiqueta não aplicada (contato não encontrado)" que o motor deixou no log.
+    const LIDA = '80685306003593@lid'; const LIDB = '196980135485500@lid'; const C27 = uuid();
+    fake.db.wa_contacts = [...(fake.db.wa_contacts || []), { id: C27, key: 'tel:5521997520054', name: 'Pessoa Lid', phone: '5521997520054', chat_id: LIDA }];
+    fake.db.wa_send_log = [...(fake.db.wa_send_log || []), { id: uuid(), source: 'follow', source_id: REG, status: 'pulado', chat_id: LIDB, contact_id: null, reason: 'etiqueta não aplicada: contato não encontrado', created_at: new Date().toISOString() }];
+    const nContacts = fake.db.wa_contacts.length;
+    await pg(`window.__fakeBridge = { ...window.__fakeBridge, activeChat: { kind: 'individual', chatId: ${JSON.stringify(LIDB)} }, chatPhone: { phone: '5521997520054', name: 'Pessoa Lid', via: 'lid' } }; return true;`);
+    for (let i = 0; i < 60 && (fake.db.wa_contacts.find((c) => c.id === C27) || {}).chat_id !== LIDB; i++) await new Promise((r) => setTimeout(r, 250));
+    const c27 = fake.db.wa_contacts.find((c) => c.id === C27);
+    check('2.16.7: abrir a conversa 196980…@lid (mesmo telefone do contato com chat_id 80685…@lid) → o contato passa para a conversa atual, sem contato novo',
+      !!c27 && c27.chat_id === LIDB && fake.db.wa_contacts.length === nContacts, JSON.stringify({ c27, n: fake.db.wa_contacts.length, nContacts }));
+    await waitFor(`return !!sh.querySelector('.cseq .cseq-warn');`, 15000);
+    const warn27 = await q(`const w = sh.querySelector('.cseq .cseq-warn'); return w ? w.textContent : null;`);
+    const warnCss27 = await q(`const w = sh.querySelector('.cseq .cseq-warn'); return w ? getComputedStyle(w).backgroundColor : '';`);
+    check('2.16.7: painel da conversa: "⚠ Régua 6 follows: etiqueta não aplicada (contato não encontrado) · dd/mm hh:mm" (amarelo)',
+      typeof warn27 === 'string' && /^⚠ Régua 6 follows: etiqueta não aplicada \(contato não encontrado\) · \d{2}\/\d{2} \d{2}:\d{2}$/.test(warn27) && warnCss27 === 'rgb(254, 249, 195)', JSON.stringify({ warn27, warnCss27 }));
+    await shot('aviso-etiqueta-nao-aplicada.png');
     await pg(`window.__fakeBridge = null; return true;`);
     fake.on = false;
     fake.generic = false;

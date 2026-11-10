@@ -1642,6 +1642,7 @@
       .cseq[hidden] { display: none; }
       .cseq-line { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); flex-wrap: wrap; padding: var(--s-1) var(--s-2); border-radius: var(--r-md); background: var(--accent-soft); font-size: var(--fs-1); font-weight: 600; }
       .cseq-btns { display: inline-flex; gap: var(--s-1); }
+      .cseq-warn { background: #fef9c3; color: #854d0e; } /* 2.16.7: etiqueta da régua não aplicada */
       .cdel { margin: 0 var(--s-3) var(--s-2); display: flex; flex-direction: column; gap: 2px; padding: var(--s-1) var(--s-2); border-radius: var(--r-md); background: var(--bg2); font-size: var(--fs-1); }
       .cdel[hidden] { display: none; }
       .cdel-t { font-weight: 700; color: var(--muted); }
@@ -2532,6 +2533,7 @@
     chatNames.current = chatId;
     loadChatBought(chatId);
     try { loadChatSequence(chatId).catch(() => {}); } catch { /* 2.12.0: ainda iniciando */ }
+    adoptOpenChatId(chatId).catch(() => {});
     try { delLoadChat(chatId).catch(() => {}); } catch { /* 2.15.0: ainda iniciando */ }
     cn.editing = false;
     renderNameRow();
@@ -6661,6 +6663,7 @@
       setChatLabels: (p) => waRequest('setChatLabels', p, { timeout: 15000 }),
       chatLabels: (p) => waRequest('chatLabels', p, { timeout: 5000 }), // 2.12.0: "Todas menos a que vai colocar" (WhatsApp)
       labels: () => waRequest('labels', {}, { timeout: 5000 }), // 2.13.0: o "Não enviar" do WhatsApp nunca sai nem recebe
+      chatPhone: (p) => waRequest('chatPhone', p, { timeout: 4000 }), // 2.16.7: telefone do @lid (cache) para a caixa ETIQUETA
     },
     sendParts: (o) => runSequence(o),
     partsOf: (item) => partsOf(item),
@@ -8782,24 +8785,45 @@
     renderFollows();
   }
 
+  // 2.16.7: abriu a conversa e o telefone dela já tem contato com outro chat_id (outro @lid da mesma pessoa): o contato
+  // passa a apontar para esta conversa (uma vez por conversa nesta aba; nunca cria contato)
+  const adopted = new Set();
+  async function adoptOpenChatId(chatId) {
+    if (!chatId || adopted.has(chatId)) return;
+    adopted.add(chatId);
+    let phone = '';
+    try { const wa = await waRequest('chatPhone', { chatId }, { timeout: 4000 }); phone = String((wa && wa.phone) || '').replace(/\D/g, ''); } catch { phone = ''; }
+    if (!phone) { adopted.delete(chatId); return; }
+    try { await call('adoptChatId', { chatId, phone }); } catch { adopted.delete(chatId); }
+  }
+
   // painel da conversa: "Na automação X · passo: esperando resposta (faltam 1h20)"
-  const cseq = { chatId: null, runs: [], busy: false };
+  const cseq = { chatId: null, runs: [], warns: [], busy: false };
   async function loadChatSequence(chatId) {
     const box = shadow.querySelector('.cseq');
     cseq.chatId = chatId;
     if (!box) return;
-    if (!chatId || motor.state.sequencesAvailable !== true) { box.hidden = true; cseq.runs = []; return; }
+    if (!chatId || motor.state.sequencesAvailable !== true) { box.hidden = true; cseq.runs = []; cseq.warns = []; return; }
     let runs = [];
+    let warns = [];
     try { runs = await call('seqChatRuns', { chatId }); } catch { runs = []; }
+    try { warns = await call('seqLabelWarnings', { chatId }); } catch { warns = []; } // 2.16.7
     if (cseq.chatId !== chatId) return;
     cseq.runs = Array.isArray(runs) ? runs : [];
+    cseq.warns = Array.isArray(warns) ? warns : [];
     renderChatSequence();
   }
   function renderChatSequence() {
     const box = shadow.querySelector('.cseq');
     if (!box) return;
     box.textContent = '';
-    box.hidden = !cseq.runs.length;
+    box.hidden = !cseq.runs.length && !cseq.warns.length;
+    // 2.16.7: a caixa ETIQUETA da régua não achou o contato desta conversa
+    cseq.warns.forEach((w) => {
+      const a = motor.state.automations.find((x) => x.id === w.automation_id);
+      const at = new Date(w.at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+      box.append(el('div', 'cseq-line cseq-warn', `⚠ ${a ? a.name : 'Régua'}: etiqueta não aplicada (contato não encontrado) · ${at}`));
+    });
     cseq.runs.forEach((r) => {
       const def = r.automation.sequence || {};
       const run = { ...r, due_at: Date.parse(r.due_at || '') || null };
@@ -11011,7 +11035,9 @@
       try {
         const plan = E.seqManualPlan(E.seqNormalize(a.sequence), c.step || null, { now: Date.now(), mode: c.mode || 'agora' });
         if (!plan || !plan.node) throw new Error('essa etapa não existe mais');
-        const r = await call('seqManualEnter', { automationId: a.id, chatId: open.chatId, plan, leaveOthers: !!c.step && c.leaveOthers !== false });
+        let phone = ''; // 2.16.7: a mesma pessoa por outro @lid nesta régua também recomeça daqui
+        try { const wa = await waRequest('chatPhone', { chatId: open.chatId }, { timeout: 4000 }); phone = String((wa && wa.phone) || '').replace(/\D/g, ''); } catch { phone = ''; }
+        const r = await call('seqManualEnter', { automationId: a.id, chatId: open.chatId, plan, leaveOthers: !!c.step && c.leaveOthers !== false, ...(phone ? { phone } : {}) });
         const st = c.step ? E.seqSendSteps(E.seqNormalize(a.sequence)).find((s) => s.node === c.step) : null;
         c.msg = `Conversa adicionada a "${a.name}"${st ? ` no Follow ${st.n}${(c.mode || 'agora') === 'agora' ? ' (sai assim que estiver no horário de envio)' : ' (espera o tempo da régua)'}` : ' a partir de agora'}.${r && r.left ? ` Saiu de ${r.left} outra${r.left === 1 ? '' : 's'} régua${r.left === 1 ? '' : 's'}.` : ''}${a.active ? '' : ' A automação está desligada: ligue para rodar.'}`;
         c.err = false;

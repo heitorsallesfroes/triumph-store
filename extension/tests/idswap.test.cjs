@@ -42,12 +42,6 @@ function fakeDb(seed = {}) {
     const prefer = (init.headers && (init.headers.Prefer || init.headers.prefer)) || '';
     const key = `${method} ${table}${u.search.includes('select=kind') ? ' kind' : ''}`;
     if (fail[key] > 0) { fail[key]--; return res(503, { message: 'Service Unavailable' }); }
-    const filters = [];
-    for (const [k, v] of u.searchParams) {
-      if (['select', 'order', 'limit', 'offset', 'on_conflict'].includes(k)) continue;
-      const m = /^(not\.)?(eq|neq|is|in|lt|gte|gt|lte)\.(.*)$/.exec(v);
-      if (m) filters.push([k, !!m[1], m[2], m[3]]);
-    }
     const one = (x, op, val) => {
       if (op === 'eq') return String(x) === val;
       if (op === 'neq') return String(x) !== val;
@@ -57,7 +51,23 @@ function fakeDb(seed = {}) {
       if (op === 'gte') return String(x) >= val;
       return true;
     };
-    const match = (r) => filters.every(([k, neg, op, val]) => one(r[k], op, val) !== neg);
+    // 2.16.7: or=(a.eq.x,and(b.eq.y,c.gte.z))
+    const splitTop = (s) => { const out = []; let d = 0; let cur = ''; for (const ch of s) { if (ch === '(') d++; if (ch === ')') d--; if (ch === ',' && d === 0) { out.push(cur); cur = ''; } else cur += ch; } if (cur) out.push(cur); return out; };
+    const cond = (s) => {
+      const g = /^(and|or)\((.*)\)$/.exec(s);
+      if (g) { const parts = splitTop(g[2]).map(cond); return g[1] === 'and' ? (r) => parts.every((p) => p(r)) : (r) => parts.some((p) => p(r)); }
+      const f = /^(\w+)\.(not\.)?(eq|neq|is|in|lt|gte|gt|lte)\.(.*)$/.exec(s);
+      return f ? (r) => one(r[f[1]], f[3], f[4]) !== !!f[2] : () => true;
+    };
+    const filters = [];
+    const groups = [];
+    for (const [k, v] of u.searchParams) {
+      if (['select', 'order', 'limit', 'offset', 'on_conflict'].includes(k)) continue;
+      if (k === 'or' || k === 'and') { groups.push(cond(`${k}${v}`)); continue; }
+      const m = /^(not\.)?(eq|neq|is|in|lt|gte|gt|lte)\.(.*)$/.exec(v);
+      if (m) filters.push([k, !!m[1], m[2], m[3]]);
+    }
+    const match = (r) => filters.every(([k, neg, op, val]) => one(r[k], op, val) !== neg) && groups.every((g) => g(r));
     const body = init.body ? JSON.parse(init.body) : null;
     if (method === 'HEAD') return res(200, null, tbl(table).filter(match).length);
     if (method === 'GET') {
@@ -116,8 +126,8 @@ function seqDef() {
   return { start: { type: 'etiqueta', source: 'whatsapp', wa_label_id: LABEL }, business: false, steps: [{ id: 'm1', type: 'enviar', item_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }, { id: 'w1', type: 'esperar', amount: 3, unit: 'dias', yes: [{ id: 'f1', type: 'fim' }], no: [{ id: 'f2', type: 'fim' }] }] };
 }
 // motor de verdade: a API é a supabase-api.js de verdade (como o background.js), menos configurações/atividade
-function motorOn(A, { wa }) {
-  const seq = { id: SEQ, name: 'Avaliação Google', active: true, kind: 'sequencia', sequence: seqDef(), activated_at: new Date(Date.now() - 3600 * 1000).toISOString(), include_existing: false, test_chat_id: null };
+function motorOn(A, { wa, def = seqDef() }) {
+  const seq = { id: SEQ, name: 'Avaliação Google', active: true, kind: 'sequencia', sequence: def, activated_at: new Date(Date.now() - 3600 * 1000).toISOString(), include_existing: false, test_chat_id: null };
   const logs = [];
   const api = async (type, p) => {
     if (type === 'getEngineSettings') return { available: true, settings: { ...E.DEFAULT_SETTINGS, paused_all: false, business_days: [0, 1, 2, 3, 4, 5, 6] }, automations: true, sequences: true, automationsV25: true };
@@ -126,8 +136,11 @@ function motorOn(A, { wa }) {
     if (typeof A[type] !== 'function') return null;
     return A[type](p);
   };
-  const motor = E.createMotor({ api, wa, sendParts: async () => ({ status: 'ok', sent: 1 }), partsOf: () => [], itemById: async () => null });
-  return { motor, logs, seq };
+  // 2.16.7: mensagem de verdade (antes: itemById → null = "sem mensagem" e o percurso terminava em 'fim' quando a hora
+  // do dia caía no horário comercial; fora dele ficava 'ativo'). Agora sai e fica 'ativo' na espera, a qualquer hora.
+  const sent = [];
+  const motor = E.createMotor({ api, wa, sendParts: async (o) => { sent.push(o.chatId); return { status: 'ok', sent: 1 }; }, partsOf: (item) => [{ type: 'texto', body: item.title }], itemById: async (id) => ({ id, title: 'Avaliação' }) });
+  return { motor, logs, seq, sent };
 }
 const ev = (c, type = 'add', confirmed = true) => ({ chatId: c.chatId, name: c.name, labelIds: [LABEL], type, seenWithout: confirmed ? [LABEL] : [], t: Date.now(), ...(c.lid ? { lid: c.lid } : {}), ...(c.phone ? { phone: c.phone } : {}) });
 
@@ -311,6 +324,135 @@ test('ponte: @lid de um @c.us só pelo cache (lidPnCache), sem consultar o servi
   handlers['chat.update_label']({ chat: chats[0], type: 'add', ids: [LABEL] });
   const evs = await B.labelEvents();
   assert.deepStrictEqual([evs.events.length, evs.events[0].chatId, evs.events[0].lid], [1, cusOf(1), lidOf(1)]);
+});
+
+// ── 2.16.7: a mesma pessoa com dois @lid diferentes (caso real: wa_contacts.chat_id = 80685…@lid, conversa 196980…@lid) ──
+const PH = '5521997520054';
+const LID_A = '80685306003593@lid'; // o chat_id do CRM
+const LID_B = '196980135485500@lid'; // a conversa que a pessoa usa agora
+const C = 'c0000000-0000-4000-8000-000000000001';
+const FU1 = 'f0000000-0000-4000-8000-000000000001'; // "Follow Up 1"
+const FU2 = 'f0000000-0000-4000-8000-000000000002'; // "Follow Up 2"
+const twoLids = (extra = {}) => ({
+  wa_contacts: [{ id: C, key: `tel:${PH}`, name: 'Pessoa', phone: PH, chat_id: LID_A }],
+  wa_contact_labels: [{ id: crypto.randomUUID(), contact_id: C, label_id: FU1 }],
+  wa_automations: [{ id: SEQ }], wa_sequence_runs: [], wa_send_log: [], ...extra,
+});
+// régua: ETIQUETA (colocar Follow Up 2, tirar as outras) → ❓ esperar 3 dias
+const labelDef = () => ({ start: { type: 'manual' }, business: false, steps: [
+  { id: 'e1', type: 'etiqueta', op: 'colocar', source: 'crm', label_id: FU2, remove_others: true },
+  { id: 'w1', type: 'esperar', amount: 3, unit: 'dias', yes: [{ id: 'f1', type: 'fim' }], no: [{ id: 'f2', type: 'fim' }] }] });
+const runAt = (chat, contactId, node = 'e1', extra = {}) => ({ id: crypto.randomUUID(), automation_id: SEQ, chat_id: chat, contact_id: contactId, entry_key: `manual@${chat}`, node, status: 'ativo', version: 0, branches: [], created_at: new Date(Date.now() - 60000).toISOString(), ...extra });
+const waLoaded = (extra = {}) => ({ ready: async () => true, labelEvents: async () => ({ events: [] }), labelChatIds: async () => null,
+  chatsInfo: async ({ chatIds }) => ({ chats: Object.fromEntries(chatIds.map((c) => [c, { loaded: true, last: null }])) }), ...extra });
+const labelsOf = (fake, id) => fake.db.wa_contact_labels.filter((l) => l.contact_id === id).map((l) => l.label_id).sort();
+
+test('2.16.7 caixa ETIQUETA: percurso na conversa 196980…@lid com o contact_id do contato (chat_id 80685…@lid) → Follow Up 2 entra e Follow Up 1 sai', async () => {
+  const fake = fakeDb(twoLids({ wa_sequence_runs: [runAt(LID_B, C)] }));
+  const A = apiOn(fake);
+  const { motor, logs } = motorOn(A, { wa: waLoaded(), def: labelDef() });
+  await motor.loadSettings();
+  await motor.refreshActivity();
+  await motor._sequencesOnce();
+  assert.deepStrictEqual(labelsOf(fake, C), [FU2]);
+  assert.strictEqual(fake.db.wa_contacts.length, 1, 'nenhum contato novo');
+  assert.strictEqual(fake.db.wa_sequence_runs[0].node, 'w1');
+  assert.deepStrictEqual(logs, []);
+});
+
+test('2.16.7 caixa ETIQUETA sem contact_id: acha pelo telefone do @lid (cache do WhatsApp) sem criar contato', async () => {
+  const fake = fakeDb(twoLids({ wa_sequence_runs: [runAt(LID_B, null)] }));
+  const A = apiOn(fake);
+  let asked = 0;
+  const { motor, logs } = motorOn(A, { wa: waLoaded({ chatPhone: async ({ chatId }) => { asked++; return chatId === LID_B ? { phone: PH } : null; } }), def: labelDef() });
+  await motor.loadSettings();
+  await motor.refreshActivity();
+  await motor._sequencesOnce();
+  assert.deepStrictEqual([labelsOf(fake, C), fake.db.wa_contacts.length, asked, logs.length], [[FU2], 1, 1, 0]);
+});
+
+test('2.16.7 caixa ETIQUETA sem contato nenhum: não pula calado — "etiqueta não aplicada: contato não encontrado" no log e no painel da conversa', async () => {
+  const fake = fakeDb(twoLids({ wa_sequence_runs: [runAt(LID_B, null)] }));
+  const A = apiOn(fake);
+  const { motor, logs } = motorOn(A, { wa: waLoaded({ chatPhone: async () => null }), def: labelDef() });
+  await motor.loadSettings();
+  await motor.refreshActivity();
+  await motor._sequencesOnce();
+  assert.deepStrictEqual(labelsOf(fake, C), [FU1], 'não mexe em ninguém');
+  assert.strictEqual(logs.length, 1);
+  assert.deepStrictEqual([logs[0].source, logs[0].source_id, logs[0].status, logs[0].chat_id, logs[0].reason], ['follow', SEQ, 'pulado', LID_B, 'etiqueta não aplicada: contato não encontrado']);
+  // o painel da conversa lê do log (wa_send_log)
+  await A.logSend(logs[0]);
+  const w = JSON.parse(JSON.stringify(await A.seqLabelWarnings({ chatId: LID_B })));
+  assert.deepStrictEqual(w.map((x) => [x.automation_id, x.reason]), [[SEQ, 'etiqueta não aplicada: contato não encontrado']]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(await A.seqLabelWarnings({ chatId: LID_A }))), []);
+  const c = src('content.js');
+  assert.ok(/call\('seqLabelWarnings', \{ chatId \}\)/.test(c) && /etiqueta não aplicada \(contato não encontrado\)/.test(c), 'painel mostra o aviso');
+});
+
+test('2.16.7 não cria outro percurso: mesma pessoa por outro @lid (contact_id ou telefone), ativo ou que respondeu há menos de 24 h', async () => {
+  const hours = (h) => new Date(Date.now() - h * 3600000).toISOString();
+  const item = (chat, contactId, extra = {}) => ({ automation_id: SEQ, chat_id: chat, entry_key: `lbl:${chat}`, contact_id: contactId, node: 'e1', entered_at: Date.now() - 60000, ...extra });
+  // ativo na 196980…@lid (contact_id) → a entrada pela etiqueta na 80685…@lid não nasce
+  let fake = fakeDb(twoLids({ wa_sequence_runs: [runAt(LID_B, C, 'w1')] }));
+  let r = await apiOn(fake).seqCreateRuns({ items: [item(LID_A, C)] });
+  assert.deepStrictEqual([r.created, r.skipped, fake.db.wa_sequence_runs.length], [0, 1, 1]);
+  // ativo sem contact_id, mas a conversa já é a do contato (chat_id) → pelo contato
+  fake = fakeDb(twoLids({ wa_sequence_runs: [runAt(LID_A, null, 'w1')] }));
+  r = await apiOn(fake).seqCreateRuns({ items: [item(LID_B, null, { phone: PH })] });
+  assert.deepStrictEqual([r.created, fake.db.wa_sequence_runs.length], [0, 1]);
+  // pelo telefone: percurso no @c.us do número; entrada nova num @lid com o mesmo telefone
+  fake = fakeDb(twoLids({ wa_contacts: [], wa_sequence_runs: [runAt(`${PH}@c.us`, null, 'w1')] }));
+  r = await apiOn(fake).seqCreateRuns({ items: [item(LID_B, null, { phone: PH })] });
+  assert.deepStrictEqual([r.created, fake.db.wa_sequence_runs.length], [0, 1]);
+  // terminou por resposta há 2 h → não nasce; há 30 h → nasce; terminou sem resposta → nasce
+  for (const [ended, outcome, want] of [[hours(2), 'respondeu', 0], [hours(30), 'respondeu', 1], [hours(2), 'nao_respondeu', 1]]) {
+    fake = fakeDb(twoLids({ wa_sequence_runs: [runAt(LID_B, C, null, { status: 'fim', outcome, ended_at: ended })] }));
+    r = await apiOn(fake).seqCreateRuns({ items: [item(LID_A, C)] });
+    assert.strictEqual(r.created, want, `${outcome} ${ended}`);
+  }
+  // a MESMA conversa segue como antes (entrada nova = percurso novo); no mesmo lote, a mesma pessoa só uma vez
+  fake = fakeDb(twoLids({ wa_sequence_runs: [runAt(LID_A, C, 'w1')] }));
+  r = await apiOn(fake).seqCreateRuns({ items: [item(LID_A, C, { entry_key: 'lbl:outra' })] });
+  assert.strictEqual(r.created, 1);
+  fake = fakeDb(twoLids());
+  r = await apiOn(fake).seqCreateRuns({ items: [item(LID_B, C), item(LID_A, C)] });
+  assert.deepStrictEqual([r.created, fake.db.wa_sequence_runs.map((x) => x.chat_id)], [1, [LID_B]]);
+  // e o contact_id que faltava é preenchido pelo telefone/chat
+  fake = fakeDb(twoLids());
+  await apiOn(fake).seqCreateRuns({ items: [item(LID_A, null)] });
+  assert.strictEqual(fake.db.wa_sequence_runs[0].contact_id, C);
+});
+
+test('2.16.7 percursos ativos lid ↔ lid do mesmo contato (contact_id) → fica só o mais antigo; entrar à mão tira o da outra conversa', async () => {
+  const seed = twoLids({ wa_sequence_runs: [runAt(LID_B, C, 'w1', { created_at: '2026-11-10T14:36:00Z' }), runAt(LID_A, C, 'e1', { created_at: '2026-11-10T14:39:00Z' })] });
+  const fake = fakeDb(seed);
+  const runs = JSON.parse(JSON.stringify(await apiOn(fake).seqRuns({ automationIds: [SEQ] })));
+  assert.deepStrictEqual(runs.map((r) => [r.chat_id, r.contact && r.contact.id]), [[LID_B, C]]);
+  assert.deepStrictEqual(fake.db.wa_sequence_runs.filter((r) => r.chat_id === LID_A).map((r) => [r.status, r.outcome]), [['saiu', 'id_duplicado']]);
+  // à mão na 196980…@lid (telefone pelo cache) com um percurso ativo na 80685…@lid: o antigo sai (reentrou), o novo leva o contact_id
+  const f2 = fakeDb(twoLids({ wa_automations: [{ id: SEQ, kind: 'sequencia' }], wa_sequence_runs: [runAt(LID_A, C, 'w1')] }));
+  await apiOn(f2).seqManualEnter({ automationId: SEQ, chatId: LID_B, plan: { node: 'e1', entered_at: Date.now(), branches: [] }, leaveOthers: false, phone: PH });
+  const all = f2.db.wa_sequence_runs.map((r) => [r.chat_id, r.status, r.outcome || null, r.contact_id]);
+  assert.deepStrictEqual(all, [[LID_A, 'saiu', 'reentrou', C], [LID_B, 'ativo', null, C]]);
+});
+
+test('2.16.7 abrir a conversa: o telefone já tem contato com outro chat_id → o contato passa para a conversa atual (sem duplicar)', async () => {
+  const fake = fakeDb(twoLids());
+  const A = apiOn(fake);
+  const r = JSON.parse(JSON.stringify(await A.adoptChatId({ chatId: LID_B, phone: PH })));
+  assert.deepStrictEqual(r, { changed: true, contactId: C, from: LID_A });
+  assert.deepStrictEqual(fake.db.wa_contacts.map((c) => [c.id, c.chat_id]), [[C, LID_B]]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(await A.adoptChatId({ chatId: LID_B, phone: PH }))), { changed: false }, 'de novo: nada');
+  // telefone sem contato: não cria; outro contato já com este chat_id: não mexe
+  assert.strictEqual((await A.adoptChatId({ chatId: '111@lid', phone: '5521900000000' })).changed, false);
+  const f2 = fakeDb(twoLids({ wa_contacts: [...twoLids().wa_contacts, { id: 'c0000000-0000-4000-8000-000000000002', key: 'nome:outra', name: 'Outra', phone: null, chat_id: LID_B }] }));
+  assert.strictEqual((await apiOn(f2).adoptChatId({ chatId: LID_B, phone: PH })).changed, false);
+  assert.strictEqual(f2.db.wa_contacts.find((c) => c.id === C).chat_id, LID_A);
+  assert.strictEqual(fake.db.wa_contacts.length + f2.db.wa_contacts.length, 3, 'nenhum contato novo');
+  // o painel chama ao abrir a conversa (uma vez por conversa)
+  const c = src('content.js');
+  assert.ok(/adoptOpenChatId\(chatId\)\.catch/.test(c) && /call\('adoptChatId', \{ chatId, phone \}\)/.test(c));
 });
 
 (async () => {

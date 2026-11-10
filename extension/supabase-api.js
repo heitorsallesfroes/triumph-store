@@ -2527,21 +2527,25 @@
     if (!automationIds.length) return [];
     const all = await restAll(`wa_sequence_runs?select=${SEQ_RUN_COLS}&automation_id=in.${inList(automationIds)}&status=eq.ativo&order=id.asc`);
     const byChat = await contactRowsByChats([...new Set(all.map((r) => r.chat_id))]);
-    const runs = await seqDropDuplicates(all, byChat);
-    const ids = [...new Set(Object.values(byChat).map((c) => c.id))];
+    // 2.16.7: o contato do percurso (contact_id) primeiro: a conversa pode ter outro @lid que o chat_id do CRM
+    const byId = new Map((await contactsById([...new Set(all.map((r) => r.contact_id).filter(Boolean))])).map((c) => [c.id, c]));
+    const contactOf = (r) => (r.contact_id && byId.get(r.contact_id)) || byChat[r.chat_id] || null;
+    const runs = await seqDropDuplicates(all, contactOf);
+    const ids = [...new Set([...Object.values(byChat), ...byId.values()].map((c) => c.id))];
     const labels = {};
     for (let i = 0; i < ids.length; i += 100) {
       (await restAll(`wa_contact_labels?select=contact_id,label_id&contact_id=in.${inList(ids.slice(i, i + 100))}&order=contact_id.asc,label_id.asc`))
         .forEach((l) => { (labels[l.contact_id] = labels[l.contact_id] || []).push(l.label_id); });
     }
-    return runs.map((r) => { const c = byChat[r.chat_id]; return { ...r, contact: c ? { id: c.id, name: c.name || null, phone: c.phone || null, labelIds: labels[c.id] || [] } : null }; });
+    return runs.map((r) => { const c = contactOf(r); return { ...r, contact: c ? { id: c.id, name: c.name || null, phone: c.phone || null, labelIds: labels[c.id] || [] } : null }; });
   }
   // 2.16.5: a mesma pessoa com dois percursos ativos na mesma régua (um pelo @c.us e outro pelo @lid, troca de id do
   // WhatsApp) fica só com o mais antigo; os outros saem (status 'saiu', outcome 'id_duplicado'), sem mandar nada.
-  async function seqDropDuplicates(runs, byChat) {
+  // 2.16.7: e dois @lid diferentes do mesmo contato (contact_id ou telefone iguais)
+  async function seqDropDuplicates(runs, contactOf) {
     const keyOf = (r) => {
-      const c = byChat[r.chat_id];
-      const phone = phoneOfChat(r.chat_id) || (c && c.phone) || null;
+      const c = contactOf(r);
+      const phone = phoneKey(phoneOfChat(r.chat_id) || (c && c.phone) || null);
       return phone ? `tel:${phone}` : c ? `id:${c.id}` : r.contact_id ? `id:${r.contact_id}` : `chat:${r.chat_id}`;
     };
     const keep = new Map();
@@ -2568,14 +2572,45 @@
       // "até X depois de entrar". Sem a hora (ou no futuro): agora, como antes.
       ...(enteredIso(it.entered_at) ? { created_at: enteredIso(it.entered_at) } : {}),
     }));
-    if (rows.length) await seqRest('wa_sequence_runs?on_conflict=automation_id,chat_id,entry_key', json('POST', 'resolution=ignore-duplicates,return=minimal', rows));
-    return { created: rows.length };
+    const fresh = rows.length ? await seqSamePersonFilter(rows, items) : [];
+    if (fresh.length) await seqRest('wa_sequence_runs?on_conflict=automation_id,chat_id,entry_key', json('POST', 'resolution=ignore-duplicates,return=minimal', fresh));
+    return { created: fresh.length, skipped: rows.length - fresh.length };
+  }
+  // 2.16.7: a mesma pessoa em OUTRA conversa (dois @lid, ou @c.us ↔ @lid) já tem percurso nesta régua, ativo ou que
+  // terminou por resposta nas últimas 24 h (mesmo contact_id ou mesmo telefone) → não cria outro (mandaria o Follow 1
+  // de novo). A mesma conversa segue como antes (a mesma entrada nunca duplica; entrada nova = percurso novo).
+  // Também preenche o contact_id que faltava (pelo chat_id / telefone).
+  const SEQ_SAME_PERSON_MS = 24 * 3600 * 1000;
+  async function seqSamePersonFilter(rows, items) {
+    const phoneIn = new Map(items.map((it) => [`${it.automation_id}|${it.chat_id}`, typeof it.phone === 'string' ? it.phone : null]));
+    const autoIds = [...new Set(rows.map((r) => r.automation_id))];
+    const since = encodeURIComponent(new Date(Date.now() - SEQ_SAME_PERSON_MS).toISOString());
+    const old = await restAll(`wa_sequence_runs?select=id,automation_id,chat_id,contact_id&automation_id=in.${inList(autoIds)}&or=(status.eq.ativo,and(outcome.eq.respondeu,ended_at.gte.${since}))&order=id.asc`);
+    const byChat = await contactRowsByChats([...new Set([...rows, ...old].map((r) => r.chat_id))]);
+    const byId = new Map((await contactsById([...new Set([...rows, ...old].map((r) => r.contact_id).filter(Boolean))])).map((c) => [c.id, c]));
+    const person = (r, ph) => {
+      const c = (r.contact_id && byId.get(r.contact_id)) || byChat[r.chat_id] || null;
+      return { cid: (c && c.id) || r.contact_id || null, tel: phoneKey(phoneOfChat(r.chat_id) || (c && c.phone) || ph || null) };
+    };
+    const seen = new Map(); // automação → [{ chat, cid, tel }]
+    const add = (aid, p) => { if (!seen.has(aid)) seen.set(aid, []); seen.get(aid).push(p); };
+    old.forEach((r) => add(r.automation_id, { chat: r.chat_id, ...person(r, null) }));
+    const out = [];
+    for (const r of rows) {
+      const p = person(r, phoneIn.get(`${r.automation_id}|${r.chat_id}`));
+      const dup = (seen.get(r.automation_id) || []).some((o) => o.chat !== r.chat_id && ((p.cid && o.cid === p.cid) || (p.tel && o.tel === p.tel)));
+      if (dup) continue;
+      if (!r.contact_id && p.cid) r.contact_id = p.cid;
+      add(r.automation_id, { chat: r.chat_id, ...p });
+      out.push(r);
+    }
+    return out;
   }
   const enteredIso = (ms) => { const t = Number(ms); return Number.isFinite(t) && t > 0 && t <= Date.now() + 60000 ? new Date(t).toISOString() : null; };
   // 2.16.0: entrar à mão numa régua (🔁 / "Adicionar à automação"), no começo ou no meio (plan = E.seqManualPlan):
   // cria o percurso já na etapa escolhida, com created_at = a entrada "de há X tempo". Quem já estava nesta régua sai
   // (entra de novo do ponto escolhido); leaveOthers: sai também das outras réguas ativas.
-  async function seqManualEnter({ automationId, chatId, plan, leaveOthers }) {
+  async function seqManualEnter({ automationId, chatId, plan, leaveOthers, phone }) {
     checkUuid(automationId, 'Automação inválida');
     if (!SCHED_CHAT_RE.test(chatId || '')) throw new Error('Conversa inválida');
     const p = plan || {};
@@ -2584,6 +2619,21 @@
     const autos = await autoRest(`wa_automations?select=id,kind&id=eq.${automationId}`);
     if (!autos.length || autos[0].kind !== 'sequencia') throw new Error('Automação não encontrada');
     const runs = await seqRest(`wa_sequence_runs?select=id,automation_id,version&chat_id=eq.${encodeURIComponent(chatId)}&status=eq.ativo`);
+    // 2.16.7: a mesma pessoa nesta régua por OUTRA conversa (outro @lid, ou c.us ↔ lid) também recomeça daqui
+    try {
+      const same = await seqRest(`wa_sequence_runs?select=id,automation_id,version,chat_id,contact_id&automation_id=eq.${automationId}&status=eq.ativo&chat_id=neq.${encodeURIComponent(chatId)}`);
+      if (same.length) {
+        const byChat = await contactRowsByChats([chatId, ...same.map((r) => r.chat_id)]);
+        const byId = new Map((await contactsById([...new Set(same.map((r) => r.contact_id).filter(Boolean))])).map((c) => [c.id, c]));
+        const me = byChat[chatId] || null;
+        const myTel = phoneKey(phoneOfChat(chatId) || (me && me.phone) || (typeof phone === 'string' ? phone : null));
+        same.forEach((r) => {
+          const c = (r.contact_id && byId.get(r.contact_id)) || byChat[r.chat_id] || null;
+          const tel = phoneKey(phoneOfChat(r.chat_id) || (c && c.phone) || null);
+          if ((me && c && c.id === me.id) || (myTel && tel === myTel)) runs.push(r);
+        });
+      }
+    } catch { /* sem isso: como antes */ }
     let left = 0;
     for (const r of runs) {
       const same = r.automation_id === automationId;
@@ -2591,7 +2641,9 @@
       const res = await seqUpdateRun({ id: r.id, version: r.version, patch: { status: 'saiu', outcome: same ? 'reentrou' : 'outra_regua' } });
       if (res.ok && !same) left++;
     }
-    const found = (await contactsByChats([chatId]))[chatId];
+    // 2.16.7: sem contato com este chat_id, o do telefone desta conversa (o @lid pode ser outro que o do CRM)
+    let found = (await contactsByChats([chatId]))[chatId] || null;
+    if (!found && phoneOfChat(chatId) == null && typeof phone === 'string') { try { found = await contactByPhone(phone); } catch { found = null; } }
     const row = {
       automation_id: automationId, chat_id: chatId, entry_key: `manual@${Date.now()}`, contact_id: found ? found.id : null,
       node: p.node, status: 'ativo', version: 0, created_at: enteredIso(p.entered_at) || new Date().toISOString(),
@@ -2647,6 +2699,27 @@
     const autos = await autoRest(`wa_automations?select=id,name,sequence,test_chat_id&id=in.${inList([...new Set(runs.map((r) => r.automation_id))])}`);
     const byId = new Map(autos.map((a) => [a.id, a]));
     return runs.filter((r) => byId.has(r.automation_id)).map((r) => ({ ...r, automation: byId.get(r.automation_id) }));
+  }
+  // 2.16.7: avisos da régua nesta conversa (últimos 7 dias): a caixa ETIQUETA não achou o contato
+  const LABEL_MISS = 'etiqueta não aplicada: contato não encontrado';
+  async function seqLabelWarnings({ chatId }) {
+    if (!SCHED_CHAT_RE.test(chatId || '')) return [];
+    const since = encodeURIComponent(new Date(Date.now() - 7 * 86400000).toISOString());
+    const rows = await engineRest(`wa_send_log?select=source_id,reason,created_at&source=eq.follow&status=eq.pulado&chat_id=eq.${encodeURIComponent(chatId)}&reason=eq.${encodeURIComponent(LABEL_MISS)}&created_at=gte.${since}&order=created_at.desc&limit=5`);
+    return rows.map((r) => ({ automation_id: r.source_id || null, reason: r.reason, at: r.created_at }));
+  }
+  // 2.16.7: abriu a conversa e o telefone dela já tem contato com OUTRO chat_id (o WhatsApp deu outro @lid para a mesma
+  // pessoa): o contato passa a apontar para esta conversa (a que a pessoa usa agora). Nunca cria contato.
+  async function adoptChatId({ chatId, phone }) {
+    if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
+    const ph = phoneOfChat(chatId) || (typeof phone === 'string' ? phone.replace(/\D/g, '') : '');
+    if (!/^\d{8,15}$/.test(ph) || !(await chatIdColumn())) return { changed: false };
+    if ((await rest(`wa_contacts?select=id&chat_id=eq.${encodeURIComponent(chatId)}&limit=1`)).length) return { changed: false };
+    const rows = await contactsByPhones([ph]);
+    const c = rows.find((r) => r.phone === ph) || rows[0];
+    if (!c || c.chat_id === chatId) return { changed: false };
+    await rest(`wa_contacts?id=eq.${c.id}`, json('PATCH', 'return=minimal', { chat_id: chatId }));
+    return { changed: true, contactId: c.id, from: c.chat_id || null };
   }
   async function seqRunAction({ id, action }) {
     checkUuid(id, 'Percurso inválido');
@@ -2993,6 +3066,25 @@
       if (phones.length) (await rest(`wa_contacts?select=${cols}&phone=in.${inList(phones)}`)).forEach((r) => { const k = `${r.phone}@c.us`; if (!out[k]) out[k] = r; });
     }
     return out;
+  }
+
+  // 2.16.7: variações do telefone (com e sem o 55 do Brasil) e o contato com ele (o de número igual primeiro)
+  const phoneVariants = (ph) => {
+    const d = String(ph || '').replace(/\D/g, '');
+    if (!/^\d{8,15}$/.test(d)) return [];
+    return [...new Set([d, /^55\d{10,11}$/.test(d) ? d.slice(2) : /^\d{10,11}$/.test(d) ? `55${d}` : d])];
+  };
+  async function contactsByPhones(phones) {
+    const vs = [...new Set(phones.flatMap(phoneVariants))];
+    const out = [];
+    const cols = await contactCols();
+    for (let i = 0; i < vs.length; i += 100) out.push(...await rest(`wa_contacts?select=${cols}&phone=in.${inList(vs.slice(i, i + 100))}&order=id.asc`));
+    return out;
+  }
+  const phoneKey = (ph) => { const v = phoneVariants(ph); return v.length ? v.find((x) => /^55\d{10,11}$/.test(x)) || v[0] : null; };
+  async function contactByPhone(ph) {
+    const rows = await contactsByPhones([ph]);
+    return rows.find((r) => r.phone === String(ph).replace(/\D/g, '')) || rows[0] || null;
   }
 
   // Contatos das conversas que estão nas etiquetas nativas dos gatilhos (com waSeen = "entrou em")
@@ -3462,15 +3554,20 @@
   }
 
   // Contato da conversa (cria e guarda o chat_id se preciso) + "tirar das automações e pôr em Cliente"
-  async function saleContactLabels({ chatId, name, phone, addLabelId, removeLabelIds }) {
+  async function saleContactLabels({ chatId, name, phone, addLabelId, removeLabelIds, contactId: givenId }) {
     if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
     const add = addLabelId ? checkUuid(addLabelId, 'Etiqueta inválida') : null;
     const remove = Array.isArray(removeLabelIds) ? removeLabelIds.slice(0, 50).map((l) => checkUuid(l, 'Etiqueta inválida')) : [];
     const ph = phoneOfChat(chatId) || (typeof phone === 'string' && /^\d{8,15}$/.test(phone.replace(/\D/g, '')) ? phone.replace(/\D/g, '') : null);
-    let found = (await contactRowsByChats([chatId]))[chatId];
+    // 2.16.7 (régua): o contato do percurso vem primeiro (a conversa pode ter outro @lid que o chat_id do CRM)
+    let contactId = null;
+    if (givenId) contactId = (await contactsById([checkUuid(givenId, 'Contato inválido')]))[0] ? givenId : null;
+    let found = contactId ? null : (await contactRowsByChats([chatId]))[chatId];
     // 2.6.3: contato com o chat_id desta conversa mas telefone de outra pessoa: não usa (evita etiquetar a pessoa errada)
     if (found && found.phone && ph && found.phone !== ph) found = null;
-    let contactId = found && found.id;
+    if (!contactId) contactId = found && found.id;
+    // 2.16.7: pelo telefone (o do @lid vem do cache do WhatsApp), sem criar outro contato
+    if (!contactId && ph) { const byPh = await contactByPhone(ph); if (byPh) contactId = byPh.id; }
     if (!contactId) {
       const nm = clip(name, 100);
       const c = ph ? await ensureContact({ key: `tel:${ph}`, phone: ph, name: nm }) : nm ? await ensureContact({ key: nameKey(nm), phone: null, name: nm }) : null;
@@ -4072,7 +4169,7 @@
     sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
     saleFirstName, erpCatalog, createSaleFromChat, lookupCep, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
-    seqRuns, seqCreateRuns, seqManualEnter, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqRunAction, seqStats, automationSentToday,
+    seqRuns, seqCreateRuns, seqManualEnter, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqLabelWarnings, adoptChatId, seqRunAction, seqStats, automationSentToday,
     automationUnreserve, applySendLabels, getContactName,
     campaignVariantStats, fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,

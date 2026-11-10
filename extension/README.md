@@ -799,6 +799,33 @@ guardada.
 
 ## O que mudou
 
+### 2.16.7 — mesma pessoa com dois @lid diferentes: etiqueta da régua e percurso duplicado
+- **O problema (10/11)**: o contato 5521997520054 tinha `wa_contacts.chat_id = 80685…@lid`, mas a conversa aberta era
+  `196980…@lid` (o mesmo número com outro @lid). Na Régua de follow-up, o percurso adicionado à mão na 196980…@lid
+  mandou o Follow 1, mas a caixa ETIQUETA (colocar Follow Up 2, tirar as outras) foi pulada sem erro: o contato não foi
+  achado pelo chat_id da conversa. Depois nasceu outro percurso do mesmo contato na 80685…@lid (entrada pela etiqueta
+  Follow Up 1), que mandaria o Follow 1 de novo.
+- **Caixa ETIQUETA (CRM)**: usa o **contact_id do percurso**. Só sem ele procura pelo chat_id e pelo **telefone**
+  (o do @lid vem do cache do WhatsApp, `chatPhone`; o servidor acha o contato pelo telefone com e sem o 55, sem criar
+  outro). Não achou ninguém → **não pula calado**: grava "etiqueta não aplicada: contato não encontrado" no log da
+  automação (`wa_send_log`, status "pulado", não conta nos limites) e o painel da conversa mostra
+  **"⚠ <régua>: etiqueta não aplicada (contato não encontrado) · dd/mm hh:mm"** (amarelo, últimos 7 dias).
+  `seqRuns` também acha o contato do percurso pelo contact_id (nome, telefone e etiquetas do "Não enviar").
+- **Percurso duplicado**: antes de criar um percurso (`seqCreateRuns`), se a mesma régua já tem percurso da **mesma
+  pessoa em outra conversa** (mesmo contact_id ou mesmo telefone; @lid ↔ @lid, @c.us ↔ @lid), **ativo ou que terminou
+  por resposta nas últimas 24 h**, não cria outro. A mesma conversa segue como antes (a mesma entrada nunca duplica;
+  entrada nova = percurso novo). O contact_id que faltava é preenchido. A limpeza de duplicados ativos (2.16.5) agora
+  também junta dois @lid do mesmo contact_id (fica o mais antigo). Entrar à mão ("Adicionar à automação") tira o
+  percurso da mesma pessoa pela outra conversa ("reentrou") e grava o contact_id pelo telefone.
+- **Abrir a conversa**: se o telefone dela já tem contato com **outro** chat_id, o contato passa a apontar para a
+  conversa atual (`adoptChatId`; uma vez por conversa na aba; nunca cria contato; não mexe se outro contato já tem
+  este chat_id).
+- Teste `idswap.test.cjs` "motor: 500 trocas…" não depende mais da hora do dia: tinha mensagem inexistente
+  ("sem mensagem" → `fim` quando caía no horário comercial). Agora tem mensagem de verdade.
+- Sem migration. Testes: `idswap.test.cjs` (etiqueta pelo contact_id, pelo telefone do @lid e o aviso; não criar o
+  percurso repetido; lid ↔ lid ativos; entrar à mão; abrir a conversa) e `chrome-real.test.cjs` (contato passa para a
+  conversa aberta e o aviso amarelo no painel).
+
 ### 2.16.6 — "Adicionar à automação" no meio da régua: "Esperar o tempo da régua"
 - Em **Começar no: Follow N**, as opções agora são **Enviar esta etapa agora** (como antes: entra como se tivesse
   entrado há o tempo desta etapa e sai assim que estiver no horário de envio) e **Esperar o tempo da régua** (antes

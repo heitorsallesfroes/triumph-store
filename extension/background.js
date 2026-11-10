@@ -105,7 +105,9 @@ const HANDLERS = {
   seqLeads:       (m) => WaApi.seqLeads({ since: m.since }),
   seqChatRuns:    (m) => WaApi.seqChatRuns({ chatId: m.chatId }),
   seqRunAction:   (m) => WaApi.seqRunAction({ id: m.id, action: m.action }),
-  seqManualEnter: (m) => WaApi.seqManualEnter({ automationId: m.automationId, chatId: m.chatId, plan: m.plan, leaveOthers: m.leaveOthers === true }), // 2.16.0
+  seqManualEnter: (m) => WaApi.seqManualEnter({ automationId: m.automationId, chatId: m.chatId, plan: m.plan, leaveOthers: m.leaveOthers === true, phone: m.phone }), // 2.16.0 (2.16.7: + phone)
+  seqLabelWarnings: (m) => WaApi.seqLabelWarnings({ chatId: m.chatId }), // 2.16.7
+  adoptChatId:    (m) => WaApi.adoptChatId({ chatId: m.chatId, phone: m.phone }), // 2.16.7
   seqStats:       (m) => WaApi.seqStats({ automationIds: m.automationIds }),
   automationSentToday: (m) => WaApi.automationSentToday({ automationId: m.automationId, since: m.since }), // 2.13.2
   automationReserve:    (m) => WaApi.automationReserve({ automationId: m.automationId, contactId: m.contactId, runKey: m.runKey }),
@@ -118,7 +120,7 @@ const HANDLERS = {
   lookupCep:             (m) => WaApi.lookupCep({ cep: m.cep }), // 2.12.3: endereço do CEP (ViaCEP, como o ERP)
   recentChatSale:        (m) => WaApi.recentChatSale({ chatId: m.chatId, phone: m.phone }),
   fetchChatSales:        ()  => WaApi.fetchChatSales(),
-  saleContactLabels:     (m) => WaApi.saleContactLabels({ chatId: m.chatId, name: m.name, phone: m.phone, addLabelId: m.addLabelId, removeLabelIds: m.removeLabelIds }),
+  saleContactLabels:     (m) => WaApi.saleContactLabels({ chatId: m.chatId, name: m.name, phone: m.phone, addLabelId: m.addLabelId, removeLabelIds: m.removeLabelIds, contactId: m.contactId }), // 2.16.7: + contactId (régua)
   saleTriggerCandidates: (m) => WaApi.saleTriggerCandidates({ sinceDays: m.sinceDays }),
   // 2.4.1: "tem algo ativo?" do motor (leituras mínimas)
   engineActivity:        (m) => WaApi.engineActivity({ automations: m.automations !== false, campaigns: m.campaigns !== false }),
