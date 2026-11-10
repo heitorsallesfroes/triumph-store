@@ -173,7 +173,7 @@
   const pz = { prefs: globalThis.TspEngine.defaultPanelPrefs(), filtersOpen: false, moreChip: null, open: false, el: null };
   // 2.10.3: lista de conversas do WhatsApp (#pane-side): posição que VOCÊ deixou, último envio seu e sua última mexida
   // userAt = qualquer mexida sua na lista (clique incluso); scrollAt = você rolando (roda, toque, teclado, barra)
-  const lk = { el: null, saved: null, userAt: 0, scrollAt: 0, armAt: 0, restores: 0, pointer: false };
+  const lk = { el: null, saved: null, userAt: 0, scrollAt: 0, armAt: 0, restores: 0, pointer: false, holding: 0, holdUntil: 0, shifted: false, chat: null };
   // Aba Etiquetas: contadores e lista de clientes da etiqueta aberta
   const lt = {
     counts: null, countsAt: null, countsError: null,
@@ -3555,10 +3555,42 @@
     return r ? r.getBoundingClientRect().height : 72;
   }
   const lkInPane = (t) => { const p = lkPane(); return !!(p && t && t.nodeType === 1 && (p.contains(t) || t.contains(p))); };
-  function lkArm() {
+  // 2.16.9: a vigia vai do COMEÇO do envio até 3 s depois da ÚLTIMA parte (E2P.LIST_KEEP_MS).
+  // - envio da extensão (mensagens rápidas, mídias, catálogo, agendados, disparos, automações, áudio):
+  //   lkArm({ hold: true }) no começo e lkRelease() no fim; cada parte que sai renova (lkArm()).
+  // - Enter / botão Enviar do WhatsApp (também o da prévia de foto/vídeo/documento): 3 s, renovados enquanto a
+  //   mensagem estiver com o reloginho do WhatsApp (ainda enviando: upload).
+  // Rolar, clicar na lista ou abrir outra conversa nesse meio tempo: não restaura até o fim desse envio.
+  const lkOpen = (now = Date.now()) => !!lk.armAt && (lk.holding > 0 || now <= lk.holdUntil);
+  // toOpen: o envio é para a conversa aberta (então quem sobe para o topo é ela). start: começo de um envio NOVO (o
+  // Enter/Enviar do WhatsApp ou o começo de um envio da extensão); as partes seguintes só renovam a janela.
+  // Um envio novo depois de você mexer na lista começa uma vigia nova (com a posição em que você deixou).
+  function lkArm({ hold = false, start = hold, toOpen = true } = {}) {
     if (!pz.prefs.keepListPos) return;
-    lk.armAt = Date.now();
-    lk.restores = 0;
+    const now = Date.now();
+    if (!lkOpen(now) || (start && lk.userAt >= lk.armAt)) { lk.armAt = now; lk.restores = 0; lk.shifted = false; lk.chat = convKeyOf(getContext()); lk.toOpen = toOpen; }
+    else if (!hold) lk.restores = 0; // cada parte que sai pode voltar a lista de novo (no máximo 3 vezes por parte)
+    lk.holdUntil = Math.max(lk.holdUntil || 0, now + E2P.LIST_KEEP_MS);
+    if (hold) lk.holding++;
+    lkWatchPending();
+  }
+  function lkRelease() {
+    lk.holding = Math.max(0, lk.holding - 1);
+    if (lk.armAt) lk.holdUntil = Math.max(lk.holdUntil || 0, Date.now() + E2P.LIST_KEEP_MS);
+  }
+  const lkCancel = () => { lk.armAt = 0; lk.holdUntil = 0; };
+  // enquanto houver mensagem com o reloginho (enviando) na conversa aberta, a janela não fecha
+  let lkPendingTimer = null;
+  function lkWatchPending() {
+    if (lkPendingTimer) return;
+    const stopAt = Date.now() + 5 * 60 * 1000;
+    lkPendingTimer = setInterval(() => {
+      const now = Date.now();
+      if (!lkOpen(now) || now > stopAt) { clearInterval(lkPendingTimer); lkPendingTimer = null; return; }
+      // abriu outra conversa (sem ser a extensão enviando): não restaura mais
+      if (!lk.holding && lk.chat && convKeyOf(getContext()) !== lk.chat) { lkCancel(); return; }
+      if (document.querySelector('#main [data-icon="msg-time"], #main [data-icon="status-time"]')) lk.holdUntil = Math.max(lk.holdUntil, now + E2P.LIST_KEEP_MS);
+    }, 300);
   }
   const lkUser = () => { lk.userAt = Date.now(); };
   const lkScroll = () => { lk.userAt = Date.now(); lk.scrollAt = lk.userAt; };
@@ -3573,15 +3605,16 @@
     // envio manual: Enter (sem Shift) na caixa de mensagem com texto
     if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
     const box = e.target && e.target.closest ? e.target.closest('footer [contenteditable="true"]') : null;
-    if (box && !box.closest('#side') && (box.textContent || '').trim()) lkArm();
+    if (box && !box.closest('#side') && (box.textContent || '').trim()) lkArm({ start: true });
   }, true);
   document.addEventListener('click', (e) => {
-    const b = e.target && e.target.closest ? e.target.closest('footer button, footer [role="button"], footer [data-icon]') : null;
-    if (!b || b.closest('#side')) return;
+    // 2.16.9: também o "Enviar" da prévia de foto/vídeo/documento do WhatsApp (fora do rodapé)
+    const b = e.target && e.target.closest ? e.target.closest('footer button, footer [role="button"], footer [data-icon], button, [role="button"], [data-icon^="send"], [data-icon*="-send"]') : null;
+    if (!b || b.closest('#side') || (shadow.host && shadow.host.contains(b))) return;
     const icon = b.matches('[data-icon]') ? b : b.querySelector('[data-icon]');
     const name = (icon && icon.getAttribute('data-icon')) || '';
     const label = (b.getAttribute('aria-label') || '').trim().toLowerCase();
-    if (/send/.test(name) || /^(enviar|send)$/.test(label)) lkArm();
+    if (/(^|-)send($|-)/.test(name) || /^(enviar|send)$/.test(label)) lkArm({ start: true });
   }, true);
   // rolagem da lista: sua = guarda; pulo para o topo logo depois do seu envio = volta
   document.addEventListener('scroll', (e) => {
@@ -3590,9 +3623,17 @@
     const now = Date.now();
     if (lk.pointer) lkScroll(); // arrastando a barra
     if (now - lk.scrollAt < 600) { lk.saved = pane.scrollTop; return; }
-    if (!E2P.listShouldRestore({ enabled: pz.prefs.keepListPos, now, armAt: lk.armAt, userAt: lk.userAt, scrollTop: pane.scrollTop, saved: lk.saved, restores: lk.restores })) return;
+    // 2.16.9: quem subiu para o topo? (envio para a conversa aberta: tem que ser ela; senão é mensagem de cliente)
+    let topIsOther = false;
+    if (lk.toOpen && lkOpen(now)) {
+      const rows = lkRows(pane).sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      const sel = lkSelected(rows);
+      topIsOther = !!sel && !!rows[0] && rows[0] !== sel;
+    }
+    if (!E2P.listShouldRestore({ enabled: pz.prefs.keepListPos, now, armAt: lk.armAt, userAt: lk.userAt, scrollTop: pane.scrollTop, saved: lk.saved, restores: lk.restores, holding: lk.holding > 0, holdUntil: lk.holdUntil, topIsOther })) return;
     lk.restores++;
-    const to = E2P.listRestoreTarget({ saved: lk.saved, rowH: lkRowH(pane), scrollHeight: pane.scrollHeight, clientHeight: pane.clientHeight });
+    const to = E2P.listRestoreTarget({ saved: lk.saved, rowH: lkRowH(pane), scrollHeight: pane.scrollHeight, clientHeight: pane.clientHeight, shift: !lk.shifted });
+    lk.shifted = true;
     pane.scrollTop = to;
     lk.saved = to;
   }, { capture: true, passive: true });
@@ -4615,6 +4656,7 @@
       }, 400);
     }
 
+    lkArm({ hold: true }); // 2.16.9: a lista pode pular quando o áudio sai (lkRelease no finally)
     try {
       const audio = await blob.arrayBuffer();
       await waRequest('sendVoice', { chatId: chat.chatId, audio, recordMs }, { id: reqId, timeout: recordMs + 20000, transfer: [audio] });
@@ -4631,6 +4673,7 @@
       clearInterval(watcher);
       if (voice && voice.id === reqId) voice = null;
       renderVoice();
+      lkRelease();
     }
   }
 
@@ -4957,6 +5000,7 @@
     const quiet = noLearn || (!firstName && (parts || []).some((p) => hasVar(p && p.body) || (Array.isArray(p && p.files) && p.files.some((f) => hasVar(f && f.caption)))));
     if (quiet && chatId) noLearnUntil.set(chatId, Infinity);
     const extMark = markExtSend(chatId); // 2.10.0: o que a extensão envia não conta como "você digitou"
+    lkArm({ hold: true, toOpen: !chatId || chatId === convWatch.chatId }); // 2.16.9: vigia a lista do começo até 3 s depois da última parte (lkRelease no finally)
     seq = { total: parts.length, index: 0, phase: 'wait', until: 0, stop: false, reqId: null, label, typingLabel: 'digitando', onStop };
     const ticker = setInterval(renderSeq, 250);
     renderSeq();
@@ -4984,7 +5028,7 @@
         renderSeq();
         try {
           const r = await sendPart(part, i, chatId, firstName, seq.reqId, firstNew);
-          lkArm(); // 2.10.3: a lista do WhatsApp pode pular para o topo depois deste envio
+          lkArm(); // 2.10.3: a lista do WhatsApp pode pular para o topo depois deste envio (2.16.9: renova a janela)
           if (r && Array.isArray(r.failedFiles)) failedFiles.push(...r.failedFiles);
         } catch (e) {
           if (e.code === 'cancelled') return { status: 'stopped', sent };
@@ -5000,6 +5044,7 @@
       renderSeq();
       if (quiet && chatId) noLearnUntil.set(chatId, Date.now() + 20000);
       extMark.done();
+      lkRelease(); // 2.16.9: + 3 s depois da última parte
     }
   }
 

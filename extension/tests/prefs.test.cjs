@@ -51,12 +51,25 @@ test('altura do topo ao arrastar: mínimo 48 px e sobra ~160 px para a lista', (
 
 // ── 2.10.3: manter a posição da lista de conversas ──
 const base = { enabled: true, now: 10000, armAt: 9000, userAt: 5000, scrollTop: 0, saved: 1000, restores: 0 };
-test('lista: pulou para o topo até 2 s depois do seu envio, sem você mexer → volta', () => {
+test('lista: pulou para o topo até 3 s depois do seu envio (2.16.9: eram 2 s), sem você mexer → volta', () => {
+  assert.strictEqual(E.LIST_KEEP_MS, 3000);
   assert.strictEqual(E.listShouldRestore(base), true);
+  assert.strictEqual(E.listShouldRestore({ ...base, now: 11500 }), true); // 2,5 s: antes não voltava
 });
-test('lista: não volta se desligado, depois de 2 s, sem envio, se você mexeu, se não pulou ou se não havia posição', () => {
+test('lista 2.16.9: do começo do envio até 3 s depois da ÚLTIMA parte (upload de 6 s, várias partes)', () => {
+  // envio da extensão em andamento há 8 s (upload): ainda vale
+  assert.strictEqual(E.listShouldRestore({ ...base, now: 17000, holding: true, holdUntil: 12000 }), true);
+  // a última parte saiu às 16 000: vale até 19 000
+  assert.strictEqual(E.listShouldRestore({ ...base, now: 18900, holdUntil: 19000 }), true);
+  assert.strictEqual(E.listShouldRestore({ ...base, now: 19001, holdUntil: 19000 }), false);
+  // você rolou/clicou no meio do envio: não volta (nem com o envio em andamento)
+  assert.strictEqual(E.listShouldRestore({ ...base, now: 17000, holding: true, userAt: 15000 }), false);
+  // no topo ficou outra conversa (mensagem de cliente chegando no meio do envio): não volta
+  assert.strictEqual(E.listShouldRestore({ ...base, holding: true, topIsOther: true }), false);
+});
+test('lista: não volta se desligado, depois de 3 s, sem envio, se você mexeu, se não pulou ou se não havia posição', () => {
   assert.strictEqual(E.listShouldRestore({ ...base, enabled: false }), false);
-  assert.strictEqual(E.listShouldRestore({ ...base, now: 11001 }), false);
+  assert.strictEqual(E.listShouldRestore({ ...base, now: 12001 }), false);
   assert.strictEqual(E.listShouldRestore({ ...base, armAt: 0 }), false);
   assert.strictEqual(E.listShouldRestore({ ...base, userAt: 9500 }), false); // rolou/clicou depois do envio
   assert.strictEqual(E.listShouldRestore({ ...base, scrollTop: 400 }), false);
@@ -69,6 +82,8 @@ test('lista: volta para onde estava + 1 linha (as mesmas conversas continuam na 
   assert.strictEqual(E.listRestoreTarget({ saved: 4380, rowH: 72, scrollHeight: 5000, clientHeight: 600 }), 4400);
   assert.strictEqual(E.listRestoreTarget({ saved: 1000, rowH: 0, scrollHeight: 5000, clientHeight: 600 }), 1072); // linha desconhecida: 72 px
   assert.strictEqual(E.listRestoreTarget({ saved: 1000, rowH: 500, scrollHeight: 5000, clientHeight: 600 }), 1120); // no máximo 120 px
+  // 2.16.9: nas partes seguintes (a conversa já está no topo) volta para o mesmo lugar, sem escorregar
+  assert.strictEqual(E.listRestoreTarget({ saved: 1072, rowH: 72, scrollHeight: 5000, clientHeight: 600, shift: false }), 1072);
 });
 
 let ok = 0;

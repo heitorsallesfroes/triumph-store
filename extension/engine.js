@@ -522,15 +522,24 @@
   // Depois de um envio SEU (até 2 s), se a lista pulou para o topo sem você mexer nela, volta para onde você
   // estava + 1 linha (a conversa que recebeu a mensagem subiu para o topo e as de cima desceram uma linha:
   // assim as mesmas conversas continuam na tela). Você rolou ou clicou na lista depois do envio: não mexe.
-  const LIST_KEEP_MS = 2000;
-  function listShouldRestore({ enabled, now, armAt, userAt, scrollTop, saved, restores }) {
-    if (!enabled || !armAt || now - armAt > LIST_KEEP_MS) return false;
+  // 2.16.9: a janela vai do COMEÇO do envio até 3 s depois da ÚLTIMA parte que saiu (holding = envio da extensão em
+  // andamento; holdUntil = fim da janela). Com mídia (upload) e várias partes o pulo vinha depois dos 2 s de antes.
+  // Sem holdUntil (jeito antigo): armAt + LIST_KEEP_MS.
+  const LIST_KEEP_MS = 3000;
+  // topIsOther (2.16.9): no topo da lista ficou OUTRA conversa, não a aberta para a qual você mandou (mensagem de
+  // cliente chegando no meio do envio) → não volta. A conversa aberta fora da lista (lista filtrada) não conta.
+  function listShouldRestore({ enabled, now, armAt, userAt, scrollTop, saved, restores, holding = false, holdUntil = null, topIsOther = false }) {
+    if (!enabled || !armAt || topIsOther) return false;
+    const until = Number.isFinite(Number(holdUntil)) && holdUntil != null ? Number(holdUntil) : armAt + LIST_KEEP_MS;
+    if (!holding && now > until) return false;
     if (userAt >= armAt) return false;
     if (saved == null || saved <= 8 || scrollTop > 8) return false;
     return (restores || 0) < 3;
   }
-  const listRestoreTarget = ({ saved, rowH, scrollHeight, clientHeight }) =>
-    Math.round(Math.max(0, Math.min(Math.max(0, (scrollHeight || 0) - (clientHeight || 0)), (saved || 0) + Math.min(120, Math.max(40, Number(rowH) || 72)))));
+  // shift: + 1 linha (a conversa que recebeu subiu para o topo). 2.16.9: só na 1ª volta de um envio (nas partes
+  // seguintes a conversa já está no topo: volta para o mesmo lugar, sem escorregar uma linha por parte)
+  const listRestoreTarget = ({ saved, rowH, scrollHeight, clientHeight, shift = true }) =>
+    Math.round(Math.max(0, Math.min(Math.max(0, (scrollHeight || 0) - (clientHeight || 0)), (saved || 0) + (shift ? Math.min(120, Math.max(40, Number(rowH) || 72)) : 0))));
 
   // altura do topo ao arrastar a divisória: entre 48 px e o que deixa ~160 px para a lista
   const clampTopH = (h, panelH) => Math.round(Math.max(48, Math.min(Math.max(48, (Number(panelH) || 0) - 160), Number(h) || 0)));

@@ -9,7 +9,7 @@ const { spawnSync } = require('child_process');
 const files = fs.readdirSync(__dirname).filter((f) => f.endsWith('.test.cjs')).sort((a, b) => (a === 'chrome-real.test.cjs') - (b === 'chrome-real.test.cjs') || a.localeCompare(b));
 let failed = 0;
 for (const f of files) {
-  const r = spawnSync(process.execPath, [path.join(__dirname, f)], { encoding: 'utf8', timeout: 240000, env: process.env });
+  const r = spawnSync(process.execPath, [path.join(__dirname, f)], { encoding: 'utf8', timeout: 450000, env: process.env });
   const out = `${r.stdout || ''}${r.stderr || ''}`.trim().split('\n');
   const ok = r.status === 0;
   if (!ok) failed++;

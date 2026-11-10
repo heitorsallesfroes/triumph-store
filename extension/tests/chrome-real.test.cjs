@@ -67,6 +67,15 @@ function send() { if (!box.textContent.trim()) return; box.textContent = ''; jum
 box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 document.querySelector('footer button').addEventListener('click', send);
 window.__fakeIncoming = (name) => jumpTop(grid.querySelector('[data-name="' + name + '"]'));
+// 2.16.9: envio pela extensão (ponte falsa): a conversa aberta sobe e a lista pula; com ms, a mensagem fica com o
+// reloginho do WhatsApp (enviando: upload) por ms e só então sobe e pula
+window.__jumps = 0; // quantas vezes a lista pulou por envio (para o teste conferir que pulou de verdade)
+window.__fakeSentJump = (ms = 0) => {
+  const sel = grid.querySelector('[aria-selected=true]');
+  if (!ms) { if (sel) { window.__jumps++; jumpTop(sel.parentElement); } return; }
+  const clock = document.createElement('span'); clock.setAttribute('data-icon', 'msg-time'); document.querySelector('#main .msgs').append(clock);
+  setTimeout(() => { clock.remove(); const s2 = grid.querySelector('[aria-selected=true]'); if (s2) { window.__jumps++; jumpTop(s2.parentElement); } }, ms);
+};
 // 2.12.1: clique no cabeçalho (o WhatsApp abriria os dados do contato), recriar o cabeçalho e conversa de grupo
 window.__hdrClicks = 0;
 document.getElementById('main').addEventListener('click', (e) => { if (e.target.closest('header')) window.__hdrClicks++; });
@@ -81,6 +90,8 @@ window.addEventListener('message', (e) => {
   if (!fb || e.source !== window || !d || d.source !== 'tsp-wajs-content' || !Object.prototype.hasOwnProperty.call(fb, d.type)) return;
   e.stopImmediatePropagation();
   const v = typeof fb[d.type] === 'function' ? fb[d.type](d.payload) : fb[d.type];
+  // 2.16.9: resposta que demora (Promise), como um envio com upload
+  if (v && typeof v.then === 'function') { v.then((data) => window.postMessage({ source: 'tsp-wajs-bridge', id: d.id, type: d.type, ok: true, data }, location.origin)); return; }
   window.postMessage({ source: 'tsp-wajs-bridge', id: d.id, type: d.type, ok: true, data: v }, location.origin);
 });
 </script></body></html>`;
@@ -138,7 +149,7 @@ async function main() {
   const errors = [];
   let sessionId = null;
   const done = () => { try { child.kill(); } catch { /* já saiu */ } setTimeout(() => { try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* arquivo preso */ } }, 1500); };
-  const timer = setTimeout(() => { console.log('FAIL tempo esgotado'); done(); process.exit(1); }, 240000);
+  const timer = setTimeout(() => { console.log('FAIL tempo esgotado'); done(); process.exit(1); }, 420000); // 2.16.9: + os envios demorados (~1 min)
   try {
     // ── Supabase falso no service worker da extensão (2.10.5) ──
     // Desligado (padrão): os pedidos do background seguem e falham como sem rede (nada muda nos outros testes).
@@ -193,6 +204,8 @@ async function main() {
         if (up && method === 'POST') { const k = decodeURIComponent(up[1]); if (fake.storage.has(k)) return [400, { statusCode: '409', error: 'Duplicate', message: 'The resource already exists' }]; fake.storage.set(k, (fake.storage.get(k) || 0) + 1); return [200, { Key: `wa-media/${k}` }]; }
         return null;
       }
+      // 2.16.9: arquivo de uma mensagem rápida (o conteúdo não importa: a ponte falsa não abre)
+      if (fake.files && method === 'GET' && url.pathname.startsWith('/storage/v1/object/public/wa-media/')) return [200, 'imagem de teste'];
       if (!url.pathname.startsWith('/rest/v1/')) return null;
       const table = url.pathname.slice('/rest/v1/'.length);
       if (fake.fail && fake.fail[table] > 0) { fake.fail[table]--; fake.failed = (fake.failed || 0) + 1; return [503, { message: 'Service Unavailable' }]; } // 2.12.1
@@ -524,8 +537,15 @@ async function main() {
           files: [{ kind: 'imagem', file_url: 'https://x.supabase.co/1.jpg', file_name: '1.jpg', file_size: 10 }, { kind: 'imagem', file_url: 'https://x.supabase.co/2.jpg', file_name: '2.jpg', file_size: 10 }, { kind: 'video', file_url: 'https://x.supabase.co/3.mp4', file_name: '3.mp4', file_size: 10 }] },
       ],
     };
+    // 2.16.9: + "Follow Padrão 2" (1 parte: imagem com legenda) e uma de 5 partes de texto, para a lista de conversas
+    const SB_URL = (/SUPABASE_URL:\s*["']([^"']+)["']/.exec(fs.readFileSync(path.join(__dirname, '..', 'config.js'), 'utf8')) || [])[1];
+    const IMG_URL = `${SB_URL}/storage/v1/object/public/wa-media/teste/follow2.jpg`;
+    const ITEM_IMG = { id: 'i-teste-2169a', category_id: 'c-teste', title: 'Follow Padrão 2', type: 'imagem', body: 'Oi {nome}, olha essa!', file_url: IMG_URL, file_name: 'follow2.jpg', file_size: 15, usage_count: 0, position: 1, created_at: '2026-11-06T10:00:00Z',
+      parts: [{ id: 'q1', item_id: 'i-teste-2169a', position: 0, type: 'imagem', body: 'Oi {nome}, olha essa!', file_url: IMG_URL, file_name: 'follow2.jpg', file_size: 15, wait_seconds: 0, typing_seconds: 0 }] };
+    const ITEM_5 = { id: 'i-teste-2169b', category_id: 'c-teste', title: 'Cinco partes', type: 'texto', body: 'Parte 1', file_url: null, file_name: null, file_size: null, usage_count: 0, position: 2, created_at: '2026-11-06T10:00:00Z',
+      parts: [1, 2, 3, 4, 5].map((n) => ({ id: `r${n}`, item_id: 'i-teste-2169b', position: n - 1, type: 'texto', body: `Parte ${n}`, file_url: null, file_name: null, file_size: null, wait_seconds: n === 1 ? 0 : 1, typing_seconds: 0 })) };
     const inExt = async (expression) => (await s('Runtime.evaluate', { expression, contextId: lastIso, returnByValue: true, awaitPromise: true })).result.value;
-    await inExt(`new Promise((r) => chrome.storage.local.set({ library: ${JSON.stringify({ categories: [{ id: 'c-teste', name: 'Testes', position: 0 }], items: [ITEM], savedAt: '2026-11-06T10:00:00Z' })} }, () => r(true)))`);
+    await inExt(`new Promise((r) => chrome.storage.local.set({ library: ${JSON.stringify({ categories: [{ id: 'c-teste', name: 'Testes', position: 0 }], items: [ITEM, ITEM_IMG, ITEM_5], savedAt: '2026-11-06T10:00:00Z' })} }, () => r(true)))`);
     await s('Page.reload', { ignoreCache: true });
     await sleep(1500);
     for (const stop = Date.now() + TIMEOUT_MS; Date.now() < stop;) {
@@ -571,6 +591,86 @@ async function main() {
     const v6 = await pv();
     check('"Restaurar" volta todas as partes e fotos', v6.off.every((x) => !x) && v6.cellsOff.every((x) => !x) && /3 de 3/.test(v6.total), JSON.stringify(v6));
     check('nenhum erro no console na prévia', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 5b. lista de conversas com envio demorado (2.16.9): a vigia vai do começo do envio até 3 s depois da ÚLTIMA parte
+    // (e enquanto a mensagem estiver com o reloginho do WhatsApp). Mensagem rápida pela prévia ("Enviar"), ponte falsa.
+    fake.on = true;
+    fake.files = true;
+    const pg5 = (js) => evalPage(`(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); ${js} })()`);
+    await pg5(`window.__sends = []; window.__fakeBridge = { status: { ready: true, version: 'teste' }, activeChat: { kind: 'individual', chatId: '5521900000001@c.us' },
+      chatPhone: { phone: '5521900000001', name: 'Cliente 1', via: 'numero' }, verifyChatPhone: { active: true, match: true },
+      sendText: (p) => { window.__sends.push(['texto', Date.now()]); window.__fakeSentJump(0); return { sent: true }; },
+      sendMedia: (p) => { window.__sends.push(['midia', Date.now()]); return window.__slowMedia === 'ponte'
+        ? new Promise((r) => setTimeout(() => { window.__fakeSentJump(0); r({ sent: true }); }, 6000)) // a ponte leva 6 s e a lista pula no fim
+        : (window.__fakeSentJump(6000), { sent: true }); }, // a ponte responde já; o WhatsApp fica 6 s com o reloginho e só então pula
+    }; return true;`);
+    const l5sendItem = async (id) => {
+      await q(`const c = sh.querySelector('.card[data-id="${id}"]'); if (!c.querySelector('.pv-send')) { c.querySelector('.info .t').click(); await wait(400); } c.querySelector('.pv-send').click(); return true;`);
+    };
+    // a) a ponte leva 6 s (upload) e a lista pula no fim
+    await wheel(1100); await sleep(700);
+    const l5m0 = await list();
+    const l5jumps = () => pg5('return { j: window.__jumps, m: window.__sends.filter((x) => x[0] === "midia").length };');
+    const l5ja = await l5jumps();
+    await pg5(`window.__slowMedia = 'ponte'; return true;`);
+    await l5sendItem('i-teste-2169a');
+    await sleep(6800);
+    const l5m1 = await list();
+    const l5jb = await l5jumps();
+    check('2.16.9 lista: imagem que leva 6 s para sair (a lista pula no fim) → volta para onde estava', l5jb.m === l5ja.m + 1 && l5jb.j === l5ja.j + 1 && l5m0.st > 500 && l5m1.st > 500 && Math.abs(l5m1.st - l5m0.st) <= 120, `antes ${JSON.stringify(l5m0)} · depois ${JSON.stringify(l5m1)} · pulos/mídias ${JSON.stringify([l5ja, l5jb])}`);
+    await sleep(3500);
+    // b) a ponte responde na hora e o WhatsApp fica 6 s "enviando" (reloginho); pula depois dos 3 s
+    const l5n0 = await list();
+    const l5jc = await l5jumps();
+    await pg5(`window.__slowMedia = 'relogio'; return true;`);
+    await l5sendItem('i-teste-2169a');
+    await sleep(7000);
+    const l5n1 = await list();
+    const l5jd = await l5jumps();
+    check('2.16.9 lista: mensagem que fica 6 s com o reloginho (upload) e pula depois → volta', l5jd.m === l5jc.m + 1 && l5jd.j === l5jc.j + 1 && l5n0.st > 500 && l5n1.st > 500 && Math.abs(l5n1.st - l5n0.st) <= 120, `antes ${JSON.stringify(l5n0)} · depois ${JSON.stringify(l5n1)} · pulos/mídias ${JSON.stringify([l5jc, l5jd])}`);
+    await sleep(3500);
+    // c) mensagem de 5 partes (1 s entre elas): cada parte pula a lista; volta sempre para o mesmo lugar (sem escorregar)
+    const l5p0 = await list();
+    const l5sends0 = (await pg5('return window.__sends.length')) || 0;
+    await l5sendItem('i-teste-2169b');
+    await sleep(6500);
+    const l5p1 = await list();
+    const l5parts5 = ((await pg5('return window.__sends.length')) || 0) - l5sends0;
+    check('2.16.9 lista: mensagem de 5 partes → depois da última a lista continua onde estava (+ 1 linha só na 1ª vez)', l5parts5 === 5 && l5p1.st > 500 && l5p1.st - l5p0.st >= 0 && l5p1.st - l5p0.st <= 120, `antes ${JSON.stringify(l5p0)} · depois ${JSON.stringify(l5p1)} · partes ${l5parts5}`);
+    await sleep(3500);
+    // d) eu rolo no meio do envio demorado: não restaura
+    await pg5(`window.__slowMedia = 'ponte'; return true;`);
+    await l5sendItem('i-teste-2169a');
+    await sleep(2000);
+    await wheel(-200);
+    await sleep(5500);
+    const l5r1 = await list();
+    check('2.16.9 lista: se você rola no meio do envio, não restaura (fica no topo depois do pulo)', l5r1.st <= 8, JSON.stringify(l5r1));
+    await sleep(3500);
+    // e) mensagem de cliente chegando no meio do envio: não restaura (no topo fica a conversa dela, não a aberta)
+    await wheel(1100); await sleep(700);
+    await pg5(`window.__slowMedia = 'ponte'; return true;`);
+    await l5sendItem('i-teste-2169a');
+    await sleep(1500);
+    await evalPage(`window.__fakeIncoming('Cliente 30')`); await sleep(600);
+    const l5i1 = await list();
+    check('2.16.9 lista: mensagem de cliente chegando no meio do envio não restaura', l5i1.st <= 8, JSON.stringify(l5i1));
+    await sleep(6000);
+    // f) lista filtrada (Não lidas / etiqueta): a conversa aberta não está na lista; o pulo do envio ainda volta
+    await wheel(1100); await sleep(700);
+    await evalPage(`window.__selKeep = [...document.querySelectorAll('#pane-side [aria-selected=true]')]; window.__selKeep.forEach((c) => c.setAttribute('aria-selected', 'false')); window.__fakeSentJumpOrig = window.__fakeSentJump; window.__fakeSentJump = () => { const g = document.querySelector('#pane-side [role=grid]'); g.prepend(g.lastElementChild); setTimeout(() => { document.getElementById('pane-side').scrollTop = 0; }, 120); }; true`);
+    const lf0 = await list();
+    await l5sendItem('i-teste-2169b');
+    await sleep(6500);
+    const lf1 = await list();
+    check('2.16.9 lista filtrada (a conversa aberta fora da lista): o envio que pula a lista ainda volta', lf0.st > 500 && lf1.st > 500, `antes ${JSON.stringify(lf0)} · depois ${JSON.stringify(lf1)}`);
+    await evalPage(`window.__fakeSentJump = window.__fakeSentJumpOrig; (window.__selKeep || []).forEach((c) => c.setAttribute('aria-selected', 'true')); true`);
+    const l5prefOn = await inExt(`new Promise((r) => chrome.storage.local.get(null, (x) => r(JSON.stringify(x).includes('"keepListPos":false') ? 'desligada' : 'ligada')))`);
+    check('2.16.9 "Manter a posição da lista de conversas ao enviar" continua ligada por padrão', l5prefOn === 'ligada', l5prefOn);
+    await pg5(`window.__fakeBridge = null; return true;`);
+    fake.on = false;
+    fake.files = false;
+    check('nenhum erro no console nos envios demorados', errors.length === 0, errors.slice(0, 8).join(' | '));
 
     // 6. 📈 → venda do ERP (2.10.5), com o Supabase falso: achar pelo telefone, escolher por valor, nenhuma,
     // mais de uma pelo telefone, desligar. Conferindo cada gravação: só wa_chat_id e telefone vazio na venda.

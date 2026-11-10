@@ -799,6 +799,25 @@ guardada.
 
 ## O que mudou
 
+### 2.16.9 — lista de conversas não pula mais para o topo em envio com imagem / várias partes
+- **O problema**: a 2.10.3 vigiava a lista (#pane-side) só por 2 s depois de cada parte. Com mídia (upload) e
+  mensagens de várias partes o WhatsApp pula a lista depois disso (ex.: "Follow Padrão 2", imagem com legenda, rolado
+  em "Ontem": a lista ia para o topo e ficava).
+- **Agora** a vigia vai do **começo do envio até 3 s depois da ÚLTIMA parte** (texto, imagem, áudio, vídeo,
+  documento, álbum, catálogo/rich), em todo envio da extensão (mensagens rápidas, mídias, catálogo, áudio do 🎤,
+  agendados, disparos, automações) e no Enter/botão Enviar do WhatsApp (também o "Enviar" da prévia de foto/vídeo/
+  documento). Enquanto a mensagem estiver com o **reloginho** do WhatsApp (ainda enviando), a janela não fecha.
+- **Sem brigar**: se você rola, clica na lista ou abre outra conversa nesse meio tempo, não restaura (até o fim desse
+  envio). Mensagem de cliente chegando não restaura (nem no meio do envio: no topo fica a conversa dela, não a aberta).
+- Volta para onde você estava + 1 linha só na 1ª vez de cada envio; nas partes seguintes volta para o mesmo lugar
+  (sem escorregar uma linha por parte). No máximo 3 voltas por parte.
+- Com a lista filtrada (Não lidas, etiqueta), em que a conversa aberta pode não estar na lista, continua funcionando.
+- "Manter a posição da lista de conversas ao enviar" (Personalizar) continua ligada por padrão.
+- Testes: `prefs.test.cjs` (janela até 3 s depois da última parte, envio em andamento, você mexeu, mensagem de
+  cliente, sem escorregar) e `chrome-real.test.cjs` (imagem que leva 6 s e pula no fim; 6 s com o reloginho e pula
+  depois; 5 partes; você rola no meio; mensagem de cliente no meio; lista filtrada). O tempo limite do teste no Chrome
+  real passou para 7 min (os envios demorados somam ~1 min).
+
 ### 2.16.8 — mostra que o "Pular espera" já foi clicado
 - No painel da conversa ("🔁 Na automação … · passo: esperando resposta"), com a espera pulada (`skip_wait` no
   percurso) o botão **Pular espera** some e aparece o selo **"⏩ Espera pulada às 12:28 · na fila de envio"** (a hora é
