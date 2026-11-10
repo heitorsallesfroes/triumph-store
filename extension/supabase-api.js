@@ -2161,6 +2161,7 @@
 
   // ── 2.12.0: validação da sequência (o painel valida antes; aqui é a última barreira) ──
   const SEQ_ID_RE = /^[a-z0-9]{1,40}$/i;
+  const SEQ_MAX_DEPTH = 10; // 2.16.4 (o mesmo do engine.js)
   // 2.16.3: draft = rascunho DESLIGADO: o que falta escolher (mensagem, etiqueta, destino do "Continuar em", tempo)
   // fica vazio em vez de recusar; o formato (ids, tipos, limites) continua conferido. Ligar exige tudo completo.
   function checkSequence(seq, { draft = false } = {}) {
@@ -2212,8 +2213,8 @@
           return out;
         }
         if (n.type === 'esperar') {
-          // até 5 "esperar resposta" um dentro do outro (o 5º ainda pode ter caixas nos caminhos)
-          if (depth > 5) throw new Error('Sequência: no máximo 5 esperas uma dentro da outra');
+          // 2.16.4: até 10 "esperar resposta" um dentro do outro (o 10º ainda pode ter caixas nos caminhos); igual ao engine.js
+          if (depth > SEQ_MAX_DEPTH) throw new Error(`Sequência: no máximo ${SEQ_MAX_DEPTH} esperas uma dentro da outra`);
           const unit = ['minutos', 'horas', 'dias'].includes(n.unit) ? n.unit : 'horas';
           const amount = opt(() => intIn(Number(n.amount), 1, unit === 'minutos' ? 525600 : unit === 'horas' ? 8760 : 365, `${w}: tempo de espera`), 0);
           // 2.16.0: "desde a entrada" (from) fica guardado; com ele não vale "da minha última mensagem"

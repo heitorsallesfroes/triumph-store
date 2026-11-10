@@ -936,7 +936,7 @@
   //   { id, type: 'esperar', amount, unit: 'minutos'|'horas'|'dias', after_mine?, yes: [passos], no: [passos] }
   //   { id, type: 'fim' } | { id, type: 'ir', to: id }   (fim da lista = Fim)
   // start = { type: 'lead'|'etiqueta'|'venda'|'manual', origin: 'todos'|'anuncio'|'organico', source, label_id, wa_label_id }
-  const SEQ_MAX_DEPTH = 5;
+  const SEQ_MAX_DEPTH = 10; // 2.16.4: até 10 "esperar resposta" um dentro do outro (antes 5)
   const SEQ_UNIT_MIN = { minutos: 1, horas: 60, dias: 1440 };
   // 2.16.0: espera contada desde a ENTRADA na automação (from: 'entrada'; ⏳ no modo tempo e ❓). Sem from = depois da
   // etapa anterior (como sempre).

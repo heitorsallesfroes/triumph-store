@@ -8982,7 +8982,7 @@
   // ══ 2.13.0: CONSTRUTOR VISUAL de automações (em cascata) ══════════════════════════════════════════
   // Tela ampla por cima do WhatsApp Web (fundo claro): COMEÇA → caixas ligadas por linhas, de cima para baixo; "+"
   // entre duas caixas insere outra; clicar numa caixa abre a edição no quadro da direita. Usa o motor das
-  // sequências (2.12.0: o mesmo jsonb, só daqui pra frente, limites, horário, Não enviar, até 5 níveis).
+  // sequências (2.12.0: o mesmo jsonb, só daqui pra frente, limites, horário, Não enviar, até 10 níveis desde a 2.16.4).
   // Automações antigas que dá para desenhar abrem aqui (E.seqFromAutomation); as outras ficam no editor antigo.
   const VB_TYPES = {
     enviar: { icon: '✉', title: 'ENVIAR MENSAGEM' }, pausa: { icon: '⏳', title: 'ESPERAR' }, esperar: { icon: '❓', title: 'ESPERAR RESPOSTA' },

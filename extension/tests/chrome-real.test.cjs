@@ -1943,6 +1943,50 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console no rascunho', errors.length === 0, errors.slice(0, 8).join(' | '));
+    // 24. até 10 "esperar resposta" um dentro do outro (2.16.4): régua de 10 níveis (3 h, dia 1, 3, 7, 15, 25, 35, 45,
+    // 55, 65). Abre no desenho em cascata (rolagem horizontal até o 10º, mesma letra), valida (Salvar e ligar abre a
+    // confirmação), o "+" no 9º nível deixa pôr ❓ e no 10º não ("No máximo 10…"), e o Simular dá as 11 mensagens na ordem.
+    fake.on = true;
+    fake.generic = true;
+    const D24 = [[3, 'horas'], [1, 'dias'], [3, 'dias'], [7, 'dias'], [15, 'dias'], [25, 'dias'], [35, 'dias'], [45, 'dias'], [55, 'dias'], [65, 'dias']];
+    const mk24 = (k) => (k < 10
+      ? [{ id: `s${k}`, type: 'enviar', item_id: itemId }, { id: `w${k}`, type: 'esperar', amount: D24[k][0], unit: D24[k][1], from: 'entrada', yes: [{ id: `y${k}`, type: 'fim' }], no: mk24(k + 1) }]
+      : [{ id: 's10', type: 'enviar', item_id: itemId }, { id: 'f10', type: 'fim' }]);
+    const ID24 = uuid();
+    fake.db.wa_automations = [...(fake.db.wa_automations || []), { id: ID24, name: 'Régua 10 níveis', kind: 'sequencia', trigger_type: 'sequencia', active: false, position: 3,
+      sequence: { start: { type: 'lead', origin: 'todos' }, business: false, schedule: { mode: 'personalizado', week: [0, 1, 2, 3, 4, 5, 6].map(() => [{ start: '00:00', end: '23:59' }]) }, steps: mk24(0) }, test_chat_id: null, conditions: [], actions: [] }];
+    await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(200); sh.querySelector('[data-sec="vendas"]').click(); await wait(200); sh.querySelector('[data-sec="follows"]').click(); await wait(300); return true;`);
+    const card24 = `[...sh.querySelectorAll('.fw-card')].find((c) => (c.querySelector('.fw-name') || {}).textContent === 'Régua 10 níveis')`;
+    const ok24 = await waitFor(`return !!${card24};`, 15000);
+    const list24 = await q(`const c = ${card24}; return { badge: c.querySelector('.fw-badge').textContent, dis: c.querySelector('.fw-switch').disabled };`);
+    await q(`const c = ${card24}; c.querySelector('.fw-edit').click(); await wait(500); return true;`);
+    const draw24 = await q(`const v = sh.querySelector('.vb'); const cv = v.querySelector('.vb-canvas'); const w = [...v.querySelectorAll('.vb-box.vb-esperar')];
+      const fs = (b) => getComputedStyle(b.querySelector('.vb-btxt')).fontSize; const last = w[w.length - 1];
+      const r = { n: w.length, sends: v.querySelectorAll('.vb-box.vb-enviar').length, bad: v.querySelectorAll('.vb-box.vb-bad').length, warn: v.querySelectorAll('.vb-order-warn').length,
+        ox: getComputedStyle(cv).overflowX, sw: cv.scrollWidth, cw: cv.clientWidth, fs0: fs(w[0]), fs9: fs(last), lastW: Math.round(last.getBoundingClientRect().width), lastTxt: last.querySelector('.vb-btxt').textContent };
+      cv.scrollLeft = cv.scrollWidth; cv.scrollTop = cv.scrollHeight; await wait(150); last.scrollIntoView({ block: 'center', inline: 'center' }); await wait(150);
+      const lr = last.getBoundingClientRect(); const cr = cv.getBoundingClientRect(); r.lastSeen = lr.left >= cr.left - 1 && lr.right <= cr.right + 1 && lr.top >= cr.top - 1 && lr.bottom <= cr.bottom + 1; r.scrolled = cv.scrollLeft > 0; return r;`);
+    check('2.16.4: régua de 10 níveis abre no desenho em cascata: 10 ❓ e 11 ✉, sem erro nem aviso; rolagem horizontal leva até o 10º, com a mesma letra e largura legível',
+      ok24 && list24.badge === 'DESLIGADA' && !list24.dis && draw24.n === 10 && draw24.sends === 11 && draw24.bad === 0 && draw24.warn === 0 && /auto|scroll/.test(draw24.ox) && draw24.sw > draw24.cw
+      && draw24.fs0 === draw24.fs9 && draw24.lastW >= 160 && draw24.lastTxt === 'Espera resposta até 65 dias depois de entrar · dia 65 desde a entrada' && draw24.lastSeen && draw24.scrolled,
+      JSON.stringify({ list24, draw24 }));
+    await shot('regua-10-niveis.png');
+    const plus24 = await q(`const v = sh.querySelector('.vb'); const lanes = [...v.querySelectorAll('.vb-lane.vb-no')];
+      const at = async (lane) => { lane.querySelector('.vb-plus').click(); await wait(200); const m = sh.querySelector('.vb .vb-menu .vb-mi-esperar'); const r = m ? { dis: m.disabled, title: m.title } : null; const x = sh.querySelector('.vb .vb-menu .vb-mi-x'); if (x) x.click(); await wait(150); return r; };
+      const nl = lanes.length; const l9 = await at([...sh.querySelectorAll('.vb .vb-lane.vb-no')][8]); const l10 = await at([...sh.querySelectorAll('.vb .vb-lane.vb-no')][9]); return { nl, l9, l10 };`);
+    check('2.16.4: "+" no 9º nível deixa pôr ❓ ESPERAR RESPOSTA; no 10º fica bloqueado ("No máximo 10 …")',
+      plus24.nl === 10 && plus24.l9 && plus24.l9.dis === false && plus24.l10 && plus24.l10.dis === true && plus24.l10.title === 'No máximo 10 "esperar resposta" um dentro do outro', JSON.stringify(plus24));
+    await q(`const t = sh.querySelector('.vb .vb-tr'); t.querySelector('.more-btn').click(); await wait(150); t.querySelector('.more-menu .vb-sim').click(); await wait(400); return true;`);
+    const sim24 = await q(`const m = sh.querySelector('.vb .vb-modal'); return [...m.querySelectorAll('.vb-sim-nunca .vb-ev')].filter((r) => r.classList.contains('vb-ev-enviar')).map((r) => r.querySelector('.vb-evt').textContent);`);
+    check('2.16.4: Simular com 10 níveis: 11 mensagens na ordem, dia 0, 0, 1, 3, 7, 15, 25, 35, 45, 55, 65',
+      sim24.length === 11 && JSON.stringify(sim24.map((x) => Number((/^dia (\d+) · /.exec(x) || [])[1]))) === '[0,0,1,3,7,15,25,35,45,55,65]', JSON.stringify(sim24));
+    await q(`sh.querySelector('.vb .vb-simclose').click(); await wait(200); sh.querySelector('.vb .vb-save-on').click(); await wait(400); return true;`);
+    const on24 = await q(`const v = sh.querySelector('.vb'); return { modal: !!v.querySelector('.vb-modal.vb-m-on'), err: (v.querySelector('.vb-msg.err') || {}).textContent || '' };`);
+    check('2.16.4: "Salvar e ligar" com 10 níveis passa na validação (abre a confirmação de ligar)', on24.modal && !on24.err, JSON.stringify(on24));
+    await q(`const v = sh.querySelector('.vb'); const bg = v.querySelector('.vb-modal-bg'); if (bg) bg.click(); await wait(200); v.querySelector('.vb-close').click(); await wait(300); const d = sh.querySelector('.vb .vb-discard'); if (d) d.click(); await wait(300); return true;`);
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console na régua de 10 níveis', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

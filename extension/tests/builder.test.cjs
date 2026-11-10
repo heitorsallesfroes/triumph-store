@@ -3,7 +3,7 @@
 // - motor (seqStep e createMotor com API falsa): respondeu no 1º passo, não respondeu até o fim, resposta durante a
 //   espera, incluir quem já está na etiqueta, ⏳ ESPERAR simples, "Nunca para quem tem a etiqueta" (CRM e WhatsApp)
 // - desenho: FIM automático no fim de cada caminho, inserir caixa ("+"), excluir, simulação, conversão das antigas
-// - servidor: ⏳, exclusões e até 5 níveis de "esperar resposta"
+// - servidor: ⏳, exclusões e até 10 níveis de "esperar resposta" (2.16.4; antes 5)
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -339,7 +339,7 @@ function api() {
   vm.runInContext(src('supabase-api.js'), c);
   return { a: c.WaApi, calls };
 }
-test('servidor: salva a régua normalizada, com ⏳, "Nunca para quem tem" e até 5 "esperar resposta" um dentro do outro', async () => {
+test('servidor: salva a régua normalizada, com ⏳, "Nunca para quem tem" e até 10 "esperar resposta" um dentro do outro', async () => {
   const { a, calls } = api();
   const def = E.seqNormalize(regua());
   def.start.exclude = [{ source: 'crm', label_id: FRIO }, { source: 'whatsapp', wa_label_id: '7' }];
@@ -348,13 +348,81 @@ test('servidor: salva a régua normalizada, com ⏳, "Nunca para quem tem" e at�
   const post = calls.find((x) => x.method === 'POST' && x.path === 'wa_automations').body;
   assert.deepStrictEqual([post.kind, post.sequence.steps[0], post.sequence.start.exclude], ['sequencia', { id: 'pz', type: 'pausa', amount: 2, unit: 'horas' }, [{ source: 'crm', label_id: FRIO }, { source: 'whatsapp', wa_label_id: '7' }]]);
   const deep = (d) => [{ id: `w${d}`, type: 'esperar', amount: 1, unit: 'horas', yes: [{ id: `y${d}`, type: 'etiqueta', op: 'colocar', source: 'crm', label_id: ATEND }], no: d > 1 ? deep(d - 1) : [{ id: 'last', type: 'enviar', item_id: F[0] }] }];
-  await a.saveAutomation({ automation: { kind: 'sequencia', name: '5 níveis', sequence: { start: { type: 'lead' }, steps: deep(5) } } }); // o 5º ainda tem caixas nos caminhos
-  await assert.rejects(a.saveAutomation({ automation: { kind: 'sequencia', name: '6', sequence: { start: { type: 'lead' }, steps: deep(6) } } }), /no máximo 5/);
+  await a.saveAutomation({ automation: { kind: 'sequencia', name: '10 níveis', active: true, sequence: { start: { type: 'lead' }, steps: deep(10) } } }); // o 10º ainda tem caixas nos caminhos
+  await assert.rejects(a.saveAutomation({ automation: { kind: 'sequencia', name: '11', sequence: { start: { type: 'lead' }, steps: deep(11) } } }), /no máximo 10/);
   await assert.rejects(a.saveAutomation({ automation: { kind: 'sequencia', name: 'x', active: true, sequence: { ...def, start: { ...def.start, exclude: [{ source: 'crm', label_id: '' }] } } } }), /Nunca para quem tem/);
   // 2.16.3: desligada = rascunho: a etiqueta de "Nunca para quem tem" ainda não escolhida fica vazia
   await a.saveAutomation({ automation: { kind: 'sequencia', name: 'x', sequence: { ...def, start: { ...def.start, exclude: [{ source: 'crm', label_id: '' }] } } } });
   const draft = calls.filter((x) => x.method === 'POST' && x.path === 'wa_automations').pop().body;
   assert.deepStrictEqual([draft.active, draft.sequence.start.exclude], [false, [{ source: 'crm', label_id: '' }]]);
+});
+
+// ── 2.16.4: 8 "esperar resposta" um dentro do outro (régua 3 h, dia 1, 3, 7, 15, 25, 35, 45 desde a entrada) ──
+const D8_AT = [[3, 'horas'], [1, 'dias'], [3, 'dias'], [7, 'dias'], [15, 'dias'], [25, 'dias'], [35, 'dias'], [45, 'dias']];
+const D8_ITEM = (k) => `aaaaaaaa-aaaa-4aaa-8aaa-0000000000${String(k).padStart(2, '0')}`;
+function deep8() {
+  const build = (k) => (k < 8
+    ? [{ id: `s${k}`, type: 'enviar', item_id: D8_ITEM(k) }, { id: `w${k}`, type: 'esperar', amount: D8_AT[k][0], unit: D8_AT[k][1], from: 'entrada',
+      yes: [{ id: `ok${k}`, type: 'etiqueta', op: 'colocar', source: 'crm', label_id: ATEND }, { id: `fy${k}`, type: 'fim' }], no: build(k + 1) }]
+    : [{ id: 's8', type: 'enviar', item_id: D8_ITEM(8) }, { id: 'frio', type: 'etiqueta', op: 'colocar', source: 'crm', label_id: FRIO }, { id: 'fim', type: 'fim' }]);
+  return { start: { type: 'etiqueta', source: 'crm', label_id: FU1 }, business: false, steps: build(0) };
+}
+const D8_MIN = [0, ...D8_AT.map(([n, u]) => n * (u === 'horas' ? 60 : 1440))]; // quando sai cada mensagem (min desde a entrada)
+test('2.16.4: 8 níveis — valida (sem erro nem aviso) e o limite agora é 10', () => {
+  const def = deep8();
+  assert.strictEqual(E.SEQ_MAX_DEPTH, 10);
+  assert.deepStrictEqual(plain(E.seqValidate(def)), []);
+  assert.deepStrictEqual(plain(E.seqEntryOrderWarnings(def)), []);
+  assert.strictEqual(Math.max(...[...E.seqIndex(def).values()].filter((e) => e.node.type === 'esperar').map((e) => e.depth)), 8);
+  const deepN = (d) => (d === 0 ? [{ id: 'z', type: 'enviar', item_id: F[0] }] : [{ id: `d${d}`, type: 'esperar', amount: 1, unit: 'horas', yes: [], no: deepN(d - 1) }]);
+  assert.deepStrictEqual(plain(E.seqValidate({ start: { type: 'manual' }, steps: deepN(10) })), [], '10 níveis valem');
+  assert.deepStrictEqual(plain(E.seqValidate({ start: { type: 'manual' }, steps: deepN(11) })).map((x) => x.msg), ['No máximo 10 esperas uma dentro da outra.']);
+  // os dois menus "+" do painel (construtor visual e editor de sequência) usam o mesmo limite do engine
+  const c = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
+  assert.strictEqual((c.match(/t === 'esperar' && depth >= E\.SEQ_MAX_DEPTH\)/g) || []).length, 2);
+  assert.ok(!/depth >= 5|No máximo 5 /.test(c));
+  assert.ok(/const SEQ_MAX_DEPTH = 10;/.test(fs.readFileSync(path.join(__dirname, '..', 'supabase-api.js'), 'utf8')), 'servidor com o mesmo limite');
+});
+test('2.16.4: 8 níveis — Simular: as 9 mensagens na ordem, na hora, +3 h, +1, 3, 7, 15, 25, 35 e 45 dias; responder no 1º vai para Em atendimento', () => {
+  const opt = { itemTitle: (id) => `F${Number(id.slice(-2))}`, labelName: (id) => (id === ATEND ? 'Em atendimento' : id === FRIO ? 'Frio' : id) };
+  const never = plain(E.seqSimulate(E.seqNormalize(deep8()), 'nunca', opt));
+  const sends = never.filter((e) => /^Recebe/.test(e.text));
+  assert.deepStrictEqual(sends.map((e) => e.text), [0, 1, 2, 3, 4, 5, 6, 7, 8].map((k) => `Recebe “F${k}”`));
+  assert.deepStrictEqual(sends.map((e) => E.simAtText(e.at)), ['na hora', '+3 h', '+1 dia', '+3 dias', '+7 dias', '+15 dias', '+25 dias', '+35 dias', '+45 dias']);
+  assert.deepStrictEqual(never.slice(-2).map((e) => e.text), ['Entra na etiqueta “Frio”', 'Fim: sai da automação']);
+  const first = plain(E.seqSimulate(E.seqNormalize(deep8()), 'primeiro', opt));
+  assert.deepStrictEqual(first.map((e) => e.text), ['Entra na automação', 'Recebe “F0”', '✅ Respondeu', 'Entra na etiqueta “Em atendimento”', 'Fim: sai da automação']);
+});
+test('2.16.4: 8 níveis — o motor executa as 9 etapas na ordem certa (nada antes da hora) e termina em Frio', () => {
+  const s = runner(deep8());
+  s.run.entered_at = T0;
+  s.tick(T0);
+  assert.deepStrictEqual(s.log.sends, [D8_ITEM(0)]);
+  for (let k = 1; k <= 8; k++) {
+    assert.strictEqual(s.tick(T0 + D8_MIN[k] * MIN - MIN).status, 'wait', `F${k} não sai antes da hora`);
+    assert.strictEqual(s.log.sends.length, k);
+    s.tick(T0 + D8_MIN[k] * MIN + MIN);
+    assert.deepStrictEqual(s.log.sends, [...Array(k + 1).keys()].map(D8_ITEM), `F${k} na ordem`);
+  }
+  s.tick(T0 + D8_MIN[8] * MIN + 2 * MIN);
+  assert.deepStrictEqual([s.log.ended, s.log.outcome, labelsOf(s.log.ops)], [true, 'nao_respondeu', ['colocar:Frio']]);
+  assert.strictEqual(s.run.branches.length, 8);
+});
+test('2.16.4: 8 níveis — respondeu depois da F5 → Em atendimento, sem F6; o servidor salva ligada (10 ok, 11 não)', async () => {
+  const s = runner(deep8());
+  s.run.entered_at = T0;
+  s.tick(T0);
+  for (let k = 1; k <= 5; k++) s.tick(T0 + D8_MIN[k] * MIN + MIN);
+  assert.strictEqual(s.log.sends.length, 6);
+  s.theirs(T0 + D8_MIN[5] * MIN + HOUR);
+  s.tick(T0 + D8_MIN[5] * MIN + HOUR + MIN);
+  assert.deepStrictEqual([s.log.sends.length, s.log.outcome, labelsOf(s.log.ops)], [6, 'respondeu', ['colocar:Em atendimento']]);
+  const { a, calls } = api();
+  await a.saveAutomation({ automation: { kind: 'sequencia', name: '8 níveis', active: true, sequence: deep8() } });
+  const post = calls.filter((x) => x.method === 'POST' && x.path === 'wa_automations').pop().body;
+  let d = 0;
+  for (let l = post.sequence.steps; l && l.length; l = (l.find((n) => n.type === 'esperar') || {}).no) if (l.some((n) => n.type === 'esperar')) d++;
+  assert.strictEqual(d, 8, 'guardou os 8 níveis');
 });
 
 (async () => {

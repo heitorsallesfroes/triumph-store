@@ -169,9 +169,9 @@ test('"Continuar para…": volta para outro ponto; sem espera no meio, a valida�
   const bad = { ...def, steps: [{ id: 'a', type: 'enviar', item_id: F1 }, { id: 'go', type: 'ir', to: 'a' }] };
   assert.deepStrictEqual(plain(E.seqValidate(bad)).map((x) => x.node), ['go']);
 });
-test('validação: mensagem, etiqueta, tempo, profundidade (até 5 esperas) e quem entra — cada um no seu passo', () => {
+test('validação: mensagem, etiqueta, tempo, profundidade (até 10 esperas, 2.16.4) e quem entra — cada um no seu passo', () => {
   const deep = (d) => (d === 0 ? [] : [{ id: `w${d}`, type: 'esperar', amount: 1, unit: 'horas', yes: [], no: deep(d - 1) }]);
-  const def = { start: { type: 'etiqueta', source: 'crm' }, steps: [{ id: 'm', type: 'enviar', item_id: '' }, { id: 't', type: 'etiqueta', op: 'colocar', source: 'crm' }, ...deep(6)] };
+  const def = { start: { type: 'etiqueta', source: 'crm' }, steps: [{ id: 'm', type: 'enviar', item_id: '' }, { id: 't', type: 'etiqueta', op: 'colocar', source: 'crm' }, ...deep(11)] };
   const w = plain(E.seqValidate(def)).map((x) => x.node);
   assert.ok(w.includes('start') && w.includes('m') && w.includes('t') && w.includes('w1') && !w.includes('w2'), JSON.stringify(w));
 });

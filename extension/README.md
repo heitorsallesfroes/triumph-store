@@ -799,6 +799,15 @@ guardada.
 
 ## O que mudou
 
+### 2.16.4 — até 10 "esperar resposta" um dentro do outro
+- `SEQ_MAX_DEPTH` passou de 5 para **10** (`engine.js`; o servidor, que tinha o 5 fixo, usa o mesmo 10). Dá para
+  montar a régua 3 h, dia 1, 3, 7, 15, 25… com 6 ou mais follows.
+- Conferido com 10 níveis: validação, os dois menus "+" (construtor visual e editor de sequência: no 10º nível o
+  ❓ fica bloqueado com "No máximo 10 …"), Simular, execução e o desenho em cascata (rolagem horizontal até o 10º,
+  mesma letra e largura das caixas).
+- Testes: `builder.test.cjs` (sequência de 8 níveis: valida, simula e executa as 9 mensagens na ordem; respondeu no
+  meio; servidor salva ligada; 10 ok / 11 não) e o Chrome real (passo 24: régua de 10 níveis).
+
 ### 2.16.3 — salvar automação incompleta como rascunho
 - **"Salvar desligada" sempre salva**, mesmo com caixas incompletas (ex.: ✉ ENVIAR MENSAGEM sem mensagem): vira
   **rascunho** desligado. As caixas incompletas continuam com borda vermelha (também ao abrir o rascunho de novo).
@@ -1201,7 +1210,7 @@ claro/escuro, com esqueleto ao carregar.
   também quem já está" com a contagem e a lista; "Só no horário comercial"; "Nunca para quem tem a etiqueta": o
   **Não enviar sempre** + outras) · ✉ **ENVIAR MENSAGEM** (mensagem pronta com busca e prévia, ou "+ Criar mensagem
   aqui", o mesmo editor das mensagens rápidas) · ⏳ **ESPERAR** (só o tempo, sem caminhos) · ❓ **ESPERAR RESPOSTA**
-  (abre dois caminhos lado a lado: ✅ Se responder / ❌ Se não responder; até 5 níveis) · 🏷 **ETIQUETA** (colocar ou
+  (abre dois caminhos lado a lado: ✅ Se responder / ❌ Se não responder; até 10 níveis) · 🏷 **ETIQUETA** (colocar ou
   tirar, CRM ou WhatsApp; "tirar de todas menos a que vou colocar"; o Não enviar nunca sai) · ⏹ **FIM**. Todo
   caminho termina em FIM (posto sozinho). ❓ inserido no meio leva o que vinha embaixo para o ❌.
 - **Validação visual**: caixa incompleta fica com borda vermelha e a frase do que falta ("Escolha ou crie a
@@ -1456,7 +1465,7 @@ claro/escuro, com esqueleto ao carregar.
     WhatsApp, com "Tirar todas as outras (menos a que vai colocar)") e ⏳ **Esperar resposta** por X
     minutos/horas/dias.
   - Todo "Esperar resposta" abre **dois caminhos** coloridos: ✅ **Respondeu** e ❌ **Não respondeu**, cada um
-    com os seus passos (pode ter outra espera dentro, até 5 níveis). Cada caminho termina em **Fim** (sai da
+    com os seus passos (pode ter outra espera dentro, até 10 níveis). Cada caminho termina em **Fim** (sai da
     automação) ou **Continuar para…** (outro passo; a validação não deixa um laço sem espera).
   - **Respondeu** = o cliente mandou qualquer mensagem depois do nosso último envio desta sequência (pela conversa
     e pelas respostas registradas em `wa_replies`). Se você mandar outra mensagem durante a espera, o tempo
