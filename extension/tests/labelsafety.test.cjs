@@ -164,7 +164,7 @@ test('api: varredura nunca usa "agora" para quem apareceu sem ser visto entrando
   const { api: a, db } = api();
   db.wa_native_label_seen.push({ chat_id: NEW, wa_label_id: LBL, first_seen_at: BASE, last_seen_at: BASE, removed_at: '2026-11-07T12:00:00.000Z' });
   const r = await a.nativeLabelSweep({ labelId: LBL, chats: [{ chatId: OLD }, { chatId: NEW }], complete: false });
-  assert.deepStrictEqual(plain(r), { added: 1, removed: 0, total: 2, baseline: 1 });
+  assert.deepStrictEqual(plain(r), { added: 1, removed: 0, total: 2, baseline: 1, moved: 0 }); // 2.16.5: + moved
   assert.deepStrictEqual([seenAt(db, OLD), seenAt(db, NEW)], [BASE, '2026-11-07T12:00:01.000Z']);
 });
 test('api: eventos — confirmado = agora; não confirmado = "já estava"; saída + volta no mesmo lote = confirmado', async () => {
@@ -175,7 +175,7 @@ test('api: eventos — confirmado = agora; não confirmado = "já estava"; saíd
     { chatId: OLD, labelId: LBL, type: 'add', confirmed: false },
     { chatId: ARCH, labelId: LBL, type: 'remove' }, { chatId: ARCH, labelId: LBL, type: 'add', confirmed: false },
   ] });
-  assert.deepStrictEqual(plain(r), { added: 2, removed: 0, baseline: 1 });
+  assert.deepStrictEqual(plain(r), { added: 2, removed: 0, baseline: 1, moved: 0, guarded: [] }); // 2.16.5: + moved, guarded
   assert.ok(Date.parse(seenAt(db, NEW)) >= t0 && Date.parse(seenAt(db, ARCH)) >= t0);
   assert.strictEqual(seenAt(db, OLD), BASE);
 });

@@ -799,6 +799,31 @@ guardada.
 
 ## O que mudou
 
+### 2.16.5 — troca de id do WhatsApp (c.us ↔ lid) não conta mais como entrada na etiqueta
+- **O problema (9/11)**: o WhatsApp trocou o id de ~511 conversas que já estavam na etiqueta "Cliente" (de `@lid` para
+  `@c.us` e de volta). A ponte viu o `@c.us` "entrando" e gravou como entrada confirmada; a régua "Avaliação Google"
+  criou 511 percursos. Agora a etiqueta nativa **identifica a pessoa pelo telefone** antes de contar uma entrada:
+  - **id canônico = o `@lid`** (o da conversa, ou o que o WA-JS mapeia para o `@c.us`, **só pelo cache**
+    `lidPnCache`, sem consultar o servidor). Sem `@lid` conhecido, o próprio id. `wa_native_label_seen` é gravada e
+    consultada sempre por ele.
+  - se o mesmo número (pelo `@lid` do WA-JS, pelo `@c.us` do telefone ou pelo `@lid` do contato do CRM com esse
+    telefone) **já tem linha nessa etiqueta** (ativa, ou que saiu nas últimas 24 h), é a **mesma pessoa**: não é entrada
+    nova; a linha só passa para o id canônico, com a **mesma** data de entrada ("já estava" continua "já estava").
+  - na varredura e nos eventos, a saída de um id com a outra forma do mesmo número presente **não** marca "saiu".
+- **Proteção extra**: mais de **20** entradas "confirmadas" de uma vez na mesma etiqueta (num ciclo) = troca de id em
+  massa: todas ficam "já estava" e vai um aviso no log da automação (`proteção: N entradas de uma vez = "já estava"`,
+  status "pulado", não manda nada). Até 20 continuam contando normalmente.
+- **Percurso duplicado**: se a mesma régua tiver percurso ativo para o `@c.us` e para o `@lid` do mesmo número, fica
+  só o mais antigo; os outros saem (`status 'saiu'`, `outcome 'id_duplicado'`), antes de qualquer envio.
+- **Números do painel (Agora / passos "Esperando…" / Saíram)**: vêm só do banco, iguais em qualquer computador
+  ("Motor: este computador" ou "outro computador executa"). Antes dependiam da checagem "o banco tem sequências?"
+  guardada por 30 min (uma falha passageira virava "Ninguém entrou ainda") e uma leitura lenta podia segurar a
+  atualização. Agora cada leitura tem prazo de 20 s, a lista atualiza a cada minuto e, se uma leitura falhar, ficam
+  os últimos números (só aparece "Ninguém entrou ainda" com resposta do banco).
+- Sem migration. O vendor WA-JS não foi alterado.
+- Testes: `idswap.test.cjs` (500 conversas trocando c.us → lid já na etiqueta → 0 entradas e 0 percursos; 1 entrada
+  real continua; proteção dos 20; percurso duplicado; números do painel com a checagem falhando; ponte só pelo cache).
+
 ### 2.16.4 — até 10 "esperar resposta" um dentro do outro
 - `SEQ_MAX_DEPTH` passou de 5 para **10** (`engine.js`; o servidor, que tinha o 5 fixo, usa o mesmo 10). Dá para
   montar a régua 3 h, dia 1, 3, 7, 15, 25… com 6 ou mais follows.

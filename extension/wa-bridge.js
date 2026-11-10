@@ -387,7 +387,8 @@
 
   async function labelEvents() {
     const events = labelEventQueue.splice(0, labelEventQueue.length);
-    if (isReady()) for (const e of events) if (/@lid$/.test(e.chatId)) { const pn = await pnOfChat(e.chatId); if (pn) e.phone = pn; }
+    // 2.16.5: + o @lid de cada @c.us (só cache), para a troca de id não virar entrada nova
+    if (isReady()) for (const e of events) await addPersonIds(e, e.chatId);
     await observeLoadedChats().catch(() => {}); // conversas que carregaram depois: guarda como estão (sem disparar)
     return { events };
   }
@@ -431,6 +432,7 @@
     for (const c of out) {
       if (!c.name) { const ch = safe(() => wpp.chat.get(c.id), null); if (ch) c.name = chatCard(ch, false).name || null; }
       if (/@lid$/.test(c.id) && pnLookups < 500) { pnLookups++; const pn = await pnOfChat(c.id); if (pn) c.phone = pn; }
+      if (/@c\.us$/.test(c.id)) await addPersonIds(c, c.id); // 2.16.5: o @lid da mesma pessoa (só cache)
     }
     return { count: known.count, chats: out, source };
   }
@@ -459,7 +461,8 @@
       if (out.length >= 5000) break;
     }
     // 2.6.0: @lid → telefone verdadeiro (cache local), para o contato do CRM ganhar o número
-    for (const c of out) if (/@lid$/.test(c.id)) { const pn = await pnOfChat(c.id); if (pn) c.phone = pn; }
+    // 2.16.5: e @c.us → o @lid da mesma pessoa (só cache), para a troca de id não virar entrada nova
+    for (const c of out) await addPersonIds(c, c.id);
     return { count: known.count, chats: out };
   }
 
@@ -1324,6 +1327,25 @@
       const pn = String(safe(() => e.phoneNumber.id, '') || '');
       return /^\d{8,15}$/.test(pn) ? pn : null;
     } catch { return null; }
+  }
+
+  // 2.16.5: @c.us → o @lid da mesma pessoa, SÓ pelo cache lidPnCache do WhatsApp Web (sem consultar o servidor, o que
+  // getPnLidEntry faria). Serve para a etiqueta nativa não contar a troca de id (c.us ↔ lid) como entrada nova.
+  function lidOfChat(chatId) {
+    if (!/^\d{8,15}@c\.us$/.test(chatId || '')) return null;
+    const W = safe(() => wpp.whatsapp, null);
+    const wid = safe(() => W.WidFactory.createWid(chatId), null);
+    if (!wid) return null;
+    const lid = safe(() => W.lidPnCache.getCurrentLid(wid), null) || safe(() => W.ApiContact.getCurrentLid(wid), null);
+    const s = String(safe(() => lid._serialized || lid.toString(), '') || '');
+    return /^\d+@lid$/.test(s) ? s : null;
+  }
+  // a mesma pessoa pelo outro lado: telefone (de um @lid) ou @lid (de um @c.us), gravados no próprio objeto
+  async function addPersonIds(o, chatId) {
+    if (/@lid$/.test(chatId || '')) { if (!o.phone) { const pn = await pnOfChat(chatId); if (pn) o.phone = pn; } return o; }
+    const lid = lidOfChat(chatId);
+    if (lid) o.lid = lid;
+    return o;
   }
 
   const realName = (v) => (typeof v === 'string' && v.trim() && !/^[+\d\s().-]+$/.test(v) ? v.trim().replace(/\s+/g, ' ').slice(0, 100) : null);

@@ -2097,7 +2097,17 @@
         (e.labelIds || []).forEach((l) => { if (ids.includes(String(l))) events.push({ chatId: e.chatId, name: e.name || null, phone: e.phone || null, labelId: String(l), type: e.type, at: e.t, confirmed: e.type === 'add' && seenWithout.includes(String(l)) }); });
       });
       if (events.length) {
-        try { await api('nativeLabelEvents', { events: events.slice(-200) }); } catch { /* a varredura corrige */ }
+        let res = null;
+        try { res = await api('nativeLabelEvents', { events: events.slice(-200) }); } catch { /* a varredura corrige */ }
+        // 2.16.5: proteção (mais de 20 entradas "confirmadas" de uma vez na mesma etiqueta): ficaram como "já estava";
+        // aviso no log de cada automação que começa por essa etiqueta (não manda nada)
+        for (const g of (res && Array.isArray(res.guarded) ? res.guarded : [])) {
+          const autos = st.activeAutomations.filter((a) => waTriggerLabelOf(a) === String(g.labelId));
+          for (const a of autos) {
+            await logSkip({ source: 'follow', source_id: a.id, contact_id: null, chat_id: null, item_id: null },
+              `proteção: ${g.count} entradas de uma vez = "já estava"`);
+          }
+        }
         st.lastEvalAt = 0;
       }
       const key = ids.join(',');
@@ -2912,6 +2922,7 @@
       state: st, runnerId, start, stop, tick, leaseTick, poke, refreshActivity, setPaused, saveSettings, simulate, queueCounts, loadSettings, loadFlows,
       // 2.12.0 (só testes): um ciclo das sequências (entrada, decisão, gravação e os envios da fila), sem o laço do motor
       _sequencesOnce: async () => { await refreshSequences(); const done = []; while ((st.seqQueue || []).length) { const j = st.seqQueue.shift(); await runSequenceJob(j); done.push(j); } return done; },
+      _trackNativeLabelsOnce: () => trackNativeLabels(), // 2.16.5 (só testes): uma leitura das etiquetas nativas
       refreshCounts, evaluate, ensureNoSendLabel, loadAutomations, evaluateAutomations,
       setWaLabel, // 2.7.1: a mensagem rápida usa a mesma troca de etiqueta do WhatsApp das automações
     };

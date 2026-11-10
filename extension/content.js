@@ -7878,22 +7878,31 @@
     renderFootPause();
     loadFollowStats();
   }
+  // 2.16.5: os números das réguas (Agora / passos / Saíram) vêm SÓ do banco (seqStats), iguais em qualquer computador,
+  // com o motor aqui ou em outro. Cada leitura tem prazo (uma lenta não segura as outras nem trava as próximas) e, se
+  // uma falhar, ficam os últimos números dela (nunca vira "Ninguém entrou ainda" por erro).
+  const STATS_TIMEOUT_MS = 20000;
+  const inTime = (p) => Promise.race([Promise.resolve(p).catch(() => null), new Promise((r) => setTimeout(() => r(null), STATS_TIMEOUT_MS))]);
   async function loadFollowStats(force = false) {
-    if (!automationsReady() || fl.statsBusy || (!force && fl.statsAt && Date.now() - fl.statsAt < 60 * 1000)) return;
+    if (!automationsReady() || fl.statsBusy || (!force && fl.statsAt && Date.now() - fl.statsAt < 50 * 1000)) return;
     fl.statsBusy = true;
-    const ids = motor.state.automations.map((a) => a.id).slice(0, 100);
-    const seqIds = motor.state.automations.filter((a) => a.kind === 'sequencia').map((a) => a.id).slice(0, 100);
-    const ignoredItems = motor.state.automations.filter((a) => a.active && a.activated_at && !a.include_existing && E.waTriggerLabelOf(a))
-      .map((a) => ({ automationId: a.id, labelId: E.waTriggerLabelOf(a), activatedAt: a.activated_at })).slice(0, 100);
-    const [queue, sent, seq, ignored] = await Promise.all([
-      motor.queueCounts().catch(() => null),
-      ids.length ? call('automationSentCounts', { automationIds: ids }).catch(() => null) : {},
-      seqIds.length ? call('seqStats', { automationIds: seqIds }).catch(() => null) : {},
-      ignoredItems.length ? call('nativeLabelIgnored', { items: ignoredItems }).catch(() => null) : {},
-    ]);
-    fl.stats = { queue: queue || {}, sent: sent || {}, seq: seq || {}, ignored: ignored || {} };
-    fl.statsAt = Date.now();
-    fl.statsBusy = false;
+    try {
+      const ids = motor.state.automations.map((a) => a.id).slice(0, 100);
+      const seqIds = motor.state.automations.filter((a) => a.kind === 'sequencia').map((a) => a.id).slice(0, 100);
+      const ignoredItems = motor.state.automations.filter((a) => a.active && a.activated_at && !a.include_existing && E.waTriggerLabelOf(a))
+        .map((a) => ({ automationId: a.id, labelId: E.waTriggerLabelOf(a), activatedAt: a.activated_at })).slice(0, 100);
+      const [queue, sent, seq, ignored] = await Promise.all([
+        inTime(motor.queueCounts()),
+        ids.length ? inTime(call('automationSentCounts', { automationIds: ids })) : {},
+        seqIds.length ? inTime(call('seqStats', { automationIds: seqIds })) : {},
+        ignoredItems.length ? inTime(call('nativeLabelIgnored', { items: ignoredItems })) : {},
+      ]);
+      const prev = fl.stats || {};
+      fl.stats = { queue: queue || prev.queue || {}, sent: sent || prev.sent || {}, seq: seq || prev.seq || null, ignored: ignored || prev.ignored || {} };
+      fl.statsAt = Date.now();
+    } finally {
+      fl.statsBusy = false;
+    }
     if (fl.open && fl.view === 'list') renderFollows();
   }
 
@@ -8515,7 +8524,8 @@
   function seqStatsEl(a) {
     const box = el('div', 'fw-stats sq-stats');
     const st = fl.stats && fl.stats.seq ? fl.stats.seq[a.id] : null;
-    if (!st) { box.append(el('span', null, fl.stats ? 'Ninguém entrou ainda.' : 'Carregando os números…')); return box; }
+    // 2.16.5: "Ninguém entrou ainda" só quando o banco respondeu (sem resposta: ainda carregando)
+    if (!st) { box.append(el('span', null, fl.stats && fl.stats.seq ? 'Ninguém entrou ainda.' : 'Carregando os números…')); return box; }
     const nodes = Object.entries(st.nodes || {});
     box.append(el('span', null, `Agora: ${st.active}`));
     nodes.forEach(([id, k]) => box.append(el('span', 'sq-at', `${E.seqNodeLabel(a.sequence, id, { itemTitle })}: ${k}`)));

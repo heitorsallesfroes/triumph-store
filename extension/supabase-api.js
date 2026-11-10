@@ -2525,8 +2525,9 @@
     if (!Array.isArray(automationIds) || automationIds.length > 100) throw new Error('Lista inválida');
     automationIds.forEach((a) => checkUuid(a, 'Automação inválida'));
     if (!automationIds.length) return [];
-    const runs = await restAll(`wa_sequence_runs?select=${SEQ_RUN_COLS}&automation_id=in.${inList(automationIds)}&status=eq.ativo&order=id.asc`);
-    const byChat = await contactsByChats([...new Set(runs.map((r) => r.chat_id))]);
+    const all = await restAll(`wa_sequence_runs?select=${SEQ_RUN_COLS}&automation_id=in.${inList(automationIds)}&status=eq.ativo&order=id.asc`);
+    const byChat = await contactRowsByChats([...new Set(all.map((r) => r.chat_id))]);
+    const runs = await seqDropDuplicates(all, byChat);
     const ids = [...new Set(Object.values(byChat).map((c) => c.id))];
     const labels = {};
     for (let i = 0; i < ids.length; i += 100) {
@@ -2534,6 +2535,28 @@
         .forEach((l) => { (labels[l.contact_id] = labels[l.contact_id] || []).push(l.label_id); });
     }
     return runs.map((r) => { const c = byChat[r.chat_id]; return { ...r, contact: c ? { id: c.id, name: c.name || null, phone: c.phone || null, labelIds: labels[c.id] || [] } : null }; });
+  }
+  // 2.16.5: a mesma pessoa com dois percursos ativos na mesma régua (um pelo @c.us e outro pelo @lid, troca de id do
+  // WhatsApp) fica só com o mais antigo; os outros saem (status 'saiu', outcome 'id_duplicado'), sem mandar nada.
+  async function seqDropDuplicates(runs, byChat) {
+    const keyOf = (r) => {
+      const c = byChat[r.chat_id];
+      const phone = phoneOfChat(r.chat_id) || (c && c.phone) || null;
+      return phone ? `tel:${phone}` : c ? `id:${c.id}` : r.contact_id ? `id:${r.contact_id}` : `chat:${r.chat_id}`;
+    };
+    const keep = new Map();
+    const drop = [];
+    [...runs].sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || String(a.id).localeCompare(String(b.id))).forEach((r) => {
+      const k = `${r.automation_id}|${keyOf(r)}`;
+      if (!keep.has(k)) keep.set(k, r);
+      else if (keep.get(k).chat_id !== r.chat_id) drop.push(r); // mesmo id duas vezes (entradas diferentes): não mexe
+    });
+    if (!drop.length) return runs;
+    const gone = new Set();
+    for (const r of drop) {
+      try { const res = await seqUpdateRun({ id: r.id, version: r.version, patch: { status: 'saiu', outcome: 'id_duplicado' } }); if (res.ok) gone.add(r.id); } catch { /* próximo ciclo */ }
+    }
+    return runs.filter((r) => !gone.has(r.id));
   }
   // cria os percursos de quem entrou (a mesma entrada nunca duplica)
   async function seqCreateRuns({ items }) {
@@ -2636,11 +2659,17 @@
     return { ok: true };
   }
   // lista: quantos em cada passo agora e quantos saíram por ✅ / ❌
+  // 2.16.5: direto do banco (igual em qualquer computador, com ou sem o motor nesta aba). Antes dependia da checagem
+  // "o banco tem sequências?" guardada por 30 min: uma falha passageira nela virava "Ninguém entrou ainda". Agora só
+  // "sem a tabela" devolve vazio; outro erro sobe (o painel mantém os últimos números).
   async function seqStats({ automationIds }) {
-    if (!Array.isArray(automationIds) || automationIds.length > 100 || !(await automationsV212())) return {};
+    if (!Array.isArray(automationIds) || automationIds.length > 100) return {};
     automationIds.forEach((a) => checkUuid(a, 'Automação inválida'));
     if (!automationIds.length) return {};
-    const runs = await restAll(`wa_sequence_runs?select=automation_id,node,status,outcome&automation_id=in.${inList(automationIds)}&order=id.asc`);
+    let runs;
+    try {
+      runs = await restAll(`wa_sequence_runs?select=automation_id,node,status,outcome&automation_id=in.${inList(automationIds)}&order=id.asc`);
+    } catch (err) { if (tableMissing(err, ['wa_sequence_runs'])) return {}; throw err; }
     const out = {};
     runs.forEach((r) => {
       const o = out[r.automation_id] || (out[r.automation_id] = { nodes: {}, active: 0, yes: 0, no: 0, other: 0 });
@@ -2701,7 +2730,8 @@
       const chatId = c && (c.chatId || c.id);
       if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
       const phone = typeof c.phone === 'string' && /^\d{8,15}$/.test(c.phone) ? c.phone : null; // 2.6.0: telefone de conversa @lid
-      return { chatId, name: clipName(c.name), phone };
+      const lid = typeof c.lid === 'string' && /^\d+@lid$/.test(c.lid) && c.lid !== chatId ? c.lid : null; // 2.16.5: @lid de um @c.us
+      return { chatId, name: clipName(c.name), phone, lid };
     });
   }
 
@@ -2754,28 +2784,106 @@
         json('PATCH', 'return=minimal', { removed_at: at, last_seen_at: at }));
     }
   }
-  // conversas da etiqueta que JÁ têm linha ativa (não mudam) e as que já saíram dela antes (removed_at)
-  async function seenState(labelId, chatIds) {
-    const active = new Set();
-    const removed = new Map();
-    for (let i = 0; i < chatIds.length; i += 100) {
-      const rows = await rest(`wa_native_label_seen?select=chat_id,removed_at&wa_label_id=eq.${encodeURIComponent(labelId)}&chat_id=in.${inList(chatIds.slice(i, i + 100))}`);
-      rows.forEach((r) => { if (r.removed_at) removed.set(r.chat_id, r.removed_at); else active.add(r.chat_id); });
-    }
-    return { active, removed };
-  }
   // hora de entrada de uma conversa nova na lista (sem linha ativa)
   const afterRemoval = (iso) => new Date(Date.parse(iso) + 1000).toISOString();
   const entryAt = (confirmed, removedAt) => (confirmed ? new Date().toISOString() : removedAt ? afterRemoval(removedAt) : WA_BASELINE_AT);
-  async function registerFresh(labelId, list, confirmedOf) {
-    if (!list.length) return { fresh: [], baseline: 0 };
-    const { active, removed } = await seenState(labelId, list.map((c) => c.chatId));
-    const fresh = list.filter((c) => !active.has(c.chatId)); // já estava: não muda a data de entrada
-    if (!fresh.length) return { fresh: [], baseline: 0 };
+  // 2.16.5: a MESMA pessoa pode aparecer com dois ids (o WhatsApp troca @c.us ↔ @lid). Identifica pelo telefone:
+  //   - id canônico = o @lid (o da conversa, ou o que o WA-JS mapeia para o @c.us); sem @lid conhecido, o próprio id;
+  //   - outros ids da pessoa = o @c.us do telefone + os @lid de contatos do CRM com esse telefone.
+  // Se um outro id da pessoa já tem linha nesta etiqueta (ativa, ou que saiu nas últimas 24 h), NÃO é entrada nova:
+  // a linha passa para o id canônico (mantém first_seen_at, "já estava" continua "já estava") e a pessoa conta como presente.
+  const SWAP_WINDOW_MS = 24 * 3600 * 1000;
+  const MASS_CONFIRMED_MAX = 20; // mais que isto de uma vez na mesma etiqueta: "já estava" (proteção)
+  const canonOf = (c) => (/@lid$/.test(c.chatId) ? c.chatId : c.lid || c.chatId);
+  const preferLid = (a, b) => (/@lid$/.test(a) ? a : /@lid$/.test(b) ? b : a);
+  const phoneOf = (c) => phoneOfChat(c.chatId) || c.phone || null;
+  function canonList(list, confirmedOf) {
+    const by = new Map();
+    list.forEach((c) => {
+      const id = canonOf(c);
+      const phone = phoneOf(c);
+      const prev = by.get(id);
+      const alts = new Set(prev ? prev.alts : []);
+      if (c.chatId !== id) alts.add(c.chatId);
+      if (phone && `${phone}@c.us` !== id) alts.add(`${phone}@c.us`);
+      by.set(id, { ...(prev || c), chatId: id, phone: (prev && prev.phone) || phone, name: (prev && prev.name) || c.name, alts, confirmed: !!(prev && prev.confirmed) || !!confirmedOf(c), viaAlt: !!(prev && prev.viaAlt) || c.chatId !== id });
+    });
+    return [...by.values()];
+  }
+  // @lid de contatos do CRM com estes telefones (telefone → [chat_id])
+  async function lidsByPhones(phones) {
+    const out = new Map();
+    const list = [...new Set(phones.filter(Boolean))];
+    if (!list.length || !(await chatIdColumn())) return out;
+    for (let i = 0; i < list.length; i += 100) {
+      (await rest(`wa_contacts?select=phone,chat_id&phone=in.${inList(list.slice(i, i + 100))}&chat_id=not.is.null`))
+        .forEach((r) => { if (/@lid$/.test(r.chat_id || '')) { if (!out.has(r.phone)) out.set(r.phone, []); out.get(r.phone).push(r.chat_id); } });
+    }
+    return out;
+  }
+  async function seenRows(labelId, chatIds) {
+    const out = new Map();
+    const ids = [...new Set(chatIds)];
+    for (let i = 0; i < ids.length; i += 100) {
+      (await rest(`wa_native_label_seen?select=chat_id,first_seen_at,removed_at&wa_label_id=eq.${encodeURIComponent(labelId)}&chat_id=in.${inList(ids.slice(i, i + 100))}`))
+        .forEach((r) => out.set(r.chat_id, r));
+    }
+    return out;
+  }
+  const samePersonRow = (r, t) => !!r && (!r.removed_at || t - Date.parse(r.removed_at) < SWAP_WINDOW_MS);
+  // a linha de outro id da mesma pessoa passa para o id canônico (first_seen_at mantido); as dos outros ids saem
+  async function moveSeen(labelId, moves) {
+    if (!moves.length) return;
+    const now = new Date().toISOString();
+    for (let i = 0; i < moves.length; i += 500) {
+      await rest('wa_native_label_seen?on_conflict=chat_id,wa_label_id', json('POST', 'resolution=merge-duplicates,return=minimal',
+        moves.slice(i, i + 500).map((m) => ({ chat_id: m.to, wa_label_id: labelId, first_seen_at: m.first_seen_at, last_seen_at: now, removed_at: null }))));
+    }
+    const old = [...new Set(moves.flatMap((m) => m.from))];
+    for (let i = 0; i < old.length; i += 100) {
+      await rest(`wa_native_label_seen?wa_label_id=eq.${encodeURIComponent(labelId)}&chat_id=in.${inList(old.slice(i, i + 100))}`, { method: 'DELETE' });
+    }
+  }
+  // fresh: linhas novas (baseline delas = "já estava"); present: ids canônicos de quem já tinha linha (inclusive por
+  // outro id); moved: linhas que mudaram de id; guarded: confirmadas tratadas como "já estava" pela proteção
+  async function registerFresh(labelId, list, confirmedOf, { guard = false } = {}) {
+    const none = { fresh: [], baseline: 0, present: new Set(), moved: 0, guarded: 0 };
+    if (!list.length) return none;
+    const people = canonList(list, confirmedOf);
+    const byPhone = await lidsByPhones(people.map((p) => p.phone));
+    people.forEach((p) => (byPhone.get(p.phone) || []).forEach((l) => { if (l !== p.chatId) p.alts.add(l); }));
+    const rows = await seenRows(labelId, people.flatMap((p) => [p.chatId, ...p.alts]));
+    const t = Date.now();
+    const present = new Set();
+    const moves = [];
+    const fresh = [];
+    const removedOf = new Map();
+    people.forEach((p) => {
+      const own = rows.get(p.chatId);
+      if (own && !own.removed_at) { present.add(p.chatId); return; } // já estava: não muda a data de entrada
+      const alias = [...p.alts].map((a) => rows.get(a)).find((r) => samePersonRow(r, t));
+      if (alias) {
+        // mesma pessoa com outro id: não é entrada nova (fica no @lid, se um dos dois for @lid)
+        const to = preferLid(p.chatId, alias.chat_id);
+        const from = [p.chatId, ...p.alts].filter((x) => x !== to && rows.has(x));
+        if (to !== alias.chat_id || alias.removed_at || from.length) moves.push({ to, from, first_seen_at: alias.first_seen_at });
+        present.add(to);
+        return;
+      }
+      // chegou por outro id (ex.: @c.us) e a linha do id canônico saiu há pouco (a própria troca de id): volta igual
+      if (own && p.viaAlt && samePersonRow(own, t)) { moves.push({ to: p.chatId, from: [], first_seen_at: own.first_seen_at }); present.add(p.chatId); return; }
+      if (own && own.removed_at) removedOf.set(p.chatId, own.removed_at);
+      fresh.push(p);
+    });
+    await moveSeen(labelId, moves);
+    if (!fresh.length) return { ...none, present, moved: moves.length };
+    // 2.16.5: proteção: muitas entradas "confirmadas" de uma vez na mesma etiqueta = troca de id em massa (sincronização)
+    const confirmedN = fresh.filter((p) => p.confirmed).length;
+    const guarded = guard && confirmedN > MASS_CONFIRMED_MAX ? confirmedN : 0;
     await ensureChatContacts(fresh);
-    const at = new Map(fresh.map((c) => [c.chatId, entryAt(confirmedOf(c), removed.get(c.chatId))]));
+    const at = new Map(fresh.map((c) => [c.chatId, guarded ? WA_BASELINE_AT : entryAt(c.confirmed, removedOf.get(c.chatId))]));
     await upsertSeen(labelId, fresh, (c) => at.get(c.chatId));
-    return { fresh, baseline: [...at.values()].filter((x) => x === WA_BASELINE_AT).length };
+    return { fresh, baseline: [...at.values()].filter((x) => x === WA_BASELINE_AT).length, present, moved: moves.length, guarded };
   }
 
   // Eventos chat.update_label (add/remove) que a aba com a trava juntou, em ordem. confirmed = a ponte viu a conversa
@@ -2796,19 +2904,26 @@
     let added = 0;
     let removed = 0;
     let baseline = 0;
+    let moved = 0;
+    const guarded = [];
     const labels = [...new Set([...last.values()].map((e) => e.labelId))];
     for (const labelId of labels) {
       const evs = [...last.values()].filter((e) => e.labelId === labelId);
       const adds = evs.filter((e) => e.type === 'add');
-      const gone = evs.filter((e) => e.type === 'remove').map((e) => e.chatId);
+      let gone = evs.filter((e) => e.type === 'remove').map((e) => e.chatId);
       if (adds.length) {
-        const r = await registerFresh(labelId, adds, (c) => c.confirmed);
+        const r = await registerFresh(labelId, adds, (c) => c.confirmed, { guard: true });
         added += r.fresh.length - r.baseline;
         baseline += r.baseline;
+        moved += r.moved;
+        if (r.guarded) guarded.push({ labelId, count: r.guarded });
+        // 2.16.5: saída de um id e entrada de outro da mesma pessoa no mesmo lote = troca de id, não saída
+        const here = new Set([...r.present, ...r.fresh.map((c) => c.chatId)]);
+        gone = gone.filter((id) => !here.has(id));
       }
       if (gone.length) { await markGone(labelId, gone); removed += gone.length; }
     }
-    return { added, removed, baseline };
+    return { added, removed, baseline, moved, guarded };
   }
 
   // Varredura de uma etiqueta nativa: quem está nela agora (lista do WhatsApp Web). Quem aparece sem linha ativa
@@ -2818,14 +2933,17 @@
     await v25OrMissing();
     checkWaLabel(labelId, 'Etiqueta inválida');
     const list = checkChats(chats, 5000);
-    const current = new Map(list.map((c) => [c.chatId, c]));
+    // 2.16.5: compara pelo id canônico (o @lid, quando conhecido); qualquer id da pessoa na lista conta como presente
+    const current = new Map(list.map((c) => [canonOf(c), c]));
+    const ids = new Set(list.flatMap((c) => [c.chatId, canonOf(c), ...(phoneOf(c) ? [`${phoneOf(c)}@c.us`] : [])]));
     const rows = await restAll(`wa_native_label_seen?select=chat_id&wa_label_id=eq.${encodeURIComponent(labelId)}&removed_at=is.null&order=chat_id.asc`);
     const active = new Set(rows.map((r) => r.chat_id));
-    const candidates = [...current.values()].filter((c) => !active.has(c.chatId));
-    const gone = complete === true ? [...active].filter((id) => !current.has(id)) : [];
+    const candidates = [...current.entries()].filter(([id]) => !active.has(id)).map(([, c]) => c);
     const r = await registerFresh(labelId, candidates, () => false);
+    const here = new Set([...ids, ...r.present, ...r.fresh.map((c) => c.chatId)]);
+    const gone = complete === true ? [...active].filter((id) => !here.has(id)) : [];
     if (gone.length) await markGone(labelId, gone);
-    return { added: r.fresh.length - r.baseline, removed: gone.length, total: current.size, baseline: r.baseline };
+    return { added: r.fresh.length - r.baseline, removed: gone.length, total: current.size, baseline: r.baseline, moved: r.moved };
   }
 
   // 2.12.5: ao ligar (ou trocar o gatilho/etiqueta): TODAS as conversas que estão na etiqueta agora ficam
