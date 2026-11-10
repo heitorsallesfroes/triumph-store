@@ -1095,7 +1095,8 @@
       .bcard:hover, .bcard:focus-visible { border-color: var(--accent); border-left-color: var(--c); box-shadow: 0 1px 6px var(--shadow); }
       .bmain { flex: 1; min-width: 0; }
       .bcname { font-weight: 700; font-size: var(--fs-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .bprev { margin-top: 2px ; min-height: 1.2em; font-size: var(--fs-1); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bphone { margin-top: 1px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bprev { margin-top: 2px ;min-height: 1.2em; font-size: var(--fs-1); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .bside { display: flex; flex-direction: column; align-items: flex-end; gap: 4px ; flex-shrink: 0; }
       .bdate { font-size: var(--fs-1); color: var(--muted); white-space: nowrap; }
       .bunread { min-width: 18px; height: 18px; padding: 0 4px ; border-radius: var(--r-pill) ; background: var(--wa-green); color: #fff; font-size: var(--fs-1); font-weight: 700; display: flex; align-items: center; justify-content: center; }
@@ -14307,6 +14308,8 @@
         const res = await call('fetchLabelClients', { labelId: id, offset: d.cards.length, limit: BOARD_PAGE });
         if (stale()) return;
         const got = Array.isArray(res && res.clients) ? res.clients : [];
+        await addCrmWaNames(got); // 2.16.11: nome da agenda do WhatsApp na frente do nome do CRM
+        if (stale()) return;
         d.cards = d.cards.concat(got.filter((c) => !d.cards.some((x) => x.id === c.id)).map((c) => ({ ...c, crm: true })));
         d.total = d.cards.length + (res && res.hasMore ? 1 : 0);
       } else {
@@ -14349,6 +14352,32 @@
     return `${c.fromMe ? '✓ ' : ''}${icon ? `${icon} ` : ''}${text}`;
   }
 
+  // 2.16.11: título do cartão (WhatsApp e CRM, grande e encolhido): (1) nome salvo na agenda do WhatsApp, (2) nome do
+  // CRM (ou o título da conversa: grupo, empresa), (3) nome do perfil com "~", (4) número formatado. Sendo nome, o
+  // número vai pequeno embaixo (phoneLine).
+  const isNameText = (v) => typeof v === 'string' && !!v.trim() && !/^[+\d\s().-]+$/.test(v);
+  function boardCardTitle(c) {
+    const phone = c.phone ? formatPhone(String(c.phone).replace(/\D/g, '')) : '';
+    const push = isNameText(c.pushname) ? c.pushname.trim() : '';
+    const other = isNameText(c.name) && c.name.trim() !== push ? c.name.trim() : '';
+    const name = (isNameText(c.contactName) && c.contactName.trim()) || other || (push && `~${push}`);
+    if (name) return { title: name, phoneLine: phone };
+    return { title: phone || (c.name || '').trim() || '—', phoneLine: '' };
+  }
+
+  // 2.16.11: nomes da agenda/perfil dos contatos do CRM (só da memória do WhatsApp Web; sem nome = fica como está)
+  async function addCrmWaNames(cards) {
+    const ids = [...new Set(cards.filter((c) => c.phone && !c.contactName && !c.pushname).map((c) => String(c.phone).replace(/\D/g, '')).filter(Boolean))];
+    if (!ids.length) return;
+    let res = null;
+    try { res = await waRequest('contactNames', { ids }, { timeout: 4000 }); } catch { return; }
+    const names = (res && res.names) || {};
+    cards.forEach((c) => {
+      const n = c.phone && names[String(c.phone).replace(/\D/g, '')];
+      if (n) { c.contactName = n.contactName || null; c.pushname = n.pushname || null; }
+    });
+  }
+
   function boardCard(c, label) {
     const busy = board.moving.has(c.id);
     const card = el('div', `bcard${busy ? ' busy' : ''}${board.activeId && board.activeId === c.id ? ' active' : ''}`);
@@ -14362,21 +14391,24 @@
     const side = el('div', 'bside');
     if (c.crm) {
       // Contato do CRM: nome, telefone, data em que entrou na etiqueta e 📝 se tiver nota
-      const title = c.name || formatPhone(c.phone) || '—';
+      const { title, phoneLine } = boardCardTitle(c);
       const name = el('div', 'bcname', `${c.hasNote ? '📝 ' : ''}${title}`);
       convLink(name, () => crmCardTarget(c), () => boardOpenOpts(c.id));
       name.title = c.hasNote ? `Abrir conversa · ${title} (tem nota)` : `Abrir conversa · ${title}`;
-      const ph = el('div', 'bprev', c.phone ? (c.name ? formatPhone(c.phone) : '') : 'só pelo nome');
-      if (c.phone && c.name) convLink(ph, () => crmCardTarget(c), () => boardOpenOpts(c.id));
+      const ph = el('div', 'bprev', c.phone ? phoneLine : 'só pelo nome');
+      if (c.phone && phoneLine) convLink(ph, () => crmCardTarget(c), () => boardOpenOpts(c.id));
       main.append(name, ph);
       const date = el('span', 'bdate', formatChatDate(isoSeconds(c.addedAt)));
       date.title = 'Entrou nesta etiqueta CRM';
       side.append(date);
     } else {
-      const name = el('div', 'bcname', c.name || '—');
+      const { title, phoneLine } = boardCardTitle(c);
+      const name = el('div', 'bcname', title);
       convLink(name, () => ({ chatId: c.id, name: c.name }), () => boardOpenOpts(c.id));
-      name.title = `Abrir conversa${c.name ? ` · ${c.name}` : ''}`;
-      main.append(name, el('div', 'bprev', previewLine(c)));
+      name.title = `Abrir conversa · ${title}`;
+      main.append(name);
+      if (phoneLine) main.append(el('div', 'bphone', phoneLine)); // 2.16.11: o número, pequeno, embaixo do nome
+      main.append(el('div', 'bprev', previewLine(c)));
       side.append(el('span', 'bdate', formatChatDate(c.t)));
       if (c.unread > 0) side.append(el('span', 'bunread', c.unread > 99 ? '99+' : String(c.unread)));
     }

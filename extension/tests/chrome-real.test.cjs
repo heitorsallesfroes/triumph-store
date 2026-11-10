@@ -727,6 +727,37 @@ async function main() {
     await pg5(`window.__fakeBridge = null; return true;`);
     check('nenhum erro no console no Quadro encolhido', errors.length === 0, errors.slice(0, 8).join(' | '));
 
+    // 5d. 2.16.11: título do cartão = nome da agenda > (CRM/título) > ~pushname > número; sendo nome, o número embaixo
+    const QN = [
+      { id: '5521979762603@c.us', name: '+55 21 97976-2603', contactName: 'Maria da Agenda', pushname: 'Mari', phone: '5521979762603' },
+      { id: '80685306003593@lid', name: '80685306003593', contactName: null, pushname: 'Zé Perfil', phone: '5521911112222' },
+      { id: '5521933334444@c.us', name: '+55 21 93333-4444', contactName: null, pushname: null, phone: '5521933334444' },
+    ];
+    await pg5(`const QN = ${JSON.stringify(QN)}; window.__fakeBridge = { status: { ready: true, version: 'teste' }, activeChat: { kind: 'individual', chatId: '5521900000001@c.us' },
+      labels: [{ id: '1', name: 'Analisar', hexColor: '#f59e0b', count: 3 }],
+      labelChats: (p) => ({ total: p.labelId === '1' ? 3 : 0, chats: p.labelId === '1' ? QN.map((c, i) => ({ ...c, kind: 'individual', t: Math.floor(Date.now() / 1000) - i * 60, unread: 0, fromMe: false, preview: { kind: 'texto', text: 'oi' } })) : [] }),
+      openChat: (p) => { window.__fakeBridge.activeChat = { kind: 'individual', chatId: p.chatId }; return { opened: true }; },
+    }; return true;`);
+    await sleep(6000);
+    await q(`sh.querySelector('.pboard').click(); return true;`);
+    await waitQB(`return sh.querySelectorAll('.board .bcard').length === 3;`, 15000);
+    const qnRead = () => q(`return [...sh.querySelectorAll('.board .bcard')].map((c) => [c.querySelector('.bcname').textContent, (c.querySelector('.bphone') || {}).textContent || '']);`);
+    const qnWant = JSON.stringify([['Maria da Agenda', '+55 (21) 97976-2603'], ['~Zé Perfil', '+55 (21) 91111-2222'], ['+55 (21) 93333-4444', '']]);
+    const qn1 = await qnRead();
+    check('2.16.11 Quadro: nome da agenda (não o número), ~pushname sem agenda, número sem nome; o número pequeno embaixo do nome', JSON.stringify(qn1) === qnWant, JSON.stringify(qn1));
+    const qnGrey = await q(`const p = sh.querySelector('.board .bphone'); const n = sh.querySelector('.board .bcname'); return parseFloat(getComputedStyle(p).fontSize) < parseFloat(getComputedStyle(n).fontSize) && getComputedStyle(p).color !== getComputedStyle(n).color;`);
+    check('2.16.11 Quadro: o número embaixo do nome é menor e cinza', qnGrey === true, String(qnGrey));
+    await shotQB('quadro-nomes.png');
+    await q(`[...sh.querySelectorAll('.board .bcard')].find((c) => /Maria da Agenda/.test(c.textContent)).click(); return true;`);
+    await waitQB(`return sh.querySelector('.board').classList.contains('compact');`, 8000);
+    await sleep(400);
+    const qn2 = await qnRead();
+    check('2.16.11 Quadro encolhido: a mesma ordem de nomes', JSON.stringify(qn2) === qnWant && (await q(`return sh.querySelector('.board .bcard.active .bcname').textContent;`)) === 'Maria da Agenda', JSON.stringify(qn2));
+    await shotQB('quadro-nomes-encolhido.png');
+    await q(`sh.querySelector('.board .bclose').click(); return true;`);
+    await pg5(`window.__fakeBridge = null; return true;`);
+    check('nenhum erro no console nos nomes do Quadro', errors.length === 0, errors.slice(0, 8).join(' | '));
+
     // 6. 📈 → venda do ERP (2.10.5), com o Supabase falso: achar pelo telefone, escolher por valor, nenhuma,
     // mais de uma pelo telefone, desligar. Conferindo cada gravação: só wa_chat_id e telefone vazio na venda.
     const iso = (daysAgo, h = 12) => new Date(Date.now() - daysAgo * 86400000 + (h - 12) * 3600000).toISOString();

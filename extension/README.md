@@ -617,6 +617,12 @@ Desde a 2.16.10, abrir uma conversa pelo cartão **encolhe** o Quadro para o
 lugar da lista de conversas (a conversa no meio, o painel à direita), com o
 cartão aberto destacado. **⤢ Expandir** volta ao Quadro grande.
 
+**Nome do cartão** (desde a 2.16.11, nos dois modos, grande e encolhido): (1) o
+nome salvo na sua agenda do WhatsApp, (2) o nome do CRM, (3) o nome do perfil
+da pessoa com "~" (ex.: "~Zé"), (4) o número. Quando aparece um nome, o número
+fica pequeno, em cinza, embaixo. Os nomes vêm só do que o WhatsApp Web já tem
+carregado (nada é consultado no servidor); sem nome, vale o próximo da ordem.
+
 **Modo WhatsApp** (igual à 1.7.0):
 - Uma coluna por etiqueta do WhatsApp, com um cartão por conversa (nome, última
   mensagem, data e não lidas). Clique num cartão (ou aperte Enter) para abrir a
@@ -802,6 +808,16 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.16.11 — Quadro mostra o nome da agenda em vez do número
+- Os cartões do Quadro (WhatsApp e CRM, grande e encolhido) mostram, nesta ordem: o **nome salvo na sua agenda do
+  WhatsApp** (o mesmo da lista de conversas), o **nome do CRM**, o **nome do perfil** com "~" na frente, e só por último
+  o **número**. Ex.: antes "+55 (21) 97976-2603", agora "Maria" com "+55 (21) 97976-2603" pequeno e cinza embaixo.
+- Vale também para conversa @lid (o nome da agenda do mesmo número). Os nomes saem só do que o WhatsApp Web já tem na
+  memória: nenhuma consulta ao servidor, a biblioteca WA-JS não foi alterada. Sem nome: cai para o próximo, sem erro.
+- O Quadro não tem campo de busca, então não houve busca para mudar.
+- Testes: `boardnames.test.cjs` (ponte com WA-JS falsa e ordem dos nomes) e `chrome-real.test.cjs` (cartões com nome
+  da agenda, ~perfil e número; número embaixo; mesma ordem no encolhido).
 
 ### 2.16.10 — Quadro encolhido ao lado da conversa
 - Clicar num cartão do Quadro (WhatsApp ou CRM) abre a conversa e o Quadro **não fecha mais**: ele **encolhe** para o

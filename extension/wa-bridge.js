@@ -322,7 +322,13 @@
       .sort((a, b) => b.t - a.t);
     return {
       total: filtered.length,
-      chats: filtered.slice(offset, offset + pageSize).map(({ c }) => chatCard(c, p.noPreview !== true)),
+      chats: filtered.slice(offset, offset + pageSize).map(({ c }) => {
+        const card = chatCard(c, p.noPreview !== true);
+        if (card.kind !== 'individual') return card;
+        // 2.16.11: nome da agenda, nome do perfil e telefone, só do que o WhatsApp Web tem na memória
+        const who = memNames(card.id, c);
+        return { ...card, contactName: who.contactName, pushname: who.pushname, phone: who.phone };
+      }),
     };
   }
 
@@ -1350,6 +1356,48 @@
 
   const realName = (v) => (typeof v === 'string' && v.trim() && !/^[+\d\s().-]+$/.test(v) ? v.trim().replace(/\s+/g, ' ').slice(0, 100) : null);
 
+  // 2.16.11: nomes do contato para o Quadro, SÓ do que o WhatsApp Web já tem na memória (ContactStore e lidPnCache),
+  // sem consultar o servidor e sem mexer no WA-JS: o salvo na agenda (name) e o do perfil (pushname), olhando os dois
+  // lados da mesma pessoa (@c.us e @lid). Sem nome na memória: null (o Quadro cai para o próximo da ordem).
+  function memNames(chatId, chat = null) {
+    const out = { phone: null, contactName: null, pushname: null };
+    if (!/^\d{1,20}@(c\.us|lid)$/.test(chatId || '')) return out;
+    const W = safe(() => wpp.whatsapp, null);
+    const widOf = (id) => safe(() => W.WidFactory.createWid(id), null);
+    let other = null;
+    const cus = /^(\d{8,15})@c\.us$/.exec(chatId);
+    if (cus) { out.phone = cus[1]; other = lidOfChat(chatId); } else {
+      const w = widOf(chatId);
+      const pn = w ? safe(() => W.lidPnCache.getPhoneNumber(w), null) : null;
+      const m = /^(\d{8,15})@c\.us$/.exec(String(safe(() => pn._serialized || pn.toString(), '') || ''));
+      if (m) { out.phone = m[1]; other = `${m[1]}@c.us`; }
+    }
+    const fromStore = (id) => safe(() => W.ContactStore.get(widOf(id) || id), null) || safe(() => W.ContactStore.get(id), null);
+    const contacts = [safe(() => chat.contact, null), fromStore(chatId), other ? fromStore(other) : null];
+    for (const c of contacts) {
+      if (!c) continue;
+      out.contactName = out.contactName || realName(safe(() => c.name, null));
+      out.pushname = out.pushname || realName(safe(() => c.pushname, null));
+    }
+    return out;
+  }
+
+  // 2.16.11: nomes (agenda e perfil) de vários contatos pelo telefone ou id, para os cartões do CRM no Quadro
+  function contactNames(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const ids = payload && Array.isArray(payload.ids) ? payload.ids.slice(0, 200) : null;
+    if (!ids) throw new BridgeError('invalid_request', 'Pedido inválido', 'before-send');
+    const names = {};
+    for (const raw of ids) {
+      const key = String(raw || '');
+      const id = /^\d{8,15}$/.test(key) ? `${key}@c.us` : key;
+      if (!/^\d{1,20}@(c\.us|lid)$/.test(id)) continue;
+      const n = memNames(id, safe(() => wpp.chat.get(id), null));
+      if (n.contactName || n.pushname) names[key] = { contactName: n.contactName, pushname: n.pushname };
+    }
+    return { names };
+  }
+
   async function chatPhone(payload) {
     if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
     const chatId = payload && payload.chatId;
@@ -1815,6 +1863,7 @@
     adContext: (payload) => adContext(payload),
     labelEvents: () => labelEvents(),
     chatPhone: (payload) => chatPhone(payload),
+    contactNames: (payload) => contactNames(payload), // 2.16.11
     verifyChatPhone: (payload) => verifyChatPhone(payload),
     adLeads: () => adLeads(),
     myMessages: () => mineQueue.splice(0, mineQueue.length),
