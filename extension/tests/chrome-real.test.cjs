@@ -1724,6 +1724,8 @@ async function main() {
       { id: '7001', name: 'Relógio Ouro', description: 'Pulseira de aço\nResistente à água', price: 459.9, salePrice: 399.9, currency: 'BRL', link: `https://wa.me/p/7001/${CAT_ME}`, url: null, retailerId: 'SKU-1', collections: ['Relógios'], images: [CAT_IMG('a1'), CAT_IMG('a2')] },
       { id: '7002', name: 'Smartwatch Preto', description: 'Tela AMOLED', price: 199, salePrice: null, currency: 'BRL', link: `https://wa.me/p/7002/${CAT_ME}`, url: null, retailerId: null, collections: [], images: [CAT_IMG('b1'), CAT_IMG('quebrada')] },
       { id: '7003', name: 'Pulseira Extra', description: '', price: 49.9, salePrice: null, currency: 'BRL', link: `https://wa.me/p/7003/${CAT_ME}`, url: null, retailerId: null, collections: ['Acessórios'], images: [CAT_IMG('c1')] },
+      // 2.16.1: o WhatsApp só deu a miniatura (100x133): não sobe e aparece em "sem foto grande"
+      { id: '7004', name: 'Só Miniatura', description: 'x', price: 10, salePrice: null, currency: 'BRL', link: `https://wa.me/p/7004/${CAT_ME}`, url: null, retailerId: null, collections: [], images: [CAT_IMG('mini')] },
     ];
     await pg(`window.__catTypes = [];
       const P = ${JSON.stringify(CAT_PRODUCTS)};
@@ -1731,7 +1733,7 @@ async function main() {
       // Proxy: registra TODO pedido que chega à ponte (inclusive os que ela não responde)
       const fb = { recentChats: [], labels: [], chatLabels: { labelIds: [] },
         catalogExport: { ok: true, reason: null, me: ${JSON.stringify(CAT_ME)}, products: P, warnings: [] },
-        catalogImage: (p) => (/quebrada/.test(p.url) ? { data: null, mime: 'image/png' } : { data: bytes(p.url.split('/').pop()), mime: 'image/png' }) };
+        catalogImage: (p) => (/quebrada/.test(p.url) ? { data: null, mime: 'image/png' } : /mini/.test(p.url) ? { data: bytes('mini'), mime: 'image/png', width: 100, height: 133 } : { data: bytes(p.url.split('/').pop()), mime: 'image/png', width: 1080, height: 1440 }) };
       window.__fakeBridge = new Proxy(fb, { getOwnPropertyDescriptor: (t, k) => { window.__catTypes.push(k); return Reflect.getOwnPropertyDescriptor(t, k); } });
       return true;`);
     await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(200); sh.querySelector('[data-sec="midias"]').click(); await wait(400); return true;`);
@@ -1742,7 +1744,7 @@ async function main() {
     const catRun = async () => {
       await q(`sh.querySelector('.md-catx-btn').click(); return true;`);
       for (const stop = Date.now() + 30000; Date.now() < stop;) {
-        const r = await q(`const d = sh.querySelector('.md-catx-done'); return d ? { done: d.textContent, fail: [...sh.querySelectorAll('.md-catx-fail li')].map((x) => x.textContent), btn: sh.querySelector('.md-catx-btn').textContent, disabled: sh.querySelector('.md-catx-btn').disabled } : (sh.querySelector('.md-catx-err') || {}).textContent || null;`);
+        const r = await q(`const d = sh.querySelector('.md-catx-done'); return d ? { done: d.textContent, nobig: (sh.querySelector('.md-catx-nobig') || {}).textContent || null, fail: [...sh.querySelectorAll('.md-catx-fail li')].map((x) => x.textContent), btn: sh.querySelector('.md-catx-btn').textContent, disabled: sh.querySelector('.md-catx-btn').disabled } : (sh.querySelector('.md-catx-err') || {}).textContent || null;`);
         if (r && typeof r === 'object') return r;
         if (typeof r === 'string') return { error: r };
         await sleep(300);
@@ -1755,23 +1757,26 @@ async function main() {
     let snap = null;
     try { snap = snapRow ? JSON.parse(snapRow.value) : null; } catch { snap = null; }
     const pathRe = /^catalog\/(7001|7002|7003)\/[0-9a-f]{64}\.png$/;
-    check('exportar: "3 produtos e 4 fotos exportados em <data>" e a lista do que falhou (a foto que não baixou)',
-      cat1 && /^3 produtos e 4 fotos exportados em \d{2}\/\d{2}\/\d{4},? \d{2}:\d{2}\.$/.test(cat1.done) && cat1.fail.length === 1 && /^Smartwatch Preto: 1 de 2 fotos não exportada: /.test(cat1.fail[0]) && cat1.btn === 'Exportar catálogo do WhatsApp' && !cat1.disabled,
+    check('exportar: "4 produtos e 4 fotos exportados em <data>", o produto sem foto grande (só miniatura 100x133) e a foto que não baixou',
+      cat1 && /^4 produtos e 4 fotos exportados em \d{2}\/\d{2}\/\d{4},? \d{2}:\d{2}\.$/.test(cat1.done) && cat1.fail.length === 2
+      && cat1.fail[0] === 'Só Miniatura: sem foto grande: o WhatsApp só deu miniatura (100x133 px)' && /^Smartwatch Preto: 1 de 2 fotos não exportada: /.test(cat1.fail[1])
+      && cat1.nobig === '1 produto sem foto grande (só miniatura): veja abaixo.' && cat1.btn === 'Exportar catálogo do WhatsApp' && !cat1.disabled,
       JSON.stringify(cat1));
     check('fotos no wa-media em catalog/<id do produto>/<sha256>.png (uma vez cada)',
       uploads1.length === 4 && uploads1.every(([p, n]) => pathRe.test(p) && n === 1) && uploads1.filter(([p]) => p.startsWith('catalog/7001/')).length === 2, JSON.stringify(uploads1));
     check('retrato em system_config (wa_catalog_snapshot): data, número da loja, produtos com descrição/preços/link/coleção e os links das fotos no bucket',
-      snap && Date.parse(snap.exported_at) && snap.phone === CAT_ME && snap.product_count === 3 && snap.image_count === 4
-      && JSON.stringify(snap.products.map((p) => [p.id, p.images.length])) === JSON.stringify([['7001', 2], ['7002', 1], ['7003', 1]])
+      snap && Date.parse(snap.exported_at) && snap.phone === CAT_ME && snap.product_count === 4 && snap.image_count === 4
+      && JSON.stringify(snap.products.map((p) => [p.id, p.images.length])) === JSON.stringify([['7001', 2], ['7002', 1], ['7003', 1], ['7004', 0]])
+      && snap.products.every((p) => p.images.every((im) => im.width === 1080 && im.height === 1440))
       && snap.products[0].description === 'Pulseira de aço\nResistente à água' && snap.products[0].price === 459.9 && snap.products[0].salePrice === 399.9 && snap.products[0].currency === 'BRL'
       && snap.products[0].link === `https://wa.me/p/7001/${CAT_ME}` && JSON.stringify(snap.products[2].collections) === '["Acessórios"]'
       && snap.products.every((p) => p.images.every((im) => /\/storage\/v1\/object\/public\/wa-media\/catalog\//.test(im.url) && pathRe.test(im.url.split('/wa-media/')[1]) && /^https:\/\/media\./.test(im.source)))
-      && snap.failed.length === 1 && snap.failed[0].id === '7002', JSON.stringify(snap && { ...snap, products: snap.products.map((p) => ({ id: p.id, n: p.images.length })) }));
+      && snap.failed.length === 2 && snap.failed[0].id === '7004' && snap.failed[1].id === '7002', JSON.stringify(snap && { ...snap, products: snap.products.map((p) => ({ id: p.id, n: p.images.length })) }));
     const posts1 = fake.storageSeen.filter((x) => x.startsWith('POST')).length;
     const cat2 = await catRun();
     const posts2 = fake.storageSeen.filter((x) => x.startsWith('POST')).length;
     check('exportar de novo: as mesmas fotos (mesmo sha256) não sobem de novo — reaproveita',
-      cat2 && /^3 produtos e 4 fotos exportados em .*\(4 já estavam no wa-media, não subiram de novo\)\.$/.test(cat2.done) && posts2 === posts1 && [...fake.storage.values()].every((n) => n === 1), JSON.stringify({ cat2, posts1, posts2 }));
+      cat2 && /^4 produtos e 4 fotos exportados em .*\(4 já estavam no wa-media, não subiram de novo\)\.$/.test(cat2.done) && posts2 === posts1 && [...fake.storage.values()].every((n) => n === 1), JSON.stringify({ cat2, posts1, posts2 }));
     const catTypes = await pg(`return [...new Set(window.__catTypes)];`);
     check('não envia nada: a ponte só recebeu leitura do catálogo e das fotos (nenhum envio)',
       catTypes.includes('catalogExport') && catTypes.includes('catalogImage') && !catTypes.some((t) => /^send|campaignSend|setChatLabels/.test(t)), JSON.stringify(catTypes));

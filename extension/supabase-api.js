@@ -3509,6 +3509,8 @@
         sha256: typeof im.sha256 === 'string' && /^[0-9a-f]{64}$/.test(im.sha256) ? im.sha256 : null,
         size: Number.isInteger(im.size) && im.size > 0 ? im.size : null,
         mime: CATALOG_IMG_MIME[im.mime] ? im.mime : null,
+        width: Number.isInteger(im.width) && im.width > 0 && im.width < 100000 ? im.width : null, // 2.16.1
+        height: Number.isInteger(im.height) && im.height > 0 && im.height < 100000 ? im.height : null,
       })).filter((im) => im.url);
       return {
         id, name: catText(p.name, 200) || 'Produto', description: catText(p.description, 5000),
@@ -3527,10 +3529,32 @@
       products, failed,
     };
   }
+  // 2.16.1: depois de gravar o retrato novo, as fotos do retrato anterior que saíram (as miniaturas) são apagadas de
+  // catalog/<id>/ — só de produtos que ficaram com pelo menos uma foto nova (produto sem foto grande mantém as antigas).
   async function saveCatalogSnapshot({ snapshot }) {
     const v = checkCatalogSnapshot(snapshot);
+    let old = null;
+    try { const rows = await rest(`system_config?select=value&key=eq.${CATALOG_KEY}`); old = rows.length ? JSON.parse(rows[0].value) : null; } catch { old = null; }
     await rest('system_config?on_conflict=key', json('POST', 'resolution=merge-duplicates,return=minimal', { key: CATALOG_KEY, value: JSON.stringify(v), updated_at: v.exported_at }));
-    return { exported_at: v.exported_at, product_count: v.product_count, image_count: v.image_count, failed: v.failed.length };
+    const { SUPABASE_URL } = cfg();
+    const pub = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/`;
+    const keep = new Set();
+    const fresh = new Set();
+    v.products.forEach((p) => { if (p.images.length) fresh.add(p.id); p.images.forEach((im) => keep.add(im.url)); });
+    const stale = [];
+    (old && Array.isArray(old.products) ? old.products : []).forEach((p) => {
+      const id = String((p && p.id) || '');
+      if (!fresh.has(id)) return;
+      (Array.isArray(p.images) ? p.images : []).forEach((im) => {
+        const u = im && typeof im.url === 'string' ? im.url : '';
+        if (u.startsWith(`${pub}catalog/${id}/`) && !keep.has(u) && !stale.includes(u) && /^[0-9a-f]{64}\.(jpg|png|webp)$/.test(u.slice(`${pub}catalog/${id}/`.length))) stale.push(u);
+      });
+    });
+    let removed = 0;
+    for (const u of stale) {
+      try { const res = await supaFetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${u.slice(pub.length)}`, { method: 'DELETE' }); if (res.ok) removed++; } catch { /* fica no bucket */ }
+    }
+    return { exported_at: v.exported_at, product_count: v.product_count, image_count: v.image_count, failed: v.failed.length, removed };
   }
   // Só o resumo da última exportação (data, quantos), para a aba Mídias
   async function catalogSnapshotInfo() {

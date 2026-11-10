@@ -726,7 +726,8 @@
   function productImages(o) {
     const out = [];
     const add = (v) => {
-      if (Array.isArray(v)) { const req = v.find((x) => x && x.key === 'requested') || v.find((x) => x && x.key === 'full') || v[0]; if (req && typeof req === 'object' && !Array.isArray(req)) { add(req.value || req.url); return; } v.forEach(add); return; }
+      // 2.16.1: [{key:'requested'} (miniatura do tamanho pedido), {key:'full'} (a original)] → a original
+      if (Array.isArray(v)) { const req = v.find((x) => x && x.key === 'full') || v.find((x) => x && x.key === 'original') || v.find((x) => x && x.key === 'requested') || v[0]; if (req && typeof req === 'object' && !Array.isArray(req)) { add(req.value || req.url); return; } v.forEach(add); return; }
       if (v && typeof v === 'object') { add(v.value || v.url || v.imageCdnUrl || v.mediaUrl); return; }
       const u = httpsOf(v);
       if (u && !out.includes(u) && out.length < EXPORT_IMAGES_MAX) out.push(u);
@@ -769,6 +770,22 @@
       images: productImages(o),
     };
   }
+  // 2.16.1: a lista (getProducts) vem pedida em 100x100 e o modelo do CatalogStore só guarda a miniatura.
+  // Cada produto é pedido de novo, só leitura, em tamanho grande (queryProduct com 1080 px); sem isso, getProductById.
+  const EXPORT_IMG_PX = 1080;
+  async function productFull(meId, id) {
+    const q = safe(() => wpp.whatsapp.functions.queryProduct, null);
+    const wid = safe(() => wpp.whatsapp.WidFactory.createWid(meId), null);
+    if (typeof q === 'function' && wid) {
+      try {
+        const r = await withTimeout(Promise.resolve().then(() => q(wid, id, EXPORT_IMG_PX, EXPORT_IMG_PX)), 15000);
+        const d = r && typeof r === 'object' && r.data !== undefined ? r.data : r;
+        if (d && typeof d === 'object') return d;
+      } catch { /* tenta pelo getProductById */ }
+    }
+    if (typeof wpp.catalog.getProductById !== 'function') return null;
+    return withTimeout(Promise.resolve().then(() => wpp.catalog.getProductById(meId, id)), 10000);
+  }
   async function catalogExport() {
     if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
     if (!wpp.catalog || typeof wpp.catalog.getProducts !== 'function') return { ok: false, reason: 'unavailable', products: [] };
@@ -805,14 +822,12 @@
       let n = null;
       try { n = exportProduct(r, me, collections); } catch { n = null; }
       if (!n || seen.has(n.id)) continue;
-      // sem descrição ou sem foto na lista: pede o produto inteiro (só leitura)
-      if ((!n.description || !n.images.length) && typeof wpp.catalog.getProductById === 'function') {
-        try {
-          const full = await withTimeout(Promise.resolve().then(() => wpp.catalog.getProductById(meId, n.id)), 10000);
-          const m = full ? exportProduct(full, me, collections) : null;
-          if (m) n = { ...n, description: n.description || m.description, images: n.images.length ? n.images : m.images, salePrice: n.salePrice != null ? n.salePrice : m.salePrice };
-        } catch { failed.push({ id: n.id, name: n.name, error: 'não consegui ler os detalhes (ficou o que a lista trouxe)' }); }
-      }
+      // o produto inteiro (só leitura): descrição completa e as fotos em tamanho cheio (as da lista ficam de reserva)
+      try {
+        const full = await productFull(meId, n.id);
+        const m = full ? exportProduct(full, me, collections) : null;
+        if (m) n = { ...n, description: n.description || m.description, images: m.images.length ? m.images : n.images, salePrice: n.salePrice != null ? n.salePrice : m.salePrice };
+      } catch { failed.push({ id: n.id, name: n.name, error: 'não consegui ler os detalhes (ficou o que a lista trouxe)' }); }
       seen.add(n.id);
       products.push(n);
     }
@@ -833,11 +848,41 @@
           const c = document.createElement('canvas');
           c.width = img.naturalWidth; c.height = img.naturalHeight;
           c.getContext('2d').drawImage(img, 0, 0);
-          c.toBlob((b) => { clearTimeout(timer); if (b) b.arrayBuffer().then((data) => resolve({ data, mime: 'image/jpeg' }), reject); else reject(new Error('canvas vazio')); }, 'image/jpeg', 0.92);
+          c.toBlob((b) => { clearTimeout(timer); if (b) b.arrayBuffer().then((data) => resolve({ data, mime: 'image/jpeg', width: img.naturalWidth, height: img.naturalHeight }), reject); else reject(new Error('canvas vazio')); }, 'image/jpeg', 0.92);
         } catch (e) { clearTimeout(timer); reject(e); }
       };
       img.src = url;
     });
+  }
+  // 2.16.1: largura x altura lidas do cabeçalho do arquivo (JPEG, PNG ou WebP); null = não deu para ler
+  function imageSize(buf) {
+    const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    const u16 = (i) => (b[i] << 8) | b[i + 1];
+    const u32 = (i) => ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
+    const le16 = (i) => b[i] | (b[i + 1] << 8);
+    const le24 = (i) => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16);
+    const ok = (w, h) => (w > 0 && h > 0 ? { width: w, height: h } : null);
+    const tag = (i) => String.fromCharCode(b[i], b[i + 1], b[i + 2], b[i + 3]);
+    if (b.length > 24 && b[0] === 0x89 && tag(1) === 'PNG\r' && tag(12) === 'IHDR') return ok(u32(16), u32(20));
+    if (b.length > 4 && b[0] === 0xff && b[1] === 0xd8) {
+      let i = 2;
+      while (i + 9 < b.length) {
+        if (b[i] !== 0xff) { i++; continue; }
+        const mk = b[i + 1];
+        if (mk === 0xff) { i++; continue; }
+        if (mk === 0xd8 || mk === 0x01 || (mk >= 0xd0 && mk <= 0xd7)) { i += 2; continue; }
+        if (mk >= 0xc0 && mk <= 0xcf && mk !== 0xc4 && mk !== 0xc8 && mk !== 0xcc) return ok(u16(i + 7), u16(i + 5));
+        i += 2 + u16(i + 2);
+      }
+      return null;
+    }
+    if (b.length > 30 && tag(0) === 'RIFF' && tag(8) === 'WEBP') {
+      const kind = tag(12);
+      if (kind === 'VP8X') return ok(le24(24) + 1, le24(27) + 1);
+      if (kind === 'VP8L') { const v = u32(21); const x = ((v & 0xff) << 24 | (v >>> 8 & 0xff) << 16 | (v >>> 16 & 0xff) << 8 | v >>> 24) >>> 0; return ok((x & 0x3fff) + 1, ((x >>> 14) & 0x3fff) + 1); }
+      if (kind === 'VP8 ') return ok(le16(26) & 0x3fff, le16(28) & 0x3fff);
+    }
+    return null;
   }
   async function catalogImage(payload) {
     const url = httpsOf(payload && payload.url);
@@ -854,7 +899,8 @@
     }
     if (!out || !(out.data instanceof ArrayBuffer) || !out.data.byteLength) throw new BridgeError('image_failed', 'Não consegui baixar a foto do catálogo', 'before-send');
     if (out.data.byteLength > CATALOG_IMG_MAX) throw new BridgeError('file_too_big', 'Foto acima de 10 MB', 'before-send');
-    return out;
+    const dim = imageSize(out.data) || (out.width && out.height ? { width: out.width, height: out.height } : null);
+    return { data: out.data, mime: out.mime, width: dim ? dim.width : null, height: dim ? dim.height : null };
   }
 
   // Contatos salvos (nome + número) para a parte "Contato"; só @c.us, até 20, filtrados aqui

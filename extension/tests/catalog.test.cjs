@@ -1,4 +1,4 @@
-// Testes da 2.15.3 (exportar o catálogo do WhatsApp Business): node extension/tests/catalog.test.cjs
+// Testes da 2.15.3 + 2.16.1 (exportar o catálogo do WhatsApp Business; 2.16.1: fotos em tamanho cheio, ≥ 600 px): node extension/tests/catalog.test.cjs
 // - ponte (WA-JS falsa): catalogExport lê TODOS os produtos visíveis (oculto fica fora) com descrição completa, preço,
 //   promoção, moeda, link wa.me/p/<id>/<número>, coleções e todas as fotos; produto sem descrição pede getProductById;
 //   catalogImage baixa a foto (só https). Nada é enviado e o catálogo não muda (nenhuma função de escrita é chamada).
@@ -19,7 +19,8 @@ const ME = '5521999990000';
 const IMG = (n) => `https://media.fsdu1-1.fna.whatsapp.net/v/t45/${n}.jpg?oh=1`;
 
 // ── ponte ──
-function bridge({ products, byId = {}, collections = null, business = true, fetchMap = {} }) {
+function bridge({ products, byId = {}, collections = null, business = true, fetchMap = {}, queryProduct = null }) {
+  const queried = [];
   let listener = null;
   const replies = [];
   const writes = [];
@@ -35,6 +36,10 @@ function bridge({ products, byId = {}, collections = null, business = true, fetc
       editProduct: () => writes.push('editProduct'), delProducts: () => writes.push('delProducts'), createProduct: () => writes.push('createProduct'),
     },
     contact: { getPnLidEntry: async () => null },
+    ...(queryProduct ? { whatsapp: {
+      WidFactory: { createWid: (s) => ({ _serialized: s }) },
+      functions: { queryProduct: async (wid, pid, w, h) => { queried.push([wid._serialized, pid, w, h]); const d = queryProduct[pid]; if (d instanceof Error) throw d; return { data: d }; } },
+    } } : {}),
   };
   let AB = ArrayBuffer;
   const fetch = async (url) => {
@@ -58,14 +63,14 @@ function bridge({ products, byId = {}, collections = null, business = true, fetc
     const wait = () => { const r = replies.find((x) => x.id === id); if (r) resolve(r); else if (Date.now() > until) resolve({ ok: false }); else setTimeout(wait, 5); };
     wait();
   });
-  return { request, writes };
+  return { request, writes, queried };
 }
 
 const CATALOG = [
   // resposta do catálogo (getProducts): preço em milésimos (texto), fotos em listas {key,value}
   { id: '111', name: 'Relógio Ouro', description: 'Pulseira de aço.\nResistente à água 5 ATM.', price: '459900', currency: 'BRL', sale_price: { price: '399900' },
     image_cdn_urls: [{ key: 'requested', value: IMG('a1') }, { key: 'full', value: IMG('a1-full') }],
-    additional_image_cdn_urls: [[{ key: 'requested', value: IMG('a2') }], [{ key: 'requested', value: IMG('a3') }], [{ key: 'requested', value: IMG('a1') }]],
+    additional_image_cdn_urls: [[{ key: 'requested', value: IMG('a2') }], [{ key: 'requested', value: IMG('a3') }], [{ key: 'requested', value: IMG('a1') }, { key: 'full', value: IMG('a1-full') }]],
     retailer_id: 'SKU-1', url: 'https://loja.example/relogio' },
   // modelo do CatalogStore: priceAmount1000 / salePriceAmount1000 e imageCdnUrl
   { id: { _serialized: '222' }, name: 'Smartwatch', priceAmount1000: 199000, salePriceAmount1000: 249000, currency: 'BRL', imageCdnUrl: IMG('b1'), additionalImageCdnUrl: [IMG('b2')] },
@@ -90,7 +95,7 @@ test('ponte: catalogExport traz todos os visíveis com descrição completa, pre
   assert.strictEqual(p1.description, 'Pulseira de aço.\nResistente à água 5 ATM.');
   assert.deepStrictEqual([p1.price, p1.salePrice, p1.currency], [459.9, 399.9, 'BRL']);
   assert.strictEqual(p1.link, `https://wa.me/p/111/${ME}`);
-  assert.deepStrictEqual(p1.images, [IMG('a1'), IMG('a2'), IMG('a3')]);
+  assert.deepStrictEqual(p1.images, [IMG('a1-full'), IMG('a2'), IMG('a3')]); // 2.16.1: a "full" (original), não a "requested"
   assert.deepStrictEqual(p1.collections, ['Relógios', 'Promoções']);
   assert.deepStrictEqual([p1.retailerId, p1.url], ['SKU-1', 'https://loja.example/relogio']);
   assert.deepStrictEqual([p2.price, p2.salePrice, p2.images, p2.collections], [199, null, [IMG('b1'), IMG('b2')], ['Relógios']]); // "promoção" maior que o preço não conta
@@ -118,6 +123,63 @@ test('ponte: catalogImage baixa os bytes (só https); falha vira erro claro', as
   assert.deepStrictEqual([bad.ok, bad.error.code], [false, 'invalid_url']);
   const off = await b.request('catalogImage', { url: IMG('nada') });
   assert.deepStrictEqual([off.ok, off.error.code], [false, 'image_failed']);
+});
+
+// ── 2.16.1: fotos em tamanho cheio ──
+// cabeçalhos mínimos de JPEG / PNG / WebP com o tamanho dado (o resto do arquivo não importa para medir)
+const jpeg = (w, h) => [0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0,
+  0xff, 0xdb, 0, 4, 0, 0, 0xff, 0xc0, 0, 17, 8, h >> 8, h & 255, w >> 8, w & 255, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1, 0xff, 0xd9];
+const png = (w, h) => [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, w >> 8, w & 255, 0, 0, h >> 8, h & 255, 8, 2, 0, 0, 0];
+const webpX = (w, h) => [...Buffer.from('RIFF'), 0, 0, 0, 0, ...Buffer.from('WEBPVP8X'), 10, 0, 0, 0, 0, 0, 0, 0,
+  (w - 1) & 255, ((w - 1) >> 8) & 255, 0, (h - 1) & 255, ((h - 1) >> 8) & 255, 0, 0, 0];
+
+test('ponte (catálogo simulado): o produto é pedido de novo em 1080 px e a foto "full" vence a miniatura da lista', async () => {
+  const THUMB = (n) => `https://media.fcaw3-1.fna.whatsapp.net/v/t45/${n}.jpg?stp=dst-jpg_p100x100_tt6&oh=1`;
+  const b = bridge({
+    products: [
+      { id: '901', name: 'Com foto grande', description: 'ok', price: '1000', image_cdn_urls: [{ key: 'requested', value: THUMB('g1') }], additional_image_cdn_urls: [[{ key: 'requested', value: THUMB('g2') }]] },
+      { id: '902', name: 'Só miniatura', description: 'ok', price: '1000', imageCdnUrl: THUMB('m1') },
+      { id: '903', name: 'Detalhe falhou', description: 'ok', price: '1000', imageCdnUrl: THUMB('f1') },
+    ],
+    queryProduct: {
+      901: { id: '901', name: 'Com foto grande', description: 'ok', price: '1000',
+        image_cdn_urls: [{ key: 'requested', value: IMG('g1-1080') }, { key: 'full', value: IMG('g1-full') }],
+        additional_image_cdn_urls: [[{ key: 'requested', value: IMG('g2-1080') }, { key: 'full', value: IMG('g2-full') }]] },
+      902: { id: '902', name: 'Só miniatura', price: '1000', image_cdn_urls: [{ key: 'requested', value: THUMB('m1') }] },
+      903: new Error('timeout'),
+    },
+  });
+  const r = await b.request('catalogExport', {});
+  assert.ok(r.ok, JSON.stringify(r));
+  const d = plain(r.data);
+  assert.deepStrictEqual(d.products.map((p) => [p.id, p.images]), [
+    ['901', [IMG('g1-full'), IMG('g2-full')]],
+    ['902', [THUMB('m1')]], // só existe a miniatura: segue (o painel mede e avisa)
+    ['903', [THUMB('f1')]], // queryProduct falhou e getProductById não tem: fica a da lista
+  ]);
+  assert.deepStrictEqual(plain(b.queried), [[`${ME}@c.us`, '901', 1080, 1080], [`${ME}@c.us`, '902', 1080, 1080], [`${ME}@c.us`, '903', 1080, 1080]]);
+  assert.deepStrictEqual(b.writes, [], 'só leitura');
+});
+
+test('ponte: catalogImage devolve largura x altura (JPEG, PNG e WebP); arquivo ilegível = null', async () => {
+  const files = { big: { mime: 'image/jpeg', bytes: jpeg(1080, 1440) }, thumb: { mime: 'image/jpeg', bytes: jpeg(100, 133) },
+    png: { mime: 'image/png', bytes: png(800, 600) }, webp: { mime: 'image/webp', bytes: webpX(1200, 900) }, junk: { mime: 'image/jpeg', bytes: [1, 2, 3] } };
+  const fetchMap = Object.fromEntries(Object.entries(files).map(([k, v]) => [IMG(k), v]));
+  const b = bridge({ products: [], fetchMap });
+  const size = async (k) => { const r = await b.request('catalogImage', { url: IMG(k) }); assert.ok(r.ok, k); return [r.data.width, r.data.height]; };
+  assert.deepStrictEqual(await size('big'), [1080, 1440]);
+  assert.deepStrictEqual(await size('thumb'), [100, 133]);
+  assert.deepStrictEqual(await size('png'), [800, 600]);
+  assert.deepStrictEqual(await size('webp'), [1200, 900]);
+  assert.deepStrictEqual(await size('junk'), [null, null]);
+});
+
+test('painel: só aceita foto com lado maior ≥ 600 px; produto só com miniatura vai para "sem foto grande"', () => {
+  const c = src('content.js');
+  assert.ok(/const CATX_MIN_PX = 600;/.test(c));
+  assert.ok(/if \(Math\.max\(w, h\) < CATX_MIN_PX\) \{ small\.push/.test(c), 'miniatura não sobe');
+  assert.ok(/sem foto grande: o WhatsApp só deu miniatura/.test(c));
+  assert.ok(c.indexOf("small.push(") < c.indexOf("call('uploadCatalogImage'"), 'mede antes de subir');
 });
 
 // ── supabase-api.js ──
@@ -184,6 +246,44 @@ test('api: retrato gravado em system_config (wa_catalog_snapshot), limpo e com a
   assert.deepStrictEqual(v.products[0].images.map((i) => i.url), [`${bucket}111/${SHA}.png`]);
   assert.deepStrictEqual([v.products[1].currency, v.products[1].salePrice], ['USD', null]);
   await assert.rejects(a.saveCatalogSnapshot({ snapshot: { phone: '12', products: [] } }), /Número da loja/);
+});
+
+test('api: exportar de novo apaga do bucket as miniaturas do retrato anterior (só de quem ganhou foto nova) e guarda largura/altura', async () => {
+  const bucket = 'https://x.supabase.co/storage/v1/object/public/wa-media/catalog/';
+  const OLD = 'a'.repeat(64);
+  const KEEP = 'b'.repeat(64);
+  const old = { version: 1, products: [
+    { id: '111', images: [{ url: `${bucket}111/${OLD}.jpg` }, { url: `${bucket}111/${KEEP}.jpg` }, { url: `${bucket}222/${OLD}.jpg` }, { url: 'https://evil.example/x.jpg' }] },
+    { id: '333', images: [{ url: `${bucket}333/${OLD}.jpg` }] }, // sem foto grande agora: a antiga fica
+  ] };
+  // fetch falso: o GET do system_config devolve o retrato anterior
+  const res = (status, body) => ({ ok: status < 300, status, text: async () => (body == null ? '' : JSON.stringify(body)) });
+  const log = [];
+  const fake = async (url, init = {}) => {
+    const method = init.method || 'GET';
+    log.push(`${method} ${url}`);
+    if (method === 'GET' && /system_config\?select=value&key=eq\.wa_catalog_snapshot/.test(url)) return res(200, [{ value: JSON.stringify(old) }]);
+    return res(method === 'POST' ? 201 : 200, method === 'POST' ? null : []);
+  };
+  const ctx = vm.createContext({ console, setTimeout, clearTimeout, Intl, URL, Promise, fetch: fake, atob, btoa, crypto: nodeCrypto.webcrypto, WA_CONFIG: { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_ANON_KEY: 'k' } });
+  vm.runInContext(src('rich-parts.js'), ctx);
+  vm.runInContext(src('supabase-api.js'), ctx);
+  const out = await ctx.WaApi.saveCatalogSnapshot({ snapshot: { phone: ME, products: [
+    { id: '111', name: 'R', images: [{ url: `${bucket}111/${KEEP}.jpg`, source: IMG('g'), sha256: KEEP, size: 9, mime: 'image/jpeg', width: 1080, height: 1440 }] },
+    { id: '333', name: 'Só miniatura', images: [] },
+  ] } });
+  assert.strictEqual(out.removed, 1);
+  const dels = log.filter((l) => l.startsWith('DELETE'));
+  assert.deepStrictEqual(dels, [`DELETE https://x.supabase.co/storage/v1/object/wa-media/catalog/111/${OLD}.jpg`]);
+  const post = log.findIndex((l) => /^POST .*system_config/.test(l));
+  assert.ok(post >= 0 && post < log.indexOf(dels[0]), 'grava o retrato novo antes de apagar');
+});
+
+test('api: o retrato guarda largura/altura de cada foto', () => {
+  const { api: a } = api();
+  const bucket = 'https://x.supabase.co/storage/v1/object/public/wa-media/catalog/';
+  const v = a.checkCatalogSnapshot({ phone: ME, products: [{ id: '1', images: [{ url: `${bucket}1/${SHA}.png`, width: 1080, height: 1440 }, { url: `${bucket}1/${SHA}.jpg`, width: -1, height: 'x' }] }] });
+  assert.deepStrictEqual(plain(v.products[0].images.map((i) => [i.width, i.height])), [[1080, 1440], [null, null]]);
 });
 
 (async () => {

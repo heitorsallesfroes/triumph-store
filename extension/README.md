@@ -799,6 +799,21 @@ guardada.
 
 ## O que mudou
 
+### 2.16.1 — catálogo exportado com as fotos em tamanho cheio
+- **Antes:** as fotos exportadas vinham em miniatura (100x133 px): a lista da WA-JS (`getProducts`) pede o catálogo
+  em 100x100 e a exportação pegava a URL `requested` (`stp=dst-jpg_p100x100`).
+- **Agora:** cada produto é pedido de novo, só leitura, em tamanho grande (`WPP.whatsapp.functions.queryProduct` com
+  1080 px; sem ela, `getProductById`) e, das URLs que o WhatsApp devolve, vale a `full` (a original). A URL assinada
+  **não é editada** (mudar o `stp` quebra a assinatura).
+- **Tamanho conferido nos bytes:** a ponte lê largura x altura do cabeçalho (JPEG, PNG ou WebP). Só sobe foto com o
+  **lado maior ≥ 600 px**; miniatura não sobe. Produto que só tem miniatura aparece na lista
+  **"sem foto grande: o WhatsApp só deu miniatura (100x133 px)"**. O retrato guarda `width`/`height` de cada foto.
+- **Substitui as miniaturas:** ao exportar de novo, as fotos do retrato anterior que saíram são apagadas de
+  `wa-media/catalog/<id>/` (só de produtos que ganharam foto nova; o retrato novo é gravado antes). O resultado mostra
+  "N fotos antigas (miniatura) apagadas do wa-media".
+- Testes: `catalog.test.cjs` (catálogo simulado com foto grande e com só miniatura, medição JPEG/PNG/WebP, limpeza do
+  bucket) e o passo 21 do Chrome real (produto "Só Miniatura" 100x133 vai para "sem foto grande").
+
 ### 2.16.0 — réguas por "dia desde o primeiro contato" + entrar no meio da régua
 - **Espera desde a entrada.** Na caixa **⏳ ESPERAR** (modo "esperar um tempo") e no prazo da **❓ ESPERAR RESPOSTA**,
   "Contar o tempo": **depois da etapa anterior** (como sempre) ou **depois que a pessoa ENTROU na automação**

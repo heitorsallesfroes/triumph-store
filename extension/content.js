@@ -12158,6 +12158,7 @@
     no_me: 'Não consegui ler o número da loja no WhatsApp.',
     failed: 'O WhatsApp não devolveu o catálogo. Tente de novo em alguns segundos.',
   };
+  const CATX_MIN_PX = 600; // 2.16.1: foto aceita = lado maior com pelo menos 600 px (a miniatura da lista tem 100)
   const catxWhen = (iso) => { const d = new Date(iso); return Number.isFinite(d.getTime()) ? d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''; };
   function bufToBase64(buf) {
     const bytes = new Uint8Array(buf);
@@ -12187,6 +12188,7 @@
       if (!r || !r.ok) throw new Error(CATX_REASON[r && r.reason] || CATX_REASON.failed);
       const products = [];
       const failed = (r.warnings || []).slice();
+      const noBig = []; // produtos que ficaram sem nenhuma foto grande
       let photos = 0;
       for (let i = 0; i < r.products.length; i++) {
         const p = r.products[i];
@@ -12194,21 +12196,32 @@
         refreshCatx();
         const images = [];
         const errs = [];
+        const small = []; // 2.16.1: só miniatura (lado maior < CATX_MIN_PX): não sobe
         for (const src of p.images || []) {
           try {
             const img = await waRequest('catalogImage', { url: src }, { timeout: 60000 });
+            if (!img || !img.data || !img.data.byteLength) throw new Error('Não consegui baixar a foto do catálogo');
+            const w = Number(img.width) || 0;
+            const h = Number(img.height) || 0;
+            if (Math.max(w, h) < CATX_MIN_PX) { small.push(w && h ? `${w}x${h} px` : 'tamanho não identificado'); continue; }
             const up = await call('uploadCatalogImage', { productId: p.id, base64: bufToBase64(img.data), mime: img.mime });
-            images.push({ url: up.url, source: src, sha256: up.sha256, size: up.size, mime: up.mime, reused: !!up.reused });
+            images.push({ url: up.url, source: src, sha256: up.sha256, size: up.size, mime: up.mime, width: w, height: h, reused: !!up.reused });
           } catch (e) { errs.push(e.message || 'erro'); }
         }
         photos += images.length;
+        if (small.length) {
+          (images.length ? failed : noBig).push({ id: p.id, name: p.name, error: images.length
+            ? `${small.length} foto${small.length === 1 ? '' : 's'} só em miniatura (${small[0]}), não exportada${small.length === 1 ? '' : 's'}`
+            : `sem foto grande: o WhatsApp só deu miniatura (${small[0]})` });
+        }
         if (errs.length) failed.push({ id: p.id, name: p.name, error: `${errs.length} de ${(p.images || []).length} foto${(p.images || []).length === 1 ? '' : 's'} não exportada${errs.length === 1 ? '' : 's'}: ${errs[0]}` });
         products.push({ ...p, images });
       }
       catx.step = 'Gravando o retrato do catálogo…';
       refreshCatx();
+      failed.unshift(...noBig);
       const saved = await call('saveCatalogSnapshot', { snapshot: { phone: r.me, products, failed } });
-      catx.result = { products: saved.product_count, photos, at: saved.exported_at, failed, reused: products.reduce((n, p) => n + p.images.filter((x) => x.reused).length, 0) };
+      catx.result = { products: saved.product_count, photos, at: saved.exported_at, failed, noBig: noBig.length, removed: saved.removed || 0, reused: products.reduce((n, p) => n + p.images.filter((x) => x.reused).length, 0) };
       catx.last = { exported_at: saved.exported_at, product_count: saved.product_count, image_count: saved.image_count, failed: failed.length };
     } catch (e) {
       catx.error = e.message || 'Erro ao exportar';
@@ -12229,6 +12242,8 @@
     const r = catx.result;
     if (r) {
       sec.append(el('div', 'ed-msg md-catx-done', `${r.products} produto${r.products === 1 ? '' : 's'} e ${r.photos} foto${r.photos === 1 ? '' : 's'} exportado${r.products + r.photos === 1 ? '' : 's'} em ${catxWhen(r.at)}${r.reused ? ` (${r.reused} já estava${r.reused === 1 ? '' : 'm'} no wa-media, não subi${r.reused === 1 ? 'u' : 'ram'} de novo)` : ''}.`));
+      if (r.removed) sec.append(el('div', 'md-up md-catx-removed', `${r.removed} foto${r.removed === 1 ? '' : 's'} antiga${r.removed === 1 ? '' : 's'} (miniatura) apagada${r.removed === 1 ? '' : 's'} do wa-media.`));
+      if (r.noBig) sec.append(el('div', 'md-up warn md-catx-nobig', `${r.noBig} produto${r.noBig === 1 ? '' : 's'} sem foto grande (só miniatura): veja abaixo.`));
       if (r.failed.length) {
         sec.append(el('div', 'md-up warn', `Com problema (${r.failed.length}):`));
         const ul = el('ul', 'md-catx-fail');
