@@ -26,7 +26,7 @@ export interface SeqNode {
   amount?: number | string; unit?: string; from?: string; after_mine?: boolean; mode?: string; until_day?: number | string | null; until_time?: string;
   send_window?: SeqWindow | null; yes?: SeqNode[]; no?: SeqNode[]; to?: string;
 }
-export interface SeqStart { type?: string; origin?: string; source?: string; label_id?: string | null; wa_label_id?: string | null; exclude?: { source?: string; label_id?: string; wa_label_id?: string }[] }
+export interface SeqStart { type?: string; origin?: string; source?: string; label_id?: string | null; wa_label_id?: string | null; exit_on_remove?: boolean; exclude?: { source?: string; label_id?: string; wa_label_id?: string }[] }
 export interface SeqSchedule { mode?: string; days?: number[]; windows?: SeqWindow[]; week?: SeqWindow[][]; daily_limit?: number | string | null }
 export interface SeqDef { start?: SeqStart; steps?: SeqNode[]; business?: boolean; schedule?: SeqSchedule | null }
 export interface AutomationRow {
@@ -515,6 +515,7 @@ const OUTCOMES: Record<string, string> = {
   respondeu: 'Respondeu ✅', nao_respondeu: 'Chegou ao fim sem responder', fim: 'Chegou ao fim', manual: 'Tirado manualmente',
   nao_enviar: 'Etiqueta Não enviar', etiqueta_excluida: 'Etiqueta excluída', id_duplicado: 'ID duplicado (troca de id do WhatsApp)',
   outra_regua: 'Entrou em outra régua', reentrou: 'Entrou de novo', sem_mensagem: 'Mensagem não existe mais',
+  saiu_etiqueta: 'Saiu da etiqueta', // extensão 2.18.1: tiraram a etiqueta do WhatsApp de início
 };
 export const outcomeText = (o: string | null | undefined) => (o ? OUTCOMES[o] || o : 'Saiu');
 export const OUTCOME_KEYS = Object.keys(OUTCOMES);

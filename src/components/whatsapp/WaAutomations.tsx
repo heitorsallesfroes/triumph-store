@@ -8,12 +8,13 @@ import { useErpRefresh } from '../../lib/erpRefresh';
 import { startVisibleInterval } from '../../lib/visibleInterval';
 import { makeAutomationsDb, type AutoStats, type Overview, type Person } from '../../lib/waAutomationsDb';
 import {
-  BOX_STYLE, boxKind, boxText, conversionBySend, endedAt, fmtAgo, fmtDateTime, fmtTime, fmtWhen, funnel, mainPath, maskPhone, matchesPerson, msOf,
+  BOX_STYLE, boxKind, boxText, conversionBySend, endedAt, fmtAgo, fmtDateTime, fmtTime, fmtWhen, funnel, mainPath, matchesPerson, msOf,
   nextStep, OUTCOME_KEYS, outcomeGroup, outcomeText, parkingNode, personTimeline, phoneOfChat, previewLines, scheduleSummary, seqDescribe, seqIndex,
   seqNodeLabel, seqSendSteps, SKIPPED_WAIT_TEXT, skippedWait, startText, statusOf, stopText, waLink, yesSummary,
   type AutomationRow, type ItemRow, type Names, type RunRow, type SendLogRow, type SeqDef, type SeqNode, type TimelineEvent,
 } from '../../lib/waAutomations';
 import { btn, input, muted, ORANGE } from './shared';
+import { displayName, fullPhone, isNameText } from '../../lib/waNames';
 import { EmptyState, eyebrow, GREEN, panel, RED, Skeleton, SkeletonStyle, SLATE } from './ui';
 
 const db = makeAutomationsDb(supabase);
@@ -70,7 +71,9 @@ function FourNumbers({ st }: { st: AutoStats | null | undefined }) {
     </div>
   );
 }
-const personName = (p: Person | undefined, chatId: string) => (p && p.name) || maskPhone((p && p.phone) || phoneOfChat(chatId)) || 'Sem nome';
+// 2.18.1: nome da agenda → nome do CRM → nome do perfil (~) → número (telefone completo)
+const personName = (p: Person | undefined, chatId: string) => displayName({ agenda: p?.agenda, crm: p?.name, profile: p?.profile, phoneLabel: fullPhone((p && p.phone) || phoneOfChat(chatId)) });
+const personHasName = (p: Person | undefined) => !!p && [p.agenda, p.name, p.profile].some((v) => isNameText(v));
 const personPhone = (p: Person | undefined, chatId: string) => (p && p.phone) || phoneOfChat(chatId);
 function namesOf(ov: Overview | null): { names: Names; items: Map<string, ItemRow> } {
   const labels = new Map((ov?.labels.data || []).map((l) => [l.id, l.name]));
@@ -283,7 +286,7 @@ function PeopleMini({ def, runs, people, now, names, onPerson }: { def: SeqDef; 
         return (
           <button key={r.id} type="button" onClick={() => onPerson(r, people[r.chat_id])} style={{ ...linkBtn, color: 'var(--text-primary)', display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 12, padding: '5px 8px', borderRadius: 8, background: 'var(--bg-inner)' }}>
             <b>{personName(people[r.chat_id], r.chat_id)}</b>
-            <span style={muted}>{maskPhone(personPhone(people[r.chat_id], r.chat_id))}</span>
+            <span style={muted}>{fullPhone(personPhone(people[r.chat_id], r.chat_id))}</span>
             <span style={muted}>entrou {fmtAgo(msOf(r.created_at), now)}</span>
             <SkippedBadge run={r} />
             {nx && <span style={{ color: nx.late ? RED : 'var(--text-muted)' }}>→ {nx.text} {fmtWhen(nx.when, now)}</span>}
@@ -380,13 +383,13 @@ function PessoasTab({ def, names, active, now, onPerson }: { def: SeqDef; names:
   const rows: PersonRow[] = useMemo(() => (active?.runs || []).map((run) => {
     const p = active?.people[run.chat_id];
     const n = run.node ? idx.get(run.node)?.node : null;
-    return { run, name: personName(p, run.chat_id), hasName: !!(p && p.name), phone: personPhone(p, run.chat_id), step: seqNodeLabel(def, run.node, names), kind: n ? boxKind(n) : 'outro', entered: msOf(run.created_at), next: nextStep(def, run, now, names) };
+    return { run, name: personName(p, run.chat_id), hasName: personHasName(p), phone: personPhone(p, run.chat_id), step: seqNodeLabel(def, run.node, names), kind: n ? boxKind(n) : 'outro', entered: msOf(run.created_at), next: nextStep(def, run, now, names) };
   }), [active, def, idx, names, now]);
   if (!active) return <div style={panel}><Skeleton h={16} /><div style={{ height: 8 }} /><Skeleton h={16} /></div>;
   const steps = [...new Set(rows.map((r) => r.run.node || ''))];
   const shown = rows.filter((r) => (!step || (r.run.node || '') === step) && matchesPerson(q, r.hasName ? r.name : '', r.phone));
   const COLS: [string, string, (r: PersonRow) => string | number | null][] = [
-    ['nome', 'Nome', (r) => (r.hasName ? r.name : null)], ['tel', 'Telefone', (r) => r.phone], ['etapa', 'Etapa atual', (r) => r.step], ['entrou', 'Entrou em', (r) => r.entered],
+    ['nome', 'Nome', (r) => (r.hasName ? r.name.replace(/^~/, '') : null)], ['tel', 'Telefone', (r) => r.phone], ['etapa', 'Etapa atual', (r) => r.step], ['entrou', 'Entrou em', (r) => r.entered],
     ['next', 'Próximo passo', (r) => (r.next ? r.next.when : null)],
   ];
   const col = COLS.find((c) => c[0] === sort.key) || COLS[4];
@@ -411,7 +414,7 @@ function PessoasTab({ def, names, active, now, onPerson }: { def: SeqDef; names:
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {sorted.slice(0, 300).map((r) => (
             <button key={r.run.id} type="button" onClick={() => onPerson(r.run, active.people[r.run.chat_id])} style={{ ...panel, padding: 12, textAlign: 'left', font: 'inherit', color: 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 3 }}>
-              <b style={{ color: 'var(--text-primary)' }}>{r.name} <span style={{ ...muted, fontWeight: 400 }}>{maskPhone(r.phone)}</span> <SkippedBadge run={r.run} /></b>
+              <b style={{ color: 'var(--text-primary)' }}>{r.name} <span style={{ ...muted, fontWeight: 400 }}>{fullPhone(r.phone)}</span> <SkippedBadge run={r.run} /></b>
               <span style={{ fontSize: 12 }}>{BOX_STYLE[r.kind as keyof typeof BOX_STYLE]?.icon} {r.step}</span>
               <span style={muted}>Entrou {fmtDateTime(r.entered)} ({fmtAgo(r.entered, now)})</span>
               {r.next && <span style={{ fontSize: 12 }}>→ {r.next.text} · {when(r)}</span>}
@@ -431,7 +434,7 @@ function PessoasTab({ def, names, active, now, onPerson }: { def: SeqDef; names:
             <tbody>{sorted.slice(0, 500).map((r) => (
               <tr key={r.run.id} onClick={() => onPerson(r.run, active.people[r.run.chat_id])} style={{ cursor: 'pointer' }} data-testid="wa-auto-person-row">
                 <td style={tdS}>{r.hasName ? <b>{r.name}</b> : <span style={muted}>Sem nome</span>}{skippedWait(r.run) && <div style={{ marginTop: 3 }}><SkippedBadge run={r.run} /></div>}</td>
-                <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{maskPhone(r.phone)}</td>
+                <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{fullPhone(r.phone)}</td>
                 <td style={tdS}>{BOX_STYLE[r.kind as keyof typeof BOX_STYLE]?.icon} {r.step}</td>
                 <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{fmtDateTime(r.entered)}<div style={muted}>{fmtAgo(r.entered, now)}</div></td>
                 <td style={tdS}>{r.next ? <>{r.next.text}<div>{when(r)}</div></> : '—'}</td>
@@ -507,7 +510,7 @@ function HistoricoTab({ a, def, names, tick, onPerson }: { a: AutomationRow; def
               <thead><tr>{['Pessoa', 'Entrou em', 'Terminou em', 'Parou em', 'Motivo'].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
               <tbody>{shown.map((r) => (
                 <tr key={r.id} onClick={() => onPerson(r, data.people[r.chat_id])} style={{ cursor: 'pointer' }}>
-                  <td style={tdS}><b>{personName(data.people[r.chat_id], r.chat_id)}</b><div style={muted}>{maskPhone(personPhone(data.people[r.chat_id], r.chat_id))}</div></td>
+                  <td style={tdS}><b>{personName(data.people[r.chat_id], r.chat_id)}</b><div style={muted}>{fullPhone(personPhone(data.people[r.chat_id], r.chat_id))}</div></td>
                   <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{fmtDateTime(msOf(r.created_at))}</td>
                   <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{fmtDateTime(endedAt(r))}</td>
                   <td style={tdS}>{stopText(def, r, names)}</td>
@@ -603,7 +606,7 @@ function PersonDrawer({ a, run, person, names, now, tick, onClose }: { a: Automa
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{personName(person, run.chat_id)}</div>
-            <div style={muted}>{maskPhone(phone)} · {a.name}</div>
+            <div style={muted}>{fullPhone(phone)} · {a.name}</div>
             <div style={{ fontSize: 12, marginTop: 4, color: run.status === 'ativo' ? ORANGE : 'var(--text-muted)' }}>{run.status === 'ativo' ? `Agora: ${seqDescribe(def, run, now, names)}` : `Encerrado: ${outcomeText(run.outcome)}`} <SkippedBadge run={run} /></div>
           </div>
           <button type="button" style={{ ...btn, padding: '4px 10px', alignSelf: 'flex-start' }} onClick={onClose}>✕</button>
@@ -646,7 +649,7 @@ function GlobalSearch({ autos, names, now, onOpen }: { autos: AutomationRow[]; n
       if (off) return;
       const groups = r.data.contacts.map((c) => {
         const chats = new Set([c.chat_id, c.phone ? `${c.phone}@c.us` : null].filter(Boolean));
-        return { key: c.id, person: { name: c.name, phone: c.phone } as Person, runs: r.data.runs.filter((x) => x.contact_id === c.id || chats.has(x.chat_id)) };
+        return { key: c.id, person: { name: c.name, phone: c.phone, agenda: c.agenda, profile: c.profile } as Person, runs: r.data.runs.filter((x) => x.contact_id === c.id || chats.has(x.chat_id)) };
       });
       setRes({ q: t, groups, error: r.error });
     }, 400);
@@ -661,7 +664,7 @@ function GlobalSearch({ autos, names, now, onOpen }: { autos: AutomationRow[]; n
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
           {res.groups.map((g) => (
             <div key={g.key} style={{ padding: 10, borderRadius: 10, background: 'var(--bg-inner)' }}>
-              <b style={{ fontSize: 13 }}>{g.person.name || 'Sem nome'}</b> <span style={muted}>{maskPhone(g.person.phone)}</span>
+              <b style={{ fontSize: 13 }}>{personName(g.person, g.person.phone ? `${g.person.phone}@c.us` : '')}</b> <span style={muted}>{fullPhone(g.person.phone)}</span>
               {!g.runs.length ? <div style={muted}>Não está nem esteve em nenhuma automação.</div> : g.runs.map((r) => {
                 const a = byId.get(r.automation_id);
                 const def = (a?.sequence || { steps: [] }) as SeqDef;

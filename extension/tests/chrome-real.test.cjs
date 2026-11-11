@@ -1459,6 +1459,23 @@ async function main() {
       tpls: [...v.querySelectorAll('.vb-tpl')].map((b) => b.dataset.tpl), close: !!v.querySelector('.vb-close'), legacy: !!v.querySelector('.vb-legacy') };`);
     check('construtor: "+ Nova automação" abre a tela ampla (por cima do WhatsApp, fundo claro) com os 4 modelos, "Fechar" e o editor antigo à parte',
       !!tpls && tpls.w === tpls.vw && tpls.h > 500 && /rgb\(24[0-9], 24[0-9], 2[45][0-9]\)|rgb\(255, 255, 255\)/.test(tpls.bg) && JSON.stringify(tpls.tpls) === '["followup3","posvenda","lead_sumiu","vazio"]' && tpls.close && tpls.legacy, JSON.stringify(tpls));
+    // 2.18.1: "Se tirarem a etiqueta: sair da automação" só quando o COMEÇA é etiqueta do WhatsApp (padrão ligado);
+    // etiqueta do CRM não ganha a opção. Num rascunho em branco (descartado depois), para não mexer na régua do teste.
+    await q(`sh.querySelector('.vb [data-tpl="vazio"]').click(); await wait(300); sh.querySelector('.vb .vb-box.vb-start').click(); await wait(250);
+      const r = [...sh.querySelectorAll('.vb .vb-side input[name="vb-start"]')][0]; if (r && !r.checked) { r.click(); await wait(250); } return true;`);
+    const ex0 = await q(`return { opt: !!sh.querySelector('.vb .vb-side .vb-exit-label'), tipo: (sh.querySelector('.vb .vb-side select[aria-label="Etiqueta: tipo"]') || {}).value || null };`);
+    const setTipo = (v) => q(`const s = sh.querySelector('.vb .vb-side select[aria-label="Etiqueta: tipo"]'); s.value = '${v}'; s.dispatchEvent(new Event('change', { bubbles: true })); await wait(300); return true;`);
+    await setTipo('whatsapp');
+    const ex1 = await q(`const l = sh.querySelector('.vb .vb-side .vb-exit-label'); return l ? { text: l.textContent.trim(), on: l.querySelector('input').checked } : null;`);
+    await q(`sh.querySelector('.vb .vb-side .vb-exit-label input').click(); await wait(150); sh.querySelector('.vb .vb-box.vb-start').click(); await wait(250); return true;`);
+    const ex2 = await q(`const l = sh.querySelector('.vb .vb-side .vb-exit-label'); return l ? l.querySelector('input').checked : null;`);
+    await setTipo('crm');
+    const ex3 = await q(`return !!sh.querySelector('.vb .vb-side .vb-exit-label');`);
+    check('COMEÇA: "Se tirarem a etiqueta: sair da automação" só com etiqueta do WhatsApp, ligado por padrão (desligar fica guardado); etiqueta do CRM sem a opção',
+      ex0.opt === false && ex0.tipo === 'crm' && !!ex1 && ex1.text === 'Se tirarem a etiqueta: sair da automação' && ex1.on === true && ex2 === false && ex3 === false, JSON.stringify({ ex0, ex1, ex2, ex3 }));
+    await q(`sh.querySelector('.vb .vb-close').click(); await wait(300); const d = sh.querySelector('.vb .vb-discard'); if (d) d.click(); await wait(300); return true;`);
+    await waitFor(`return !sh.querySelector('.vb') && !!sh.querySelector('.fw-new');`, 10000);
+    await q(`sh.querySelector('.fw-new').click(); await wait(300); return true;`);
     await q(`sh.querySelector('.vb [data-tpl="followup3"]').click(); await wait(300); return true;`);
     const drawn = await q(`const v = sh.querySelector('.vb'); const t = (sel) => [...v.querySelectorAll(sel)].map((b) => b.querySelector('.vb-btxt').textContent);
       return { name: v.querySelector('.vb-name').value, start: t('.vb-box.vb-start')[0], sends: t('.vb-box.vb-enviar'), waits: t('.vb-box.vb-esperar'), tags: t('.vb-box.vb-etiqueta'),

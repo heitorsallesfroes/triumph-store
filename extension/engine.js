@@ -356,6 +356,49 @@
     if (code) return `Consulta recusada pelo Supabase (${code}).`;
     return m || 'erro desconhecido';
   }
+  // 2.18.1: nome salvo na AGENDA (e o do perfil) de cada conversa → banco (wa_contact_names), para o ERP mostrar.
+  // read({ chatIds? }) = ponte (só a memória do WhatsApp Web, sem consultar servidor); save(items) = banco.
+  // Só grava o que mudou desde a última gravação (assinatura por conversa). Ao abrir a conversa: chat(id);
+  // lista carregada e varredura leve: sweep() (no máximo 1 a cada sweepMs; sweep(true) força).
+  // Sem a tabela (save devolve { available: false }): para de tentar.
+  function createAgendaSync({ read, save, now = () => Date.now(), sweepMs = 30 * 60 * 1000, batch = 200 } = {}) {
+    const sent = new Map();
+    let sweepAt = 0;
+    let off = false;
+    let busy = false;
+    const sig = (x) => `${x.contactName || ''}|${x.pushname || ''}|${x.phone || ''}`;
+    const okItem = (x) => !!x && LEARN_CHAT_RE.test(x.chatId || '') && !!(x.contactName || x.pushname);
+    async function push(items) {
+      const fresh = (Array.isArray(items) ? items : []).filter((x) => okItem(x) && sent.get(x.chatId) !== sig(x));
+      let n = 0;
+      for (let i = 0; i < fresh.length && !off; i += batch) {
+        const part = fresh.slice(i, i + batch).map((x) => ({ chatId: x.chatId, phone: x.phone || null, contactName: x.contactName || null, pushname: x.pushname || null }));
+        const r = await save(part);
+        if (r && r.available === false) { off = true; break; }
+        part.forEach((x) => sent.set(x.chatId, sig(x)));
+        n += part.length;
+      }
+      return n;
+    }
+    return {
+      async chat(chatId) {
+        if (off || !LEARN_CHAT_RE.test(chatId || '')) return 0;
+        try { const r = await read({ chatIds: [chatId] }); return await push(r && r.items); } catch { return 0; }
+      },
+      async sweep(force = false) {
+        if (off || busy || (!force && sweepAt && now() - sweepAt < sweepMs)) return 0;
+        busy = true;
+        try {
+          const r = await read({});
+          if (!r || !Array.isArray(r.items)) return 0; // ponte ainda não pronta: tenta no próximo tique
+          sweepAt = now();
+          return await push(r.items);
+        } catch { return 0; } finally { busy = false; }
+      },
+      isOff: () => off,
+      size: () => sent.size,
+    };
+  }
   // Aprender o nome da SUA mensagem sem perder: o que não gravou (rede, extensão reiniciando) fica guardado e
   // tenta de novo (8 s, 16 s, 32 s… até 5 min). Antes da 2.12.1 a fila da ponte era esvaziada e uma falha
   // de gravação perdia o nome para sempre.
@@ -1528,7 +1571,53 @@
     const wa = new Set((waIds || []).map(String));
     return ex.some((x) => (x.source === 'whatsapp' ? wa.has(String(x.wa_label_id)) : crm.has(String(x.label_id))));
   }
-  const unitText = (amount, unit) => {
+  // ── 2.18.1: SAIR AO TIRAR A ETIQUETA DO WHATSAPP DE INÍCIO ──
+  // Só para sequências cuja caixa COMEÇA é uma etiqueta do WhatsApp (nativa), com a opção ligada (padrão; desligada =
+  // start.exit_on_remove === false). Começo por etiqueta do CRM (ex.: Régua de follow-up): null, nada muda.
+  function seqExitLabelOf(def) {
+    const s = def && def.start;
+    if (!s || s.type !== 'etiqueta' || s.source !== 'whatsapp' || !s.wa_label_id || s.exit_on_remove === false) return null;
+    return String(s.wa_label_id);
+  }
+  // A própria automação já tirou a etiqueta de início neste percurso? (um passo "tirar" dela, ou "colocar … e tirar
+  // todas as outras", ANTES do passo atual: na mesma lista e nas listas de cima). Essa retirada não conta.
+  function seqSelfRemovedStart(def, node, labelId) {
+    const L = String(labelId || '');
+    if (!L || !node) return false;
+    const idx = seqIndex(def);
+    const removes = (n) => !!n && n.type === 'etiqueta' && n.source === 'whatsapp'
+      && ((n.op === 'tirar' && String(n.wa_label_id) === L) || (n.op === 'colocar' && n.remove_others && String(n.wa_label_id) !== L));
+    let e = idx.get(node);
+    for (let guard = 0; e && guard < 20; guard++) {
+      for (let i = 0; i < e.i; i++) if (removes(e.list[i])) return true;
+      e = e.parent ? idx.get(e.parent.id) : null;
+    }
+    return false;
+  }
+  const opsRemoveLabel = (ops, labelId) => (ops || []).some((op) => op && op.source === 'whatsapp'
+    && ((op.op === 'tirar' && String(op.wa_label_id) === String(labelId)) || (op.op === 'colocar' && op.remove_others && String(op.wa_label_id) !== String(labelId))));
+  const digitsOf = (v) => String(v || '').replace(/\D/g, '');
+  const samePhone = (a, b) => { const x = digitsOf(a); const y = digitsOf(b); return x.length >= 8 && y.length >= 8 && (x === y || x.slice(-11) === y.slice(-11)); };
+  // A pessoa do percurso ainda tem a etiqueta? 'present' | 'absent' | 'unknown'. Troca de id (@c.us ↔ @lid) NÃO é
+  // retirada: qualquer id da MESMA pessoa (o do percurso, o @lid mapeado ou o mesmo telefone) com a etiqueta = present.
+  // absent só com a conversa do percurso carregada SEM a etiqueta e a lista da etiqueta lida por inteiro sem ninguém
+  // dessa pessoa. Conversa sumiu da memória (a troca de id costuma fazer isso), lista falhou ou carregando: unknown.
+  // holders = resposta de labelChatIds ({ count, chats: [{ id, phone?, lid? }] }) ou null.
+  function waStartPresence({ labelId, runChatId, runPhone, chat, holders }) {
+    const L = String(labelId);
+    if (chat && chat.loaded && Array.isArray(chat.labels) && chat.labels.map(String).includes(L)) return 'present';
+    if (!holders || !Array.isArray(holders.chats)) return 'unknown';
+    const phone = runPhone || ((/^(\d{8,15})@c\.us$/.exec(runChatId || '') || [])[1]) || null;
+    const mine = holders.chats.some((c) => c && (c.id === runChatId || c.lid === runChatId
+      || (phone && (samePhone(c.phone, phone) || samePhone((/^(\d{8,15})@c\.us$/.exec(c.id || '') || [])[1], phone)))));
+    if (mine) return 'present';
+    if (!holders.chats.length && Number(holders.count) > 0) return 'unknown'; // WhatsApp ainda carregando a lista
+    if (!chat || !chat.loaded || !Array.isArray(chat.labels)) return 'unknown';
+    return 'absent';
+  }
+  const WA_LEFT_READS = 2; // leituras seguidas sem a etiqueta para sair
+  const LEFT_LABEL_REASON = 'saiu da etiqueta';
+  const unitText =(amount, unit) => {
     const n = Number(amount) || 0;
     if (unit === 'minutos') return `${n} minuto${n === 1 ? '' : 's'}`;
     if (unit === 'horas') return `${n} hora${n === 1 ? '' : 's'}`;
@@ -1768,7 +1857,7 @@
   // Texto do passo atual de uma conversa ("esperando resposta (faltam 1h20)")
   function seqDescribe(def, run, now, { itemTitle = (id) => id } = {}) {
     if (!run) return '';
-    if (run.status && run.status !== 'ativo') return run.outcome === 'respondeu' ? 'saiu: respondeu' : run.outcome === 'nao_respondeu' ? 'saiu: não respondeu' : 'saiu';
+    if (run.status && run.status !== 'ativo') return run.outcome === 'respondeu' ? 'saiu: respondeu' : run.outcome === 'nao_respondeu' ? 'saiu: não respondeu' : run.outcome === 'saiu_etiqueta' ? 'saiu: saiu da etiqueta' : 'saiu';
     const idx = seqIndex(def);
     const e = idx.get(run.node || seqFirstOf(def.steps));
     if (!e) return 'terminando';
@@ -2603,6 +2692,10 @@
     // 2.13.0: ids das etiquetas do WhatsApp chamadas "Não enviar" (relidas a cada 5 min; sem a ponte: nenhuma)
     const waNoSend = new Set();
     let waNoSendAt = 0;
+    // 2.18.1: leituras seguidas sem a etiqueta de início (id do percurso → quantas) e percursos em que a própria
+    // automação tirou essa etiqueta (só memória; o caminho já percorrido cobre depois de recarregar)
+    const waLeftReads = new Map();
+    const seqSelfRemoved = new Set();
     async function loadWaNoSend() {
       if (!deps.wa || typeof deps.wa.labels !== 'function' || now() - waNoSendAt < 5 * MIN_MS) return;
       waNoSendAt = now();
@@ -2629,6 +2722,9 @@
       try { const r = await deps.wa.chatPhone({ chatId: run.chat_id }); return (r && r.phone) || null; } catch { return null; }
     }
     async function seqLabelOps(run, ops, automation = null) {
+      // 2.18.1: a automação vai tirar a própria etiqueta de início: essa retirada não tira a pessoa do percurso
+      const exitLabel = automation && automation.kind === 'sequencia' ? seqExitLabelOf(automation.sequence) : null;
+      if (exitLabel && opsRemoveLabel(ops, exitLabel)) { seqSelfRemoved.add(run.id); waLeftReads.delete(run.id); }
       let who = null; // { contactId, name, phone }: uma vez por chamada
       let missLogged = false;
       const crmCall = async (payload) => {
@@ -2698,6 +2794,16 @@
       let replies = {};
       if (starts.length) { try { replies = await api('seqReplies', { chatIds, since: new Date(Math.min(...starts) - 60 * 1000).toISOString() }) || {}; } catch { replies = {}; } }
       const t = now();
+      // 2.18.1: quem está em cada etiqueta de início (uma leitura por etiqueta por ciclo; falhou = null = "não sei")
+      const holders = new Map();
+      const holdersOf = async (labelId) => {
+        if (!holders.has(labelId)) {
+          let h = null;
+          if (deps.wa && typeof deps.wa.labelChatIds === 'function') { try { h = await deps.wa.labelChatIds({ labelId }); } catch { h = null; } }
+          holders.set(labelId, h && Array.isArray(h.chats) ? h : null);
+        }
+        return holders.get(labelId);
+      };
       for (const r of runs) {
         const a = byId.get(r.automation_id);
         if (!a) continue;
@@ -2708,6 +2814,23 @@
         const waIds = ((chats[r.chat_id] || {}).labels || []).map(String);
         if (waIds.some((id) => waNoSend.has(id))) { await seqPatch(r, { status: 'saiu', outcome: 'nao_enviar' }); continue; }
         if (seqExcluded(a.sequence.start, r.contact ? r.contact.labelIds : [], waIds)) { await seqPatch(r, { status: 'saiu', outcome: 'etiqueta_excluida' }); continue; }
+        // 2.18.1: tiraram a etiqueta do WhatsApp de início → sai antes do próximo envio (2 leituras seguidas)
+        const exitLabel = seqExitLabelOf(a.sequence);
+        if (exitLabel && !seqSelfRemoved.has(r.id) && !seqSelfRemovedStart(a.sequence, r.node, exitLabel)) {
+          const pres = waStartPresence({ labelId: exitLabel, runChatId: r.chat_id, runPhone: await seqRunPhone(r), chat: chats[r.chat_id] || null, holders: await holdersOf(exitLabel) });
+          if (pres === 'absent') {
+            const n = (waLeftReads.get(r.id) || 0) + 1;
+            waLeftReads.set(r.id, n);
+            if (n >= WA_LEFT_READS) {
+              waLeftReads.delete(r.id);
+              if (await seqPatch(r, { status: 'saiu', outcome: 'saiu_etiqueta', due_at: null })) {
+                await logSkip({ source: 'follow', source_id: a.id, contact_id: r.contact ? r.contact.id : r.contact_id || null, chat_id: r.chat_id, item_id: null }, LEFT_LABEL_REASON);
+              }
+            }
+            continue; // 1ª leitura sem a etiqueta: não envia nada até a 2ª confirmar (ou a etiqueta voltar)
+          }
+          if (pres === 'present') waLeftReads.delete(r.id);
+        }
         const res = seqStep({ def: a.sequence, run: seqRunState(r), chat: chats[r.chat_id] || null, replies: replies[r.chat_id] || [], now: t, settings: st.settings });
         if (res.status === 'wait') {
           const due = res.dueAt || null;
@@ -3097,7 +3220,8 @@
     resolveSendItem, nextScheduleAt, AUTOMATION_TEMPLATES, waitPhrase,
     WIZARDS, wizardToAutomations, wizardSentence, wizardMinutes, businessMinutesPerDay, validateAutomationDraft,
     seqIndex, seqStep, seqValidate, seqFromEntry, sinceEntryText, seqEntryOrderWarnings, seqSendSteps, seqManualPlan, seqManualForecast, seqSkipForecast, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
-    seqNormalize, seqInsert, seqRemove, seqExcluded, seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
+    seqNormalize, seqInsert, seqRemove, seqExcluded, seqExitLabelOf, seqSelfRemovedStart, waStartPresence, LEFT_LABEL_REASON, createAgendaSync, // 2.18.1
+    seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
     itemUsageLines, itemInUse, friendlyDeleteError, // 2.13.1
     scheduleSpec, nextSendTime, pausaUntil, scheduleDailyLimit, scheduleOutsideCommon, scheduleSentence, scheduleProblems, untilText, windowText, daysText, // 2.13.2
     weekFromJson, weekOf, weekToJson, weekSummary, scheduleWeekJson, copyToWeekdays, rowOutsideCommon, WEEK_ORDER, DAY_CAP, // 2.14.3

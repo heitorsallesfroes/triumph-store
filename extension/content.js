@@ -2982,6 +2982,7 @@
     adoptOpenChatId(chatId).catch(() => {});
     try { boardFollowChat(chatId); } catch { /* 2.16.10: Quadro ainda iniciando */ }
     try { delLoadChat(chatId).catch(() => {}); } catch { /* 2.15.0: ainda iniciando */ }
+    try { if (chatId) agendaSync.chat(chatId).catch(() => {}); } catch { /* 2.18.1: nome da agenda → banco (ERP); ainda iniciando */ }
     cn.editing = false;
     renderNameRow();
     if (!chatId) return;
@@ -3023,6 +3024,14 @@
     if (nameLearner.size()) await learnFlush();
   }
   setInterval(() => { learnTick().catch(() => {}); }, 4000);
+  // 2.18.1: nome salvo na agenda de cada conversa → banco (wa_contact_names), para o ERP. Só da memória do WhatsApp
+  // Web (sem consultar servidor, sem mexer no WA-JS): ao abrir a conversa, quando a lista carrega (1ª leitura que
+  // der certo) e numa varredura leve a cada 30 min. Só grava o que mudou.
+  const agendaSync = globalThis.TspEngine.createAgendaSync({
+    read: (payload) => waRequest('agendaNames', payload, { timeout: 8000 }),
+    save: (items) => call('saveContactNames', { items }),
+  });
+  setTimeout(() => { agendaSync.sweep().catch(() => {}); setInterval(() => { if (!document.hidden) agendaSync.sweep().catch(() => {}); }, 60 * 1000); }, 15000);
   // descobre já se a tabela existe (sem ela, o {nome} funciona como antes)
   call('getChatName', { chatId: '1@c.us' }).then((r) => { if (r && chatNames.available === null) chatNames.available = r.available !== false; }).catch(() => {});
 
@@ -10088,6 +10097,16 @@
     });
     side.append(types);
     if (st.type === 'etiqueta') side.append(vbLabelField(st, 'Etiqueta', () => { f.existing = null; vbChange(); vbRender(); }));
+    // 2.18.1: só etiqueta do WhatsApp: tirar a etiqueta da pessoa termina o percurso antes do próximo envio
+    if (st.type === 'etiqueta' && st.source === 'whatsapp') {
+      const l = el('label', 'sc-radio vb-exit-label');
+      const c = el('input');
+      c.type = 'checkbox';
+      c.checked = st.exit_on_remove !== false;
+      c.addEventListener('change', () => { if (c.checked) delete st.exit_on_remove; else st.exit_on_remove = false; vbChange(); });
+      l.append(c, ' Se tirarem a etiqueta: sair da automação');
+      side.append(l);
+    }
     if (st.type === 'lead') {
       const o = el('select', 'ed-cat');
       o.setAttribute('aria-label', 'Quais leads');

@@ -3,6 +3,7 @@
 import { supabase } from './supabase';
 import { fetchAllRows } from './resumoAnualCalc';
 import { INVALID_STATUSES } from './crmBridge';
+import { loadAllAgendaNames } from './waNames';
 import type { ActivityDayRow, ActivityRow, Range, ReplyRow, SendRow } from './waPanel';
 import {
   fbGapWindow, saleDateFilter, trackingWindow, type ChatNameRow, type TrackAttributionRow, type TrackConversionRow, type TrackIgLeadRow, type TrackInput, type TrackLeadRow, type TrackSaleRow,
@@ -76,7 +77,8 @@ export async function loadTracking(r: Range): Promise<TrackLoad> {
     settings = (data as BusinessSettings | null) || null;
   } catch { settings = null; }
   const igLeads = await loadIgLeads(w.knownFrom, r.to, missing);
-  return { input: { leads, attributions, sends, replies, sales, names, conversions, activity, activityDays, items, igLeads }, missing: [...new Set(missing)], settings };
+  const agenda = await loadAllAgendaNames(supabase); // 2.18.1: nome da agenda (sem a tabela: [] e fica como antes)
+  return { input: { leads, attributions, sends, replies, sales, names, conversions, activity, activityDays, items, igLeads, agenda }, missing: [...new Set(missing)], settings };
 }
 
 // Instagram FASE 2: conversas que começaram com o código de um link rastreável (ig_link_leads, gravadas pela extensão

@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.3.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.18.1** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -808,6 +808,27 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.18.1 — Sai da automação quando tiram a etiqueta do WhatsApp de início · nome da agenda no ERP
+- **Sair ao tirar a etiqueta** (só automações cuja caixa **▶ COMEÇA** é uma **etiqueta do WhatsApp**): se tirarem
+  essa etiqueta da pessoa, o percurso termina **antes do próximo envio**, com o motivo **"saiu da etiqueta"** (aparece
+  no Histórico da extensão e no ERP → Automações → Histórico). Exemplo: "Avaliação Google" começa em "Cliente"; pôs o
+  motoboy nela sem querer e tirou → ele sai e não recebe nada.
+  - Opção na caixa COMEÇA: **"Se tirarem a etiqueta: sair da automação"** (padrão **ligado**; desligada = como antes).
+  - Precisa de **2 leituras seguidas** (1 por minuto) sem a etiqueta. Na 1ª leitura sem ela, o envio já fica segurado.
+  - **Troca de id @c.us ↔ @lid não é retirada**: se qualquer id da mesma pessoa (o @lid mapeado ou o mesmo telefone)
+    está na etiqueta, ela fica. Conversa que sumiu da memória do WhatsApp Web (o que a troca de id costuma fazer), lista
+    da etiqueta ainda carregando ou que falhou = "não sei" → não sai.
+  - Retirada feita **pela própria automação** daquele percurso (passo "tirar" essa etiqueta, ou "colocar … e tirar as
+    outras") não conta.
+  - Automações que começam por **etiqueta do CRM** (ex.: Régua de follow-up), por lead, venda ou à mão: **nada muda**.
+- **Nome da agenda no banco**: a extensão grava o nome salvo na agenda (e o do perfil) de cada conversa que conhece
+  em `wa_contact_names` — ao abrir a conversa, quando a lista carrega e numa varredura leve a cada 30 min (só o que
+  mudou). Só com o que o WhatsApp Web já tem na memória: **sem consultar o servidor** e sem mexer no WA-JS (vendor).
+  O ERP mostra: **nome da agenda → nome do CRM → nome do perfil (~) → número**.
+- Sem a migration `20261114120000_wa_contact_names.sql`: a extensão funciona como antes (não grava o nome).
+- Testes: `labelexit.test.cjs` (motor de verdade: tirar "Cliente" à mão → sai; troca c.us↔lid → não sai; Régua de
+  follow-up sem mudança; gravação dos nomes; ponte com WA-JS falsa) e `chrome-real.test.cjs` (a opção na caixa COMEÇA).
 
 ### 2.18.0 — Links rastreáveis do Instagram ([IG-...]) até a venda
 - Os links do ERP (aba Instagram → **Rastreio**, ex.: `triumph-store.vercel.app/l/bio`) abrem o WhatsApp da loja

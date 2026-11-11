@@ -4,6 +4,7 @@
 // O cliente vem por parâmetro (a tela passa o supabase do ERP; o teste com os dados reais passa um cliente só de
 // leitura): makeAutomationsDb(supabase).
 import type { AutomationRow, ItemRow, RunRow, SendLogRow } from './waAutomations.ts';
+import { agendaIndex, loadAgendaNames } from './waNames.ts';
 
 // o mínimo do supabase-js que esta tela usa (consultas encadeadas que viram { data, error, count })
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -13,8 +14,9 @@ export const RUN_COLS = 'id, automation_id, chat_id, contact_id, entry_key, node
 const SEND_COLS = 'id, created_at, chat_id, contact_id, item_id, status, reason, source_id';
 export interface Part<T> { data: T; error: string | null }
 export interface LabelRow { id: string; name: string }
-export interface ContactRow { id: string; name: string | null; phone: string | null; chat_id?: string | null }
-export interface Person { name: string | null; phone: string | null }
+export interface ContactRow { id: string; name: string | null; phone: string | null; chat_id?: string | null; agenda?: string | null; profile?: string | null }
+// 2.18.1: agenda = nome salvo na agenda do WhatsApp, profile = nome do perfil (wa_contact_names); name = o do CRM
+export interface Person { name: string | null; phone: string | null; agenda?: string | null; profile?: string | null }
 export interface AutoStats { total: number; active: number; responded: number; finished: number; other: number }
 export interface Overview {
   automations: Part<AutomationRow[]>; labels: Part<LabelRow[]>; items: Part<ItemRow[]>;
@@ -94,6 +96,21 @@ export function makeAutomationsDb(sb: ReadClient) {
     return { automations, labels, items, stats, nodes };
   }
 
+  // 2.18.1: nome da agenda e do perfil (wa_contact_names) de cada conversa, pela conversa ou pelo telefone; sem a
+  // tabela: nada muda. Conversa sem contato ganha o telefone que a extensão leu (se tiver).
+  async function addAgenda(byChat: Record<string, Person>, chatIds: string[]) {
+    const ids = [...new Set(chatIds.filter(Boolean))];
+    const rows = await loadAgendaNames(sb, { chatIds: ids, phones: ids.map((c) => byChat[c]?.phone || null) });
+    if (!rows.length) return;
+    const idx = agendaIndex(rows);
+    ids.forEach((c) => {
+      const p = byChat[c] || { name: null, phone: null };
+      const n = idx.get(c, p.phone);
+      const phone = p.phone || rows.find((r) => r.chat_id === c)?.phone || null;
+      if (n.agenda || n.profile || phone !== p.phone) byChat[c] = { ...p, phone, agenda: n.agenda, profile: n.profile };
+    });
+  }
+
   // Nome e telefone das pessoas dos percursos: pelo contato (contact_id), pela conversa (chat_id) e, para @lid sem
   // contato, pelo telefone que a extensão gravou em wa_leads
   async function peopleOf(runs: { chat_id: string; contact_id?: string | null }[]): Promise<{ byChat: Record<string, Person>; error: string | null }> {
@@ -109,6 +126,7 @@ export function makeAutomationsDb(sb: ReadClient) {
       for (const c of chunks(phones, 100)) (await run<ContactRow[]>(sb.from('wa_contacts').select('id, name, phone').in('phone', c).limit(PAGE))).forEach((x) => { if (x.phone) byChat[`${x.phone}@c.us`] = byChat[`${x.phone}@c.us`] || { name: x.name, phone: x.phone }; });
       const lids = missing.filter((c) => !byChat[c] && /@lid$/.test(c));
       for (const c of chunks(lids, 100)) (await run<{ chat_id: string; phone: string | null }[]>(sb.from('wa_leads').select('chat_id, phone').in('chat_id', c).limit(PAGE))).forEach((x) => { if (!byChat[x.chat_id]) byChat[x.chat_id] = { name: null, phone: x.phone }; });
+      await addAgenda(byChat, runs.map((r) => r.chat_id));
       return { byChat, error: null };
     } catch (e) { return { byChat, error: msg(e) }; }
   }
@@ -144,10 +162,23 @@ export function makeAutomationsDb(sb: ReadClient) {
     const found = new Map<string, ContactRow>();
     if (digits.length < 4 || digits.length !== t.replace(/\s/g, '').length) (await run<ContactRow[]>(sb.from('wa_contacts').select('id, name, phone, chat_id').ilike('name', `%${t}%`).limit(20))).forEach((c) => found.set(c.id, c));
     if (digits.length >= 4) (await run<ContactRow[]>(sb.from('wa_contacts').select('id, name, phone, chat_id').ilike('phone', `%${digits}%`).limit(20))).forEach((c) => found.set(c.id, c));
+    // 2.18.1: também pelo nome salvo na agenda do WhatsApp (sem a tabela: só o CRM, como antes)
+    if (digits.length < 4 || digits.length !== t.replace(/\s/g, '').length) {
+      try {
+        const { data, error } = await sb.from('wa_contact_names').select('chat_id, phone, agenda_name, profile_name').ilike('agenda_name', `%${t}%`).limit(20);
+        if (!error) (data || []).forEach((r: { chat_id: string; phone: string | null }) => {
+          const same = [...found.values()].some((c) => c.chat_id === r.chat_id || (!!r.phone && !!c.phone && String(c.phone).replace(/\D/g, '').slice(-11) === String(r.phone).replace(/\D/g, '').slice(-11)));
+          if (!same) found.set(`ag:${r.chat_id}`, { id: `ag:${r.chat_id}`, name: null, phone: r.phone, chat_id: r.chat_id });
+        });
+      } catch { /* sem a tabela */ }
+    }
     const contacts = [...found.values()];
     if (!contacts.length) return { runs: [], contacts };
+    // nome da agenda / perfil de cada contato achado
+    const ag = agendaIndex(await loadAgendaNames(sb, { chatIds: contacts.map((c) => c.chat_id), phones: contacts.map((c) => c.phone) }));
+    contacts.forEach((c) => { const n = ag.get(c.chat_id, c.phone); c.agenda = n.agenda; c.profile = n.profile; });
     const runs = new Map<string, RunRow>();
-    (await run<RunRow[]>(runsTable().select(RUN_COLS).in('contact_id', contacts.map((c) => c.id)).order('created_at', { ascending: false }).limit(PAGE))).forEach((r) => runs.set(r.id, r));
+    (await run<RunRow[]>(runsTable().select(RUN_COLS).in('contact_id', contacts.map((c) => c.id).filter((id) => !id.startsWith('ag:')).concat(['00000000-0000-0000-0000-000000000000'])).order('created_at', { ascending: false }).limit(PAGE))).forEach((r) => runs.set(r.id, r));
     const chats = [...new Set(contacts.flatMap((c) => [c.chat_id, c.phone ? `${c.phone}@c.us` : null]).filter(Boolean) as string[])];
     if (chats.length) (await run<RunRow[]>(runsTable().select(RUN_COLS).in('chat_id', chats).order('created_at', { ascending: false }).limit(PAGE))).forEach((r) => runs.set(r.id, r));
     return { runs: [...runs.values()], contacts };

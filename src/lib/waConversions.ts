@@ -62,6 +62,7 @@ export interface ContactSources {
   leadPhone: Record<string, string | null | undefined>;
   attribution: Record<string, { phone?: string | null; contact_name?: string | null } | undefined>;
   chatName: Record<string, string | undefined>;
+  agenda?: Record<string, string | null | undefined>; // extensão 2.18.1: nome salvo na agenda do WhatsApp (wa_contact_names), vem primeiro
   sales: Record<string, { customer_name?: string | null; customer_phone?: string | null } | undefined>;
 }
 export function conversionContact(r: Pick<ConversionRow, 'chat_id' | 'contact_name' | 'sale_id'>, src: ContactSources): { name: string; phone: string } {
@@ -69,7 +70,7 @@ export function conversionContact(r: Pick<ConversionRow, 'chat_id' | 'contact_na
   const sale = r.sale_id ? src.sales[r.sale_id] : undefined;
   const attr = chat ? src.attribution[chat] : undefined;
   const clean = (v: string | null | undefined) => (typeof v === 'string' && v.trim() ? v.trim() : null);
-  const name = clean(r.contact_name) || clean(chat ? src.chatName[chat] : null) || clean(attr && attr.contact_name) || clean(sale && sale.customer_name) || '—';
+  const name = clean(chat && src.agenda ? src.agenda[chat] : null) || clean(r.contact_name) || clean(chat ? src.chatName[chat] : null) || clean(attr && attr.contact_name) || clean(sale && sale.customer_name) || '—';
   let phone = maskPhone(chat);
   if (phone === '—') {
     const digits = [chat ? src.leadPhone[chat] : null, attr && attr.phone, sale && sale.customer_phone].find((p) => maskPhoneDigits(p) !== '—');

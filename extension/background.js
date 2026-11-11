@@ -35,6 +35,7 @@ const HANDLERS = {
   moveItems:       (m) => WaApi.moveItems({ categoryId: m.categoryId, ids: m.ids }),
   getChatName:     (m) => WaApi.getChatName({ chatId: m.chatId }),
   setChatName:     (m) => WaApi.setChatName({ chatId: m.chatId, name: m.name, source: m.source }),
+  saveContactNames: (m) => WaApi.saveContactNames({ items: m.items }), // 2.18.1: nome da agenda → banco
   getGreetings:    ()  => WaApi.getGreetings(),
   setGreetings:    (m) => WaApi.setGreetings({ manha: m.manha, tarde: m.tarde, noite: m.noite }),
   uploadFile:      (m) => WaApi.uploadFile({ partType: m.partType, base64: m.base64, mime: m.mime, fileName: m.fileName }),

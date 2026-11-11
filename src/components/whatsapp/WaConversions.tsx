@@ -39,6 +39,7 @@ async function contactSources(chatIds: string[], sales: Record<string, SaleInfo>
     read<{ chat_id: string; phone: string | null }>('wa_leads', 'chat_id, phone', (r) => { src.leadPhone[r.chat_id] = r.phone; }),
     read<{ chat_id: string; phone: string | null; contact_name: string | null }>('wa_ad_attribution', 'chat_id, phone, contact_name', (r) => { src.attribution[r.chat_id] = r; }),
     read<{ chat_id: string; name: string }>('wa_chat_names', 'chat_id, name', (r) => { src.chatName[r.chat_id] = r.name; }),
+    read<{ chat_id: string; agenda_name: string | null }>('wa_contact_names', 'chat_id, agenda_name', (r) => { (src.agenda = src.agenda || {})[r.chat_id] = r.agenda_name; }), // 2.18.1
   ]);
   return src;
 }

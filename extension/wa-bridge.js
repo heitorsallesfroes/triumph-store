@@ -1447,6 +1447,37 @@
     return { names };
   }
 
+  // 2.18.1: nome da agenda (e do perfil) das conversas, para gravar no banco e o ERP mostrar. SÓ da memória do
+  // WhatsApp Web (memNames: ContactStore e lidPnCache), sem consultar o servidor. chatIds = só essas (conversa aberta);
+  // sem chatIds = as conversas individuais carregadas na lista (até 3000).
+  const AGENDA_MAX = 3000;
+  async function agendaNames(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const p = payload || {};
+    const pairs = [];
+    if (Array.isArray(p.chatIds)) {
+      p.chatIds.slice(0, 200).forEach((id) => { if (typeof id === 'string' && /^\d{1,20}@(c\.us|lid)$/.test(id)) pairs.push([id, safe(() => wpp.chat.get(id), null)]); });
+    } else {
+      let loaded;
+      try { loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS); } catch (err) {
+        if (err instanceof BridgeError) throw err;
+        throw new BridgeError('chats_failed', 'Não consegui ler as conversas', 'before-send');
+      }
+      for (const c of Array.isArray(loaded) ? loaded : []) {
+        const id = chatIdOf(c);
+        if (!/^\d{1,20}@(c\.us|lid)$/.test(id) || safe(() => !!c.isGroup, false)) continue;
+        pairs.push([id, c]);
+        if (pairs.length >= AGENDA_MAX) break;
+      }
+    }
+    const items = [];
+    for (const [id, chat] of pairs) {
+      const n = memNames(id, chat);
+      if (n.contactName || n.pushname) items.push({ chatId: id, phone: n.phone, contactName: n.contactName, pushname: n.pushname });
+    }
+    return { items };
+  }
+
   async function chatPhone(payload) {
     if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
     const chatId = payload && payload.chatId;
@@ -1925,6 +1956,7 @@
     labelEvents: () => labelEvents(),
     chatPhone: (payload) => chatPhone(payload),
     contactNames: (payload) => contactNames(payload), // 2.16.11
+    agendaNames: (payload) => agendaNames(payload), // 2.18.1
     verifyChatPhone: (payload) => verifyChatPhone(payload),
     adLeads: () => adLeads(),
     myMessages: () => mineQueue.splice(0, mineQueue.length),

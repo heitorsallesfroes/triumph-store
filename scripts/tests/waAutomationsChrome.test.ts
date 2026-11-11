@@ -3,7 +3,8 @@
 //   REAL=1 node scripts/tests/waAutomationsChrome.test.ts   (os DADOS REAIS, somente leitura: só GET/HEAD no Supabase)
 // Empacota só a tela com o esbuild que já vem com o Vite e abre no Google Chrome instalado (headless, DevTools por
 // pipe). Confere: cards (selo, como começa, horário, 4 números, funil), filtros, Etapas (caixas, ✅ ao lado,
-// "👥 N pessoas aqui agora" abrindo a lista), Pessoas (telefone mascarado, próximo passo, atrasado em vermelho,
+// "👥 N pessoas aqui agora" abrindo a lista), Pessoas (2.18.1: telefone COMPLETO e nome agenda → CRM → ~perfil →
+// número; próximo passo, atrasado em vermelho, "Saiu da etiqueta" no Histórico,
 // ordenar), linha do tempo da pessoa (feito ✓ e previsto, "Abrir no WhatsApp"), Histórico (motivos e conversão),
 // Envios, busca global, celular (uma coluna, tabela vira lista, sem rolagem lateral) e nenhum erro no console.
 // Opções: CHROME_PATH=..., HEADFUL=1, SHOTS_DIR=<pasta para os prints>.
@@ -52,12 +53,19 @@ function fixtures(now: number) {
       { id: 'c2', name: 'Bruno Lima', phone: '5521987650002', chat_id: null },
     ],
     wa_leads: [{ chat_id: '900000000003@lid', phone: '5521987650003' }],
+    // 2.18.1: nome da agenda (Bruno) e só o do perfil (o @lid); Ana fica com o nome do CRM
+    wa_contact_names: [
+      { chat_id: '5521987650002@c.us', phone: '5521987650002', agenda_name: 'Bruno da Agenda', profile_name: 'Bru' },
+      { chat_id: '900000000003@lid', phone: '5521987650003', agenda_name: null, profile_name: 'Carla Perfil' },
+    ],
     wa_sequence_runs: [
       run('r1', '5521987650001@c.us', { contact_id: 'c1', created_at: iso(now - 1 * H) }),
       run('r2', '5521987650002@c.us', { created_at: iso(now - 96 * H) }), // ❓ 3 h venceu há 4 dias: atrasado (a qualquer hora do dia)
       run('r3', '900000000003@lid', { node: W[1], skip_wait: true, created_at: iso(now - 5 * H), branches: [{ node: W[0], result: 'nao', at: now - 2 * H }] }), // extensão 2.16.8: "Pular espera" clicado
       run('r4', '5521987650004@c.us', { status: 'fim', outcome: 'respondeu', node: null, created_at: iso(now - 30 * H), ended_at: iso(now - 26 * H), updated_at: iso(now - 26 * H), branches: [{ node: W[0], result: 'nao', at: now - 27 * H }, { node: W[1], result: 'sim', at: now - 26 * H }] }),
       run('r5', '5521987650005@c.us', { status: 'saiu', outcome: 'manual', created_at: iso(now - 30 * H), ended_at: null, updated_at: iso(now - 20 * H) }),
+      // extensão 2.18.1: tiraram a etiqueta do WhatsApp de início
+      run('r6', '5521987650006@c.us', { status: 'saiu', outcome: 'saiu_etiqueta', created_at: iso(now - 30 * H), ended_at: iso(now - 19 * H), updated_at: iso(now - 19 * H) }),
     ],
     wa_send_log: [
       { id: 's1', created_at: iso(now - 2 * H), chat_id: '900000000003@lid', contact_id: null, item_id: F1, status: 'enviado', reason: null, source: 'follow', source_id: A1 },
@@ -173,8 +181,8 @@ async function main() {
       await ev(`${H} btn('Pessoas').click(); return true;`);
       await waitFor(`${H} return !!document.querySelector('[data-testid="wa-auto-people"]');`);
       await sleep(800);
-      const ppl = await ev(`${H} return { rows: $$('[data-testid="wa-auto-person-row"]').length, tab: txt(btn('Pessoas')), masked: $$('[data-testid="wa-auto-person-row"]').every((r) => /\\d{2} \\d\\*{4}-\\d{4}|\\*{4}\\d{4}|—/.test(txt(r.cells[1]))) };`);
-      check('dados reais: Pessoas = "Em andamento agora" do card, telefones mascarados', ppl.rows === active && ppl.masked, JSON.stringify({ ...ppl, active }));
+      const ppl = await ev(`${H} return { rows: $$('[data-testid="wa-auto-person-row"]').length, tab: txt(btn('Pessoas')), full: $$('[data-testid="wa-auto-person-row"]').every((r) => !/\\*/.test(txt(r.cells[1])) && /^(\\(\\d{2}\\) \\d{4,5}-\\d{4}|\\+\\d+|)$/.test(txt(r.cells[1]))) };`);
+      check('dados reais: Pessoas = "Em andamento agora" do card, telefones completos (2.18.1)', ppl.rows === active && ppl.full, JSON.stringify({ ...ppl, active }));
       await ev(`${H} btn('Histórico').click(); return true;`);
       check('dados reais: Histórico abre', await waitFor(`${H} const h = document.querySelector('[data-testid="wa-auto-history"]'); return !!h && !h.querySelector('.wa-skel');`));
       await ev(`${H} btn('Envios').click(); return true;`);
@@ -187,8 +195,8 @@ async function main() {
       check('lista: 3 cards com selo LIGADA / DESLIGADA / RASCUNHO', listOk && list.length === 3 && /LIGADA/.test(list[0]) && !/DESLIGADA/.test(list[0]) && /DESLIGADA/.test(list[1]) && /RASCUNHO/.test(list[2]), JSON.stringify(list.map((t: string) => t.slice(0, 40))));
       check('card: como começa, vale desde, horário resumido', /Quando entra na etiqueta CRM Follow Up 1/.test(list[0]) && /Vale desde: \d\d\/\d\d às \d\d:\d\d/.test(list[0]) && /Seg–Sex 9h–18h · Sáb 9h–14h/.test(list[0])
         && /Quando entra na etiqueta do WhatsApp nº 1/.test(list[1]) && /Ainda não foi ligada/.test(list[1]) && /Seg–Qui 19h–22h/.test(list[1]), list[0].slice(0, 300));
-      check('card: 4 números (3 em andamento · 1 respondeu · 0 fim · 1 outro motivo) e o funil (2 na ❓ 3 h, 1 na ❓ dia 1)',
-        /3\s*Em andamento agora\s*1\s*Responderam ✅\s*0\s*Chegaram ao fim sem responder\s*1\s*Saíram por outro motivo/.test(list[0]) && /Esperando resposta \(até 3 h depois de entrar\)\s*2/.test(list[0]) && /Esperando resposta \(até 1 dia depois de entrar\)\s*1/.test(list[0]), list[0]);
+      check('card: 4 números (3 em andamento · 1 respondeu · 0 fim · 2 outro motivo) e o funil (2 na ❓ 3 h, 1 na ❓ dia 1)',
+        /3\s*Em andamento agora\s*1\s*Responderam ✅\s*0\s*Chegaram ao fim sem responder\s*2\s*Saíram por outro motivo/.test(list[0]) && /Esperando resposta \(até 3 h depois de entrar\)\s*2/.test(list[0]) && /Esperando resposta \(até 1 dia depois de entrar\)\s*1/.test(list[0]), list[0]);
       await step('filtros e busca pelo nome', async () => {
         await ev(`${H} btn('Ligadas').click(); return true;`); await sleep(150);
         const lig = await ev(`${H} return cards().length;`);
@@ -210,16 +218,16 @@ async function main() {
       await step('Etapas: clicar no contador abre a lista', async () => {
         await ev(`${H} $$('[data-testid="wa-auto-step-count"]')[0].click(); return true;`); await sleep(200);
         const open = await ev(`${H} return txt($$('[data-testid="wa-auto-step"]')[0]);`);
-        check('Etapas: clicar no 👥 abre as pessoas (nome, telefone mascarado, próximo envio; atrasado em vermelho)', /Ana Souza\s*21 9\*\*\*\*-0001/.test(open) && /Bruno Lima/.test(open) && /→ Recebe Follow Padrão 1/.test(open), open);
+        check('Etapas: clicar no 👥 abre as pessoas (nome da agenda → CRM, telefone completo, próximo envio; atrasado em vermelho)', /Ana Souza\s*\(21\) 98765-0001/.test(open) && /Bruno da Agenda\s*\(21\) 98765-0002/.test(open) && !/Bruno Lima/.test(open) && !/\*\*\*\*/.test(open) && /→ Recebe Follow Padrão 1/.test(open), open);
       });
       await shot('etapas.png');
       await ev(`${H} btn('Pessoas').click(); return true;`);
       await waitFor(`${H} return $$('[data-testid="wa-auto-person-row"]').length === 3;`);
       const ppl = await ev(`${H} return $$('[data-testid="wa-auto-person-row"]').map((r) => ({ t: txt(r), red: getComputedStyle(r.cells[4].querySelector('span') || r.cells[4]).color }));`);
-      check('Pessoas: 3 em andamento, telefone mascarado, etapa, "há X h" e o próximo passo; o atrasado em vermelho e primeiro (ordem pelo próximo)',
-        ppl.length === 3 && /Bruno Lima/.test(ppl[0].t) && /atrasado/.test(ppl[0].t) && ppl[0].red === 'rgb(239, 68, 68)' && /21 9\*\*\*\*-0003/.test(ppl.map((x: { t: string }) => x.t).join()) && /há 4 dias/.test(ppl[0].t) && ppl.every((x: { t: string }) => /Recebe Follow Padrão/.test(x.t)), JSON.stringify(ppl));
+      check('Pessoas: 3 em andamento, telefone completo, nome agenda/CRM/~perfil, etapa, "há X h" e o próximo passo; o atrasado em vermelho e primeiro (ordem pelo próximo)',
+        ppl.length === 3 && /Bruno da Agenda/.test(ppl[0].t) && /atrasado/.test(ppl[0].t) && ppl[0].red === 'rgb(239, 68, 68)' && /~Carla Perfil\s*.*\(21\) 98765-0003/.test(ppl.map((x: { t: string }) => x.t).join()) && /Ana Souza/.test(ppl.map((x: { t: string }) => x.t).join()) && !/\*\*\*\*/.test(ppl.map((x: { t: string }) => x.t).join()) && /há 4 dias/.test(ppl[0].t) && ppl.every((x: { t: string }) => /Recebe Follow Padrão/.test(x.t)), JSON.stringify(ppl));
       // extensão 2.16.8: quem teve a espera pulada (skip_wait) leva o selo "⏩ pulou a espera"; os outros não
-      const sk = await ev(`${H} return $$('[data-testid="wa-auto-person-row"]').map((r) => [/-0003/.test(txt(r)), (r.querySelector('[data-testid="wa-auto-skipped"]') || {}).textContent || '']);`);
+      const sk = await ev(`${H} return $$('[data-testid="wa-auto-person-row"]').map((r) => [/98765-0003/.test(txt(r)), (r.querySelector('[data-testid="wa-auto-skipped"]') || {}).textContent || '']);`);
       check('Pessoas: selo "⏩ pulou a espera" só na pessoa com a espera pulada', sk.filter((x: [boolean, string]) => x[1]).length === 1 && sk.every((x: [boolean, string]) => (x[1] === '⏩ pulou a espera') === x[0]), JSON.stringify(sk));
       await step('Pessoas: ordenar e filtrar', async () => {
         await ev(`${H} btn('Nome').click(); return true;`); await sleep(150);
@@ -227,10 +235,10 @@ async function main() {
         await ev(`${H} const s = document.querySelector('select[aria-label="Filtrar por etapa"]'); s.value = '${W[1]}'; s.dispatchEvent(new Event('change', { bubbles: true })); return true;`); await sleep(150);
         const f = await ev(`${H} return $$('[data-testid="wa-auto-person-row"]').length;`);
         await ev(`${H} const s = document.querySelector('select[aria-label="Filtrar por etapa"]'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); return true;`); await sleep(150);
-        check('Pessoas: ordenar por Nome (A→Z, sem nome por último) e filtro por etapa', byName.join() === 'Ana Souza,Bruno Lima,Sem nome' && f === 1, JSON.stringify({ byName, f }));
+        check('Pessoas: ordenar por Nome (agenda, CRM e ~perfil) e filtro por etapa', byName.join() === 'Ana Souza,Bruno da Agenda,~Carla Perfil' && f === 1, JSON.stringify({ byName, f }));
       });
       await step('linha do tempo da pessoa', async () => {
-        await ev(`${H} $$('[data-testid="wa-auto-person-row"]').find((r) => /21 9\\*{4}-0003/.test(txt(r))).click(); return true;`);
+        await ev(`${H} $$('[data-testid="wa-auto-person-row"]').find((r) => /\\(21\\) 98765-0003/.test(txt(r))).click(); return true;`);
         await waitFor(`${H} return $$('[data-testid="wa-auto-timeline"] li').length > 3;`);
         const tl = await ev(`${H} const d = document.querySelector('[data-testid="wa-auto-drawer"]'); return { done: $$('li[data-done="1"]', d).map(txt), next: $$('li[data-done="0"]', d).map(txt).slice(0, 3), link: (d.querySelector('a') || {}).href || '', skipped: !!d.querySelector('[data-testid="wa-auto-skipped"]') };`);
         check('linha do tempo: selo "⏩ pulou a espera" junto do "Agora:" (extensão 2.16.8)', tl.skipped === true, JSON.stringify(tl));
@@ -243,10 +251,14 @@ async function main() {
         await ev(`${H} btn('Histórico').click(); return true;`);
         await waitFor(`${H} const h = document.querySelector('[data-testid="wa-auto-history"]'); return !!h && !h.querySelector('.wa-skel') && /Respondeu/.test(txt(h));`);
         const h = await ev(`${H} return txt(document.querySelector('[data-testid="wa-auto-history"]'));`);
-        check('Histórico: encerrados com motivo traduzido (Respondeu ✅, Tirado manualmente) e "Depois do Follow Padrão 1: 1 de 2 enviados (50%)"',
-          /Respondeu ✅/.test(h) && /Tirado manualmente/.test(h) && /Depois do Follow Padrão 1: 1 de 2 enviados \(50%\)/.test(h) && /Últimos 2 percursos/.test(h), h.slice(0, 500));
+        check('Histórico: encerrados com motivo traduzido (Respondeu ✅, Tirado manualmente, Saiu da etiqueta) e "Depois do Follow Padrão 1: 1 de 2 enviados (50%)"',
+          /Respondeu ✅/.test(h) && /Tirado manualmente/.test(h) && /Saiu da etiqueta/.test(h) && /\(21\) 98765-0006/.test(h) && /Depois do Follow Padrão 1: 1 de 2 enviados \(50%\)/.test(h) && /Últimos 3 percursos/.test(h), h.slice(0, 500));
         await ev(`${H} const s = document.querySelector('select[aria-label="Filtrar por motivo"]'); s.value = 'manual'; s.dispatchEvent(new Event('change', { bubbles: true })); return true;`); await sleep(150);
         check('Histórico: filtro por motivo', /Últimos 1 percursos/.test(await ev(`${H} return txt(document.querySelector('[data-testid="wa-auto-history"]'));`)));
+        await ev(`${H} const s = document.querySelector('select[aria-label="Filtrar por motivo"]'); s.value = 'saiu_etiqueta'; s.dispatchEvent(new Event('change', { bubbles: true })); return true;`); await sleep(150);
+        const se = await ev(`${H} return txt(document.querySelector('[data-testid="wa-auto-history"]'));`);
+        check('Histórico: filtro "Saiu da etiqueta" (2.18.1)', /Últimos 1 percursos/.test(se) && /Saiu da etiqueta/.test(se), se.slice(0, 300));
+        await ev(`${H} const s = document.querySelector('select[aria-label="Filtrar por motivo"]'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); return true;`); await sleep(150);
       });
       await step('Envios', async () => {
         await ev(`${H} btn('Envios').click(); return true;`);
@@ -258,7 +270,12 @@ async function main() {
         await ev(`${H} const i = document.querySelector('input[aria-label="Buscar pessoa"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'ana'); i.dispatchEvent(new Event('input', { bubbles: true })); return true;`);
         await waitFor(`${H} return /Ana Souza/.test(txt(document.querySelector('[data-testid="wa-auto-search"]')));`, 5000);
         const g = await ev(`${H} return txt(document.querySelector('[data-testid="wa-auto-search"]'));`);
-        check('busca global: "ana" → Ana Souza na Régua de follow-up, etapa atual e próximo envio', /Ana Souza\s*21 9\*\*\*\*-0001/.test(g) && /Régua de follow-up\s*Esperando resposta \(até 3 h depois de entrar\)\s*→ Recebe Follow Padrão 1/.test(g), g);
+        // 2.18.1: busca pelo nome da agenda também (wa_contact_names), com o telefone completo
+        await ev(`${H} const i = document.querySelector('input[aria-label="Buscar pessoa"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'da agenda'); i.dispatchEvent(new Event('input', { bubbles: true })); return true;`);
+        await waitFor(`${H} return /Bruno da Agenda/.test(txt(document.querySelector('[data-testid="wa-auto-search"]')));`, 5000);
+        const g2 = await ev(`${H} return txt(document.querySelector('[data-testid="wa-auto-search"]'));`);
+        check('busca global: "da agenda" → Bruno da Agenda (nome da agenda), (21) 98765-0002, na Régua de follow-up', /Bruno da Agenda\s*\(21\) 98765-0002/.test(g2) && /Régua de follow-up/.test(g2), g2);
+        check('busca global: "ana" → Ana Souza na Régua de follow-up, etapa atual e próximo envio', /Ana Souza\s*\(21\) 98765-0001/.test(g) && /Régua de follow-up\s*Esperando resposta \(até 3 h depois de entrar\)\s*→ Recebe Follow Padrão 1/.test(g), g);
       });
       await step('celular', async () => {
         await s('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -272,7 +289,7 @@ async function main() {
       });
       const q = await ev(`return (window.__QUERIES || []).map((x) => ({ t: x.table, f: x.filters.length }));`);
       const tables = [...new Set(q.map((x: { t: string }) => x.t))];
-      const allowed = ['wa_automations', 'wa_sequence_runs', 'wa_contacts', 'wa_contact_labels', 'wa_labels', 'wa_items', 'wa_send_log', 'wa_native_label_seen', 'wa_leads'];
+      const allowed = ['wa_automations', 'wa_sequence_runs', 'wa_contacts', 'wa_contact_labels', 'wa_labels', 'wa_items', 'wa_send_log', 'wa_native_label_seen', 'wa_leads', 'wa_contact_names'];
       check('só as tabelas permitidas e as grandes sempre com filtro', tables.every((t) => allowed.includes(t as string)) && q.filter((x: { t: string; f: number }) => /sequence_runs|send_log|contacts|leads|items/.test(x.t) && !x.f).length === 0, JSON.stringify(tables));
     }
     check('nenhum erro no console da página', errors.length === 0, errors.slice(0, 5).join(' | '));

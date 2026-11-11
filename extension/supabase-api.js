@@ -2316,6 +2316,8 @@
       start.source = st.source === 'whatsapp' && st.type === 'etiqueta' ? 'whatsapp' : 'crm';
       if (start.source === 'whatsapp') start.wa_label_id = opt(() => checkWaLabel(st.wa_label_id, 'Sequência: escolha a etiqueta do WhatsApp de quem entra'), '');
       else start.label_id = opt(() => checkUuid(st.label_id, 'Sequência: escolha a etiqueta de quem entra'), '');
+      // 2.18.1: "Se tirarem a etiqueta: sair da automação" (só etiqueta do WhatsApp; ligado = sem o campo)
+      if (start.source === 'whatsapp' && st.exit_on_remove === false) start.exit_on_remove = false;
     }
     // 2.13.0: "Nunca para quem tem a etiqueta" (o Não enviar vale sempre, não precisa estar aqui)
     if (Array.isArray(st.exclude) && st.exclude.length) {
@@ -4141,6 +4143,28 @@
     return { name: clean, source };
   }
 
+  // ── 2.18.1: nome da AGENDA do WhatsApp por conversa (wa_contact_names; migration 20261114120000) ──
+  // Só o que a extensão leu da memória do WhatsApp Web: o nome salvo na agenda e o do perfil. O ERP mostra
+  // agenda → CRM → perfil (~) → número. Sem a tabela: { available: false } (a extensão para de tentar).
+  const AG_TABLE = 'wa_contact_names';
+  const agName = (v) => { const s = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 100) : ''; return s && !/^[+\d\s().-]+$/.test(s) ? s : null; };
+  async function saveContactNames({ items }) {
+    if (!Array.isArray(items) || items.length > 200) throw new Error('Lista inválida');
+    const at = new Date().toISOString();
+    const rows = items.filter((x) => x && SCHED_CHAT_RE.test(x.chatId || '')).map((x) => {
+      const d = String(x.phone || '').replace(/\D/g, '');
+      return { chat_id: x.chatId, phone: /^\d{8,15}$/.test(d) ? d : null, agenda_name: agName(x.contactName), profile_name: agName(x.pushname), updated_at: at };
+    }).filter((r) => r.agenda_name || r.profile_name);
+    if (!rows.length) return { available: true, saved: 0 };
+    try {
+      await rest(`${AG_TABLE}?on_conflict=chat_id`, json('POST', 'resolution=merge-duplicates,return=minimal', rows));
+    } catch (err) {
+      if (tableMissing(err, [AG_TABLE])) return { available: false, saved: 0 };
+      throw err;
+    }
+    return { available: true, saved: rows.length };
+  }
+
   // 2.8.3: textos da {saudacao} (system_config, chave wa_greetings; sem migration)
   const GREET_KEY = 'wa_greetings';
   const GREET_DEFAULT = { manha: 'Bommmm dia', tarde: 'Uma ótima tarde', noite: 'Uma ótima noite' };
@@ -4487,7 +4511,7 @@
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,
     saveItem, deleteItem, itemUsage, createCategory, renameCategory, deleteCategory, reorderCategories, moveItems,
-    getChatName, setChatName, getGreetings, setGreetings, uploadFile, partsTableExists,
+    getChatName, setChatName, saveContactNames, getGreetings, setGreetings, uploadFile, partsTableExists,
     fetchMediaLibrary, createMediaFolder, renameMediaFolder, deleteMediaFolder, reorderMediaFolders, uploadMedia, updateMedia,
     incrementMediaUsage, mediaUsage, deleteMedia, importMediaFromItems,
     fetchLibrary, incrementUsage, fetchFile, isAllowedFileUrl, MAX_FILE_BYTES,

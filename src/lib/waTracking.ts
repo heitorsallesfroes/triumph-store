@@ -18,6 +18,7 @@
 import { addDays, normalizePhone, spDay, spStartOfDay, DAY_MS, type ActivityDayRow, type ActivityRow, type AttributionRow, type LeadRow, type Range, type ReplyRow, type SaleRowP, type SendRow, saleTime } from './waPanel.ts';
 import { eventKind } from './waConversions.ts';
 import { CHANNEL_LABEL, type IgChannel } from './igLinks.ts';
+import { isNameText, type AgendaNameRow } from './waNames.ts';
 
 // ── Linhas ────────────────────────────────────────────────────────────────
 export interface TrackLeadRow extends LeadRow { last_message_at?: string | null }
@@ -38,6 +39,7 @@ export interface TrackInput {
   sales: TrackSaleRow[]; names: ChatNameRow[]; conversions: TrackConversionRow[];
   activity?: ActivityRow[]; activityDays?: ActivityDayRow[]; // 2.12.8
   items?: { id: string; title: string; follow_step?: number | null }[]; // ERP 09/11: nomes na linha do tempo
+  agenda?: AgendaNameRow[]; // extensão 2.18.1: nome salvo na agenda do WhatsApp e do perfil (wa_contact_names)
   igLeads?: TrackIgLeadRow[]; // Instagram FASE 2: conversas que começaram com um código [IG-...] (ig_link_leads)
 }
 // ig_link_leads + o link (canal e apelido) achado pelo link_id ou pelo código
@@ -138,7 +140,7 @@ export interface Conversation {
   // tracked = 1º contato registrado (wa_leads / wa_ad_attribution); false = começou antes do rastreamento e
   // entrou pela venda (o início é a 1ª atividade conhecida)
   tracked: boolean;
-  name: string; nameSource: 'aprendido' | 'whatsapp' | 'telefone' | 'nenhum';
+  name: string; nameSource: 'agenda' | 'aprendido' | 'whatsapp' | 'perfil' | 'telefone' | 'nenhum';
   phone: string | null; phoneLabel: string; waLink: string | null;
   ad: boolean; adId: string | null; adTitle: string | null;
   ig: IgOrigin | null; // Instagram FASE 2: veio de um link rastreável (só vale se não veio de anúncio)
@@ -263,6 +265,9 @@ export function buildConversations(input: TrackInput, bh: BusinessHours = DEFAUL
     if (d.from_store) addTo(storeDaysByKey);
   });
   const namesByKey = group(input.names, (n) => n.chat_id);
+  // 2.18.1: agenda/perfil pela conversa e pelo telefone (a mesma pessoa em @c.us e @lid)
+  const agendaRows = input.agenda || [];
+  const agendaByKey = group([...agendaRows.map((r) => ({ r, chat: r.chat_id })), ...agendaRows.filter((r) => r.phone).map((r) => ({ r, chat: `${String(r.phone).replace(/\D/g, '')}@c.us` }))], (x) => x.chat);
   const convByKey = group(realConv, (c) => c.chat_id);
   const timesOf = (rows: { chat: string | null; t: number }[]) => {
     const m = new Map<string, number[]>();
@@ -304,8 +309,12 @@ export function buildConversations(input: TrackInput, bh: BusinessHours = DEFAUL
     const waName = [...attrs.map((a) => a.contact_name), ...acts.map((a) => a.name), ...conv.map((c) => c.contact_name)].map((n) => (n || '').trim()).find(Boolean);
     const saleName = own.map((s) => (s.customer || '').trim()).find(Boolean);
     const phoneLabel = formatPhone(phone);
-    const name = learned || waName || saleName || phoneLabel || '(sem nome)';
-    const nameSource = learned ? 'aprendido' : waName || saleName ? 'whatsapp' : phoneLabel ? 'telefone' : 'nenhum';
+    // 2.18.1: nome da agenda → os de antes (nome da conversa / WhatsApp / venda) → nome do perfil (~) → telefone
+    const ag = [...(agendaByKey.get(key) || []), ...(phone ? agendaByKey.get(convKeyOf(`${phone}@c.us`) || '') || [] : [])].map((x) => x.r);
+    const agendaName = ag.map((r) => r.agenda_name).find((v) => isNameText(v))?.trim() || null;
+    const profileName = ag.map((r) => r.profile_name).find((v) => isNameText(v))?.trim() || null;
+    const name = agendaName || learned || waName || saleName || (profileName ? `~${profileName}` : '') || phoneLabel || '(sem nome)';
+    const nameSource = agendaName ? 'agenda' : learned ? 'aprendido' : waName || saleName ? 'whatsapp' : profileName ? 'perfil' : phoneLabel ? 'telefone' : 'nenhum';
     // 1ª resposta nossa: o 1º envio registrado depois da 1ª mensagem (só quando o início foi registrado)
     const after = seed ? sends.filter((t) => t >= firstAt).sort((a, b) => a - b) : [];
     const firstReplyAt = after.length ? after[0] : null;
