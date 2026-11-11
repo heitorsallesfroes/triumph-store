@@ -132,7 +132,7 @@ test('content.js: CRM pede contactNames com timeout e sem erro; encolhido usa o 
   assert.ok(/waRequest\('contactNames', \{ ids \}, \{ timeout: 4000 \}\); \} catch \{ return; \}/.test(c));
   assert.ok(/await addCrmWaNames\(got\);[\s\S]{0,120}if \(stale\(\)\) return;/.test(c));
   assert.strictEqual((c.match(/= boardCardTitle\(c\)/g) || []).length, 2, 'WhatsApp e CRM');
-  assert.ok(/^2\.16\.(1[1-9])$/.test(JSON.parse(src('manifest.json')).version), 'manifesto 2.16.11 ou depois');
+  assert.ok(/^2\.(16\.(1[1-9])|(1[7-9]|[2-9]\d)\.\d+)$/.test(JSON.parse(src('manifest.json')).version), 'manifesto 2.16.11 ou depois');
 });
 
 (async () => {

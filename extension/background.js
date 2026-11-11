@@ -170,6 +170,12 @@ const HANDLERS = {
   metaContactConfig:     ()  => WaApi.metaContactConfig(),
   setMetaContactConfig:  (m) => WaApi.setMetaContactConfig({ on: m.on, test: m.test }),
   chatContactInfo:       (m) => WaApi.chatContactInfo({ chatId: m.chatId }),
+  // 2.17.0: Radar (só leitura de etiquetas/percursos; config e silenciados em system_config)
+  radarState:            (m) => WaApi.radarState({ chats: m.chats }),
+  radarConfig:           ()  => WaApi.radarConfig(),
+  setRadarConfig:        (m) => WaApi.setRadarConfig({ config: m.config }),
+  radarSnooze:           ()  => WaApi.radarSnooze(),
+  setRadarSnooze:        (m) => WaApi.setRadarSnooze({ chatId: m.chatId, mode: m.mode, lastT: m.lastT, minutes: m.minutes }),
   // 2.6.2: anúncio de onde o lead veio (wa_ad_attribution)
   getAdAttribution:      (m) => WaApi.getAdAttribution({ chatId: m.chatId }),
   saveAdAttributions:    (m) => WaApi.saveAdAttributions({ items: m.items }),

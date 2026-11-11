@@ -809,6 +809,32 @@ guardada.
 
 ## O que mudou
 
+### 2.17.0 — Radar: conversas sem etiqueta CRM e sem automação há mais de 2 h
+- **Objetivo**: todo lead deve estar numa etiqueta CRM ou numa automação. O Radar avisa quando uma conversa fica parada
+  sem nenhum dos dois, para você decidir à mão.
+- **Regra** (confere a cada 5 min, só no horário geral de envio): conversa individual (não grupo, não arquivada, não a
+  sua própria nem "Meu Numero Pessoal"), com mensagem sua ou do cliente nos últimos 7 dias, cuja **última** mensagem
+  (de qualquer lado) tem mais de 2 h, e cujo contato **não tem etiqueta CRM** e **não tem percurso ativo** em
+  automação/régua ligada (régua: percurso "ativo"; automação: inscrição sem saída). O contato é achado pela conversa
+  (chat_id), pelo telefone do @c.us ou pelo telefone que o WhatsApp Web já tem do @lid.
+- **Aviso**: popup discreto no canto inferior esquerdo (não bloqueia a tela): "⚠ 3 conversas sem destino há mais de
+  2 h", com nome da agenda/nome/número, a última mensagem resumida ("Cliente: …" / "Você: …") e há quanto tempo.
+  Clicar numa abre a conversa e o painel na aba **Etiquetas**. Por conversa: **Não precisa** (silencia até chegar
+  mensagem nova) e **Lembrar em 1 h**. **Fechar**: o aviso volta só se aparecer conversa nova na lista.
+- **Contador** (bolinha vermelha com o número) no botão do painel, e **Mais → Radar** com a mesma lista, o botão
+  "Conferir agora" (vale também fora do horário) e as **configurações**: ligar/desligar, tempo (padrão 2 h), etiquetas
+  CRM que também contam como "sem destino" (nenhuma por padrão) e etiquetas do WhatsApp que tiram a conversa do radar
+  (ex.: Motoboy).
+- **Onde fica guardado** (vale em qualquer computador, sem migration): `system_config` chave `wa_radar_snooze` ("Não
+  precisa"/"Lembrar") e chave `wa_radar_config` (configurações). O resto é **só leitura** do que já existe (conversas
+  na memória do WhatsApp Web, etiquetas, percursos). O resumo da mensagem só aparece na tela: nunca vai para o banco nem
+  para o `chrome.storage` (neste computador fica só a lista de ids que já estavam no aviso ao "Fechar").
+- Correção junto: o **Diagnóstico do Produto** (2.16.14) abria sem o estilo do painel (fundo transparente); agora abre
+  com o tema, como o Radar.
+- Testes: `radar.test.cjs` (regra, ponte, banco só leitura, system_config) e `chrome-real.test.cjs` (popup, contador,
+  Mais → Radar, abrir na aba Etiquetas, "Não precisa", "Fechar", etiqueta Motoboy), com WhatsApp e banco simulados.
+  Telas em `screenshots/2.17.0/`.
+
 ### 2.16.14 — Diagnóstico do Produto e prévia da reserva sempre a da extensão
 - **Por quê**: no teste real da 2.16.13 (conversa "Meu Numero Pessoal", 3 partes Produto) os três saíram como link
   com foto pequena e "R$ 709,00" cheio, sem o cartão nativo. Faltava ver o que aconteceu em cada passo.

@@ -3820,6 +3820,116 @@
     return { on, since, test };
   }
 
+  // ── 2.17.0: Radar — conversas sem etiqueta CRM e sem automação (SÓ LEITURA do que já existe) ──
+  // Para um lote de conversas: o contato (por chat_id, telefone do @c.us ou o telefone que o WhatsApp Web tem do @lid),
+  // as etiquetas CRM dele e se ele tem percurso ativo (régua: wa_sequence_runs ativo; automação: inscrição sem saída
+  // em wa_automation_enrollments), só de automações ligadas. Nada é gravado.
+  async function radarState({ chats }) {
+    const list = (Array.isArray(chats) ? chats : []).slice(0, 300)
+      .filter((c) => c && typeof c.chatId === 'string' && SCHED_CHAT_RE.test(c.chatId))
+      .map((c) => ({ chatId: c.chatId, phone: typeof c.phone === 'string' && /^\d{8,15}$/.test(c.phone) ? c.phone : null }));
+    const out = {};
+    if (!list.length) return out;
+    const byChat = await contactsByChats(list.map((c) => c.chatId));
+    const missing = list.filter((c) => !byChat[c.chatId] && c.phone);
+    for (let i = 0; i < missing.length; i += 100) {
+      const part = missing.slice(i, i + 100);
+      const rows = await rest(`wa_contacts?select=id,name,phone&phone=in.${inList(part.map((c) => c.phone))}`);
+      const byPhone = new Map(rows.map((r) => [r.phone, r]));
+      part.forEach((c) => { const r = byPhone.get(c.phone); if (r) byChat[c.chatId] = { id: r.id, name: r.name }; });
+    }
+    const contactIds = [...new Set(list.map((c) => byChat[c.chatId] && byChat[c.chatId].id).filter(Boolean))];
+    const labels = new Map();
+    for (let i = 0; i < contactIds.length; i += 100) {
+      const rows = await rest(`wa_contact_labels?select=contact_id,label_id&contact_id=in.${inList(contactIds.slice(i, i + 100))}`);
+      rows.forEach((r) => { if (!labels.has(r.contact_id)) labels.set(r.contact_id, []); labels.get(r.contact_id).push(r.label_id); });
+    }
+    // automações ligadas (régua e automação); sem as tabelas do motor: ninguém tem percurso
+    let activeAutos = new Set();
+    try { activeAutos = new Set((await rest('wa_automations?select=id&active=eq.true')).map((a) => a.id)); } catch { activeAutos = new Set(); }
+    const activeContacts = new Set();
+    const activeChats = new Set();
+    if (activeAutos.size) {
+      const chatIds = list.map((c) => c.chatId);
+      const tries = [];
+      if (await automationsV212().catch(() => false)) {
+        for (let i = 0; i < chatIds.length; i += 100) tries.push(rest(`wa_sequence_runs?select=automation_id,chat_id,contact_id&status=eq.ativo&chat_id=in.${inList(chatIds.slice(i, i + 100))}`));
+        for (let i = 0; i < contactIds.length; i += 100) tries.push(rest(`wa_sequence_runs?select=automation_id,chat_id,contact_id&status=eq.ativo&contact_id=in.${inList(contactIds.slice(i, i + 100))}`));
+      }
+      if (await automationsV25().catch(() => false)) {
+        for (let i = 0; i < contactIds.length; i += 100) tries.push(rest(`wa_automation_enrollments?select=automation_id,chat_id,contact_id&removed_at=is.null&contact_id=in.${inList(contactIds.slice(i, i + 100))}`));
+      }
+      (await Promise.all(tries.map((p) => p.catch(() => [])))).flat().forEach((r) => {
+        if (!activeAutos.has(r.automation_id)) return;
+        if (r.contact_id) activeContacts.add(r.contact_id);
+        if (r.chat_id) activeChats.add(r.chat_id);
+      });
+    }
+    list.forEach((c) => {
+      const ct = byChat[c.chatId] || null;
+      out[c.chatId] = {
+        contactId: ct ? ct.id : null,
+        crmLabelIds: ct ? labels.get(ct.id) || [] : [],
+        active: activeChats.has(c.chatId) || (!!ct && activeContacts.has(ct.id)),
+      };
+    });
+    return out;
+  }
+
+  // Configuração e silenciados do Radar em system_config (vale em qualquer computador; sem migration)
+  const RADAR_CONFIG_KEY = 'wa_radar_config';
+  const RADAR_SNOOZE_KEY = 'wa_radar_snooze';
+  const readConfigKey = async (key) => {
+    const rows = await rest(`system_config?select=key,value&key=eq.${key}`);
+    try { return rows.length ? JSON.parse(rows[0].value) : null; } catch { return null; }
+  };
+  const writeConfigKey = (key, v) => rest('system_config?on_conflict=key', json('POST', 'resolution=merge-duplicates,return=minimal', { key, value: JSON.stringify(v), updated_at: new Date().toISOString() }));
+  const uuidList = (v) => [...new Set((Array.isArray(v) ? v : []).filter((x) => typeof x === 'string' && UUID_RE.test(x)))].slice(0, 100);
+  const waIdList = (v) => [...new Set((Array.isArray(v) ? v : []).map(String).filter((x) => /^[\w:.-]{1,40}$/.test(x)))].slice(0, 100);
+  function radarConfigOf(v) {
+    const o = v && typeof v === 'object' ? v : {};
+    const hours = Number(o.hours);
+    return { on: o.on !== false, hours: Number.isFinite(hours) && hours >= 0.5 && hours <= 72 ? Math.round(hours * 2) / 2 : 2, crmAsNone: uuidList(o.crmAsNone), waExclude: waIdList(o.waExclude) };
+  }
+  async function radarConfig() { return radarConfigOf(await readConfigKey(RADAR_CONFIG_KEY)); }
+  async function setRadarConfig({ config }) {
+    const c = radarConfigOf(config);
+    await writeConfigKey(RADAR_CONFIG_KEY, c);
+    return c;
+  }
+  // silenciados: { chatId: { mode: 'none', lastT } } ("Não precisa": até chegar mensagem nova) ou
+  // { mode: 'remind', until } ("Lembrar em 1 h"). Velhos (30 dias) saem sozinhos.
+  const radarSnoozeOf = (v) => {
+    const o = v && typeof v === 'object' ? v : {};
+    const out = {};
+    const old = Date.now() - 30 * 86400000;
+    Object.keys(o).slice(0, 2000).forEach((k) => {
+      const s = o[k];
+      if (!SCHED_CHAT_RE.test(k) || !s || typeof s !== 'object') return;
+      const at = Date.parse(s.at || '') || 0;
+      if (at && at < old) return;
+      if (s.mode === 'none' && Number.isFinite(Number(s.lastT))) out[k] = { mode: 'none', lastT: Number(s.lastT), at: s.at || null };
+      else if (s.mode === 'remind' && typeof s.until === 'string' && Date.parse(s.until)) out[k] = { mode: 'remind', until: s.until, at: s.at || null };
+    });
+    return out;
+  };
+  async function radarSnooze() { return radarSnoozeOf(await readConfigKey(RADAR_SNOOZE_KEY)); }
+  async function setRadarSnooze({ chatId, mode, lastT, minutes }) {
+    if (typeof chatId !== 'string' || !SCHED_CHAT_RE.test(chatId)) throw new Error('Conversa inválida');
+    const cur = await radarSnooze();
+    const at = new Date().toISOString();
+    if (mode === 'none') {
+      if (!Number.isFinite(Number(lastT))) throw new Error('Valor inválido');
+      cur[chatId] = { mode: 'none', lastT: Number(lastT), at };
+    } else if (mode === 'remind') {
+      const m = Math.min(24 * 60, Math.max(5, Math.floor(Number(minutes) || 60)));
+      cur[chatId] = { mode: 'remind', until: new Date(Date.now() + m * 60000).toISOString(), at };
+    } else if (mode === 'clear') delete cur[chatId];
+    else throw new Error('Valor inválido');
+    await writeConfigKey(RADAR_SNOOZE_KEY, cur);
+    return cur;
+  }
+
   // ── 2.15.3: exportar o catálogo do WhatsApp Business (só leitura do catálogo; nada é enviado) ──
   // Fotos em wa-media/catalog/<id do produto>/<sha256>.<ext>: a mesma foto (mesmo sha256) nunca sobe duas vezes.
   // O retrato completo fica em system_config, chave wa_catalog_snapshot (sem migration).
@@ -4290,6 +4400,7 @@
   }
 
   root.WaApi = {
+    radarState, radarConfig, setRadarConfig, radarSnooze, setRadarSnooze, // 2.17.0
     uploadCatalogImage, saveCatalogSnapshot, catalogSnapshotInfo, checkCatalogSnapshot, // 2.15.3
     lastSaleCustomerName, salePhoneVariants,
     engineActivity, clearReadCache, automationExisting, chatConversions, purchasedChats, pendingContactLeads, conversionStats,

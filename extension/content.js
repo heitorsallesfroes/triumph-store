@@ -1469,6 +1469,30 @@
       .pdg-b { display: flex; flex-wrap: wrap; gap: var(--s-2); }
       .pdg-msg { font-size: var(--fs-1); color: var(--muted); min-height: 1em; }
       .pdg-out { width: 100%; min-height: 260px; flex: 1; resize: vertical; font: 11px/1.4 ui-monospace, Consolas, monospace; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--bg); color: var(--fg); padding: var(--s-2); box-sizing: border-box; }
+      /* 2.17.0: Radar */
+      .toggle .rbadge { position: absolute; top: 2px; right: -14px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: #e5484d; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; box-shadow: 0 1px 3px var(--shadow); }
+      .toggle .rbadge[hidden] { display: none; }
+      .rpop { position: fixed; left: 16px; bottom: 16px; z-index: 2147482000; width: min(360px, calc(100vw - 32px)); max-height: min(60vh, 460px); display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-3); border-radius: var(--r-lg); background: var(--card); color: var(--fg); border: 1px solid var(--border); border-left: 4px solid #f5a524; box-shadow: var(--sh-3); font-size: var(--fs-2); animation: fadeIn .15s ease both; }
+      .rpop-top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-2); }
+      .rpop-h { font-weight: 700; }
+      .rpop-l, .rdg-list { display: flex; flex-direction: column; gap: var(--s-2); overflow: auto; min-height: 0; }
+      .rdg-list { max-height: 40vh; }
+      .rr { display: flex; flex-direction: column; gap: 4px; padding: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); background: var(--bg); }
+      .rr-main { display: flex; flex-direction: column; gap: 2px; padding: 0; border: none; background: transparent; color: inherit; text-align: left; cursor: pointer; min-width: 0; }
+      .rr-main:hover .rr-t { text-decoration: underline; }
+      .rr-t { font-weight: 600; overflow-wrap: anywhere; }
+      .rr-s { color: var(--muted); font-size: var(--fs-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .rr-ago { color: var(--muted); font-size: var(--fs-1); }
+      .rr-a { display: flex; gap: var(--s-1); flex-wrap: wrap; }
+      .rr-b { min-height: 26px; padding: 0 var(--s-2); font-size: var(--fs-1); }
+      .rr-empty, .rr-more { color: var(--muted); font-size: var(--fs-1); }
+      .rdg { width: min(620px, calc(100vw - 32px)); overflow: auto; }
+      .rdg-cfg { display: flex; flex-direction: column; gap: var(--s-2); }
+      .rdg-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+      .rdg-h { width: auto; }
+      .rdg-g { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--s-2); margin: 0; }
+      .rdg-g legend { padding: 0 4px; color: var(--muted); font-size: var(--fs-1); }
+      .rdg-chk { display: inline-flex; align-items: center; gap: 4px; }
       .rp-price { color: var(--fg); font-weight: 600; } .rp-full { color: var(--muted); font-weight: 400; }
       .rp-link { font-size: var(--fs-1); color: var(--accent); overflow-wrap: anywhere; }
       .rp-ed { display: flex; flex-direction: column; gap: var(--s-2); }
@@ -2462,7 +2486,7 @@
     btns.append(readBtn, testBtn, copyBtn, closeBtn);
     box.append(head, sel, btns, msg, out);
     bg.append(box);
-    shadow.append(bg);
+    root.append(bg); // dentro do .root: tema e fonte do painel
     let info = null;
     let test = null;
     let armed = false;
@@ -2518,6 +2542,233 @@
     testBtn.disabled = !list.length;
   }
   shadow.querySelector('.ppdiag').addEventListener('click', () => { openProductDiag(); });
+
+  // ── 2.17.0: Radar — conversas sem etiqueta CRM e sem automação há mais de N horas ──
+  // A cada 5 min (só no horário geral de envio): lê as conversas da memória do WhatsApp Web (radarChats), as etiquetas
+  // CRM e os percursos ativos (radarState, só leitura) e mostra um aviso discreto no canto inferior. "Não precisa" e
+  // "Lembrar em 1 h" ficam em system_config (wa_radar_snooze); as configurações em wa_radar_config. O resumo da última
+  // mensagem fica só na memória (nunca vai para o banco nem para chrome.storage).
+  const RADAR_EVERY_MS = 5 * 60 * 1000;
+  const RADAR_DISMISS_KEY = 'radarDismissed'; // só os ids das conversas que já estavam no aviso quando ele foi fechado
+  const radar = { list: [], config: null, snooze: {}, at: 0, busy: false, dismissed: new Set(), crmLabels: null, waLabels: null, settingsAt: 0, settings: null, error: null };
+  try { chrome.storage.local.get([RADAR_DISMISS_KEY], (r) => { const v = r && r[RADAR_DISMISS_KEY]; if (Array.isArray(v)) radar.dismissed = new Set(v.slice(0, 500)); }); } catch { /* extensão recarregada */ }
+  const radarBadge = el('span', 'rbadge');
+  radarBadge.hidden = true;
+  radarBadge.setAttribute('aria-hidden', 'true');
+  toggleBtn.append(radarBadge);
+  const radarMenuBtn = el('button', 'pradar');
+  radarMenuBtn.type = 'button';
+  radarMenuBtn.title = 'Radar: conversas sem etiqueta CRM e sem automação';
+  radarMenuBtn.innerHTML = svg('alert');
+  const radarMenuTxt = el('span', '', 'Radar');
+  radarMenuBtn.append(radarMenuTxt);
+  pmenuEl.insertBefore(radarMenuBtn, pmenuEl.querySelector('.pmaint'));
+  radarMenuBtn.addEventListener('click', () => { setMoreOpen(false); openRadarDialog(); });
+
+  const radarWho = (c) => c.name || (c.phone ? formatPhone(c.phone) : c.id.split('@')[0]);
+  const radarPreview = (c) => {
+    const p = c.preview || {};
+    const txt = p.text || (p.kind && p.kind !== 'texto' && p.kind !== 'nenhum' ? PREVIEW_LABEL[p.kind] || 'Mensagem' : '');
+    return `${c.fromMe === true ? 'Você: ' : c.fromMe === false ? 'Cliente: ' : ''}${txt || '(sem prévia)'}`;
+  };
+  async function radarBusinessTime() {
+    let s = motor && motor.state && motor.state.settings;
+    if (!s) {
+      if (!radar.settings || Date.now() - radar.settingsAt > 30 * 60 * 1000) {
+        try { const r = await call('getEngineSettings'); radar.settings = r && r.available ? r.settings : null; } catch { radar.settings = null; }
+        radar.settingsAt = Date.now();
+      }
+      s = radar.settings;
+    }
+    return s ? E.isBusinessTime(Date.now(), s) : true;
+  }
+  async function radarRefresh({ force = false } = {}) {
+    if (radar.busy) { if (!force) return; await radar.busy.catch(() => {}); if (radar.busy) return; } // "Conferir agora" espera a conferência em andamento
+    let release;
+    radar.busy = new Promise((r) => { release = r; });
+    try {
+      radar.config = await call('radarConfig');
+      if (!radar.config || !radar.config.on) { radar.list = []; radar.error = null; return; }
+      if (!force && !(await radarBusinessTime())) return; // fora do horário geral: não avalia (fica a última lista)
+      const r = await waRequest('radarChats', {}, { timeout: 20000 });
+      const chats = (r && r.chats) || [];
+      const nowS = Math.floor(Date.now() / 1000);
+      const idle = chats.filter((c) => nowS - c.t >= radar.config.hours * 3600); // só pergunta ao banco das paradas
+      const [db, snooze] = await Promise.all([idle.length ? call('radarState', { chats: idle.map((c) => ({ chatId: c.id, phone: c.phone })) }) : {}, call('radarSnooze')]);
+      radar.snooze = snooze || {};
+      radar.list = E.radarPick({ chats: idle, db, config: radar.config, snooze: radar.snooze, nowMs: Date.now() });
+      radar.error = null;
+      radar.at = Date.now();
+    } catch (e) {
+      radar.error = String((e && e.message) || e);
+    } finally {
+      radar.busy = null;
+      release();
+      radarRender();
+    }
+  }
+  let radarPopup = null;
+  function radarRender() {
+    const n = radar.list.length;
+    radarBadge.hidden = !n;
+    radarBadge.textContent = n > 99 ? '99+' : String(n);
+    toggleBtn.title = n ? `Mensagens (Triumph Store) — Radar: ${n} conversa${n === 1 ? '' : 's'} sem destino` : 'Mensagens (Triumph Store)';
+    radarMenuTxt.textContent = n ? `Radar (${n})` : 'Radar';
+    const fresh = radar.list.some((c) => !radar.dismissed.has(c.id));
+    if (n && fresh) radarShowPopup();
+    else if (!n && radarPopup) { radarPopup.remove(); radarPopup = null; }
+    else if (radarPopup) radarFillPopup();
+    const dlg = shadow.querySelector('.rdg-list');
+    if (dlg) radarFillList(dlg, false);
+  }
+  function radarRow(c, compact) {
+    const row = el('div', 'rr');
+    const main = el('button', 'rr-main');
+    main.type = 'button';
+    main.title = 'Abrir a conversa e o painel na aba Etiquetas';
+    main.append(el('div', 'rr-t', radarWho(c)), el('div', 'rr-s', radarPreview(c)), el('div', 'rr-ago', E.radarAgo(c.idleS)));
+    main.addEventListener('click', () => {
+      openConversation({ chatId: c.id, phone: c.phone, name: c.name }, { onOpened: () => { setOpen(true); setSection('etiquetas'); } });
+    });
+    const acts = el('div', 'rr-a');
+    const mk = (t, title, fn) => { const b = el('button', 'btn rr-b', t); b.type = 'button'; b.title = title; b.addEventListener('click', fn); return b; };
+    acts.append(
+      mk('Não precisa', 'Silencia esta conversa até chegar mensagem nova', () => radarSnoozeChat(c, 'none')),
+      mk('Lembrar em 1 h', 'Volta a avisar daqui a 1 hora', () => radarSnoozeChat(c, 'remind')),
+    );
+    row.append(main, acts);
+    if (compact) row.classList.add('compact');
+    return row;
+  }
+  async function radarSnoozeChat(c, mode) {
+    try {
+      radar.snooze = await call('setRadarSnooze', { chatId: c.id, mode, lastT: c.t, minutes: 60 });
+      radar.list = radar.list.filter((x) => x.id !== c.id);
+      radarRender();
+    } catch (e) {
+      crmToast(`Não consegui guardar (${String((e && e.message) || e)})`, 'error', 5000);
+    }
+  }
+  function radarShowPopup() {
+    if (!radarPopup) {
+      radarPopup = el('div', 'rpop');
+      radarPopup.setAttribute('role', 'status');
+      radarPopup.setAttribute('aria-live', 'polite');
+      root.append(radarPopup);
+    }
+    radarFillPopup();
+  }
+  function radarFillPopup() {
+    if (!radarPopup) return;
+    const n = radar.list.length;
+    radarPopup.textContent = '';
+    const head = el('div', 'rpop-h', `⚠ ${n} conversa${n === 1 ? '' : 's'} sem destino há mais de ${radarHoursTxt()}`);
+    const close = el('button', 'btn rpop-x', 'Fechar');
+    close.type = 'button';
+    close.title = 'Fechar (o aviso volta só se aparecer conversa nova na lista)';
+    close.addEventListener('click', () => {
+      radar.dismissed = new Set(radar.list.map((c) => c.id));
+      storageSet({ [RADAR_DISMISS_KEY]: [...radar.dismissed].slice(0, 500) });
+      radarPopup.remove();
+      radarPopup = null;
+    });
+    const top = el('div', 'rpop-top');
+    top.append(head, close);
+    const list = el('div', 'rpop-l');
+    radar.list.slice(0, 20).forEach((c) => list.append(radarRow(c, true)));
+    if (n > 20) list.append(el('div', 'rr-more', `e mais ${n - 20} em Mais → Radar`));
+    radarPopup.append(top, list);
+  }
+  const radarHoursTxt = () => { const h = (radar.config && radar.config.hours) || 2; return h < 1 ? `${Math.round(h * 60)} min` : `${String(h).replace('.', ',')} h`; };
+  function radarFillList(box, loading) {
+    box.textContent = '';
+    if (loading) { box.append(el('div', 'rr-empty', 'Conferindo as conversas…')); return; }
+    if (radar.error) box.append(el('div', 'rr-empty', `Não consegui conferir agora (${radar.error}).`));
+    else if (radar.config && !radar.config.on) box.append(el('div', 'rr-empty', 'O Radar está desligado.'));
+    else if (!radar.list.length) box.append(el('div', 'rr-empty', radar.at ? `Nenhuma conversa sem destino (conferido às ${new Date(radar.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}).` : 'Ainda não conferido (só no horário geral de envio).'));
+    radar.list.forEach((c) => box.append(radarRow(c, false)));
+  }
+  async function openRadarDialog() {
+    shadow.querySelectorAll('.pdg-bg').forEach((x) => x.remove());
+    const bg = el('div', 'pdg-bg');
+    const box = el('div', 'pdg rdg');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Radar');
+    const head = el('div', 'pdg-h', 'Radar — conversas sem etiqueta CRM e sem automação');
+    const intro = el('div', 'pdg-msg', 'Conversa individual com mensagem nos últimos 7 dias, parada há mais do tempo escolhido, cujo contato não tem etiqueta CRM nem percurso ativo em automação/régua. Confere a cada 5 min, no horário geral de envio.');
+    const list = el('div', 'rdg-list');
+    const btns = el('div', 'pdg-b');
+    const mk = (t, cls = 'btn') => { const b = el('button', cls, t); b.type = 'button'; return b; };
+    const now = mk('Conferir agora', 'btn primary');
+    const closeBtn = mk('Fechar');
+    btns.append(now, closeBtn);
+    const cfg = el('div', 'rdg-cfg');
+    box.append(head, intro, btns, list, el('div', 'pdg-h rdg-ch', 'Configurações'), cfg);
+    bg.append(box);
+    root.append(bg);
+    const close = () => bg.remove();
+    closeBtn.addEventListener('click', close);
+    bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+    now.addEventListener('click', async () => { radarFillList(list, true); await radarRefresh({ force: true }); radarFillList(list, false); });
+    radarFillList(list, false);
+    // configurações
+    cfg.append(el('div', 'rr-empty', 'Carregando…'));
+    let c = null;
+    try { c = await call('radarConfig'); } catch (e) { cfg.textContent = ''; cfg.append(el('div', 'rr-empty', `Não consegui ler as configurações (${String((e && e.message) || e)}).`)); return; }
+    let crmList = [];
+    try { crmList = ((await call('fetchLabels')) || []).filter((l) => l && l.id); } catch { crmList = []; }
+    let waList = Array.isArray(state.waLabels) ? state.waLabels : null;
+    if (!waList) { try { waList = await waRequest('labels', {}, { timeout: 4000 }); } catch { waList = []; } }
+    cfg.textContent = '';
+    const draft = { on: c.on, hours: c.hours, crmAsNone: new Set(c.crmAsNone), waExclude: new Set(c.waExclude.map(String)) };
+    const onL = el('label', 'rdg-row');
+    const onI = el('input');
+    onI.type = 'checkbox';
+    onI.checked = draft.on;
+    onI.addEventListener('change', () => { draft.on = onI.checked; });
+    onL.append(onI, ' Radar ligado');
+    const hL = el('label', 'rdg-row', 'Avisar quando a conversa está parada há mais de ');
+    const hS = el('select', 'pdg-sel rdg-h');
+    [1, 2, 3, 4, 6, 8, 12, 24, 48].concat([draft.hours]).filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => a - b)
+      .forEach((h) => { const o = el('option', '', `${String(h).replace('.', ',')} h`); o.value = String(h); if (h === draft.hours) o.selected = true; hS.append(o); });
+    hS.addEventListener('change', () => { draft.hours = Number(hS.value); });
+    hL.append(hS);
+    const group = (title, items, set, key) => {
+      const g = el('fieldset', 'rdg-g');
+      g.append(el('legend', '', title));
+      if (!items.length) g.append(el('div', 'rr-empty', 'Nenhuma etiqueta.'));
+      items.forEach((l) => {
+        const lab = el('label', 'rdg-chk');
+        const i = el('input');
+        i.type = 'checkbox';
+        i.checked = set.has(String(l.id));
+        i.addEventListener('change', () => { if (i.checked) set.add(String(l.id)); else set.delete(String(l.id)); });
+        lab.append(i, ` ${l.name || l.id}`);
+        lab.dataset[key] = String(l.id);
+        g.append(lab);
+      });
+      return g;
+    };
+    const save = mk('Salvar configurações', 'btn primary');
+    const smsg = el('div', 'pdg-msg');
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      try {
+        radar.config = await call('setRadarConfig', { config: { on: draft.on, hours: draft.hours, crmAsNone: [...draft.crmAsNone], waExclude: [...draft.waExclude] } });
+        smsg.textContent = 'Salvo (vale em todos os computadores).';
+        radarFillList(list, true);
+        await radarRefresh({ force: true });
+        radarFillList(list, false);
+      } catch (e) { smsg.textContent = `Não consegui salvar (${String((e && e.message) || e)}).`; }
+      save.disabled = false;
+    });
+    cfg.append(onL, hL,
+      group('Etiquetas CRM que também contam como "sem destino"', crmList, draft.crmAsNone, 'crm'),
+      group('Etiquetas do WhatsApp que tiram a conversa do radar (ex.: Motoboy)', (waList || []).filter((l) => l && l.id != null), draft.waExclude, 'wa'),
+      save, smsg);
+  }
+  setTimeout(() => { radarRefresh(); setInterval(() => radarRefresh(), RADAR_EVERY_MS); }, 20000);
 
   function renderPanelNav() {
     let moreOn = false;

@@ -3034,7 +3034,49 @@
     };
   }
 
+  // ── 2.17.0: Radar — conversas "sem destino" (sem etiqueta CRM e sem percurso ativo) há mais de N horas ──
+  // Pura (testável). chats = ponte radarChats; db = { chatId: { crmLabelIds, active } } (null = não deu para ler o banco:
+  // ninguém entra, para não avisar errado); config = { on, hours, crmAsNone, waExclude }; snooze = system_config.
+  const RADAR_WINDOW_S = 7 * 86400;
+  const radarNorm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  function radarPick({ chats, db, config, snooze, nowMs = Date.now() }) {
+    const c = config || {};
+    if (c.on === false || !db || !Array.isArray(chats)) return [];
+    const nowS = Math.floor(nowMs / 1000);
+    const hours = Number(c.hours) > 0 ? Number(c.hours) : 2;
+    const idleS = Math.round(hours * 3600);
+    const asNone = new Set(Array.isArray(c.crmAsNone) ? c.crmAsNone : []);
+    const waOut = new Set((Array.isArray(c.waExclude) ? c.waExclude : []).map(String));
+    const sn = snooze || {};
+    const out = [];
+    for (const ch of chats) {
+      if (!ch || typeof ch.id !== 'string' || !/^\d+@(c\.us|lid)$/.test(ch.id)) continue;
+      const t = Number(ch.t) || 0;
+      if (!t || t < nowS - RADAR_WINDOW_S || nowS - t < idleS) continue; // fora dos 7 dias / parada há menos de N h
+      if (radarNorm(ch.name) === 'meu numero pessoal') continue;
+      if ((Array.isArray(ch.labels) ? ch.labels : []).some((l) => waOut.has(String(l)))) continue; // etiqueta do WhatsApp que tira do radar
+      const d = db[ch.id] || { crmLabelIds: [], active: false };
+      if (d.active) continue;
+      if ((d.crmLabelIds || []).some((l) => !asNone.has(l))) continue; // tem etiqueta CRM que conta como destino
+      const s = sn[ch.id];
+      if (s && s.mode === 'none' && t <= Number(s.lastT)) continue; // "Não precisa" até chegar mensagem nova
+      if (s && s.mode === 'remind' && Date.parse(s.until) > nowMs) continue; // "Lembrar em 1 h"
+      out.push({ ...ch, idleS: nowS - t });
+    }
+    return out.sort((a, b) => b.t - a.t);
+  }
+  // "há 3 h 20 min" / "há 1 dia"
+  function radarAgo(s) {
+    const m = Math.max(0, Math.floor(Number(s) / 60) || 0);
+    if (m < 60) return `há ${m} min`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `há ${h} h${m % 60 ? ` ${m % 60} min` : ''}`;
+    const d = Math.floor(h / 24);
+    return `há ${d} dia${d === 1 ? '' : 's'}${h % 24 ? ` ${h % 24} h` : ''}`;
+  }
+
   root.TspEngine = {
+    radarPick, radarAgo, // 2.17.0
     DEFAULT_SETTINGS, NO_SEND_NAME, DAY_NAMES,
     parseHM, normSettings, businessMsBetween, isBusinessTime, addBusinessMs, nextBusinessStart,
     formatWait, formatDays, scheduleText, waitText, formatLeft, hm,

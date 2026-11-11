@@ -183,7 +183,7 @@ async function main() {
       if (method === 'POST') {
         const list = (Array.isArray(body) ? body : [body]).map((r) => ({ id: require('crypto').randomUUID(), created_at: new Date().toISOString(), ...r }));
         // 2.13.3: upsert (on_conflict=coluna): troca a linha com a mesma chave
-        const oc = table === 'wa_chat_names' ? q.get('on_conflict') : null; // só aqui: as outras tabelas seguem como antes
+        const oc = table === 'wa_chat_names' || table === 'system_config' ? q.get('on_conflict') : null; // só aqui (2.17.0: + system_config): as outras tabelas seguem como antes
         if (oc) list.forEach((r) => { const old = tbl(table).find((x) => String(x[oc]) === String(r[oc])); if (old) { Object.assign(old, r); r.__dup = true; } });
         tbl(table).push(...list.filter((r) => !r.__dup));
         if (table === 'wa_automations' && fake.onAutomationPost) list.forEach((r) => fake.onAutomationPost(r));
@@ -2375,6 +2375,65 @@ async function main() {
     await q(`[...sh.querySelectorAll('.pdg-b button')].find((b) => b.textContent === 'Fechar').click(); return true;`);
     await pg(`const s = document.querySelector('#main header span'); s.textContent = window.__oldName || 'Cliente 1'; s.title = s.textContent; return true;`);
     check('nenhum erro no console na 2.16.14', errors.length === 0, errors.slice(0, 8).join(' | '));
+    // 28. 2.17.0: Radar. Ponte simulada com 4 conversas paradas: A (sem contato) e D (etiqueta do WhatsApp Motoboy)
+    // entram; B (contato com etiqueta CRM VIP) e C (parada há 1 h) não. Popup no canto, bolinha no ícone, Mais → Radar,
+    // "Não precisa" grava em system_config, clicar abre a conversa e o painel na aba Etiquetas, "Fechar" só volta com
+    // conversa nova, e a etiqueta Motoboy nas configurações tira a conversa do radar.
+    fake.on = true;
+    fake.generic = true;
+    const B28 = uuid();
+    fake.db.system_config = (fake.db.system_config || []).filter((r) => !/^wa_radar_/.test(r.key));
+    fake.db.wa_contacts = [...(fake.db.wa_contacts || []), { id: B28, key: 'tel:5521977770002', name: 'Bia', phone: '5521977770002', chat_id: null, created_at: '2026-11-01T10:00:00Z' }];
+    fake.db.wa_contact_labels = [...(fake.db.wa_contact_labels || []), { contact_id: B28, label_id: VIP, created_at: '2026-11-02T10:00:00Z' }];
+    await pg(`const now = Math.floor(Date.now() / 1000); const mk = (n, h, o = {}) => ({ id: '552197777000' + n + '@c.us', t: now - h * 3600, fromMe: false, preview: { kind: 'texto', text: 'Qual o preço do Raptor?' }, phone: '552197777000' + n, name: 'Radar ' + n, labels: [], ...o });
+      window.__radar = [mk(1, 3), mk(2, 5), mk(3, 1), mk(4, 26, { fromMe: true, labels: ['9'], preview: { kind: 'foto', text: '' } })];
+      window.__opened = [];
+      window.__fakeBridge = { ...window.__fakeBridge, radarChats: () => ({ chats: window.__radar }), labels: [{ id: '9', name: 'Motoboy', color: 1, count: 1 }], openChat: (p) => { window.__opened.push(p.chatId); return { opened: true }; } };
+      return true;`);
+    await q(`sh.querySelector('.pmore').click(); await wait(200); sh.querySelector('.pradar').click(); return true;`);
+    const dlg28 = await waitFor(`return !!sh.querySelector('.rdg .rdg-cfg [data-wa="9"]');`, 15000);
+    await q(`[...sh.querySelectorAll('.rdg .pdg-b button')].find((b) => b.textContent === 'Conferir agora').click(); return true;`);
+    const list28 = await waitFor(`return sh.querySelectorAll('.rdg-list .rr').length === 2;`, 15000);
+    const st28 = await q(`const p = sh.querySelector('.rpop'); return { names: [...sh.querySelectorAll('.rdg-list .rr-t')].map((x) => x.textContent), pop: p ? p.querySelector('.rpop-h').textContent : null, popRows: p ? p.querySelectorAll('.rr').length : 0,
+      badge: sh.querySelector('.toggle .rbadge').hidden ? null : sh.querySelector('.toggle .rbadge').textContent, menu: sh.querySelector('.pradar span').textContent, sub: [...sh.querySelectorAll('.rdg-list .rr-s')].map((x) => x.textContent), ago: [...sh.querySelectorAll('.rdg-list .rr-ago')].map((x) => x.textContent), txt: sh.querySelector('.rdg-list').textContent };`);
+    check('2.17.0: Radar lista só as sem etiqueta CRM e sem automação há mais de 2 h; popup "⚠ 2 conversas sem destino há mais de 2 h", bolinha 2 e "Radar (2)"',
+      dlg28 && list28 && JSON.stringify(st28.names) === JSON.stringify(['Radar 1', 'Radar 4']) && st28.pop === '⚠ 2 conversas sem destino há mais de 2 h' && st28.popRows === 2 && st28.badge === '2' && st28.menu === 'Radar (2)'
+      && st28.sub[0] === 'Cliente: Qual o preço do Raptor?' && st28.sub[1] === 'Você: Foto' && st28.ago[0] === 'há 3 h' && st28.ago[1] === 'há 1 dia 2 h', JSON.stringify(st28));
+    await q(`[...sh.querySelectorAll('.rdg .pdg-b button')].find((b) => b.textContent === 'Fechar').click(); return true;`);
+    await shot('radar-popup.png');
+    // clicar numa conversa: abre a conversa e o painel na aba Etiquetas
+    await q(`if (sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(300); [...sh.querySelectorAll('.rpop .rr-main')].find((b) => /Radar 4/.test(b.textContent)).click(); return true;`);
+    const open28 = await waitFor(`return !!sh.querySelector('.root.open') && sh.querySelector('.panel').classList.contains('sec-labels');`, 10000);
+    const opened28 = await pg(`return window.__opened;`);
+    check('2.17.0: clicar numa conversa do aviso abre a conversa e o painel na aba Etiquetas', open28 && opened28.includes('5521977770004@c.us'), JSON.stringify({ open28, opened28 }));
+    // "Não precisa": some da lista e fica em system_config (vale em qualquer computador)
+    await q(`const r = [...sh.querySelectorAll('.rpop .rr')].find((x) => /Radar 1/.test(x.textContent)); [...r.querySelectorAll('button')].find((b) => b.textContent === 'Não precisa').click(); return true;`);
+    const snz28 = await waitFor(`return !sh.querySelector('.toggle .rbadge').hidden && sh.querySelector('.toggle .rbadge').textContent === '1';`, 10000);
+    const row28 = (fake.db.system_config || []).find((r) => r.key === 'wa_radar_snooze');
+    let snzVal = null;
+    try { snzVal = JSON.parse(row28.value); } catch { snzVal = null; }
+    check('2.17.0: "Não precisa" tira a conversa do aviso e grava em system_config (wa_radar_snooze), sem o texto da mensagem',
+      snz28 && !!snzVal && snzVal['5521977770001@c.us'] && snzVal['5521977770001@c.us'].mode === 'none' && !/Raptor/.test(row28.value), JSON.stringify({ snz28, row28 }));
+    // "Fechar": o aviso some e só volta com conversa nova na lista
+    await q(`sh.querySelector('.rpop .rpop-x').click(); return true;`);
+    await q(`sh.querySelector('.pmore').click(); await wait(200); sh.querySelector('.pradar').click(); await wait(300); [...sh.querySelectorAll('.rdg .pdg-b button')].find((b) => b.textContent === 'Conferir agora').click(); await wait(1500); return true;`);
+    const closed28 = await q(`return !sh.querySelector('.rpop');`);
+    await pg(`const now = Math.floor(Date.now() / 1000); window.__radar.push({ id: '5521977770005@c.us', t: now - 4 * 3600, fromMe: false, preview: { kind: 'audio', text: '' }, phone: '5521977770005', name: 'Radar 5', labels: [] }); return true;`);
+    await q(`[...sh.querySelectorAll('.rdg .pdg-b button')].find((b) => b.textContent === 'Conferir agora').click(); return true;`);
+    const back28 = await waitFor(`const p = sh.querySelector('.rpop'); return !!p && /⚠ 2 conversas/.test(p.textContent);`, 10000);
+    check('2.17.0: "Fechar" esconde o aviso; ele volta só quando aparece conversa nova na lista', closed28 && back28, JSON.stringify({ closed28, back28 }));
+    // configurações: a etiqueta do WhatsApp Motoboy tira a conversa do radar (salvo em system_config)
+    await q(`const i = sh.querySelector('.rdg .rdg-cfg [data-wa="9"] input'); i.click(); [...sh.querySelectorAll('.rdg .rdg-cfg button')].find((b) => b.textContent === 'Salvar configurações').click(); return true;`);
+    const cfg28 = await waitFor(`return /Salvo/.test(sh.querySelector('.rdg .rdg-cfg .pdg-msg').textContent) && sh.querySelectorAll('.rdg-list .rr').length === 1;`, 10000);
+    const cfgRow = (fake.db.system_config || []).find((r) => r.key === 'wa_radar_config');
+    check('2.17.0: Mais → Radar → configurações: etiqueta do WhatsApp "Motoboy" tira a conversa do radar (wa_radar_config)',
+      cfg28 && !!cfgRow && /"waExclude":\["9"\]/.test(cfgRow.value) && /"hours":2/.test(cfgRow.value), JSON.stringify({ cfg28, cfgRow }));
+    await shot('radar-mais.png');
+    await q(`[...sh.querySelectorAll('.rdg .pdg-b button')].find((b) => b.textContent === 'Fechar').click(); const p = sh.querySelector('.rpop .rpop-x'); if (p) p.click(); return true;`);
+    await pg(`window.__fakeBridge.radarChats = () => ({ chats: [] }); return true;`);
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console na 2.17.0', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

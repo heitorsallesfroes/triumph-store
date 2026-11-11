@@ -1397,6 +1397,40 @@
     return out;
   }
 
+  // 2.17.0: Radar — conversas individuais com mensagem (de qualquer lado) nos últimos 7 dias. SÓ LEITURA, da memória
+  // do WhatsApp Web (sem consultar o servidor): fora grupos, arquivadas e a minha própria conversa. Volta a hora e o
+  // lado da última mensagem, um resumo dela (só para mostrar; nunca é gravado), nome/telefone e etiquetas do WhatsApp.
+  const RADAR_MAX = 300;
+  async function radarChats(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const p = payload || {};
+    const nowS = Number.isFinite(p.now) ? p.now : Math.floor(Date.now() / 1000);
+    const since = nowS - 7 * 86400;
+    let loaded;
+    try { loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS); } catch (err) {
+      if (err instanceof BridgeError) throw err;
+      throw new BridgeError('chats_failed', 'Não consegui ler as conversas', 'before-send');
+    }
+    const meUser = String(safe(() => wpp.conn.getMyUserId().user, '') || '');
+    const out = [];
+    for (const chat of Array.isArray(loaded) ? loaded : []) {
+      const id = chatIdOf(chat);
+      if (!/^\d+@(c\.us|lid)$/.test(id) || safe(() => !!chat.isGroup, false) || safe(() => !!chat.archive, false)) continue;
+      const last = lastLoadedMessage(chat);
+      const t = Math.max(Number(safe(() => chat.t, 0)) || 0, last ? Number(safe(() => last.t, 0)) || 0 : 0);
+      if (!t || t < since) continue;
+      const n = memNames(id, chat);
+      if (meUser && (id.split('@')[0] === meUser || n.phone === meUser)) continue; // a minha própria conversa
+      const title = realName(safe(() => chat.formattedTitle, null)) || realName(safe(() => chat.name, null));
+      out.push({
+        id, t, fromMe: last ? !!safe(() => last.id.fromMe, false) : null, preview: previewOf(last),
+        phone: n.phone, name: (n.contactName || title || n.pushname || '').slice(0, 100) || null, labels: labelIdsOf(chat),
+      });
+    }
+    out.sort((a, b) => b.t - a.t);
+    return { chats: out.slice(0, RADAR_MAX) };
+  }
+
   // 2.16.11: nomes (agenda e perfil) de vários contatos pelo telefone ou id, para os cartões do CRM no Quadro
   function contactNames(payload) {
     if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
@@ -1892,6 +1926,7 @@
     richInfo: () => richInfo(),
     catalogProducts: () => catalogProducts(),
     productDiag: (payload) => productDiag(payload), // 2.16.14
+    radarChats: (payload) => radarChats(payload), // 2.17.0
     catalogExport: () => catalogExport(), // 2.15.3
     catalogImage: (payload) => catalogImage(payload),
     contactSearch: (payload) => contactSearch(payload),
