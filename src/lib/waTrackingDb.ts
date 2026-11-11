@@ -5,7 +5,7 @@ import { fetchAllRows } from './resumoAnualCalc';
 import { INVALID_STATUSES } from './crmBridge';
 import type { ActivityDayRow, ActivityRow, Range, ReplyRow, SendRow } from './waPanel';
 import {
-  saleDateFilter, trackingWindow, type ChatNameRow, type TrackAttributionRow, type TrackConversionRow, type TrackInput, type TrackLeadRow, type TrackSaleRow,
+  fbGapWindow, saleDateFilter, trackingWindow, type ChatNameRow, type TrackAttributionRow, type TrackConversionRow, type TrackInput, type TrackLeadRow, type TrackSaleRow,
 } from './waTracking';
 
 // settings: horário comercial do motor de envios (wa_settings), ou null
@@ -88,4 +88,26 @@ export async function loadAdAttributions(chatIds: string[]): Promise<TrackAttrib
     if (!error) return (data as unknown as TrackAttributionRow[]) || [];
   }
   return [];
+}
+
+// ERP 11/11: Vendas × Facebook (aba Rastreamento). Só leitura: as vendas do período e de ontem/hoje (para o aviso) e
+// as Compras enviadas de 8 dias antes até 8 dias depois (para achar a Compra da mesma conversa).
+export interface FbGapLoad { sales: TrackSaleRow[]; conversions: TrackConversionRow[]; missing: string[] }
+export async function loadSalesFb(r: Range, now = Date.now()): Promise<FbGapLoad> {
+  const w = fbGapWindow(r, now);
+  const missing: string[] = [];
+  const [chatCol, eventCol, saleIdCol] = await Promise.all([
+    hasColumn('sales', 'wa_chat_id'), hasColumn('wa_conversion_events', 'event_name'), hasColumn('wa_conversion_events', 'sale_id'),
+  ]);
+  const salesCols = `id, sale_date, created_at, total_sale_price, customer_phone, customer_name${chatCol ? ', wa_chat_id' : ''}`;
+  const convCols = `chat_id, error, value, test, status, created_at${eventCol ? ', event_name' : ''}${saleIdCol ? ', sale_id' : ''}`;
+  const sf = saleDateFilter({ from: w.salesFrom, until: w.salesTo });
+  const [sales, conversions] = await Promise.all([
+    fetchAllRows<TrackSaleRow>((f, t) => supabase.from('sales').select(salesCols)
+      .neq('status', INVALID_STATUSES[0]).neq('status', INVALID_STATUSES[1])
+      .gte('sale_date', sf.gte).lt('sale_date', sf.lt).order('id').range(f, t) as any),
+    orEmpty<TrackConversionRow>('conversões (wa_conversion_events)', missing, () => fetchAllRows<TrackConversionRow>((f, t) => supabase.from('wa_conversion_events')
+      .select(convCols).gte('created_at', iso(w.convFrom)).lte('created_at', iso(w.convTo)).order('event_id').range(f, t) as any)),
+  ]);
+  return { sales, conversions, missing };
 }

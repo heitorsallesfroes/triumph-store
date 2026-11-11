@@ -10,9 +10,10 @@ import { periodRanges, spDay, type PeriodPreset } from '../../lib/waPanel';
 import {
   adBadgeTitle, buildConversations, buyFunnel, conversationAd, conversationsCsv, conversationsIn, conversationTimeline, filterStage, originByDay, originMatches, pageInfo, salesByDay, salesCsv,
   searchConversations, sortConversations, trackSummary, businessHoursLabel, businessHoursOf, saleLinksText, DEFAULT_SORT, STAGE_FILTERS, STAGE_LABEL,
+  salesFbGap, recentFbGap, fbGapText, type SalesFbGap,
   type Conversation, type ConversationAd, type OriginFilter, type SalesDateMode, type SortKey, type Stage, type StageFilter, type TrackInput,
 } from '../../lib/waTracking';
-import { loadAdAttributions, loadTracking, type TrackLoad } from '../../lib/waTrackingDb';
+import { loadAdAttributions, loadSalesFb, loadTracking, type FbGapLoad, type TrackLoad } from '../../lib/waTrackingDb';
 import { startVisibleInterval } from '../../lib/visibleInterval';
 import { useErpRefresh } from '../../lib/erpRefresh';
 import { btn, input, ORANGE } from './shared';
@@ -41,6 +42,7 @@ const INFO = {
   origin: 'Conversas ativas por dia (o 1º dia delas no período), separadas pela origem. O número dentro de cada pedaço é a quantidade.',
   funnel: 'Fez contato = conversas ativas do período (100%). Comprou = as que tiveram venda pelo WhatsApp (💰, 📈 ou o telefone da venda) depois do 1º contato. Canceladas/reembolsadas não contam.',
   sales: '"Data do primeiro contato": as vendas das conversas do período, no dia em que a conversa começou. "Data da venda": as vendas pelo WhatsApp feitas no período, no dia da venda (de conversas de qualquer data).',
+  fb: 'Faturamento no ERP = todas as vendas do período (pela data da venda; canceladas e reembolsadas não contam). Enviado ao Facebook = Compras (Purchase) enviadas no período, sem as de teste. Venda com conversão = Compra enviada ligada a ela (📈 ou o "Enviar agora" do 💰) ou, sem ligação, Compra da mesma conversa até 7 dias antes/depois. Só leitura: o ERP não envia nada ao Facebook.',
   table: 'Todas as conversas do período: as ativas, os leads novos e as que tiveram venda no período. Ordem padrão: última mensagem, mais recente primeiro. Atualiza sozinha a cada 30 s ("Ao vivo") quando o período inclui hoje, sem sair da página em que você está. 👁 abre a linha do tempo da conversa; 💬 abre no WhatsApp.',
 };
 
@@ -61,6 +63,11 @@ export default function WaTracking() {
   const r = ranges.cur;
   const key = `${r.fromDay}|${r.toDay}`;
   const [data, setData] = useState<Loaded | null>(null);
+  // ERP 11/11: Vendas × Facebook (leitura própria: período + ontem/hoje para o aviso)
+  const [fbData, setFbData] = useState<{ key: string; load: FbGapLoad } | null>(null);
+  const fbRef = useRef<HTMLDivElement>(null);
+  const reloadFb = () => loadSalesFb(r).then((load) => setFbData({ key, load })).catch(() => { /* tenta de novo na próxima */ });
+  useEffect(() => { let alive = true; loadSalesFb(r).then((load) => { if (alive) setFbData({ key, load }); }).catch(() => {}); return () => { alive = false; }; }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -81,6 +88,7 @@ export default function WaTracking() {
     const stop = startVisibleInterval(() => {
       if (busy.current) return;
       busy.current = true;
+      if (alive) reloadFb();
       loadTracking(r)
         .then((load) => { if (alive) setData((cur) => (cur && cur.key === key ? { load, key, at: Date.now() } : cur)); })
         .catch(() => { /* tenta de novo na próxima */ })
@@ -90,7 +98,7 @@ export default function WaTracking() {
   }, [key, live]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Atualizar" do topo: como o "Ao vivo" (período, origem, página e filtros da tabela continuam)
-  useErpRefresh(() => loadTracking(r).then((load) => setData((cur) => (cur && cur.key === key ? { load, key, at: Date.now() } : { load, key, at: Date.now() }))));
+  useErpRefresh(() => Promise.all([reloadFb(), loadTracking(r).then((load) => setData((cur) => (cur && cur.key === key ? { load, key, at: Date.now() } : { load, key, at: Date.now() })))]));
 
   const loading = !data || data.key !== key;
   const bh = useMemo(() => businessHoursOf(data ? data.load.settings : null), [data]);
@@ -103,6 +111,10 @@ export default function WaTracking() {
   const salesTot = useMemo(() => (salesDaily ? salesDaily.reduce((a, x) => ({ n: a.n + x.vendas, v: a.v + x.receita }), { n: 0, v: 0 }) : null), [salesDaily]);
   const originTot = useMemo(() => (daily ? daily.reduce((a, x) => ({ ad: a.ad + x.anuncio, un: a.un + x.nao_rastreada }), { ad: 0, un: 0 }) : null), [daily]);
   const tag = `${r.fromDay}_a_${r.toDay}`;
+  const fbReady = !!fbData && fbData.key === key;
+  const fbGap = useMemo<SalesFbGap | null>(() => (fbReady && fbData ? salesFbGap(fbData.load.sales, fbData.load.conversions, r) : null), [fbReady, fbData, r]);
+  const fbRecent = useMemo(() => (fbData ? recentFbGap(fbData.load.sales, fbData.load.conversions) : null), [fbData]);
+  const seeFbList = () => setTimeout(() => fbRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   const download = (text: string, name: string) => {
     const blob = new Blob([String.fromCharCode(0xfeff) + text], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -123,6 +135,14 @@ export default function WaTracking() {
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>Rastreamento</h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>{br(r.fromDay)} a {br(r.toDay)} · de onde vêm as conversas e quantas viram venda</p>
       </div>
+
+      {/* ERP 11/11: venda de hoje/ontem sem a Compra enviada ao Facebook */}
+      {fbRecent && fbRecent.count > 0 && (
+        <div style={{ ...panel, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: 'rgba(249,115,22,0.08)', borderColor: 'rgba(249,115,22,0.45)', color: ORANGE, fontSize: 13, fontWeight: 600 }} role="alert" data-testid="track-fb-alert">
+          <span>⚠ {fbGapText(fbRecent, fmtMoney)} — hoje e ontem</span>
+          <button type="button" style={{ ...btn, color: ORANGE, border: '1px solid rgba(249,115,22,0.45)' }} onClick={seeFbList} data-testid="track-fb-alert-see">ver lista</button>
+        </div>
+      )}
 
       {/* Topo: dois cartões grandes */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: 12 }}>
@@ -250,6 +270,13 @@ export default function WaTracking() {
         </Card>
       </div>
 
+      {/* ERP 11/11: Vendas — ERP × Facebook */}
+      <div ref={fbRef}>
+        <Card title="Vendas: ERP × Facebook" info={INFO.fb} testId="track-fb">
+          {!fbGap ? <Skeleton h={160} /> : <FbGapBlock gap={fbGap} />}
+        </Card>
+      </div>
+
       {/* Conversas */}
       <div ref={tableRef}>
         <Card title="Conversas" info={INFO.table} testId="track-conversations" right={live && data && !loading ? <LiveBadge at={data.at} /> : undefined}>
@@ -262,6 +289,47 @@ export default function WaTracking() {
       <section style={panel}>
         <WaConversions title="Eventos enviados ao Facebook" startDay={r.fromDay} endDay={r.toDay} />
       </section>
+    </div>
+  );
+}
+
+// ERP 11/11: lado a lado (ERP × Facebook × diferença) e a lista das vendas sem conversão enviada. Só leitura.
+function FbGapBlock({ gap }: { gap: SalesFbGap }) {
+  const th: React.CSSProperties = { textAlign: 'left', padding: '6px 8px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', borderBottom: '1px solid var(--border-main)' };
+  const td: React.CSSProperties = { padding: '8px', fontSize: 13, borderBottom: '1px solid var(--border-main)', color: 'var(--text-primary)' };
+  const n = (x: number, one: string, many: string) => `${fmtInt(x)} ${x === 1 ? one : many}`;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))', gap: 16 }}>
+        <Metric label="Faturamento no ERP" value={fmtMoney(gap.erp.total)} color={GREEN} sub={n(gap.erp.count, 'venda', 'vendas')} testId="track-fb-erp" />
+        <Metric label="Enviado ao Facebook" value={fmtMoney(gap.fb.total)} color={META} sub={n(gap.fb.count, 'compra enviada', 'compras enviadas')} testId="track-fb-sent" />
+        <Metric label="Diferença" value={fmtMoney(gap.diff.total)} color={gap.diff.total > 0 ? ORANGE : undefined} sub={gap.diff.count >= 0 ? `${fmtInt(gap.diff.count)} venda${gap.diff.count === 1 ? '' : 's'} a mais no ERP` : `${fmtInt(-gap.diff.count)} compra${gap.diff.count === -1 ? '' : 's'} a mais no Facebook`} testId="track-fb-diff" />
+      </div>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }} data-testid="track-fb-missing-title">Vendas sem conversão enviada ({fmtInt(gap.missing.length)})</div>
+        {!gap.missing.length ? <EmptyState text="Todas as vendas do período têm a compra enviada ao Facebook." /> : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }} data-testid="track-fb-missing">
+              <thead><tr><th style={th}>Cliente</th><th style={th}>Data</th><th style={th}>Valor</th><th style={th}>Conversa do WhatsApp</th><th style={th} /></tr></thead>
+              <tbody>
+                {gap.missing.map((s) => (
+                  <tr key={s.id} data-testid="track-fb-row">
+                    <td style={td}>{s.customer || 'Cliente'}</td>
+                    <td style={td}>{when(s.t)}</td>
+                    <td style={td}>{fmtMoney(s.total)}</td>
+                    <td style={{ ...td, color: s.hasChat ? GREEN : ORANGE }}>{s.hasChat ? 'ligada' : 'sem conversa — não dá para enviar'}</td>
+                    <td style={td}>{s.openUrl ? (
+                      <a href={s.openUrl} target="_blank" rel="noreferrer" style={{ ...btn, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }} data-testid="track-fb-open" title="Abrir no WhatsApp Web e enviar pelo 📈">
+                        <MessageCircle size={14} /> Abrir conversa
+                      </a>
+                    ) : null}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

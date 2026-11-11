@@ -4343,6 +4343,14 @@
     out.taken = taken.filter((t) => t.event_id !== eventId).map((t) => t.sale_id);
     return out;
   }
+  // 2.17.2: a venda (💰) já tem Compra REAL enviada ao Facebook ligada a ela (mesmo sale_id)? Sem a coluna sale_id:
+  // available: false (o painel pergunta normalmente). Só leitura.
+  async function saleConversion({ saleId }) {
+    if (typeof saleId !== 'string' || !UUID_RE.test(saleId)) throw new Error('Venda inválida');
+    if (!(await linkCols())) return { available: false, exists: false };
+    const rows = await convRest(`${CONV_TABLE}?select=event_id,value,created_at&sale_id=eq.${saleId}&status=eq.enviado&test=eq.false&limit=1`);
+    return rows.length ? { available: true, exists: true, value: Number(rows[0].value) || 0, at: rows[0].created_at } : { available: true, exists: false };
+  }
   // Liga: grava sale_id na compra; preenche wa_chat_id da venda (se vazio) e, se pedido, o telefone (se vazio)
   async function linkSaleToPurchase({ eventId, saleId, phone, fillPhone }) {
     if (!(await linkCols())) throw new Error(LINK_MISSING);
@@ -4421,6 +4429,7 @@
   }
 
   root.WaApi = {
+    saleConversion, // 2.17.2
     radarState, radarConfig, setRadarConfig, radarSnooze, setRadarSnooze, setRadarSnoozeMany, // 2.17.0 (2.17.1: + em lote)
     uploadCatalogImage, saveCatalogSnapshot, catalogSnapshotInfo, checkCatalogSnapshot, // 2.15.3
     lastSaleCustomerName, salePhoneVariants,

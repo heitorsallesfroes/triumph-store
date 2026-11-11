@@ -61,6 +61,8 @@ function fixtures(now: number) {
   activity.push({ chat_id: chat(99), phone: '5511900000099', name: 'Só a loja', first_seen_at: iso(now - 30 * 24 * 60 * MIN), first_message_at: null, last_message_at: iso(now - 30 * 24 * 60 * MIN), last_from: 'loja', last_customer_at: null, is_new_lead: null });
   // vendas: 03 (lead), 15 e 40 (antigas)
   const sales = [3, 15, 40].map((n) => ({ id: `5a1e00${pad(n)}-0000-4000-8000-000000000000`, sale_date: spDay(now), created_at: iso(now - n * MIN), total_sale_price: 100 * n, customer_phone: `55119000000${pad(n)}`, customer_name: `Cliente ${pad(n)}`, wa_chat_id: chat(n), origin: null, status: 'em_separacao' }));
+  // ERP 11/11: venda de balcão de hoje, sem conversa nem telefone (Vendas × Facebook: "sem conversa — não dá para enviar")
+  sales.push({ id: '5a1e0099-0000-4000-8000-000000000000', sale_date: spDay(now), created_at: iso(now - 2 * MIN), total_sale_price: 250, customer_phone: null as unknown as string, customer_name: 'Balcão', wa_chat_id: null as unknown as string, origin: null, status: 'em_separacao' });
   // respostas a envios nossos: 20–30
   const sends: Record<string, unknown>[] = [];
   const replies: Record<string, unknown>[] = [];
@@ -267,6 +269,40 @@ async function main() {
       await ev(`${H} btn('Data do primeiro contato', document.querySelector('[data-testid="track-sales"]')).click(); return true;`);
       check('Vendas: "Data da venda" mostra as 3 vendas do período (R$ 5.800; "Data do primeiro contato" só a do lead novo) e "Baixar relatório de vendas"',
         vOk && /R\$\s5\.800/.test(v.v) && v.rep, JSON.stringify(v));
+    });
+    // ERP 11/11: Vendas × Facebook (só leitura) e o aviso do topo
+    await step('Vendas × Facebook', async () => {
+      const fx = fixtures(now);
+      const today = spDay(now);
+      const fbExp = fx.wa_conversion_events.filter((e) => e.event_name === 'Purchase' && spDay(Date.parse(e.created_at)) === today);
+      const fbTotal = fbExp.reduce((a, e) => a + Number(e.value), 0);
+      const erpTotal = fx.sales.reduce((a, x) => a + Number(x.total_sale_price), 0);
+      const brl = (n: number) => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const fbOk = await waitFor(`${H} return document.querySelectorAll('[data-testid="track-fb-row"]').length === 2;`, 8000);
+      const fb = await ev(`${H} const tv = (id) => txt(document.querySelector('[data-testid="' + id + '-value"]')); const sub = (id) => txt(document.querySelector('[data-testid="' + id + '"]'));
+        return { erp: tv('track-fb-erp'), erpSub: sub('track-fb-erp'), sent: tv('track-fb-sent'), sentSub: sub('track-fb-sent'), diff: tv('track-fb-diff'), diffSub: sub('track-fb-diff'),
+          title: txt(document.querySelector('[data-testid="track-fb-missing-title"]')),
+          rows: [...document.querySelectorAll('[data-testid="track-fb-row"]')].map((tr) => ({ c: txt(tr.cells[0]), v: txt(tr.cells[2]), chat: txt(tr.cells[3]), href: (tr.querySelector('[data-testid="track-fb-open"]') || {}).href || null })),
+          alert: txt(document.querySelector('[data-testid="track-fb-alert"]')) };`);
+      const norm = (x: string) => String(x || '').replace(/\s/g, ' ').replace(/,00\b/g, ''); // o fmtMoney do ERP tira o ,00 acima de mil
+      check('Vendas × Facebook: "Faturamento no ERP" (todas as vendas) e "Enviado ao Facebook" (Compras enviadas, sem teste) lado a lado, com a diferença em R$ e em vendas',
+        fbOk && norm(fb.erp) === norm(`R$ ${brl(erpTotal)}`) && /4 vendas/.test(fb.erpSub) && norm(fb.sent) === norm(`R$ ${brl(fbTotal)}`) && new RegExp(`${fbExp.length} compras enviadas`).test(fb.sentSub)
+          && norm(fb.diff) === norm(`${erpTotal - fbTotal < 0 ? '-' : ''}R$ ${brl(Math.abs(erpTotal - fbTotal))}`) && (4 - fbExp.length >= 0 ? new RegExp(`${4 - fbExp.length} vendas? a mais no ERP`) : new RegExp(`${fbExp.length - 4} compras? a mais no Facebook`)).test(fb.diffSub),
+        JSON.stringify({ fb, erpTotal, fbTotal, n: fbExp.length }));
+      check('Vendas × Facebook: lista "Vendas sem conversão enviada" — Cliente 40 (conversa ligada, "Abrir conversa" no web.whatsapp.com) e o balcão "sem conversa — não dá para enviar"; as com Compra da conversa não entram',
+        fbOk && fb.title === 'Vendas sem conversão enviada (2)' && fb.rows[0].c === 'Balcão' && fb.rows[0].chat === 'sem conversa — não dá para enviar' && !fb.rows[0].href
+          && fb.rows[1].c === 'Cliente 40' && norm(fb.rows[1].v) === 'R$ 4.000' && fb.rows[1].chat === 'ligada' && fb.rows[1].href === 'https://web.whatsapp.com/send?phone=5511900000040',
+        JSON.stringify(fb.rows));
+      check('Aviso no topo do Rastreamento: "⚠ 2 vendas sem conversão enviada (R$ 4.250,00) — hoje e ontem" com "ver lista"',
+        /^⚠ 2 vendas sem conversão enviada \(R\$ 4\.250\) — hoje e ontem/.test(norm(fb.alert)) && /ver lista$/.test(fb.alert), fb.alert);
+      await ev(`${H} document.querySelector('[data-testid="track-fb-alert-see"]').click(); return true;`);
+      await sleep(800);
+      const seen = await ev(`${H} const r = document.querySelector('[data-testid="track-fb"]').getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0;`);
+      check('"ver lista" leva até o bloco Vendas × Facebook', seen === true, String(seen));
+      const writes = await ev(`return (window.__QUERIES || []).filter((q) => q.table === 'sales' || q.table === 'wa_conversion_events').length > 0 && !(window.__WRITES || []).length;`);
+      check('Vendas × Facebook é só leitura (consultas, nada gravado)', writes === true);
+      await shot('rastreamento-vendas-facebook.png');
+      await ev(`window.scrollTo(0, 0); return true;`);
     });
     await step('Conversas: aguardando 1ª resposta e detalhes', async () => {
       await ev(`${H} document.querySelector('[data-testid="track-see-awaiting"]').click(); return true;`);

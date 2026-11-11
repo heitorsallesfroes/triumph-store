@@ -809,6 +809,35 @@ guardada.
 
 ## O que mudou
 
+### 2.17.2 — Não esquecer a compra para o Facebook depois da venda (💰)
+- Logo depois de **"Venda registrada"** aparece, no mesmo lugar: **"📈 Enviar a compra para o Facebook? R$ 734,00"**
+  com **Enviar agora** e **Agora não**.
+- **Enviar agora** usa o mesmo envio do 📈 (função `meta-purchase-event`, intocada): o valor da venda, a mesma
+  conversa, o anúncio salvo da conversa, a mesma trava do telefone e o modo teste do 📈. A compra real fica ligada à
+  venda recém-criada (`sale_id`). Mostra o resultado: "Compra enviada ao Facebook ✓", "já tinha sido enviada" ou o
+  erro com a mensagem (com "Tentar de novo").
+- **Não pergunta** quando a venda já tem compra real enviada ligada a ela (mesmo `sale_id`; inclusive a compra que o
+  formulário da venda ligou, quando o 📈 foi antes do 💰). Se a conversa teve outra compra real nos últimos 7 dias, a
+  pergunta avisa ("Envie só se for outro pedido").
+- **Mais → "Ao salvar venda"**: Perguntar (padrão) / Enviar sempre automático / Não perguntar (neste computador). O
+  automático não envia por cima de outra compra recente da conversa: nesse caso pergunta.
+- Testes: `salefb.test.cjs` e `chrome-real.test.cjs` (pergunta, "Enviar agora" pela função simulada com valor,
+  conversa, anúncio e `sale_id`; configuração em Mais).
+
+### ERP (11/11) — Rastreamento: Vendas × Facebook (só leitura)
+- Bloco **"Vendas: ERP × Facebook"** na aba WhatsApp → Rastreamento, lado a lado: **Faturamento no ERP** (todas as
+  vendas do período, pela data da venda; canceladas/reembolsadas não contam) × **Enviado ao Facebook** (Compras com
+  status enviado, sem testes, no período) e a **diferença** em R$ e em quantidade.
+- Lista **"Vendas sem conversão enviada"** do período: cliente, data, valor, se tem conversa do WhatsApp ligada
+  (`wa_chat_id`) e **Abrir conversa** (web.whatsapp.com) para enviar pelo 📈. Sem conversa ligada: "sem conversa — não
+  dá para enviar". Venda com conversão = Compra real ligada a ela (`sale_id`) ou, sem ligação, Compra real da mesma
+  conversa até 7 dias antes/depois (cada Compra cobre uma venda só).
+- **Aviso no topo** quando há venda de hoje/ontem sem conversão: "⚠ 2 vendas sem conversão enviada (R$ 1.200) — hoje e
+  ontem", com "ver lista".
+- Só leitura: o ERP não envia nada ao Facebook. Contas em `src/lib/waTracking.ts` (`salesFbGap`, `recentFbGap`),
+  leitura em `src/lib/waTrackingDb.ts` (`loadSalesFb`). Testes: `scripts/tests/waTracking.test.ts` e
+  `scripts/tests/waChrome.test.ts` (Chrome real, 20/20).
+
 ### 2.17.1 — Radar só daqui pra frente e contando as etiquetas do WhatsApp
 - **Por quê**: na 2.17.0 o Radar mostrou 115 conversas, muitas antigas e muitas de clientes que já têm etiqueta do
   WhatsApp (ex.: "Cliente").

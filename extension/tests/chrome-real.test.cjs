@@ -206,6 +206,12 @@ async function main() {
       }
       // 2.16.9: arquivo de uma mensagem rápida (o conteúdo não importa: a ponte falsa não abre)
       if (fake.files && method === 'GET' && url.pathname.startsWith('/storage/v1/object/public/wa-media/')) return [200, 'imagem de teste'];
+      // 2.17.2: função meta-purchase-event falsa: guarda o pedido e cria a linha em wa_conversion_events (como a de verdade)
+      if (fake.meta && url.pathname === '/functions/v1/meta-purchase-event' && method === 'POST') {
+        fake.metaCalls = [...(fake.metaCalls || []), body];
+        if (body && body.event_id) fake.events.push({ event_id: body.event_id, chat_id: body.chat_id, contact_name: body.contact_name, value: body.value, test: !!body.test, status: 'enviado', error: null, created_at: new Date().toISOString(), event_name: 'Purchase', sale_id: null });
+        return [200, { ok: true, events_received: 1, duplicate: false, method: 'chat', test: !!(body && body.test) }];
+      }
       if (!url.pathname.startsWith('/rest/v1/')) return null;
       const table = url.pathname.slice('/rest/v1/'.length);
       if (fake.fail && fake.fail[table] > 0) { fake.fail[table]--; fake.failed = (fake.failed || 0) + 1; return [503, { message: 'Service Unavailable' }]; } // 2.12.1
@@ -1200,6 +1206,23 @@ async function main() {
       && row.payment_status === 'a_cobrar' && row.delivery_notes === 'Deixar na portaria' && row.wa_chat_id === CH && row.origin === 'anuncio' && row.ad_title === 'Relógio Promo' && !('wa_warranty_months' in row)
       && JSON.stringify(items) === JSON.stringify([['A', 1, 499.9, 199.5, 499.9], ['B', 2, 59.9, 12.5, 119.8]]) && /pagina=historico/.test(openErp || ''),
       JSON.stringify({ saved, row, items, openErp, msg: await q(`return (sh.querySelector('.vd-msg') || {}).textContent || '';`) }));
+    // 2.17.2: logo depois de "Venda registrada": "Enviar a compra para o Facebook? R$ 619,70" → "Enviar agora" usa o
+    // envio do 📈 (mesmo valor, mesma conversa) e liga a compra à venda recém-criada (sale_id)
+    fake.meta = true;
+    fake.metaCalls = [];
+    const fbAsk = await waitFor(`const b = sh.querySelector('.vtab .vd-fb.st-ask'); return !!b && /Enviar a compra para o Facebook\\? R\\$\\s619,70/.test(b.textContent);`, 10000);
+    const fbAskTxt = await q(`const b = sh.querySelector('.vtab .vd-fb'); return b ? { t: b.textContent, btns: [...b.querySelectorAll('button')].map((x) => x.textContent) } : null;`);
+    await shotQB('venda-facebook-pergunta.png');
+    await q(`[...sh.querySelectorAll('.vtab .vd-fb button')].find((x) => x.textContent === 'Enviar agora').click(); return true;`);
+    const fbSent = await waitFor(`const b = sh.querySelector('.vtab .vd-fb.st-sent'); return !!b && /Compra enviada ao Facebook ✓/.test(b.textContent);`, 15000);
+    const fbCall = (fake.metaCalls || [])[0] || {};
+    const fbEv = fake.events.find((x) => x.event_id === fbCall.event_id) || {};
+    check('2.17.2: depois de "Venda registrada" pergunta "Enviar a compra para o Facebook? R$ 619,70" (Enviar agora / Agora não); "Enviar agora" manda pelo 📈 com o valor da venda, a conversa e o anúncio, e liga a compra à venda (sale_id)',
+      fbAsk && !!fbAskTxt && JSON.stringify(fbAskTxt.btns) === JSON.stringify(['Enviar agora', 'Agora não']) && fbSent && fake.metaCalls.length === 1 && fbCall.value === 619.7 && fbCall.chat_id === CH
+      && fbCall.test === false && !!fbCall.ad && fbCall.ad.title === 'Relógio Promo' && fbEv.sale_id === row.id,
+      JSON.stringify({ fbAsk, fbAskTxt, fbSent, fbCall, fbEv: { sale_id: fbEv.sale_id }, saleId: row.id }));
+    await shotQB('venda-facebook-enviado.png');
+    fake.meta = false;
     // 2.13.3: o nome da conversa vira o primeiro nome do cliente da venda ("Maria Souza" → "Maria"), origem "da venda"
     const cnRows = (fake.db.wa_chat_names || []).filter((x) => x.chat_id === CH);
     const cnPanel = await waitFor(`return (sh.querySelector('.cname .cname-src') || {}).textContent === 'da venda';`, 6000);
@@ -1232,6 +1255,16 @@ async function main() {
     await pg('window.__fakeBridge = null; return true;');
     fake.on = false;
     fake.generic = false;
+    // 2.17.2: Mais → "Ao salvar venda: perguntar (padrão) / enviar sempre automático / não perguntar"
+    await q(`sh.querySelector('.pmore').click(); await wait(200); sh.querySelector('.pvfb').click(); await wait(300); return true;`);
+    const fbCfg = await q(`const d = sh.querySelector('.vfb'); return d ? { opts: [...d.querySelectorAll('label')].map((x) => x.textContent.trim()), sel: (d.querySelector('input:checked') || {}).value } : null;`);
+    await q(`sh.querySelector('.vfb input[value="auto"]').click(); await wait(200); return true;`);
+    const fbStored = await inExt(`new Promise((r) => chrome.storage.local.get('saleFbMode', (x) => r(x.saleFbMode || null)))`);
+    const fbLbl = await q(`return sh.querySelector('.pvfb span').textContent;`);
+    await q(`sh.querySelector('.vfb input[value="ask"]').click(); await wait(150); [...sh.querySelectorAll('.vfb button')].find((b) => b.textContent === 'Fechar').click(); return true;`);
+    check('2.17.2: Mais → "Ao salvar venda": perguntar (padrão) / enviar sempre automático / não perguntar, guardado',
+      !!fbCfg && JSON.stringify(fbCfg.opts) === JSON.stringify(['Perguntar (padrão)', 'Enviar sempre automático', 'Não perguntar']) && fbCfg.sel === 'ask' && fbStored === 'auto' && fbLbl === 'Ao salvar venda: enviar sempre',
+      JSON.stringify({ fbCfg, fbStored, fbLbl }));
     check('nenhum erro no console na venda pelo WhatsApp', errors.length === 0, errors.slice(0, 8).join(' | '));
 
     // 11. "só daqui pra frente" à prova de falhas para etiquetas do WhatsApp (2.12.5): ao ligar, TODAS as conversas da

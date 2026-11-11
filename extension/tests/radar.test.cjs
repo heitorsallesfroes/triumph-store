@@ -256,7 +256,7 @@ test('painel: a cada 5 min no horário geral, popup, contador no ícone, Mais �
   assert.ok(c.includes('radarPopup.append(top, radarAllBtn(), list);') && c.includes('allWrap.append(radarAllBtn())'), 'no popup e na seção');
   assert.ok(c.includes('Ligado desde'));
   assert.ok(src('background.js').includes('setRadarSnoozeMany:'));
-  assert.strictEqual(JSON.parse(src('manifest.json')).version, '2.17.1');
+  assert.ok(/^2\.(17\.[1-9]\d*|(1[8-9]|[2-9]\d)\.\d+)$/.test(JSON.parse(src('manifest.json')).version), 'versão 2.17.1 ou depois');
 });
 
 (async () => {

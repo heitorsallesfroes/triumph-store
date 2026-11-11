@@ -1491,6 +1491,11 @@
       .rdg-since { font-size: var(--fs-2); font-weight: 600; }
       .rr-all { align-self: flex-start; margin-top: 0; }
       .rr-all.rr-arm { border-color: #e5484d; color: #e5484d; }
+      .vd-fb { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+      .vd-fb .vd-fb-t { font-weight: 600; }
+      .vd-fb .vd-fb-t.err { color: #e5484d; }
+      .vd-fb .ed-add { margin: 0; }
+      .vfb { width: min(460px, calc(100vw - 32px)); }
       .rdg-cfg { display: flex; flex-direction: column; gap: var(--s-2); }
       .rdg-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
       .rdg-h { width: auto; }
@@ -12419,11 +12424,12 @@
         return;
       }
       chatNameFromSaleResult(f.chatId, res && res.chatName); // 2.13.3
-      if (f.linkEventId) call('linkSaleToPurchase', { eventId: f.linkEventId, saleId: res.id, fillPhone: false }).then(() => cv.links.delete(f.linkEventId)).catch(() => {}); // 2.10.5
-      vs.done = { id: res.id, total: res.total, tinyFailed: res.tinyFailed, after: null };
+      const linkP = f.linkEventId ? call('linkSaleToPurchase', { eventId: f.linkEventId, saleId: res.id, fillPhone: false }).then(() => cv.links.delete(f.linkEventId)).catch(() => {}) : Promise.resolve(); // 2.10.5
+      vs.done = { id: res.id, total: res.total, tinyFailed: res.tinyFailed, after: null, fb: null };
       vs.view = 'done';
       vs.busy = false;
       renderVendas();
+      saleFbStart(f, vs.done, linkP); // 2.17.2: compra para o Facebook logo depois da venda
       // 2.12.4: só agora (venda gravada) as escolhas de "Ao registrar a venda", cada parte com o seu resultado
       const done = vs.done;
       done.after = await applySaleAfter(f);
@@ -12535,6 +12541,8 @@
     const sec = el('section', 'crmsec');
     sec.append(el('div', 'wt-head', 'VENDA REGISTRADA'));
     sec.append(el('div', 'fw-test vd-done', `Venda registrada (Em separação). Finalize no ERP. Total ${TS.money(vs.done.total)}.`));
+    const fbBox = saleFbBox(vs.done); // 2.17.2
+    if (fbBox) sec.append(fbBox);
     const url = erpLink({ pagina: 'historico', venda: vs.done.id });
     if (url) sec.append(erpAnchor('Abrir esta venda no ERP', url, 'bbtn primary vd-open'));
     else sec.append(el('div', 'crm-intro', 'No ERP: Histórico de Vendas.'));
@@ -12555,6 +12563,128 @@
     sec.append(fbtn('bbtn', 'Gerar mensagem do entregador', () => openCourier()), fbtn('bbtn', 'Voltar', () => { vs.view = 'list'; loadChatSales(); }));
     vtabEl.append(sec);
   }
+
+  // ── 2.17.2: compra para o Facebook logo depois de salvar a venda (💰) ──
+  // Pergunta "Enviar a compra para o Facebook? R$ 734,00" (ou envia sozinho / não pergunta, conforme Mais → "Ao salvar
+  // venda"). O envio é o MESMO do 📈 (sendPurchaseEvent: mesmo valor da venda, mesma conversa, o anúncio salvo da
+  // conversa, o modo teste do 📈) e a compra real fica ligada à venda recém-criada (sale_id). Se a venda já tem
+  // compra enviada (mesmo sale_id), não pergunta. Escolha guardada neste computador (chrome.storage.local).
+  const SALE_FB_KEY = 'saleFbMode';
+  const SALE_FB_MODES = [['ask', 'Perguntar (padrão)'], ['auto', 'Enviar sempre automático'], ['off', 'Não perguntar']];
+  let saleFbMode = 'ask';
+  try { chrome.storage.local.get([SALE_FB_KEY], (r) => { const v = r && r[SALE_FB_KEY]; if (SALE_FB_MODES.some(([k]) => k === v)) saleFbMode = v; }); } catch { /* extensão recarregada */ }
+  const saleFbRender = (done) => { if (vs.done === done && vs.view === 'done') renderVendas(); };
+  async function saleFbStart(f, done, linkP) {
+    const mode = saleFbMode;
+    const value = Math.round(Number(done.total) * 100) / 100;
+    done.f = f;
+    if (mode === 'off' || !f.chatId || !(value > 0 && value <= 100000)) return;
+    done.fb = { state: 'checking', value };
+    saleFbRender(done);
+    await linkP; // a compra que a venda ligou (📈 antes do 💰) já conta
+    const [has, recent] = await Promise.all([
+      call('saleConversion', { saleId: done.id }).catch(() => null),
+      call('recentConversion', { chatId: f.chatId }).catch(() => null),
+    ]);
+    if (has && has.exists) { done.fb = { state: 'had', value }; saleFbRender(done); return; }
+    done.fb = { state: 'ask', value, recent: recent && recent.exists ? recent : null };
+    // automático: só quando não há outra compra real recente desta conversa (aí pergunta, para não contar duas vezes)
+    if (mode === 'auto' && !done.fb.recent) { await saleFbSend(f, done); return; }
+    saleFbRender(done);
+  }
+  async function saleFbSend(f, done) {
+    const value = done.fb.value;
+    done.fb = { ...done.fb, state: 'sending' };
+    saleFbRender(done);
+    const fail = (msg) => { done.fb = { ...done.fb, state: 'error', msg }; saleFbRender(done); };
+    try {
+      const phone = String(f.customer_phone || '').replace(/\D/g, '') || (/^\d+@c\.us$/.test(f.chatId) ? f.chatId.split('@')[0] : '');
+      const lock = await phoneLock(f.chatId, phone); // 2.6.3: o telefone tem que ser desta conversa (a mesma trava do 📈)
+      if (lock) { fail(lock); return; }
+      const saved = await call('getAdAttribution', { chatId: f.chatId }).catch(() => null);
+      const ad = saved && saved.row ? adFromAttribution(saved.row) : null;
+      const eventId = crypto.randomUUID();
+      const test = !!cv.test;
+      const r = await call('sendPurchaseEvent', { event: {
+        event_id: eventId, chat_id: f.chatId, phone, contact_name: f.customer_name || '', value, event_time: Math.floor(Date.now() / 1000), description: '', test,
+        ad: ad ? { title: ad.title, source_id: ad.sourceId, source_app: ad.platform || ad.sourceApp, conversion_source: ad.conversionSource || null, ctwa_clid: ad.ctwaClid || null } : null,
+      } });
+      let linkErr = null;
+      if (!test && !r.duplicate) { try { await call('linkSaleToPurchase', { eventId, saleId: done.id, fillPhone: false }); } catch (e) { linkErr = e.message; } }
+      done.fb = { ...done.fb, state: r.duplicate ? 'dup' : 'sent', n: r.events_received, test: !!r.test, linkErr };
+      saleFbRender(done);
+    } catch (e) {
+      fail(e.message);
+    }
+  }
+  function saleFbBox(done) {
+    const fb = done && done.fb;
+    if (!fb) return null;
+    const box = el('div', `fw-test vd-fb st-${fb.state}`);
+    box.setAttribute('role', 'status');
+    const money = TS.money(fb.value);
+    if (fb.state === 'checking') box.append(el('div', 'lt-none loading', 'Conferindo a compra para o Facebook…'));
+    else if (fb.state === 'had') box.append(el('div', 'vd-fb-t', `📈 A compra desta venda já foi enviada ao Facebook (${money}).`));
+    else if (fb.state === 'ask') {
+      box.append(el('div', 'vd-fb-t', `📈 Enviar a compra para o Facebook? ${money}`));
+      if (fb.recent) box.append(el('div', 'ed-note', `Atenção: já foi enviada uma compra de ${TS.money(fb.recent.value)} em ${dmHm(fb.recent.at)} nesta conversa. Envie só se for outro pedido.`));
+      if (cv.test) box.append(el('div', 'ed-note', 'Modo teste do 📈 ligado: vai como teste.'));
+      const row = el('div', 'ed-add');
+      row.append(fbtn('bbtn primary vd-fb-go', 'Enviar agora', () => saleFbSend(done.f || {}, done)), fbtn('bbtn vd-fb-no', 'Agora não', () => { done.fb = null; saleFbRender(done); }));
+      box.append(row);
+    } else if (fb.state === 'sending') box.append(el('div', 'lt-none loading', `Enviando a compra (${money}) para o Facebook…`));
+    else if (fb.state === 'sent') {
+      box.append(el('div', 'vd-fb-t', `📈 Compra enviada ao Facebook ✓ ${money}${fb.test ? ' · modo teste' : ''} (o Facebook recebeu ${fb.n} evento${fb.n === 1 ? '' : 's'})`));
+      if (fb.linkErr) box.append(el('div', 'ed-note', `Não consegui ligar a compra à venda: ${fb.linkErr}`));
+    } else if (fb.state === 'dup') box.append(el('div', 'vd-fb-t', `📈 Essa compra já tinha sido enviada (não mandei de novo).`));
+    else if (fb.state === 'error') {
+      box.append(el('div', 'vd-fb-t err', `📈 Não consegui enviar a compra: ${fb.msg}`));
+      box.append(fbtn('bbtn vd-fb-go', 'Tentar de novo', () => saleFbSend(done.f || {}, done)));
+    }
+    return box;
+  }
+  // Mais → "Ao salvar venda"
+  function openSaleFbConfig() {
+    setMoreOpen(false);
+    shadow.querySelectorAll('.pdg-bg').forEach((x) => x.remove());
+    const bg = el('div', 'pdg-bg');
+    const box = el('div', 'pdg vfb');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Ao salvar venda');
+    box.append(el('div', 'pdg-h', 'Ao salvar venda (💰): compra para o Facebook'));
+    box.append(el('div', 'pdg-msg', 'Depois de "Venda registrada", a compra (Purchase) vai pelo mesmo envio do 📈, com o valor da venda, e fica ligada a ela. Venda que já tem compra enviada não pergunta. Vale neste computador.'));
+    const msg = el('div', 'pdg-msg');
+    SALE_FB_MODES.forEach(([k, label]) => {
+      const l = el('label', 'rdg-row');
+      const i = el('input');
+      i.type = 'radio';
+      i.name = 'vfb-mode';
+      i.value = k;
+      i.checked = saleFbMode === k;
+      i.addEventListener('change', () => { if (!i.checked) return; saleFbMode = k; storageSet({ [SALE_FB_KEY]: k }); msg.textContent = 'Salvo.'; pvfbTxt.textContent = saleFbLabel(); });
+      l.append(i, ` ${label}`);
+      box.append(l);
+    });
+    const close = el('button', 'btn', 'Fechar');
+    close.type = 'button';
+    const shut = () => bg.remove();
+    close.addEventListener('click', shut);
+    bg.addEventListener('click', (e) => { if (e.target === bg) shut(); });
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); shut(); } });
+    box.append(msg, close);
+    bg.append(box);
+    root.append(bg);
+  }
+  const saleFbLabel = () => `Ao salvar venda: ${{ ask: 'perguntar', auto: 'enviar sempre', off: 'não perguntar' }[saleFbMode]}`;
+  const pvfbBtn = el('button', 'pvfb');
+  pvfbBtn.type = 'button';
+  pvfbBtn.title = 'Depois de salvar a venda (💰): perguntar, enviar sozinho ou não perguntar a compra para o Facebook';
+  pvfbBtn.innerHTML = svg('trend');
+  const pvfbTxt = el('span', '', saleFbLabel());
+  pvfbBtn.append(pvfbTxt);
+  pmenuEl.insertBefore(pvfbBtn, pmenuEl.querySelector('.pmaint'));
+  pvfbBtn.addEventListener('click', () => openSaleFbConfig());
+  setTimeout(() => { pvfbTxt.textContent = saleFbLabel(); }, 500); // depois de ler a escolha salva
 
   // ── Mensagem do entregador (só monta o texto; enviar é um clique). 2.12.3: sem a linha de horário ──
   async function openCourier() {

@@ -508,6 +508,46 @@ test('anúncio da conversa: título, origem, miniatura, Ver criativo e Gerenciad
   assert.equal(adBadgeTitle({ ad: false, adTitle: null }), '');
 });
 
+// ERP 11/11: Vendas × Facebook (só leitura)
+test('Vendas × Facebook: faturamento do ERP × Compras enviadas (sem teste), diferença e as vendas sem conversão', () => {
+  const { salesFbGap, recentFbGap, fbGapText, waWebUrl } = tracking;
+  const C1 = '5511911112222@c.us'; const C2 = '5511933334444@c.us'; const CL = '777@lid';
+  const sale = (id: string, at: string, total: number, extra: Record<string, unknown> = {}) => ({ id, sale_date: at.slice(0, 10), created_at: sp(at), total_sale_price: total, customer_phone: null, customer_name: `Cliente ${id}`, wa_chat_id: null, ...extra });
+  const conv = (at: string, value: number | null, extra: Record<string, unknown> = {}) => ({ chat_id: C1, error: null, value, test: false, status: 'enviado', created_at: sp(at), event_name: value == null ? 'Contact' : 'Purchase', sale_id: null, ...extra });
+  const sales = [
+    sale('s1', '2026-11-05T10:00:00', 734, { wa_chat_id: C1, customer_phone: '11911112222' }), // ligada pelo sale_id
+    sale('s2', '2026-11-05T11:00:00', 500, { wa_chat_id: C2 }), // Compra da mesma conversa, sem ligação, 1 dia depois
+    sale('s3', '2026-11-06T09:00:00', 466, { wa_chat_id: CL, customer_phone: '(11) 95555-6666' }), // sem Compra (só teste e falhou)
+    sale('s4', '2026-11-04T09:00:00', 250), // balcão: sem conversa
+    sale('s5', '2026-10-20T09:00:00', 999, { wa_chat_id: C1 }), // fora do período
+  ];
+  const conversions = [
+    conv('2026-11-05T10:05:00', 734, { sale_id: 's1' }),
+    conv('2026-11-06T11:00:00', 500, { chat_id: C2 }),
+    conv('2026-11-06T09:10:00', 466, { chat_id: CL, test: true }),
+    conv('2026-11-06T09:20:00', 466, { chat_id: CL, status: 'falhou' }),
+    conv('2026-11-06T09:30:00', null, { chat_id: CL }), // Contato não é Compra
+    conv('2026-10-20T09:10:00', 999, { chat_id: C1 }), // fora do período (não soma no Facebook)
+  ];
+  const g = salesFbGap(sales, conversions, R);
+  assert.deepEqual([g.erp, g.fb, g.diff], [{ count: 4, total: 1950 }, { count: 2, total: 1234 }, { total: 716, count: 2 }]);
+  assert.deepEqual(g.missing.map((x) => [x.id, x.total, x.hasChat, x.openUrl]), [
+    ['s3', 466, true, 'https://web.whatsapp.com/send?phone=5511955556666'], // @lid: pelo telefone da venda
+    ['s4', 250, false, null], // sem conversa — não dá para enviar
+  ]);
+  // a Compra da mesma conversa cobre UMA venda só (a mais próxima) e só até 7 dias
+  const two = salesFbGap([sale('a', '2026-11-02T10:00:00', 100, { wa_chat_id: C2 }), sale('b', '2026-11-05T10:00:00', 200, { wa_chat_id: C2 })], [conv('2026-11-05T12:00:00', 200, { chat_id: C2 })], R);
+  assert.deepEqual(two.missing.map((x) => x.id), ['a']);
+  const far = salesFbGap([sale('a', '2026-11-05T10:00:00', 100, { wa_chat_id: C2 })], [conv('2026-10-25T10:00:00', 100, { chat_id: C2 })], R);
+  assert.deepEqual(far.missing.map((x) => x.id), ['a'], 'Compra de mais de 7 dias antes não cobre');
+  // aviso do topo: só hoje e ontem (06/11 e 05/11) — s3 (hoje, sem Compra); s1/s2 cobertas; s4 é de 04/11
+  assert.deepEqual(recentFbGap(sales, conversions, NOW), { count: 1, total: 466 });
+  assert.equal(fbGapText({ count: 2, total: 1200 }, (n) => `R$ ${n}`), '2 vendas sem conversão enviada (R$ 1200)');
+  assert.equal(fbGapText({ count: 1, total: 466 }, (n) => `R$ ${n}`), '1 venda sem conversão enviada (R$ 466)');
+  assert.equal(waWebUrl('5511911112222@c.us', null), 'https://web.whatsapp.com/send?phone=5511911112222');
+  assert.equal(waWebUrl(null, null), null);
+});
+
 let ok = 0;
 for (const [name, fn] of tests) {
   try { fn(); ok++; console.log(`ok   ${name}`); } catch (e) { console.log(`FAIL ${name}\n     ${(e as Error).message.split('\n').slice(0, 8).join('\n     ')}`); process.exitCode = 1; }

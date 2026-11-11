@@ -170,6 +170,7 @@ const HANDLERS = {
   metaContactConfig:     ()  => WaApi.metaContactConfig(),
   setMetaContactConfig:  (m) => WaApi.setMetaContactConfig({ on: m.on, test: m.test }),
   chatContactInfo:       (m) => WaApi.chatContactInfo({ chatId: m.chatId }),
+  saleConversion:        (m) => WaApi.saleConversion({ saleId: m.saleId }), // 2.17.2: a venda já tem Compra enviada?
   // 2.17.0: Radar (só leitura de etiquetas/percursos; config e silenciados em system_config)
   radarState:            (m) => WaApi.radarState({ chats: m.chats }),
   radarConfig:           ()  => WaApi.radarConfig(),

@@ -632,3 +632,72 @@ export function trackingWindow(r: Range, now = Date.now()) {
     until: Math.max(r.to, now), // respostas, envios e vendas depois do período ainda contam para as conversas dele
   };
 }
+
+// ── ERP 11/11: Vendas × Facebook (só leitura; nada é enviado ao Facebook pelo ERP) ──
+// "Faturamento no ERP" = todas as vendas do período (não canceladas/reembolsadas), pela data da venda.
+// "Enviado ao Facebook" = Compras (Purchase) enviadas (status enviado, sem testes), pela data do envio.
+// Venda COM conversão: uma Compra real enviada ligada a ela (sale_id) ou, sem ligação, uma Compra real da MESMA
+// conversa (wa_chat_id) enviada até 7 dias antes/depois da venda (cada Compra cobre uma venda só, a mais próxima).
+export interface FbGapSale {
+  id: string; t: number; total: number; customer: string | null; chatId: string | null; phone: string | null;
+  hasChat: boolean; openUrl: string | null;
+}
+export interface SalesFbGap {
+  erp: { count: number; total: number };
+  fb: { count: number; total: number };
+  diff: { total: number; count: number };
+  missing: FbGapSale[];
+}
+const FB_MATCH_MS = 7 * DAY_MS;
+const realPurchase = (c: TrackConversionRow) => c.status === 'enviado' && !c.test && eventKind(c) === 'Compra';
+// web.whatsapp.com para abrir a conversa e enviar pelo 📈: pelo número do @c.us ou o telefone da venda
+export function waWebUrl(chatId: string | null | undefined, phone: string | null | undefined): string | null {
+  const m = /^(\d{8,15})@c\.us$/.exec(String(chatId ?? ''));
+  const d = m ? m[1] : (normalizePhone(phone) || String(phone ?? '').replace(/\D/g, ''));
+  return /^\d{8,15}$/.test(d) ? `https://web.whatsapp.com/send?phone=${d}` : null;
+}
+// vendas cobertas por uma Compra real (por sale_id ou pela conversa)
+export function coveredSales(sales: TrackSaleRow[], conversions: TrackConversionRow[]): Set<string> {
+  const covered = new Set<string>();
+  const ids = new Set(sales.map((s) => s.id));
+  const purchases = conversions.filter(realPurchase);
+  purchases.forEach((c) => { if (c.sale_id && ids.has(c.sale_id)) covered.add(c.sale_id); });
+  const free = purchases.filter((c) => !c.sale_id && c.chat_id).map((c) => ({ chat: c.chat_id as string, t: ts(c.created_at) })).filter((c) => Number.isFinite(c.t));
+  const pending = sales.filter((s) => !covered.has(s.id) && s.wa_chat_id).map((s) => ({ s, t: saleTime(s) })).filter((x) => Number.isFinite(x.t)).sort((a, b) => a.t - b.t);
+  for (const p of free.sort((a, b) => a.t - b.t)) {
+    let best: { s: TrackSaleRow; t: number } | null = null;
+    for (const x of pending) {
+      if (covered.has(x.s.id) || x.s.wa_chat_id !== p.chat || Math.abs(x.t - p.t) > FB_MATCH_MS) continue;
+      if (!best || Math.abs(x.t - p.t) < Math.abs(best.t - p.t)) best = x;
+    }
+    if (best) covered.add(best.s.id);
+  }
+  return covered;
+}
+export function salesFbGap(sales: TrackSaleRow[], conversions: TrackConversionRow[], r: Pick<Range, 'from' | 'to'>): SalesFbGap {
+  const inP = sales.filter((s) => inRange(saleTime(s), r));
+  const covered = coveredSales(sales, conversions);
+  const purchases = conversions.filter((c) => realPurchase(c) && inRange(ts(c.created_at), r));
+  const erp = { count: inP.length, total: money2(inP.reduce((a, s) => a + (Number(s.total_sale_price) || 0), 0)) };
+  const fb = { count: purchases.length, total: money2(purchases.reduce((a, c) => a + (Number(c.value) || 0), 0)) };
+  const missing = inP.filter((s) => !covered.has(s.id)).map((s) => {
+    const chatId = s.wa_chat_id || null;
+    return { id: s.id, t: saleTime(s), total: money2(Number(s.total_sale_price) || 0), customer: s.customer_name || null, chatId, phone: s.customer_phone || null,
+      hasChat: !!chatId, openUrl: chatId ? waWebUrl(chatId, s.customer_phone) : null };
+  }).sort((a, b) => b.t - a.t);
+  return { erp, fb, diff: { total: money2(erp.total - fb.total), count: erp.count - fb.count }, missing };
+}
+// Aviso do topo: vendas de HOJE e ONTEM (SP) sem conversão enviada
+export function recentFbGap(sales: TrackSaleRow[], conversions: TrackConversionRow[], now = Date.now()): { count: number; total: number } {
+  const today = spDay(now);
+  const r = { from: spStartOfDay(addDays(today, -1)), to: spStartOfDay(today) + DAY_MS - 1 };
+  const g = salesFbGap(sales, conversions, r);
+  return { count: g.missing.length, total: money2(g.missing.reduce((a, s) => a + s.total, 0)) };
+}
+// "2 vendas sem conversão enviada (R$ 1.200,00)"
+export const fbGapText = (g: { count: number; total: number }, money: (n: number) => string) => `${g.count} venda${g.count === 1 ? '' : 's'} sem conversão enviada (${money(g.total)})`;
+// janela da leitura: o período (e ontem/hoje para o aviso) + 8 dias antes para achar a Compra da mesma conversa
+export function fbGapWindow(r: Pick<Range, 'from' | 'to'>, now = Date.now()) {
+  const from = Math.min(r.from, spStartOfDay(addDays(spDay(now), -1)));
+  return { salesFrom: from, salesTo: Math.max(r.to, now), convFrom: from - 8 * DAY_MS, convTo: Math.max(r.to, now) + 8 * DAY_MS };
+}
