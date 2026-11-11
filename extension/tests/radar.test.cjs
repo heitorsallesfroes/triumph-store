@@ -37,18 +37,23 @@ test('regra: só parada há mais de 2 h, nos 7 dias, sem etiqueta CRM e sem perc
     chat(4), // tem etiqueta CRM
     chat(5), // percurso ativo
     chat(6, { name: 'Meu Número Pessoal' }), // minha conversa de teste
-    chat(7, { labels: ['9'] }), // etiqueta do WhatsApp "Motoboy" tira do radar
+    chat(7, { labels: ['9'] }), // etiqueta do WhatsApp (ex.: "Cliente") é destino (2.17.1)
     chat(8), // só etiqueta "Novo" (conta como sem destino) → entra
     chat(9, { id: '123@g.us' }), // grupo
     chat(10, { t: S - 26 * H, fromMe: true }), // entra (minha mensagem por último)
   ];
   const db = { [chat(4).id]: { crmLabelIds: [FU], active: false }, [chat(5).id]: { crmLabelIds: [], active: true }, [chat(8).id]: { crmLabelIds: [NOVO], active: false } };
-  const out = plain(E.radarPick({ chats, db, config: { on: true, hours: 2, crmAsNone: [NOVO], waExclude: ['9'] }, snooze: {}, nowMs: NOW }));
+  const out = plain(E.radarPick({ chats, db, config: { on: true, hours: 2, crmAsNone: [NOVO], waAsNone: [] }, snooze: {}, nowMs: NOW }));
   assert.deepStrictEqual(out.map((c) => c.name), ['Cliente 1', 'Cliente 8', 'Cliente 10']);
   assert.strictEqual(out[0].idleS, 3 * H);
   // sem "Novo" como sem destino, o 8 sai; tempo de 4 h: o 1 e o 8 (3 h) saem
-  assert.deepStrictEqual(plain(E.radarPick({ chats, db, config: { on: true, hours: 2, crmAsNone: [], waExclude: ['9'] }, snooze: {}, nowMs: NOW })).map((c) => c.name), ['Cliente 1', 'Cliente 10']);
-  assert.deepStrictEqual(plain(E.radarPick({ chats, db, config: { on: true, hours: 4, crmAsNone: [NOVO], waExclude: [] }, snooze: {}, nowMs: NOW })).map((c) => c.name), ['Cliente 10']);
+  assert.deepStrictEqual(plain(E.radarPick({ chats, db, config: { on: true, hours: 2, crmAsNone: [], waAsNone: [] }, snooze: {}, nowMs: NOW })).map((c) => c.name), ['Cliente 1', 'Cliente 10']);
+  assert.deepStrictEqual(plain(E.radarPick({ chats, db, config: { on: true, hours: 4, crmAsNone: [NOVO], waAsNone: [] }, snooze: {}, nowMs: NOW })).map((c) => c.name), ['Cliente 10']);
+  // 2.17.1: etiqueta do WhatsApp marcada como "não conta" → o 7 entra de novo
+  assert.deepStrictEqual(plain(E.radarPick({ chats, db, config: { on: true, hours: 2, crmAsNone: [NOVO], waAsNone: ['9'] }, snooze: {}, nowMs: NOW })).map((c) => c.name), ['Cliente 1', 'Cliente 7', 'Cliente 8', 'Cliente 10']);
+  // 2.17.1: só daqui pra frente — ligado há 2,5 h: só entram as com a última mensagem depois disso (nenhuma das de 3 h/26 h)
+  assert.deepStrictEqual(plain(E.radarPick({ chats, db, config: { on: true, since: new Date(NOW - 2.5 * H * 1000).toISOString(), hours: 2, crmAsNone: [NOVO], waAsNone: [] }, snooze: {}, nowMs: NOW })).map((c) => c.name), []);
+  assert.deepStrictEqual(plain(E.radarPick({ chats, db, config: { on: true, since: new Date(NOW - 4 * H * 1000).toISOString(), hours: 2, crmAsNone: [NOVO], waAsNone: [] }, snooze: {}, nowMs: NOW })).map((c) => c.name), ['Cliente 1', 'Cliente 8']);
   // desligado / banco ilegível: ninguém
   assert.strictEqual(E.radarPick({ chats, db, config: { on: false }, snooze: {}, nowMs: NOW }).length, 0);
   assert.strictEqual(E.radarPick({ chats, db: null, config: { on: true, hours: 2 }, snooze: {}, nowMs: NOW }).length, 0);
@@ -56,7 +61,7 @@ test('regra: só parada há mais de 2 h, nos 7 dias, sem etiqueta CRM e sem perc
 
 test('"Não precisa" silencia até chegar mensagem nova; "Lembrar em 1 h" volta depois da hora', () => {
   const c = chat(1);
-  const cfg = { on: true, hours: 2, crmAsNone: [], waExclude: [] };
+  const cfg = { on: true, hours: 2, crmAsNone: [], waAsNone: [] };
   const pick = (snooze, chats = [c], nowMs = NOW) => plain(E.radarPick({ chats, db: {}, config: cfg, snooze, nowMs })).length;
   assert.strictEqual(pick({ [c.id]: { mode: 'none', lastT: c.t } }), 0);
   assert.strictEqual(pick({ [c.id]: { mode: 'none', lastT: c.t } }, [{ ...c, t: c.t + 60 }]), 1, 'mensagem nova: volta');
@@ -197,11 +202,19 @@ test('radarState: só lê; contato por chat_id, telefone do @c.us e do @lid; eti
 
 test('config e silenciados em system_config (wa_radar_config / wa_radar_snooze), valores conferidos', async () => {
   const { api, T } = db({});
-  assert.deepStrictEqual(await api.radarConfig(), { on: true, hours: 2, crmAsNone: [], waExclude: [] }, 'padrão: ligado, 2 h');
-  const c = await api.setRadarConfig({ config: { on: false, hours: 3, crmAsNone: [NOVO, 'x'], waExclude: ['9', '<script>'] } });
-  assert.deepStrictEqual(c, { on: false, hours: 3, crmAsNone: [NOVO], waExclude: ['9'] });
-  assert.deepStrictEqual(await api.radarConfig(), c);
-  assert.strictEqual((await api.setRadarConfig({ config: { hours: 999 } })).hours, 2, 'tempo fora do limite volta ao padrão');
+  const t0 = Date.now();
+  const c0 = await api.radarConfig();
+  assert.deepStrictEqual({ ...c0, since: null }, { on: true, since: null, hours: 2, crmAsNone: [], waAsNone: [] }, 'padrão: ligado, 2 h');
+  assert.ok(Date.parse(c0.since) >= t0 - 1000, 'sem data de início: começa agora (e fica gravada)');
+  assert.strictEqual((await api.radarConfig()).since, c0.since, 'a data não muda a cada leitura');
+  const c = await api.setRadarConfig({ config: { on: false, hours: 3, crmAsNone: [NOVO, 'x'], waAsNone: ['9', '<script>'], since: '2020-01-01T00:00:00Z' } });
+  assert.deepStrictEqual(c, { on: false, since: null, hours: 3, crmAsNone: [NOVO], waAsNone: ['9'] });
+  assert.deepStrictEqual(await api.radarConfig(), c, 'desligado: sem data');
+  await new Promise((r) => setTimeout(r, 5));
+  const on = await api.setRadarConfig({ config: { on: true, hours: 999 } });
+  assert.strictEqual(on.hours, 2, 'tempo fora do limite volta ao padrão');
+  assert.ok(Date.parse(on.since) > Date.parse(c0.since), 'religar = nova data');
+  assert.strictEqual((await api.setRadarConfig({ config: { on: true, hours: 4 } })).since, on.since, 'salvar ligado mantém a data');
   let s = await api.setRadarSnooze({ chatId: '5521900000001@c.us', mode: 'none', lastT: 1762880000 });
   assert.deepStrictEqual([s['5521900000001@c.us'].mode, s['5521900000001@c.us'].lastT], ['none', 1762880000]);
   s = await api.setRadarSnooze({ chatId: '5521900000002@c.us', mode: 'remind', minutes: 60 });
@@ -212,6 +225,20 @@ test('config e silenciados em system_config (wa_radar_config / wa_radar_snooze),
   await assert.rejects(() => api.setRadarSnooze({ chatId: 'x', mode: 'none', lastT: 1 }), /Conversa inválida/);
   s = await api.setRadarSnooze({ chatId: '5521900000001@c.us', mode: 'clear' });
   assert.deepStrictEqual(Object.keys(s), ['5521900000002@c.us']);
+  // 2.17.1: "Não precisa para todas" numa gravação só
+  s = await api.setRadarSnoozeMany({ items: [{ chatId: '5521900000003@c.us', lastT: 10 }, { chatId: '80685306003593@lid', lastT: 20 }, { chatId: 'x', lastT: 1 }] });
+  assert.deepStrictEqual([s['5521900000003@c.us'].mode, s['5521900000003@c.us'].lastT, s['80685306003593@lid'].lastT, 'x' in s], ['none', 10, 20, false]);
+  await assert.rejects(() => api.setRadarSnoozeMany({ items: [] }), /Lista inválida/);
+});
+
+// 2.16.x → 2.17.1: config gravada pela 2.17.0 (sem data e com waExclude) passa a começar agora
+test('atualização da 2.17.0: sem data de início → começa no momento da atualização; waExclude antigo é ignorado', async () => {
+  const { api } = db({ system_config: [{ key: 'wa_radar_config', value: JSON.stringify({ on: true, hours: 2, crmAsNone: [], waExclude: ['9'] }) }] });
+  const t0 = Date.now();
+  const c = await api.radarConfig();
+  assert.ok(Date.parse(c.since) >= t0 - 1000);
+  assert.deepStrictEqual(c.waAsNone, []);
+  assert.ok(!('waExclude' in c));
 });
 
 test('painel: a cada 5 min no horário geral, popup, contador no ícone, Mais → Radar, abre na aba Etiquetas', () => {
@@ -225,7 +252,11 @@ test('painel: a cada 5 min no horário geral, popup, contador no ícone, Mais �
   assert.ok(c.includes("pmenuEl.insertBefore(radarMenuBtn, pmenuEl.querySelector('.pmaint'));"));
   assert.ok(!/RADAR_DISMISS_KEY\]: [^\n]*preview/.test(c), 'resumo da mensagem não vai para o chrome.storage');
   assert.ok(src('background.js').includes('radarState:') && src('background.js').includes('setRadarSnooze:'));
-  assert.strictEqual(JSON.parse(src('manifest.json')).version, '2.17.0');
+  assert.ok(c.includes("const b = el('button', 'btn rr-all', 'Não precisa para todas');") && c.includes('Confirmar: silenciar as'), 'para todas, com confirmação');
+  assert.ok(c.includes('radarPopup.append(top, radarAllBtn(), list);') && c.includes('allWrap.append(radarAllBtn())'), 'no popup e na seção');
+  assert.ok(c.includes('Ligado desde'));
+  assert.ok(src('background.js').includes('setRadarSnoozeMany:'));
+  assert.strictEqual(JSON.parse(src('manifest.json')).version, '2.17.1');
 });
 
 (async () => {

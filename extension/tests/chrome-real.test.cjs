@@ -2383,10 +2383,15 @@ async function main() {
     fake.generic = true;
     const B28 = uuid();
     fake.db.system_config = (fake.db.system_config || []).filter((r) => !/^wa_radar_/.test(r.key));
+    // 2.17.1: Radar ligado há 2 dias (só entram conversas com a última mensagem depois disso)
+    const SINCE28 = new Date(Date.now() - 2 * 86400000);
+    fake.db.system_config.push({ key: 'wa_radar_config', value: JSON.stringify({ on: true, since: SINCE28.toISOString(), hours: 2, crmAsNone: [], waAsNone: [] }) });
+    const p2 = (x) => String(x).padStart(2, '0');
+    const SINCE28_TXT = `Ligado desde ${p2(SINCE28.getDate())}/${p2(SINCE28.getMonth() + 1)} ${p2(SINCE28.getHours())}:${p2(SINCE28.getMinutes())}`;
     fake.db.wa_contacts = [...(fake.db.wa_contacts || []), { id: B28, key: 'tel:5521977770002', name: 'Bia', phone: '5521977770002', chat_id: null, created_at: '2026-11-01T10:00:00Z' }];
     fake.db.wa_contact_labels = [...(fake.db.wa_contact_labels || []), { contact_id: B28, label_id: VIP, created_at: '2026-11-02T10:00:00Z' }];
     await pg(`const now = Math.floor(Date.now() / 1000); const mk = (n, h, o = {}) => ({ id: '552197777000' + n + '@c.us', t: now - h * 3600, fromMe: false, preview: { kind: 'texto', text: 'Qual o preço do Raptor?' }, phone: '552197777000' + n, name: 'Radar ' + n, labels: [], ...o });
-      window.__radar = [mk(1, 3), mk(2, 5), mk(3, 1), mk(4, 26, { fromMe: true, labels: ['9'], preview: { kind: 'foto', text: '' } })];
+      window.__radar = [mk(1, 3), mk(2, 5), mk(3, 1), mk(4, 26, { fromMe: true, preview: { kind: 'foto', text: '' } }), mk(6, 3, { labels: ['9'] }), mk(7, 60)]; // 2.17.1: 6 tem etiqueta do WhatsApp (destino); 7 é de antes de ligar
       window.__opened = [];
       window.__fakeBridge = { ...window.__fakeBridge, radarChats: () => ({ chats: window.__radar }), labels: [{ id: '9', name: 'Motoboy', color: 1, count: 1 }], openChat: (p) => { window.__opened.push(p.chatId); return { opened: true }; } };
       return true;`);
@@ -2401,6 +2406,11 @@ async function main() {
       && st28.sub[0] === 'Cliente: Qual o preço do Raptor?' && st28.sub[1] === 'Você: Foto' && st28.ago[0] === 'há 3 h' && st28.ago[1] === 'há 1 dia 2 h', JSON.stringify(st28));
     await q(`[...sh.querySelectorAll('.rdg .pdg-b button')].find((b) => b.textContent === 'Fechar').click(); return true;`);
     await shot('radar-popup.png');
+    await q(`sh.querySelector('.pmore').click(); await wait(200); sh.querySelector('.pradar').click(); await wait(400); return true;`);
+    const since28 = await waitFor(`const e = sh.querySelector('.rdg .rdg-since'); return !!e && /^Ligado desde/.test(e.textContent);`, 8000) ? await q(`return sh.querySelector('.rdg .rdg-since').textContent;`) : null;
+    check('2.17.1: topo da seção Radar mostra "Ligado desde dd/mm hh:mm"; conversa com etiqueta do WhatsApp e a de antes de ligar ficam fora',
+      since28 === SINCE28_TXT && !st28.names.includes('Radar 6') && !st28.names.includes('Radar 7'), JSON.stringify({ since28, SINCE28_TXT, names: st28.names }));
+    await q(`[...sh.querySelectorAll('.rdg .pdg-b button')].find((b) => b.textContent === 'Fechar').click(); return true;`);
     // clicar numa conversa: abre a conversa e o painel na aba Etiquetas
     await q(`if (sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(300); [...sh.querySelectorAll('.rpop .rr-main')].find((b) => /Radar 4/.test(b.textContent)).click(); return true;`);
     const open28 = await waitFor(`return !!sh.querySelector('.root.open') && sh.querySelector('.panel').classList.contains('sec-labels');`, 10000);
@@ -2422,18 +2432,39 @@ async function main() {
     await q(`[...sh.querySelectorAll('.rdg .pdg-b button')].find((b) => b.textContent === 'Conferir agora').click(); return true;`);
     const back28 = await waitFor(`const p = sh.querySelector('.rpop'); return !!p && /⚠ 2 conversas/.test(p.textContent);`, 10000);
     check('2.17.0: "Fechar" esconde o aviso; ele volta só quando aparece conversa nova na lista', closed28 && back28, JSON.stringify({ closed28, back28 }));
-    // configurações: a etiqueta do WhatsApp Motoboy tira a conversa do radar (salvo em system_config)
+    // 2.17.1: configurações: a etiqueta do WhatsApp "Motoboy" marcada como "não conta" → a conversa 6 entra (salvo em system_config)
     await q(`const i = sh.querySelector('.rdg .rdg-cfg [data-wa="9"] input'); i.click(); [...sh.querySelectorAll('.rdg .rdg-cfg button')].find((b) => b.textContent === 'Salvar configurações').click(); return true;`);
-    const cfg28 = await waitFor(`return /Salvo/.test(sh.querySelector('.rdg .rdg-cfg .pdg-msg').textContent) && sh.querySelectorAll('.rdg-list .rr').length === 1;`, 10000);
+    const cfg28 = await waitFor(`return /Salvo/.test(sh.querySelector('.rdg .rdg-cfg .pdg-msg').textContent) && sh.querySelectorAll('.rdg-list .rr').length === 3;`, 10000);
     const cfgRow = (fake.db.system_config || []).find((r) => r.key === 'wa_radar_config');
-    check('2.17.0: Mais → Radar → configurações: etiqueta do WhatsApp "Motoboy" tira a conversa do radar (wa_radar_config)',
-      cfg28 && !!cfgRow && /"waExclude":\["9"\]/.test(cfgRow.value) && /"hours":2/.test(cfgRow.value), JSON.stringify({ cfg28, cfgRow }));
+    check('2.17.1: Mais → Radar → configurações: etiqueta do WhatsApp marcada como "não conta" volta a entrar no radar (waAsNone); a data de início não muda',
+      cfg28 && !!cfgRow && cfgRow.value.includes('"waAsNone":["9"]') && cfgRow.value.includes(SINCE28.toISOString()), JSON.stringify({ cfg28, cfgRow }));
     await shot('radar-mais.png');
+    // 2.17.1: "Não precisa para todas" (pede confirmação) silencia as 3 de uma vez
+    const allBtn = `sh.querySelector('.rdg .rdg-all .rr-all')`;
+    await q(`${allBtn}.click(); return true;`);
+    const arm28 = await q(`return { t: ${allBtn}.textContent, rows: sh.querySelectorAll('.rdg-list .rr').length, popAll: !!sh.querySelector('.rpop .rr-all') };`);
+    await shot('radar-todas.png');
+    await q(`${allBtn}.click(); return true;`);
+    const all28 = await waitFor(`return sh.querySelectorAll('.rdg-list .rr').length === 0 && sh.querySelector('.toggle .rbadge').hidden && !sh.querySelector('.rpop');`, 10000);
+    let snzAll = {};
+    try { snzAll = JSON.parse((fake.db.system_config.find((r) => r.key === 'wa_radar_snooze') || {}).value || '{}'); } catch { snzAll = {}; }
+    check('2.17.1: "Não precisa para todas" (no popup e na seção) pede confirmação e silencia todas da lista (wa_radar_snooze)',
+      arm28.t === 'Confirmar: silenciar as 3' && arm28.rows === 3 && arm28.popAll && all28 && ['5521977770004@c.us', '5521977770005@c.us', '5521977770006@c.us'].every((k) => snzAll[k] && snzAll[k].mode === 'none'),
+      JSON.stringify({ arm28, all28, snzAll: Object.keys(snzAll) }));
+    // 2.17.1: desligar e religar = nova data de início
+    const saveCfg = `[...sh.querySelectorAll('.rdg .rdg-cfg button')].find((b) => b.textContent === 'Salvar configurações').click();`;
+    await q(`sh.querySelector('.rdg .rdg-cfg .rdg-row input[type="checkbox"]').click(); ${saveCfg} return true;`);
+    const off28 = await waitFor(`return sh.querySelector('.rdg .rdg-since').textContent === 'Desligado';`, 10000);
+    await q(`sh.querySelector('.rdg .rdg-cfg .rdg-row input[type="checkbox"]').click(); ${saveCfg} return true;`);
+    const on28 = await waitFor(`return /^Ligado desde/.test(sh.querySelector('.rdg .rdg-since').textContent);`, 10000);
+    let newSince = null;
+    try { newSince = JSON.parse(fake.db.system_config.find((r) => r.key === 'wa_radar_config').value).since; } catch { newSince = null; }
+    check('2.17.1: desligar mostra "Desligado"; religar grava uma nova data de início', off28 && on28 && !!newSince && Date.parse(newSince) > Date.now() - 120000, JSON.stringify({ off28, on28, newSince }));
     await q(`[...sh.querySelectorAll('.rdg .pdg-b button')].find((b) => b.textContent === 'Fechar').click(); const p = sh.querySelector('.rpop .rpop-x'); if (p) p.click(); return true;`);
     await pg(`window.__fakeBridge.radarChats = () => ({ chats: [] }); return true;`);
     fake.on = false;
     fake.generic = false;
-    check('nenhum erro no console na 2.17.0', errors.length === 0, errors.slice(0, 8).join(' | '));
+    check('nenhum erro no console na 2.17.0/2.17.1', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

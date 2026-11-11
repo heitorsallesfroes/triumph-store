@@ -1487,6 +1487,10 @@
       .rr-b { min-height: 26px; padding: 0 var(--s-2); font-size: var(--fs-1); }
       .rr-empty, .rr-more { color: var(--muted); font-size: var(--fs-1); }
       .rdg { width: min(620px, calc(100vw - 32px)); overflow: auto; }
+      .rdg > * { flex-shrink: 0; } /* 2.17.1: o texto não fica espremido por cima dos botões */
+      .rdg-since { font-size: var(--fs-2); font-weight: 600; }
+      .rr-all { align-self: flex-start; margin-top: 0; }
+      .rr-all.rr-arm { border-color: #e5484d; color: #e5484d; }
       .rdg-cfg { display: flex; flex-direction: column; gap: var(--s-2); }
       .rdg-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
       .rdg-h { width: auto; }
@@ -2550,7 +2554,7 @@
   // mensagem fica só na memória (nunca vai para o banco nem para chrome.storage).
   const RADAR_EVERY_MS = 5 * 60 * 1000;
   const RADAR_DISMISS_KEY = 'radarDismissed'; // só os ids das conversas que já estavam no aviso quando ele foi fechado
-  const radar = { list: [], config: null, snooze: {}, at: 0, busy: false, dismissed: new Set(), crmLabels: null, waLabels: null, settingsAt: 0, settings: null, error: null };
+  const radar = { onDialog: null, list: [], config: null, snooze: {}, at: 0, busy: false, dismissed: new Set(), crmLabels: null, waLabels: null, settingsAt: 0, settings: null, error: null };
   try { chrome.storage.local.get([RADAR_DISMISS_KEY], (r) => { const v = r && r[RADAR_DISMISS_KEY]; if (Array.isArray(v)) radar.dismissed = new Set(v.slice(0, 500)); }); } catch { /* extensão recarregada */ }
   const radarBadge = el('span', 'rbadge');
   radarBadge.hidden = true;
@@ -2620,6 +2624,7 @@
     else if (radarPopup) radarFillPopup();
     const dlg = shadow.querySelector('.rdg-list');
     if (dlg) radarFillList(dlg, false);
+    if (radar.onDialog) radar.onDialog(); // 2.17.1: "Ligado desde" e "Não precisa para todas"
   }
   function radarRow(c, compact) {
     const row = el('div', 'rr');
@@ -2677,8 +2682,40 @@
     const list = el('div', 'rpop-l');
     radar.list.slice(0, 20).forEach((c) => list.append(radarRow(c, true)));
     if (n > 20) list.append(el('div', 'rr-more', `e mais ${n - 20} em Mais → Radar`));
-    radarPopup.append(top, list);
+    radarPopup.append(top, radarAllBtn(), list);
   }
+  // 2.17.1: "Não precisa para todas" (1º clique pede confirmação, 2º silencia todas até chegar mensagem nova)
+  function radarAllBtn() {
+    const b = el('button', 'btn rr-all', 'Não precisa para todas');
+    b.type = 'button';
+    b.title = 'Silencia todas as conversas da lista até chegar mensagem nova em cada uma';
+    let armed = false;
+    b.addEventListener('click', async () => {
+      const items = radar.list.map((c) => ({ chatId: c.id, lastT: c.t }));
+      if (!items.length) return;
+      if (!armed) { armed = true; b.textContent = `Confirmar: silenciar as ${items.length}`; b.classList.add('rr-arm'); return; }
+      b.disabled = true;
+      try {
+        radar.snooze = await call('setRadarSnoozeMany', { items });
+        const done = new Set(items.map((x) => x.chatId));
+        radar.list = radar.list.filter((c) => !done.has(c.id));
+        radarRender();
+      } catch (e) {
+        crmToast(`Não consegui guardar (${String((e && e.message) || e)})`, 'error', 5000);
+        b.disabled = false;
+      }
+    });
+    b.hidden = !radar.list.length;
+    return b;
+  }
+  // 2.17.1: "Ligado desde 11/11 13:40"
+  const radarSinceTxt = (c) => {
+    if (!c) return '';
+    if (!c.on || !c.since) return 'Desligado';
+    const d = new Date(c.since);
+    const p = (x) => String(x).padStart(2, '0');
+    return `Ligado desde ${p(d.getDate())}/${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
   const radarHoursTxt = () => { const h = (radar.config && radar.config.hours) || 2; return h < 1 ? `${Math.round(h * 60)} min` : `${String(h).replace('.', ',')} h`; };
   function radarFillList(box, loading) {
     box.textContent = '';
@@ -2695,7 +2732,8 @@
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-label', 'Radar');
     const head = el('div', 'pdg-h', 'Radar — conversas sem etiqueta CRM e sem automação');
-    const intro = el('div', 'pdg-msg', 'Conversa individual com mensagem nos últimos 7 dias, parada há mais do tempo escolhido, cujo contato não tem etiqueta CRM nem percurso ativo em automação/régua. Confere a cada 5 min, no horário geral de envio.');
+    const sinceEl = el('div', 'rdg-since', radarSinceTxt(radar.config)); // 2.17.1
+    const intro = el('div', 'pdg-msg', 'Conversa individual cuja última mensagem (de qualquer lado) é depois de o Radar ser ligado e tem mais do tempo escolhido, sem nenhuma etiqueta (CRM ou do WhatsApp, menos as marcadas como "não contam") e sem percurso ativo em automação/régua. Confere a cada 5 min, no horário geral de envio.');
     const list = el('div', 'rdg-list');
     const btns = el('div', 'pdg-b');
     const mk = (t, cls = 'btn') => { const b = el('button', cls, t); b.type = 'button'; return b; };
@@ -2703,15 +2741,20 @@
     const closeBtn = mk('Fechar');
     btns.append(now, closeBtn);
     const cfg = el('div', 'rdg-cfg');
-    box.append(head, intro, btns, list, el('div', 'pdg-h rdg-ch', 'Configurações'), cfg);
+    const allWrap = el('div', 'rdg-all');
+    box.append(head, sinceEl, intro, btns, allWrap, list, el('div', 'pdg-h rdg-ch', 'Configurações'), cfg);
     bg.append(box);
     root.append(bg);
-    const close = () => bg.remove();
+    const close = () => { radar.onDialog = null; bg.remove(); };
     closeBtn.addEventListener('click', close);
     bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
     box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
-    now.addEventListener('click', async () => { radarFillList(list, true); await radarRefresh({ force: true }); radarFillList(list, false); });
+    const syncTop = () => { sinceEl.textContent = radarSinceTxt(radar.config); allWrap.textContent = ''; allWrap.append(radarAllBtn()); };
+    radar.onDialog = syncTop;
+    now.addEventListener('click', async () => { radarFillList(list, true); await radarRefresh({ force: true }); radarFillList(list, false); syncTop(); });
     radarFillList(list, false);
+    syncTop();
+    if (!radar.config) call('radarConfig').then((x) => { radar.config = x; syncTop(); }).catch(() => {});
     // configurações
     cfg.append(el('div', 'rr-empty', 'Carregando…'));
     let c = null;
@@ -2721,7 +2764,7 @@
     let waList = Array.isArray(state.waLabels) ? state.waLabels : null;
     if (!waList) { try { waList = await waRequest('labels', {}, { timeout: 4000 }); } catch { waList = []; } }
     cfg.textContent = '';
-    const draft = { on: c.on, hours: c.hours, crmAsNone: new Set(c.crmAsNone), waExclude: new Set(c.waExclude.map(String)) };
+    const draft = { on: c.on, hours: c.hours, crmAsNone: new Set(c.crmAsNone), waAsNone: new Set((c.waAsNone || []).map(String)) };
     const onL = el('label', 'rdg-row');
     const onI = el('input');
     onI.type = 'checkbox';
@@ -2755,7 +2798,7 @@
     save.addEventListener('click', async () => {
       save.disabled = true;
       try {
-        radar.config = await call('setRadarConfig', { config: { on: draft.on, hours: draft.hours, crmAsNone: [...draft.crmAsNone], waExclude: [...draft.waExclude] } });
+        radar.config = await call('setRadarConfig', { config: { on: draft.on, hours: draft.hours, crmAsNone: [...draft.crmAsNone], waAsNone: [...draft.waAsNone] } });
         smsg.textContent = 'Salvo (vale em todos os computadores).';
         radarFillList(list, true);
         await radarRefresh({ force: true });
@@ -2765,7 +2808,7 @@
     });
     cfg.append(onL, hL,
       group('Etiquetas CRM que também contam como "sem destino"', crmList, draft.crmAsNone, 'crm'),
-      group('Etiquetas do WhatsApp que tiram a conversa do radar (ex.: Motoboy)', (waList || []).filter((l) => l && l.id != null), draft.waExclude, 'wa'),
+      group('Etiquetas do WhatsApp que NÃO contam como destino (qualquer outra tira a conversa do radar)', (waList || []).filter((l) => l && l.id != null), draft.waAsNone, 'wa'),
       save, smsg);
   }
   setTimeout(() => { radarRefresh(); setInterval(() => radarRefresh(), RADAR_EVERY_MS); }, 20000);

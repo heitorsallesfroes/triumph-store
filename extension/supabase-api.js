@@ -3886,14 +3886,25 @@
   const writeConfigKey = (key, v) => rest('system_config?on_conflict=key', json('POST', 'resolution=merge-duplicates,return=minimal', { key, value: JSON.stringify(v), updated_at: new Date().toISOString() }));
   const uuidList = (v) => [...new Set((Array.isArray(v) ? v : []).filter((x) => typeof x === 'string' && UUID_RE.test(x)))].slice(0, 100);
   const waIdList = (v) => [...new Set((Array.isArray(v) ? v : []).map(String).filter((x) => /^[\w:.-]{1,40}$/.test(x)))].slice(0, 100);
+  // 2.17.1: since = quando o Radar foi ligado (só entram conversas cuja última mensagem é depois disso; religar = nova
+  // data); waAsNone = etiquetas do WhatsApp que NÃO contam como destino (qualquer outra tira a conversa do radar).
   function radarConfigOf(v) {
     const o = v && typeof v === 'object' ? v : {};
     const hours = Number(o.hours);
-    return { on: o.on !== false, hours: Number.isFinite(hours) && hours >= 0.5 && hours <= 72 ? Math.round(hours * 2) / 2 : 2, crmAsNone: uuidList(o.crmAsNone), waExclude: waIdList(o.waExclude) };
+    const since = typeof o.since === 'string' && Date.parse(o.since) ? new Date(Date.parse(o.since)).toISOString() : null;
+    return { on: o.on !== false, since, hours: Number.isFinite(hours) && hours >= 0.5 && hours <= 72 ? Math.round(hours * 2) / 2 : 2, crmAsNone: uuidList(o.crmAsNone), waAsNone: waIdList(o.waAsNone) };
   }
-  async function radarConfig() { return radarConfigOf(await readConfigKey(RADAR_CONFIG_KEY)); }
+  async function radarConfig() {
+    const raw = await readConfigKey(RADAR_CONFIG_KEY);
+    const c = radarConfigOf(raw);
+    // sem data de início (nunca configurado ou vindo da 2.17.0): começa agora — o que já estava parado não entra
+    if (c.on && !c.since) { c.since = new Date().toISOString(); await writeConfigKey(RADAR_CONFIG_KEY, c); }
+    return c;
+  }
   async function setRadarConfig({ config }) {
+    const cur = radarConfigOf(await readConfigKey(RADAR_CONFIG_KEY));
     const c = radarConfigOf(config);
+    c.since = c.on ? (cur.on && cur.since ? cur.since : new Date().toISOString()) : null; // ligar/religar = nova data
     await writeConfigKey(RADAR_CONFIG_KEY, c);
     return c;
   }
@@ -3926,6 +3937,16 @@
       cur[chatId] = { mode: 'remind', until: new Date(Date.now() + m * 60000).toISOString(), at };
     } else if (mode === 'clear') delete cur[chatId];
     else throw new Error('Valor inválido');
+    await writeConfigKey(RADAR_SNOOZE_KEY, cur);
+    return cur;
+  }
+  // 2.17.1: "Não precisa para todas": silencia de uma vez (até chegar mensagem nova em cada uma)
+  async function setRadarSnoozeMany({ items }) {
+    const list = (Array.isArray(items) ? items : []).slice(0, 500).filter((x) => x && typeof x.chatId === 'string' && SCHED_CHAT_RE.test(x.chatId) && Number.isFinite(Number(x.lastT)));
+    if (!list.length) throw new Error('Lista inválida');
+    const cur = await radarSnooze();
+    const at = new Date().toISOString();
+    list.forEach((x) => { cur[x.chatId] = { mode: 'none', lastT: Number(x.lastT), at }; });
     await writeConfigKey(RADAR_SNOOZE_KEY, cur);
     return cur;
   }
@@ -4400,7 +4421,7 @@
   }
 
   root.WaApi = {
-    radarState, radarConfig, setRadarConfig, radarSnooze, setRadarSnooze, // 2.17.0
+    radarState, radarConfig, setRadarConfig, radarSnooze, setRadarSnooze, setRadarSnoozeMany, // 2.17.0 (2.17.1: + em lote)
     uploadCatalogImage, saveCatalogSnapshot, catalogSnapshotInfo, checkCatalogSnapshot, // 2.15.3
     lastSaleCustomerName, salePhoneVariants,
     engineActivity, clearReadCache, automationExisting, chatConversions, purchasedChats, pendingContactLeads, conversionStats,

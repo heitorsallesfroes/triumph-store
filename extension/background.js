@@ -176,6 +176,7 @@ const HANDLERS = {
   setRadarConfig:        (m) => WaApi.setRadarConfig({ config: m.config }),
   radarSnooze:           ()  => WaApi.radarSnooze(),
   setRadarSnooze:        (m) => WaApi.setRadarSnooze({ chatId: m.chatId, mode: m.mode, lastT: m.lastT, minutes: m.minutes }),
+  setRadarSnoozeMany:    (m) => WaApi.setRadarSnoozeMany({ items: m.items }), // 2.17.1
   // 2.6.2: anúncio de onde o lead veio (wa_ad_attribution)
   getAdAttribution:      (m) => WaApi.getAdAttribution({ chatId: m.chatId }),
   saveAdAttributions:    (m) => WaApi.saveAdAttributions({ items: m.items }),

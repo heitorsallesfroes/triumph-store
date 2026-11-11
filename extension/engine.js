@@ -3036,7 +3036,7 @@
 
   // ── 2.17.0: Radar — conversas "sem destino" (sem etiqueta CRM e sem percurso ativo) há mais de N horas ──
   // Pura (testável). chats = ponte radarChats; db = { chatId: { crmLabelIds, active } } (null = não deu para ler o banco:
-  // ninguém entra, para não avisar errado); config = { on, hours, crmAsNone, waExclude }; snooze = system_config.
+  // ninguém entra, para não avisar errado); config = { on, since, hours, crmAsNone, waAsNone }; snooze = system_config.
   const RADAR_WINDOW_S = 7 * 86400;
   const radarNorm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   function radarPick({ chats, db, config, snooze, nowMs = Date.now() }) {
@@ -3046,15 +3046,17 @@
     const hours = Number(c.hours) > 0 ? Number(c.hours) : 2;
     const idleS = Math.round(hours * 3600);
     const asNone = new Set(Array.isArray(c.crmAsNone) ? c.crmAsNone : []);
-    const waOut = new Set((Array.isArray(c.waExclude) ? c.waExclude : []).map(String));
+    const waNone = new Set((Array.isArray(c.waAsNone) ? c.waAsNone : []).map(String)); // 2.17.1: etiquetas do WhatsApp que não contam
+    const sinceS = c.since && Date.parse(c.since) ? Math.floor(Date.parse(c.since) / 1000) : null; // 2.17.1: só daqui pra frente
     const sn = snooze || {};
     const out = [];
     for (const ch of chats) {
       if (!ch || typeof ch.id !== 'string' || !/^\d+@(c\.us|lid)$/.test(ch.id)) continue;
       const t = Number(ch.t) || 0;
       if (!t || t < nowS - RADAR_WINDOW_S || nowS - t < idleS) continue; // fora dos 7 dias / parada há menos de N h
+      if (sinceS != null && t <= sinceS) continue; // 2.17.1: última mensagem de antes de o Radar ser ligado
       if (radarNorm(ch.name) === 'meu numero pessoal') continue;
-      if ((Array.isArray(ch.labels) ? ch.labels : []).some((l) => waOut.has(String(l)))) continue; // etiqueta do WhatsApp que tira do radar
+      if ((Array.isArray(ch.labels) ? ch.labels : []).some((l) => !waNone.has(String(l)))) continue; // 2.17.1: qualquer etiqueta do WhatsApp é destino (menos as que "não contam")
       const d = db[ch.id] || { crmLabelIds: [], active: false };
       if (d.active) continue;
       if ((d.crmLabelIds || []).some((l) => !asNone.has(l))) continue; // tem etiqueta CRM que conta como destino

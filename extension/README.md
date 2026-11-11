@@ -809,6 +809,22 @@ guardada.
 
 ## O que mudou
 
+### 2.17.1 — Radar só daqui pra frente e contando as etiquetas do WhatsApp
+- **Por quê**: na 2.17.0 o Radar mostrou 115 conversas, muitas antigas e muitas de clientes que já têm etiqueta do
+  WhatsApp (ex.: "Cliente").
+- **Só daqui pra frente**: o Radar guarda quando foi ligado (`since` em `system_config` → `wa_radar_config`); desligar e
+  religar grava uma nova data. Só entram conversas cuja **última** mensagem (de qualquer lado) é **depois** dessa
+  data. Ao atualizar para esta versão, a data de início vira o momento da atualização (a configuração da 2.17.0 não
+  tinha data), então as conversas já paradas somem.
+- **Etiqueta do WhatsApp também é destino**: conversa com **qualquer** etiqueta (CRM ou do WhatsApp) não entra, menos
+  as marcadas nas configurações como "não contam" (CRM e WhatsApp, separadas). A opção antiga "etiquetas do WhatsApp
+  que tiram do radar" deixou de existir (agora todas tiram).
+- **"Não precisa para todas"** no aviso e em Mais → Radar: o 1º clique pede confirmação ("Confirmar: silenciar as N"),
+  o 2º silencia todas da lista até chegar mensagem nova em cada uma (uma gravação só em `wa_radar_snooze`).
+- Topo de Mais → Radar: **"Ligado desde 11/11 13:40"** (ou "Desligado").
+- Testes: `radar.test.cjs` (data de início, atualização da 2.17.0, etiquetas do WhatsApp, em lote) e
+  `chrome-real.test.cjs` (Ligado desde, etiqueta do WhatsApp, "não conta", para todas com confirmação, religar).
+
 ### 2.17.0 — Radar: conversas sem etiqueta CRM e sem automação há mais de 2 h
 - **Objetivo**: todo lead deve estar numa etiqueta CRM ou numa automação. O Radar avisa quando uma conversa fica parada
   sem nenhum dos dois, para você decidir à mão.
