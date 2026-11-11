@@ -1559,6 +1559,22 @@
     const hit = typeof text === 'string' ? IG_CODE_RE.exec(text) : null;
     return hit ? hit[1].toUpperCase() : null;
   }
+  // 2.18.2: a FRASE de uma automação do Instagram ("Olá! Vi o comentário no Instagram 🔥") na 1ª mensagem: sai SÓ um
+  // resumo (hash) da mensagem inteira, nunca o texto; o painel compara com os resumos das frases das automações
+  // (ig_automations / ig_direct_phrase) e grava só o código da automação. A mesma regra do supabase-api.js (igPhraseHash).
+  function igPhraseHash(text) {
+    const t = String(text || '').normalize('NFC').replace(/[​-‍﻿]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (t.length < 8 || t.length > 400) return null;
+    let h1 = 0xdeadbeef; let h2 = 0x41c6ce57;
+    for (let i = 0; i < t.length; i++) { const ch = t.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
+  }
+  function igPhraseOf(m) {
+    const type = safe(() => m.type, '');
+    return type === 'chat' ? igPhraseHash(safe(() => m.body, '')) : null;
+  }
   function leadAd(m) {
     const ctx = ctxOf(m);
     if (!ctx) return null;
@@ -1578,7 +1594,7 @@
       const chat = safe(() => wpp.chat.get(chatId), null);
       const msgs = (chat && safe(() => chat.msgs.getModelsArray(), null)) || [];
       const earlier = msgs.some((x) => x !== m && realMsg(x) && msgT(x) <= t && safe(() => x.id.id, 1) !== safe(() => m.id.id, 2));
-      if (!earlier && noEarlierOf(chat) !== false) { ev.first = true; ev.ad = leadAd(m); ev.ig = igCodeOf(m); }
+      if (!earlier && noEarlierOf(chat) !== false) { ev.first = true; ev.ad = leadAd(m); ev.ig = igCodeOf(m); if (!ev.ig) ev.igh = igPhraseOf(m); }
     }
     convQueue.push(ev);
     if (convQueue.length > CONV_MAX) convQueue.splice(0, convQueue.length - CONV_MAX);
@@ -1667,7 +1683,7 @@
         const first = msgs[0];
         firstAt = msgT(first);
         isNewLead = safe(() => first.id.fromMe, true) === false;
-        if (isNewLead && firstAt >= since) leads.push({ chatId: c.id, fromMe: false, t: firstAt, first: true, ad: leadAd(first), ig: igCodeOf(first), scan: true });
+        if (isNewLead && firstAt >= since) leads.push({ chatId: c.id, fromMe: false, t: firstAt, first: true, ad: leadAd(first), ig: igCodeOf(first), igh: igCodeOf(first) ? null : igPhraseOf(first), scan: true });
       }
       const lastAt = Math.max(c.t, last ? msgT(last) : 0);
       items.push({

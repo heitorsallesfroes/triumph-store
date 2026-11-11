@@ -4,7 +4,7 @@
 // serve a página do ERP empacotada (chrome/igTrackingHarness.tsx, Supabase falso). A edge function ig-link de
 // verdade (supabase/functions/ig-link/link.ts) responde aqui no Node, pelo CDP (Fetch), no lugar do Supabase; o
 // WhatsApp (wa.me) também é SIMULADO. Nada sai do computador. Confere:
-//   - abas Visão geral / Rastreio / Direct e Automações "em breve" (desabilitadas), ?aba= no endereço (F5 volta);
+//   - abas Visão geral / Rastreio / Direct / Automações (FASE 3: liberadas), ?aba= no endereço (F5 volta);
 //   - Rastreio: cliques → conversas → vendas → R$ por link e por canal, taxas, melhores links, últimos cliques;
 //     criar link (apelido → código sugerido, post ligado, erros), editar, copiar, QR code (lido de volta);
 //     grava SÓ ig_links;
@@ -219,11 +219,11 @@ async function main() {
     // ── abas ──
     await go('/?pagina=instagram', `return !!document.querySelector('[data-testid="ig-shell"]');`);
     const tabs = await ev(`${H} return $$('[role="tab"]').map((b) => ({ id: b.dataset.testid, t: txt(b), dis: b.disabled, sel: b.getAttribute('aria-selected') })).concat([{ page: !!tid('ig-page') }]);`);
-    check('abas: Visão geral (aberta), Rastreio, e Direct/Automações "em breve" desabilitadas',
-      tabs.length === 5 && tabs[0].t === 'Visão geral' && tabs[0].sel === 'true' && tabs[1].t === 'Rastreio' && !tabs[1].dis && /^Direct ?em breve$/.test(tabs[2].t) && tabs[2].dis && /^Automações ?em breve$/.test(tabs[3].t) && tabs[3].dis && tabs[4].page, JSON.stringify(tabs));
+    check('abas: Visão geral (aberta), Rastreio, Direct e Automações (FASE 3: liberadas)',
+      tabs.length === 5 && tabs[0].t === 'Visão geral' && tabs[0].sel === 'true' && tabs[1].t === 'Rastreio' && !tabs[1].dis && tabs[2].t === 'Direct' && !tabs[2].dis && tabs[3].t === 'Automações' && !tabs[3].dis && tabs[4].page, JSON.stringify(tabs));
     await ev(`${H} tid('ig-tab-direct').click(); return true;`);
     await sleep(100);
-    check('aba "em breve" não abre', await ev(`${H} return tid('ig-tab-visao-geral').getAttribute('aria-selected') === 'true' && !!tid('ig-page');`));
+    check('aba Direct abre (FASE 3)', await waitFor(`${H} return tid('ig-tab-direct').getAttribute('aria-selected') === 'true' && !!tid('ig-direct');`));
     await ev(`${H} tid('ig-tab-rastreio').click(); return true;`);
     const opened = await waitFor(`${H} return $$('[data-testid="igr-link"]').length === 3 && !/…/.test(txt(tid('igr-kpis')));`, 15000);
     check('Rastreio abre com ?aba=rastreio no endereço', opened && await ev(`return new URLSearchParams(location.search).get('aba') === 'rastreio';`), await ev(`return location.search;`));

@@ -1508,16 +1508,44 @@
     }
     return igLinkCodes.map.get(code) || null;
   }
+  // 2.18.2: a FRASE de uma automação do Instagram (ig_automations.wa_phrase; o botão "Mandar o WhatsApp" do Direct usa
+  // system_config ig_direct_phrase = IG-DIRECT). A ponte manda só um resumo (hash) da 1ª mensagem; aqui o mesmo resumo
+  // das frases (lista relida a cada 5 min) vira o código da automação. A mesma regra da ponte (wa-bridge.js igPhraseHash).
+  function igPhraseHash(text) {
+    const t = String(text || '').normalize('NFC').replace(/[​-‍﻿]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (t.length < 8 || t.length > 400) return null;
+    let h1 = 0xdeadbeef; let h2 = 0x41c6ce57;
+    for (let i = 0; i < t.length; i++) { const ch = t.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
+  }
+  const IG_HASH = /^[0-9a-f]{16}$/;
+  const igPhrases = { map: new Map(), at: 0 };
+  async function igPhraseCodeOf(hash) {
+    if (Date.now() - igPhrases.at > 5 * 60 * 1000) {
+      const map = new Map();
+      try { (await rest('ig_automations?select=code,wa_phrase&link_mode=eq.frase')).forEach((r) => { const h = igPhraseHash(r.wa_phrase); if (h && IG_CODE.test(r.code || '')) map.set(h, r.code); }); } catch { /* sem a tabela */ }
+      try { const c = await rest('system_config?select=value&key=eq.ig_direct_phrase'); const h = c.length ? igPhraseHash(c[0].value) : null; if (h && !map.has(h)) map.set(h, 'IG-DIRECT'); } catch { /* sem a chave */ }
+      igPhrases.map = map;
+      igPhrases.at = Date.now();
+    }
+    return igPhrases.map.get(hash) || null;
+  }
   async function saveIgLeads(items) {
     const seen = new Set();
-    const list = (Array.isArray(items) ? items : []).filter((it) => {
-      if (!it || !PANEL_CHAT_RE.test(it.chatId || '') || typeof it.ig !== 'string' || !IG_CODE.test(it.ig) || seen.has(it.chatId)) return false;
+    const list = [];
+    for (const it of Array.isArray(items) ? items : []) {
+      if (!it || !PANEL_CHAT_RE.test(it.chatId || '') || seen.has(it.chatId)) continue;
+      let code = typeof it.ig === 'string' && IG_CODE.test(it.ig) ? it.ig : null;
+      if (!code && typeof it.igh === 'string' && IG_HASH.test(it.igh)) code = await igPhraseCodeOf(it.igh);
+      if (!code) continue;
       seen.add(it.chatId);
-      return true;
-    });
+      list.push({ ...it, ig: code, viaPhrase: !it.ig });
+    }
     if (!list.length || !(await igLeadsTable())) return 0;
     const rows = [];
-    for (const it of list) rows.push({ chat_id: it.chatId, phone: panelPhone(it.phone), first_message_at: isoOfSec(it.t), code: it.ig, link_id: await igLinkIdOf(it.ig) });
+    for (const it of list) rows.push({ chat_id: it.chatId, phone: panelPhone(it.phone), first_message_at: isoOfSec(it.t), code: it.ig, link_id: it.viaPhrase ? null : await igLinkIdOf(it.ig) });
     await rest('ig_link_leads?on_conflict=chat_id', json('POST', 'resolution=ignore-duplicates,return=minimal', rows));
     return rows.length;
   }

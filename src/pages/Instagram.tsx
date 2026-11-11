@@ -3,7 +3,7 @@
 //     nada grava no ERP). Dados: edge function "instagram" (src/lib/igDb.ts); regras de "O que funciona":
 //     src/lib/igInsights.ts.
 //   - Rastreio (FASE 2): links rastreáveis /l/<apelido> → WhatsApp → venda (src/components/instagram/IgTracking.tsx).
-//   - Direct e Automações: "em breve" (desabilitadas).
+//   - Direct e Automações (FASE 3): src/components/instagram/IgDirect.tsx e IgAutomations.tsx (tudo nasce desligado).
 // README: src/pages/Instagram.README.md
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Instagram as InstagramIcon, RefreshCw, X } from 'lucide-react';
@@ -11,6 +11,9 @@ import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ReferenceLine, R
 import { useErpRefresh } from '../lib/erpRefresh';
 import { initialTab, writeTab } from '../lib/erpRoute';
 import IgTracking from '../components/instagram/IgTracking';
+import IgAutomations from '../components/instagram/IgAutomations';
+import IgDirect from '../components/instagram/IgDirect';
+import IgFunnel from '../components/instagram/IgFunnel';
 import {
   IG_PERIODS, KIND_COLOR, KIND_LABEL, SORT_LABEL, GENDER_LABEL,
   audienceShare, bestFormat, bestTimes, bioTaps, deltaOf, deltaText, engagementOf, fmtDuration, fmtN, fmtPct, fmtWhen, frequencyVsReach, sortAges, sortMedia, sortValue, topBy,
@@ -46,13 +49,13 @@ const SORTS: SortKey[] = ['views', 'reach', 'likes', 'comments', 'saved', 'share
 const fmtSort = (m: IgMedia, k: SortKey) => (k === 'engagement' ? fmtPct(sortValue(m, k)) : fmtN(sortValue(m, k)));
 
 // ── abas da página (mesmo visual das abas da página WhatsApp) ──
-type PageTab = 'visao-geral' | 'rastreio';
+type PageTab = 'visao-geral' | 'rastreio' | 'direct' | 'automacoes';
 const PAGE_TABS: { id: string; label: string; ready: boolean }[] = [
   { id: 'visao-geral', label: 'Visão geral', ready: true }, { id: 'rastreio', label: 'Rastreio', ready: true },
-  { id: 'direct', label: 'Direct', ready: false }, { id: 'automacoes', label: 'Automações', ready: false },
+  { id: 'direct', label: 'Direct', ready: true }, { id: 'automacoes', label: 'Automações', ready: true },
 ];
 export default function Instagram() {
-  const [tab, setTab] = useState<PageTab>(() => initialTab('instagram', ['visao-geral', 'rastreio'] as const, 'visao-geral'));
+  const [tab, setTab] = useState<PageTab>(() => initialTab('instagram', ['visao-geral', 'rastreio', 'direct', 'automacoes'] as const, 'visao-geral'));
   useEffect(() => { writeTab('instagram', tab); }, [tab]);
   return (
     <div className="igs" data-testid="ig-shell">
@@ -77,6 +80,8 @@ export default function Instagram() {
       </div>
       {tab === 'visao-geral' && <IgOverview />}
       {tab === 'rastreio' && <div style={{ padding: 24, color: 'var(--text-primary)' }} className="igs-body"><IgTracking /></div>}
+      {tab === 'direct' && <div style={{ padding: 24, color: 'var(--text-primary)' }} className="igs-body"><IgDirect /></div>}
+      {tab === 'automacoes' && <div style={{ padding: 24, color: 'var(--text-primary)' }} className="igs-body"><IgAutomations /></div>}
     </div>
   );
 }
@@ -153,6 +158,8 @@ function IgOverview() {
           <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12, color: 'var(--text-secondary)' }}>{warnings.map((w) => <li key={w}>{w}</li>)}</ul>
         </details>
       )}
+
+      <IgFunnel days={days} />
 
       <Charts load={daily} />
 

@@ -45,7 +45,7 @@ O token fica no secret `IG_ACCESS_TOKEN` e nunca volta para o navegador. `IG_USE
 # FASE 2 — abas e RASTREIO de links até a venda
 
 A página Instagram tem abas, como a página WhatsApp (`?pagina=instagram&aba=rastreio`; o F5 volta para a aba):
-**Visão geral** (a FASE 1), **Rastreio** (nova) e **Direct** / **Automações** como "em breve" (desabilitadas).
+**Visão geral** (a FASE 1), **Rastreio** (nova) e **Direct** / **Automações** (liberadas na FASE 3, abaixo).
 
 ## Gráfico diário: os dias "quase zerados"
 Não é a junção dos blocos de 30 dias (ela só vale para os cartões do topo; o gráfico pede um total por dia). Erro
@@ -91,3 +91,112 @@ numa chamada viraria buraco no gráfico, não um valor baixo. Para conferir com 
 - `node scripts/tests/igTrackingChrome.test.ts`: Chrome real — abas, Rastreio, criar/editar/copiar/QR, `/l/bio`
   no celular dentro do Instagram até o WhatsApp simulado, e WhatsApp → Rastreamento.
 - `node extension/tests/igcode.test.cjs`: código na 1ª mensagem (ponte, motor e gravação).
+
+---
+
+# FASE 3 — AUTOMAÇÕES (substituto do ManyChat) e DIRECT simples · TUDO NASCE DESLIGADO
+
+O Instagram é a porta de entrada: responder sozinho e levar o lead para o WhatsApp (onde a venda fecha). Não é um CRM
+do Instagram (sem etiquetas, quadro ou régua).
+
+## Segurança (como fica ligado)
+- **Chave geral** `system_config.ig_automations_enabled` (nasce `false`): desligada, o webhook **recebe e grava** tudo
+  e **não envia nada** (nem resposta pública). Ligar pede confirmação.
+- **Modo teste** `ig_test_mode` (nasce `true`): só as contas da lista `ig_test_accounts` (@ ou IGSID) recebem; as
+  outras ficam no histórico como "pulado: modo teste". Desligar o modo teste também pede confirmação.
+- **Antispam** `ig_dm_cooldown_hours` (24): no máximo 1 DM automática por pessoa a cada X horas, **somando todas as
+  automações**, com trava atômica no Postgres (`ig_claim_dm`: dois eventos no mesmo segundo → só 1 passa). Se a Meta
+  recusar o envio, a vez volta (`ig_release_dm`).
+- O mesmo comentário/mensagem **nunca dispara 2 vezes** (`ig_automation_runs.source_id` único) e o que a Meta reenviar
+  com o mesmo `mid`/`comment_id` é ignorado. **Eco** (`is_echo`, inclusive do ManyChat e de outros apps) e o que a
+  própria conta escreve ficam gravados como "de mim" e **nunca** disparam.
+- Janelas da Meta: DM privada a comentário até **7 dias** (1 por comentário); DM normal até **24 h** da última mensagem
+  da pessoa. Fora da janela: não manda (o motivo fica no disparo).
+- **Nenhum token no navegador**: o token de longa duração fica em `ig_account` (RLS sem política: só a service role das
+  edge functions lê). Mensagens de erro saem sem o token.
+
+## Conectar Instagram (Instagram API com Login do Instagram — graph.instagram.com)
+Aba **Automações → Conectar Instagram** → Login oficial do Instagram (escopos `instagram_business_basic`,
+`instagram_business_manage_messages`, `instagram_business_manage_comments`) → volta em
+`…/functions/v1/ig-manage/oauth`, que troca o code pelo token de **longa duração (60 dias)**, guarda no servidor, assina
+os campos do webhook e volta para o ERP (`?pagina=instagram&aba=automacoes&ig=conectado`).
+- Tela: **"Conectado como @store_triumph · token válido até DD/MM"**, alerta vermelho se faltar < 7 dias ou se a
+  renovação falhar, botão **Renovar agora**. Sem os segredos: a tela diz quais faltam e mostra o passo a passo.
+- **Renovação**: `refresh_access_token` quando faltar < 20 dias — rotina diária do banco (migration
+  `20261115130000_ig_token_cron.sql`, pg_cron + pg_net, chave interna `x-cron-key`) e também sozinha quando a tela ou o
+  webhook usam a conta (no máximo 1 tentativa a cada 12 h).
+
+## Webhook — edge function `ig-webhook` (pública)
+- GET: verificação (`hub.mode`, `hub.verify_token` = `IG_WEBHOOK_VERIFY_TOKEN`, devolve `hub.challenge`).
+- POST: confere `x-hub-signature-256` (HMAC-SHA256 do **corpo bruto** com `IG_APP_SECRET`). Inválida → **401**.
+  Válida → **200 na hora** e o trabalho segue em segundo plano (erro interno vai para `ig_webhook_log`, que aparece em
+  "Avisos do webhook" na aba Automações).
+- Campos: `messages` (DMs, respostas e menções a story), `messaging_postbacks`, `comments`, `live_comments`.
+- Grava `ig_messages` (mid único), `ig_comments` (id único) e `ig_conversations` (uma por IGSID; nome/@/foto por
+  chamada separada, no máximo 1 vez por semana).
+
+## Automações (aba **Automações**)
+Cartões como no ManyChat: **Quando…** · **E o comentário possui…** · **Responder no comentário** · **Eles receberão
+(DM)**, com ligar/desligar de cada uma (o selo mostra a chave geral e o modo teste) e as métricas do período (7/30/90
+dias): disparos, DMs enviadas, cliques (com link /l/), conversas no WhatsApp, vendas, R$ e CTR (cliques ÷ DMs; com a
+frase: conversas ÷ DMs).
+- Gatilhos: comentário em qualquer post/reel ou em **posts escolhidos** (grade de miniaturas), com "qualquer palavra"
+  ou palavras-chave (palavra inteira, sem diferença de acento/maiúscula); DM nova (1ª mensagem da pessoa);
+  resposta/menção em story; palavra-chave em DM. Vale a 1ª automação ligada que bater (pela ordem).
+- Ações: resposta pública no comentário (variações sorteadas, opcional) e DM (Private Reply ao comentário / DM na janela
+  de 24 h) com texto (variações, `{nome}`) e **botão com link** (template de botão `web_url`; se a Meta recusar, vai o
+  texto com o link).
+- O link padrão é o **WhatsApp da loja com a FRASE da automação** (ex.: "Olá! Vi o comentário no Instagram e quero saber
+  da promoção 🔥"). A extensão **2.18.2** reconhece a frase na 1ª mensagem do WhatsApp (só um resumo/hash sai da página,
+  nunca o texto) e grava a conversa em `ig_link_leads` com o **código da automação** (ex.: IG-A-COMENT): assim o rastreio
+  conversa → venda funciona. Ou escolha um **link rastreável /l/…** (conta cliques).
+- Já vem **DESLIGADA** a automação **"Comentários → WhatsApp (cópia do ManyChat)"**: qualquer post/reel, qualquer palavra,
+  as 3 respostas públicas do ManyChat e a DM com o botão "WhatsApp Loja". **Desligue a do ManyChat** antes de ligar esta,
+  para não responder em dobro.
+- Automação nova nasce desligada; ligar só com tudo preenchido.
+
+## Direct (aba **Direct**)
+Lista (mais recentes primeiro) com foto, @/nome, última mensagem, origem (comentário/story/DM) e **"✅ foi para o
+WhatsApp"** (uma conversa do WhatsApp começou com a frase/código do link que mandamos para a pessoa, até 3 h depois) ou
+**"⏳ ainda não foi"**. Filtro "Ainda não foi para o WhatsApp" com o contador. Abrir: histórico (DMs e comentários),
+resposta de texto (só na janela de 24 h; fora dela avisa e desliga) e **"Mandar o WhatsApp"** (DM padrão `ig_direct_dm`
+com o botão para a frase `ig_direct_phrase`, código IG-DIRECT).
+
+## Visão geral
+Cartão **"Funil Instagram → WhatsApp → venda"** do período: comentários e DMs recebidos → DMs automáticas → cliques →
+conversas no WhatsApp → vendas → R$.
+
+## Aplicar / publicar / cadastrar
+1. Migrations: **`20261115120000_ig_automations.sql`** (tabelas, funções do antispam, chaves desligadas e a cópia do
+   ManyChat) e depois **`20261115130000_ig_token_cron.sql`** (renovação diária; precisa da `ig-manage` publicada).
+2. Edge functions, as duas com **Verify JWT desligado** (a pasta `_shared` vai junto):
+   `supabase functions deploy ig-manage --no-verify-jwt` e `supabase functions deploy ig-webhook --no-verify-jwt`.
+3. Segredos: **`IG_APP_ID`**, **`IG_APP_SECRET`** (do **produto Instagram** do app — não são os do app do Facebook) e
+   **`IG_WEBHOOK_VERIFY_TOKEN`** (uma senha que você inventa). Opcional: `IG_ERP_URL`.
+4. Extensão 2.18.2 (recarregar em `chrome://extensions`).
+
+## Passo a passo no painel da Meta (developers.facebook.com)
+1. **Meus apps** → abra o app (ou crie um do tipo Empresa) → **Adicionar produto: Instagram** → **API com Login do
+   Instagram**.
+2. **Instagram → Configuração da API com Login do Instagram**: copie o **ID do app do Instagram** (`IG_APP_ID`) e a
+   **Chave secreta do app do Instagram** (`IG_APP_SECRET`) e cadastre no Supabase junto com o `IG_WEBHOOK_VERIFY_TOKEN`.
+3. **Configurar o login da empresa do Instagram → URL de redirecionamento OAuth**:
+   `https://jcnvlqfpmmejtzfhfjix.supabase.co/functions/v1/ig-manage/oauth`
+4. **Configurar webhooks**: URL de retorno `https://jcnvlqfpmmejtzfhfjix.supabase.co/functions/v1/ig-webhook`, Token de
+   verificação = `IG_WEBHOOK_VERIFY_TOKEN` → **Verificar e salvar** → assinar `messages`, `messaging_postbacks`,
+   `comments` e `live_comments`.
+5. No app do Instagram (celular): **Configurações → Mensagens e respostas aos stories → Ferramentas conectadas →
+   Permitir acesso às mensagens**.
+6. No ERP: **Instagram → Automações → Conectar Instagram** (entrar como @store_triumph).
+7. Com o app em **modo de desenvolvimento**, só contas com função no app (testadores) recebem; para todos, peça na
+   **Análise do app** o acesso avançado a `instagram_business_manage_messages` e `instagram_business_manage_comments` e
+   publique o app.
+8. Teste com a chave geral ligada **em modo teste** e a sua conta pessoal na lista; só depois desligue o modo teste.
+
+## Testes (nunca chamam a Meta de verdade)
+- `node scripts/tests/igAuto.test.ts`: servidor com a Meta SIMULADA e o banco em memória — assinatura válida/inválida,
+  200 sempre, eco, duplicados (mid e comment_id), antispam concorrente, janelas de 24 h e 7 dias, chave geral desligada,
+  modo teste, fallback do botão, erro da Meta, renovação do token, Conectar (OAuth), cron e Direct.
+- `node scripts/tests/igAutoErp.test.ts`: contas da tela ("foi para o WhatsApp", métricas, funil, textos).
+- `node scripts/tests/igAutoChrome.test.ts`: Chrome real — Automações, Direct, funil, celular, só grava o permitido.
+- `node extension/tests/igphrase.test.cjs`: a frase na 1ª mensagem do WhatsApp (extensão 2.18.2).

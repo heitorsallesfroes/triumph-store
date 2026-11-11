@@ -667,7 +667,7 @@
         [...(events || [])].filter((e) => e && typeof e.chatId === 'string' && Number.isFinite(Number(e.t)))
           .sort((a, b) => a.t - b.t).forEach((e) => {
             const chat = e.chatId;
-            if (!e.fromMe && e.first) out.leads.push({ chatId: chat, phone: e.phone || null, t: e.t, ad: e.ad || null, ...(e.ig ? { ig: e.ig } : {}) }); // 2.18.0: ig = código [IG-...] (só quando veio)
+            if (!e.fromMe && e.first) out.leads.push({ chatId: chat, phone: e.phone || null, t: e.t, ad: e.ad || null, ...(e.ig ? { ig: e.ig } : {}), ...(!e.ig && e.igh ? { igh: e.igh } : {}) }); // 2.18.0: ig = código [IG-...] (só quando veio); 2.18.2: igh = resumo da frase
             if (e.scan) return; // varredura da abertura: só o lead
             act.set(chat, mergeActivity(act.get(chat), activityOfEvent(e)));
             if (e.fromMe) {

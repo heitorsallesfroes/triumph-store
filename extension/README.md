@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.18.1** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.18.2** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -808,6 +808,15 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.18.2 — Frase das automações do Instagram na 1ª mensagem
+- As automações do Instagram (ERP → Instagram → Automações) mandam um botão para o WhatsApp da loja com uma **frase
+  natural** (ex.: "Olá! Vi o comentário no Instagram e quero saber da promoção 🔥"). Na **1ª mensagem de um lead novo**
+  sem código `[IG-...]`, a ponte manda só um **resumo (hash)** da mensagem — nunca o texto; o painel compara com os
+  resumos das frases (`ig_automations.wa_phrase` e `system_config.ig_direct_phrase`) e, batendo, grava a conversa em
+  `ig_link_leads` com o **código da automação** (ex.: IG-A-COMENT; Direct: IG-DIRECT). O resto não muda.
+- Sem a migration `20261115120000_ig_automations.sql`: nada de frase (o código `[IG-...]` continua).
+- Testes: `igphrase.test.cjs`.
 
 ### 2.18.1 — Sai da automação quando tiram a etiqueta do WhatsApp de início · nome da agenda no ERP
 - **Sair ao tirar a etiqueta** (só automações cuja caixa **▶ COMEÇA** é uma **etiqueta do WhatsApp**): se tirarem
