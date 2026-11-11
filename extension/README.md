@@ -809,6 +809,19 @@ guardada.
 
 ## O que mudou
 
+### 2.18.0 — Links rastreáveis do Instagram ([IG-...]) até a venda
+- Os links do ERP (aba Instagram → **Rastreio**, ex.: `triumph-store.vercel.app/l/bio`) abrem o WhatsApp da loja
+  com a mensagem e um código no fim: **"Olá! Vim pelo Instagram 😊 [IG-BIO]"**.
+- Quando chega a **1ª mensagem de um lead novo** com um código `[IG-...]`, a extensão grava a conversa em
+  `ig_link_leads` (conversa, telefone, hora e o código; o link é achado pelo código). **Só o código sai da página do
+  WhatsApp** — o texto da mensagem nunca é guardado e a mensagem não é alterada. Vale também para os leads achados na
+  varredura da abertura (72 h).
+- No ERP, a conversa passa a aparecer como **"Instagram (orgânico) · <canal> · <apelido>"** em WhatsApp →
+  Rastreamento, separada de **Meta Ads** e **Não rastreada**. Anúncio continua valendo primeiro (conversa que veio de
+  anúncio fica Meta Ads).
+- Sem a migration `20261113120000_ig_links.sql`: a extensão funciona como antes (não grava o código).
+- Testes: `igcode.test.cjs` (ponte com WA-JS falsa, motor e gravação com PostgREST falso).
+
 ### 2.17.2 — Não esquecer a compra para o Facebook depois da venda (💰)
 - Logo depois de **"Venda registrada"** aparece, no mesmo lugar: **"📈 Enviar a compra para o Facebook? R$ 734,00"**
   com **Enviar agora** e **Agora não**.

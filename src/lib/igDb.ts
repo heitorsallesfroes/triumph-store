@@ -37,7 +37,9 @@ async function cached<T>(key: string, fresh: boolean, run: () => Promise<T>): Pr
 
 export interface Win { since: number; until: number; fromDay: string; toDay: string }
 export interface IgTop { profile: IgProfile; period: { days: number; cur: Win; prev: Win }; cur: IgTotals; prev: IgTotals; warnings: string[]; at: number }
-export interface IgDaily { size: 'day' | 'week'; rows: IgDailyRow[]; warnings: string[] }
+// reach_source: 'serie' = alcance da série diária da Meta; 'dia' = total de cada dia. check: soma das visualizações dos dias × total do período
+export interface IgDailyCheck { metric: string; daily_sum: number | null; period_total: number | null; diff_pct: number | null; ok: boolean | null }
+export interface IgDaily { size: 'day' | 'week'; rows: IgDailyRow[]; warnings: string[]; reach_source?: 'serie' | 'dia'; check?: IgDailyCheck }
 export interface IgMediaLoad { items: IgMedia[]; truncated: boolean; warnings: string[] }
 export interface IgAudience { audience: { city: AudienceRow[]; age: AudienceRow[]; gender: AudienceRow[] }; warnings: string[] }
 

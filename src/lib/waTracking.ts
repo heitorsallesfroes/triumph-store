@@ -1,4 +1,4 @@
-// Aba WhatsApp → Rastreamento: de onde vêm as conversas (anúncio ou não rastreada), quanto tempo a loja leva
+// Aba WhatsApp → Rastreamento: de onde vêm as conversas (Meta Ads, Instagram orgânico ou não rastreada), quanto tempo a loja leva
 // para responder, a jornada Fez contato → Respondeu → Comprou, as vendas por dia e a lista de conversas.
 // Regras puras (sem React nem Supabase): node scripts/tests/waTracking.test.ts
 //
@@ -17,6 +17,7 @@
 // wa_leads): ela entra pelo próprio chat da venda, marcada como "início não registrado", com as vendas do período.
 import { addDays, normalizePhone, spDay, spStartOfDay, DAY_MS, type ActivityDayRow, type ActivityRow, type AttributionRow, type LeadRow, type Range, type ReplyRow, type SaleRowP, type SendRow, saleTime } from './waPanel.ts';
 import { eventKind } from './waConversions.ts';
+import { CHANNEL_LABEL, type IgChannel } from './igLinks.ts';
 
 // ── Linhas ────────────────────────────────────────────────────────────────
 export interface TrackLeadRow extends LeadRow { last_message_at?: string | null }
@@ -37,9 +38,22 @@ export interface TrackInput {
   sales: TrackSaleRow[]; names: ChatNameRow[]; conversions: TrackConversionRow[];
   activity?: ActivityRow[]; activityDays?: ActivityDayRow[]; // 2.12.8
   items?: { id: string; title: string; follow_step?: number | null }[]; // ERP 09/11: nomes na linha do tempo
+  igLeads?: TrackIgLeadRow[]; // Instagram FASE 2: conversas que começaram com um código [IG-...] (ig_link_leads)
 }
+// ig_link_leads + o link (canal e apelido) achado pelo link_id ou pelo código
+export interface TrackIgLeadRow { chat_id: string; phone: string | null; first_message_at: string; code: string; link_id?: string | null; channel?: string | null; slug?: string | null }
+export interface IgOrigin { code: string; channel: IgChannel | null; slug: string | null }
 
-export type OriginFilter = 'todas' | 'anuncio' | 'nao_rastreada';
+// Origem da conversa (Instagram FASE 2): Meta Ads (anúncio, vale primeiro) → Instagram orgânico (link rastreável
+// [IG-...]) → Não rastreada
+export type Source = 'anuncio' | 'instagram' | 'nao_rastreada';
+export const SOURCE_LABEL: Record<Source, string> = { anuncio: 'Meta Ads', instagram: 'Instagram (orgânico)', nao_rastreada: 'Não rastreada' };
+export const sourceOf = (c: { ad: boolean; ig?: IgOrigin | null }): Source => (c.ad ? 'anuncio' : c.ig ? 'instagram' : 'nao_rastreada');
+// "Instagram (orgânico) · Bio · bio"
+export const igLabel = (ig: IgOrigin | null | undefined) => (ig ? [SOURCE_LABEL.instagram, ig.channel ? CHANNEL_LABEL[ig.channel] : null, ig.slug || ig.code].filter(Boolean).join(' · ') : '');
+export const sourceText = (c: { ad: boolean; ig?: IgOrigin | null }) => (sourceOf(c) === 'instagram' ? igLabel(c.ig) : SOURCE_LABEL[sourceOf(c)]);
+
+export type OriginFilter = 'todas' | Source;
 export type Stage = 'contato' | 'respondeu' | 'comprou';
 export const STAGE_LABEL: Record<Stage, string> = { contato: 'Fez contato', respondeu: 'Respondeu', comprou: 'Comprou' };
 // 2.12.8: filtro de etapa da tabela
@@ -127,6 +141,7 @@ export interface Conversation {
   name: string; nameSource: 'aprendido' | 'whatsapp' | 'telefone' | 'nenhum';
   phone: string | null; phoneLabel: string; waLink: string | null;
   ad: boolean; adId: string | null; adTitle: string | null;
+  ig: IgOrigin | null; // Instagram FASE 2: veio de um link rastreável (só vale se não veio de anúncio)
   firstAt: number; lastAt: number;
   firstReplyAt: number | null; replyMinutes: number | null; replyBusinessMinutes: number | null;
   replied: boolean; stage: Stage;
@@ -163,6 +178,8 @@ export function buildConversations(input: TrackInput, bh: BusinessHours = DEFAUL
   input.attributions.forEach((a) => lidPhoneOf(a.chat_id, a.phone, lidPhone));
   activity.forEach((a) => lidPhoneOf(a.chat_id, a.phone, lidPhone));
   input.sales.forEach((s) => lidPhoneOf(s.wa_chat_id, s.customer_phone, lidPhone));
+  const igLeads = input.igLeads || [];
+  igLeads.forEach((l) => lidPhoneOf(l.chat_id, l.phone, lidPhone));
   const keyOf = (chat: string | null | undefined): string | null => {
     if (!chat) return null;
     const p = phoneOfCus(chat) || lidPhone.get(chat);
@@ -171,20 +188,26 @@ export function buildConversations(input: TrackInput, bh: BusinessHours = DEFAUL
   const realConv = input.conversions.filter((c) => !c.test && c.status === 'enviado');
 
   // 1. conversas com o 1º contato registrado (a mais antiga de cada pessoa)
-  interface Seed { key: string; chatId: string; t: number; ad: boolean; adId: string | null; adTitle: string | null; tracked: boolean }
+  interface Seed { key: string; chatId: string; t: number; ad: boolean; adId: string | null; adTitle: string | null; tracked: boolean; ig: IgOrigin | null }
   const seeds = new Map<string, Seed>();
   const put = (s: Seed) => {
     const cur = seeds.get(s.key);
     if (!cur) { seeds.set(s.key, s); return; }
     const first = s.t < cur.t ? s : cur;
-    seeds.set(s.key, { ...first, ad: s.ad || cur.ad, adId: first.adId || cur.adId || s.adId, adTitle: first.adTitle || cur.adTitle || s.adTitle });
+    seeds.set(s.key, { ...first, ad: s.ad || cur.ad, adId: first.adId || cur.adId || s.adId, adTitle: first.adTitle || cur.adTitle || s.adTitle, ig: first.ig || cur.ig || s.ig });
   };
-  input.leads.forEach((l) => { const k = keyOf(l.chat_id); const t = ts(l.first_message_at); if (k && Number.isFinite(t)) put({ key: k, chatId: l.chat_id, t, ad: l.origin === 'anuncio', adId: l.ad_id, adTitle: l.ad_title, tracked: true }); });
-  input.attributions.forEach((a) => { const k = keyOf(a.chat_id); const t = ts(a.first_message_at); if (k && Number.isFinite(t)) put({ key: k, chatId: a.chat_id, t, ad: true, adId: a.ad_id, adTitle: a.ad_title, tracked: true }); });
+  input.leads.forEach((l) => { const k = keyOf(l.chat_id); const t = ts(l.first_message_at); if (k && Number.isFinite(t)) put({ key: k, chatId: l.chat_id, t, ad: l.origin === 'anuncio', adId: l.ad_id, adTitle: l.ad_title, tracked: true, ig: null }); });
+  input.attributions.forEach((a) => { const k = keyOf(a.chat_id); const t = ts(a.first_message_at); if (k && Number.isFinite(t)) put({ key: k, chatId: a.chat_id, t, ad: true, adId: a.ad_id, adTitle: a.ad_title, tracked: true, ig: null }); });
+  // Instagram FASE 2: 1ª mensagem com o código de um link rastreável
+  igLeads.forEach((l) => {
+    const k = keyOf(l.chat_id); const t = ts(l.first_message_at);
+    const channel = l.channel && l.channel in CHANNEL_LABEL ? (l.channel as IgChannel) : null;
+    if (k && Number.isFinite(t)) put({ key: k, chatId: l.chat_id, t, ad: false, adId: null, adTitle: null, tracked: true, ig: { code: l.code, channel, slug: l.slug || null } });
+  });
   // 2.12.8: lead novo achado pela atividade (a conversa começou com o cliente) que não está em wa_leads
   activity.forEach((a) => {
     const k = keyOf(a.chat_id); const t = ts(a.first_message_at);
-    if (a.is_new_lead === true && k && Number.isFinite(t) && !seeds.has(k)) put({ key: k, chatId: a.chat_id, t, ad: false, adId: null, adTitle: null, tracked: true });
+    if (a.is_new_lead === true && k && Number.isFinite(t) && !seeds.has(k)) put({ key: k, chatId: a.chat_id, t, ad: false, adId: null, adTitle: null, tracked: true, ig: null });
   });
 
   // conversas que existem no WhatsApp (para a venda do ERP pelo telefone): registros + atividade + envios + respostas + eventos
@@ -226,6 +249,7 @@ export function buildConversations(input: TrackInput, bh: BusinessHours = DEFAUL
   };
   const leadsByKey = group(input.leads, (l) => l.chat_id);
   const attrByKey = group(input.attributions, (a) => a.chat_id);
+  const igByKey = group(igLeads, (l) => l.chat_id);
   // 2.12.8: conversas com atividade (todas, não só leads): cada uma vira conversa pela própria chave
   activity.forEach((a) => { const k = keyOf(a.chat_id); if (k && !convOfKey(k)) alias.set(k, k); });
   const actByKey = group(activity, (a) => a.chat_id);
@@ -296,10 +320,12 @@ export function buildConversations(input: TrackInput, bh: BusinessHours = DEFAUL
     const saleAd = own.some((s) => saleRows.get(s.id)?.origin === 'anuncio');
     const convAd = conv.map((c) => c.ad_title).find(Boolean) || null;
     const ad = seed ? seed.ad : saleAd || !!convAd;
+    const igs = igByKey.get(key) || [];
     return {
-      key, chatId, chatIds: [...new Set([chatId, ...leads.map((x) => x.chat_id), ...attrs.map((x) => x.chat_id), ...acts.map((x) => x.chat_id)].filter(Boolean))], tracked: !!seed,
+      key, chatId, chatIds: [...new Set([chatId, ...leads.map((x) => x.chat_id), ...attrs.map((x) => x.chat_id), ...acts.map((x) => x.chat_id), ...igs.map((x) => x.chat_id)].filter(Boolean))], tracked: !!seed,
       name, nameSource, phone, phoneLabel, waLink: waLinkOf(phone),
       ad, adId: seed ? seed.adId : null, adTitle: seed ? seed.adTitle : convAd,
+      ig: !ad && seed ? seed.ig : null,
       firstAt, lastAt,
       firstReplyAt, replyMinutes: firstReplyAt == null ? null : (firstReplyAt - firstAt) / 60000,
       replyBusinessMinutes: firstReplyAt == null ? null : businessMinutesBetween(firstAt, firstReplyAt, bh),
@@ -325,7 +351,7 @@ function withSales(c: Conversation, links = c.saleLinks): Conversation {
   };
 }
 
-export const originMatches = (ad: boolean, f: OriginFilter) => f === 'todas' || (f === 'anuncio' ? ad : !ad);
+export const originMatches = (c: { ad: boolean; ig?: IgOrigin | null }, f: OriginFilter) => f === 'todas' || sourceOf(c) === f;
 // Conversas do período (2.12.8, como o Tintim):
 //   - lead novo do período (1º contato no período): com as vendas depois do 1º contato;
 //   - ATIVA no período (o cliente mandou mensagem no período: dia com mensagem do cliente ou resposta a um envio
@@ -339,7 +365,7 @@ export function conversationsIn(model: TrackModel, r: Pick<Range, 'from' | 'to'>
   const repliedChats = new Set((replies || []).filter((x) => inRange(ts(x.replied_at), r)).map((x) => x.chat_id));
   const out: Conversation[] = [];
   model.conversations.forEach((c) => {
-    if (!originMatches(c.ad, f)) return;
+    if (!originMatches(c, f)) return;
     const periodLead = c.tracked && inRange(c.firstAt, r);
     const periodActive = periodLead || c.customerDays.some((d) => d >= fromDay && d <= toDay) || c.chatIds.some((id) => repliedChats.has(id));
     if (periodLead) { out.push({ ...c, periodLead, periodActive }); return; }
@@ -359,6 +385,8 @@ export interface TrackSummary {
   // ERP 09/11 (Tintim): rastreadas x não rastreadas entre as ATIVAS, aguardando 1ª resposta e tempo de jornada
   activeAd: number; activeAdPct: number | null; activeUntracked: number; activeUntrackedPct: number | null;
   awaiting: number; journeyDays: number | null; journeyCount: number;
+  // Instagram FASE 2: conversas do Instagram orgânico (links rastreáveis); "não rastreadas" já não as contam
+  ig: number; activeIg: number; activeIgPct: number | null; leadsIg: number;
 }
 // fromSecond: tempo da 1ª resposta a partir da 2ª mensagem nossa (ignora a automática / saudação)
 export function trackSummary(list: Conversation[], businessOnly = false, fromSecond = false): TrackSummary {
@@ -369,28 +397,31 @@ export function trackSummary(list: Conversation[], businessOnly = false, fromSec
     .filter((m): m is number => m != null);
   const actives = list.filter((c) => c.periodActive);
   const activeAd = actives.filter((c) => c.ad).length;
+  const ig = list.filter((c) => sourceOf(c) === 'instagram').length;
+  const activeIg = actives.filter((c) => sourceOf(c) === 'instagram').length;
   // tempo de jornada: do 1º contato registrado até a 1ª venda (só quem comprou)
   const journeys = list.filter((c) => c.tracked && c.firstSaleAt != null && c.firstSaleAt >= c.firstAt).map((c) => ((c.firstSaleAt as number) - c.firstAt) / DAY_MS);
   const bought = list.filter((c) => c.sales > 0).length;
   const sales = list.reduce((x, c) => x + c.sales, 0);
   return {
-    total, fresh, older: total - fresh, ad, adPct: total ? ad / total : null, untracked: total - ad, untrackedPct: total ? (total - ad) / total : null,
+    total, fresh, older: total - fresh, ad, adPct: total ? ad / total : null, untracked: total - ad - ig, untrackedPct: total ? (total - ad - ig) / total : null,
     answered: mins.length, avgReplyMinutes: mins.length ? mins.reduce((a, b) => a + b, 0) / mins.length : null,
     bought, sales, revenue: money2(list.reduce((x, c) => x + c.revenue, 0)), conversion: total ? bought / total : null,
     active: actives.length, leads: fresh, leadsAd: list.filter((c) => c.periodLead && c.ad).length,
-    activeAd, activeAdPct: actives.length ? activeAd / actives.length : null, activeUntracked: actives.length - activeAd,
-    activeUntrackedPct: actives.length ? (actives.length - activeAd) / actives.length : null,
+    activeAd, activeAdPct: actives.length ? activeAd / actives.length : null, activeUntracked: actives.length - activeAd - activeIg,
+    activeUntrackedPct: actives.length ? (actives.length - activeAd - activeIg) / actives.length : null,
     awaiting: list.filter((c) => c.awaiting).length,
     journeyDays: journeys.length ? journeys.reduce((a, b) => a + b, 0) / journeys.length : null, journeyCount: journeys.length,
+    ig, activeIg, activeIgPct: actives.length ? activeIg / actives.length : null, leadsIg: list.filter((c) => c.periodLead && sourceOf(c) === 'instagram').length,
   };
 }
 
 // ── Gráficos ──────────────────────────────────────────────────────────────
 const daysOf = (r: Pick<Range, 'fromDay' | 'days'>) => Array.from({ length: r.days }, (_, i) => addDays(r.fromDay, i));
 
-export interface OriginDay { day: string; anuncio: number; nao_rastreada: number }
+export interface OriginDay { day: string; anuncio: number; instagram: number; nao_rastreada: number }
 export function originByDay(list: Conversation[], r: Pick<Range, 'fromDay' | 'days'>): OriginDay[] {
-  const m = new Map(daysOf(r).map((day) => [day, { day, anuncio: 0, nao_rastreada: 0 }]));
+  const m = new Map(daysOf(r).map((day) => [day, { day, anuncio: 0, instagram: 0, nao_rastreada: 0 }]));
   // ERP 09/11 (Tintim): as conversas ATIVAS do período, cada uma no 1º dia dela no período (o dia do 1º contato, se
   // for lead novo, ou o 1º dia em que o cliente falou) — a soma das barras é o total de conversas ativas
   const days = daysOf(r);
@@ -400,7 +431,7 @@ export function originByDay(list: Conversation[], r: Pick<Range, 'fromDay' | 'da
     if (!c.periodActive) return;
     const cand = [...(c.periodLead ? [spDay(c.firstAt)] : []), ...c.customerDays.filter((d) => d >= from && d <= to)].sort();
     const p = cand.length ? m.get(cand[0]) : undefined;
-    if (p) p[c.ad ? 'anuncio' : 'nao_rastreada']++;
+    if (p) p[sourceOf(c)]++;
   });
   return [...m.values()];
 }
@@ -435,8 +466,8 @@ export function salesByDay(model: TrackModel, r: Range, f: OriginFilter, mode: S
   if (mode === 'contato') {
     conversationsIn(model, r, f).forEach((c) => c.saleLinks.forEach((s) => add(c.firstAt, s.total)));
   } else {
-    const adOf = new Map(model.conversations.map((c) => [c.key, c.ad]));
-    model.sales.filter((s) => inRange(s.t, r) && originMatches(!!adOf.get(s.convKey), f)).forEach((s) => add(s.t, s.total));
+    const convOf = new Map(model.conversations.map((c) => [c.key, c]));
+    model.sales.filter((s) => inRange(s.t, r) && originMatches(convOf.get(s.convKey) || { ad: false }, f)).forEach((s) => add(s.t, s.total));
   }
   return [...m.values()];
 }
@@ -452,7 +483,7 @@ export function searchConversations(list: Conversation[], q: string): Conversati
   const text = fold(q.trim());
   if (!text) return list;
   const digits = q.replace(/\D/g, '');
-  return list.filter((c) => fold(c.name).includes(text) || (c.adTitle ? fold(c.adTitle).includes(text) : false)
+  return list.filter((c) => fold(c.name).includes(text) || (c.adTitle ? fold(c.adTitle).includes(text) : false) || (c.ig ? fold(igLabel(c.ig)).includes(text) : false)
     || (digits.length >= 3 && (c.phone || '').includes(digits)));
 }
 
@@ -478,7 +509,7 @@ export function sortConversations(list: Conversation[], key: SortKey, desc: bool
   const val = (c: Conversation): number | string | null => {
     switch (key) {
       case 'name': return fold(c.name);
-      case 'origin': return c.ad ? `0${fold(c.adTitle || '')}` : '1';
+      case 'origin': return c.ad ? `0${fold(c.adTitle || '')}` : c.ig ? `1${fold(igLabel(c.ig))}` : '2';
       case 'stage': return STAGE_ORDER[c.stage] * 1e9 + c.revenue;
       case 'lastAt': return c.lastAt;
       case 'revenue': return c.revenue;
@@ -509,14 +540,14 @@ const csvCell = (v: string | number) => {
 export function conversationsCsv(list: Conversation[]): string {
   const head = ['Contato', 'Telefone', 'Origem', 'Anúncio', 'Etapa', 'Vendas', 'Valor', 'Lead novo no período', 'Primeira mensagem', 'Última mensagem', 'Última mensagem de', '1ª resposta (min)', 'Contato enviado ao Facebook', 'Compra enviada ao Facebook'];
   const rows = list.map((c) => [
-    c.name, c.phoneLabel, c.ad ? 'Meta Ads' : 'Não rastreada', c.adTitle || '', STAGE_LABEL[c.stage], c.sales, c.revenue.toFixed(2).replace('.', ','), c.periodLead ? 'sim' : 'não',
+    c.name, c.phoneLabel, sourceText(c), c.adTitle || '', STAGE_LABEL[c.stage], c.sales, c.revenue.toFixed(2).replace('.', ','), c.periodLead ? 'sim' : 'não',
     `${dt(c.firstAt)}${c.tracked ? '' : ' (início não registrado)'}`, dt(c.lastAt), c.lastFrom || '', c.replyMinutes == null ? '' : Math.round(c.replyMinutes), c.fbContact ? 'sim' : 'não', c.fbPurchase ? 'sim' : 'não',
   ]);
   return [head, ...rows].map((r) => r.map(csvCell).join(';')).join('\r\n');
 }
 
 // ── ERP 09/11: detalhes da conversa (👁) — linha do tempo ─────────────────
-export type TimelineKind = 'contato' | 'anuncio' | 'loja' | 'follow' | 'disparo' | 'resposta' | 'venda' | 'facebook';
+export type TimelineKind = 'contato' | 'anuncio' | 'instagram' | 'loja' | 'follow' | 'disparo' | 'resposta' | 'venda' | 'facebook';
 export interface TimelineEvent { t: number; kind: TimelineKind; text: string }
 export function conversationTimeline(c: Conversation, input: Pick<TrackInput, 'sends' | 'replies' | 'conversions'> & { items?: { id: string; title: string; follow_step?: number | null }[] },
   money: (n: number) => string): TimelineEvent[] {
@@ -525,6 +556,7 @@ export function conversationTimeline(c: Conversation, input: Pick<TrackInput, 's
   const out: TimelineEvent[] = [];
   out.push({ t: c.firstAt, kind: 'contato', text: c.tracked ? 'Primeira mensagem do cliente (1º contato)' : 'Primeira atividade conhecida (início não registrado)' });
   if (c.ad) out.push({ t: c.firstAt, kind: 'anuncio', text: `Veio do anúncio${c.adTitle ? ` “${c.adTitle}”` : ' (Meta Ads)'}` });
+  else if (c.ig) out.push({ t: c.firstAt, kind: 'instagram', text: `Veio do ${igLabel(c.ig)} (código ${c.ig.code})` });
   input.sends.forEach((s) => {
     const t = ts(s.created_at);
     if (s.status !== 'enviado' || !s.chat_id || !ids.has(s.chat_id) || !Number.isFinite(t)) return;
@@ -608,10 +640,10 @@ export function salesCsv(model: TrackModel, r: Range, f: OriginFilter, mode: Sal
   const byKey = new Map(model.conversations.map((c) => [c.key, c]));
   let rows: { s: SaleLink; c: Conversation | undefined }[];
   if (mode === 'contato') rows = conversationsIn(model, r, f).flatMap((c) => c.saleLinks.map((s) => ({ s, c })));
-  else rows = model.sales.filter((s) => inRange(s.t, r) && originMatches(!!byKey.get(s.convKey)?.ad, f)).map((s) => ({ s, c: byKey.get(s.convKey) }));
+  else rows = model.sales.filter((s) => inRange(s.t, r) && originMatches(byKey.get(s.convKey) || { ad: false }, f)).map((s) => ({ s, c: byKey.get(s.convKey) }));
   const head = ['Data da venda', 'Venda', 'Contato', 'Telefone', 'Origem', 'Anúncio', 'Primeiro contato', 'Valor', 'Como foi ligada'];
   const lines = rows.sort((a, b) => a.s.t - b.s.t).map(({ s, c }) => [
-    dt(s.t), `#${s.id.slice(0, 8)}`, c ? c.name : s.customer || '', c ? c.phoneLabel : '', c && c.ad ? 'Meta Ads' : 'Não rastreada', (c && c.adTitle) || '',
+    dt(s.t), `#${s.id.slice(0, 8)}`, c ? c.name : s.customer || '', c ? c.phoneLabel : '', c ? sourceText(c) : SOURCE_LABEL.nao_rastreada, (c && c.adTitle) || '',
     c ? dt(c.firstAt) : '', s.total.toFixed(2).replace('.', ','), s.how.map((h) => SALE_HOW_LABEL[h]).join(' + '),
   ]);
   return [head, ...lines].map((x) => x.map(csvCell).join(';')).join('\r\n');

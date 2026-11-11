@@ -1,14 +1,14 @@
 // Aba "Rastreamento" (como o Tintim): conversas aguardando 1ª resposta e tempo de jornada no topo; filtros (período,
 // origem, relatório); visão geral (ativas, rastreadas × não rastreadas, 1ª resposta, meia-lua); origem por dia;
 // funil Fez contato → Comprou; vendas; a tabela de conversas (ao vivo, 25 por página, detalhes da conversa numa
-// lateral) e os eventos enviados ao Facebook. Azul = Meta Ads, laranja = Não rastreada.
+// lateral) e os eventos enviados ao Facebook. Azul = Meta Ads, rosa = Instagram (orgânico, links rastreáveis), laranja = Não rastreada.
 // Contas em src/lib/waTracking.ts; leitura em src/lib/waTrackingDb.ts. Só leitura.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Download, ExternalLink, Eye, MessageCircle, Search, X } from 'lucide-react';
 import { periodRanges, spDay, type PeriodPreset } from '../../lib/waPanel';
 import {
-  adBadgeTitle, buildConversations, buyFunnel, conversationAd, conversationsCsv, conversationsIn, conversationTimeline, filterStage, originByDay, originMatches, pageInfo, salesByDay, salesCsv,
+  adBadgeTitle, igLabel, buildConversations, buyFunnel, conversationAd, conversationsCsv, conversationsIn, conversationTimeline, filterStage, originByDay, originMatches, pageInfo, salesByDay, salesCsv,
   searchConversations, sortConversations, trackSummary, businessHoursLabel, businessHoursOf, saleLinksText, DEFAULT_SORT, STAGE_FILTERS, STAGE_LABEL,
   salesFbGap, recentFbGap, fbGapText, type SalesFbGap,
   type Conversation, type ConversationAd, type OriginFilter, type SalesDateMode, type SortKey, type Stage, type StageFilter, type TrackInput,
@@ -23,8 +23,10 @@ import { EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoT
 // cores do Tintim
 const META = '#2563eb';
 const UNTR = '#f97316';
+const IGC = '#c026d3'; // Instagram FASE 2: links rastreáveis do Instagram (orgânico)
 const PRESETS: [PeriodPreset, string][] = [['hoje', 'Hoje'], ['7d', '7 dias'], ['30d', '30 dias'], ['mes', 'Este mês'], ['custom', 'Personalizado']];
-const ORIGINS: [OriginFilter, string][] = [['todas', 'Todas as origens'], ['anuncio', 'Meta Ads'], ['nao_rastreada', 'Não rastreada']];
+const ORIGINS: [OriginFilter, string][] = [['todas', 'Todas as origens'], ['anuncio', 'Meta Ads'], ['instagram', 'Instagram (orgânico)'], ['nao_rastreada', 'Não rastreada']];
+const ORIGIN_COLORS = { anuncio: META, instagram: IGC, nao_rastreada: UNTR };
 const PAGE = 25;
 // 2.12.8: atualiza sozinha a cada 30 s (aba visível, período incluindo hoje). O teste usa window.__TSP_LIVE_MS.
 const LIVE_MS = Number((globalThis as { __TSP_LIVE_MS?: number }).__TSP_LIVE_MS) || 30 * 1000;
@@ -37,7 +39,8 @@ const INFO = {
   journey: 'Média de dias entre o 1º contato registrado e a 1ª venda, das conversas do período que compraram.',
   active: 'Total de conversas novas ativas (como no Tintim): conversas, uma por pessoa, em que o CLIENTE mandou mensagem no período, novas ou antigas. Gravado pela extensão 2.12.8; ao abrir o WhatsApp Web ela varre as conversas com mensagem nas últimas 72 h.',
   ad: 'Conversas ativas que vieram de um anúncio do Meta (Facebook/Instagram, clique para o WhatsApp).',
-  untracked: 'Conversas ativas sem anúncio: o cliente chamou direto, pelo link, indicação etc.',
+  untracked: 'Conversas ativas sem anúncio e sem link rastreável do Instagram: o cliente chamou direto, indicação etc.',
+  ig: 'Conversas ativas que começaram por um link rastreável do Instagram (bio, stories, comentários…): a 1ª mensagem trouxe o código [IG-...] (extensão 2.18.0). Anúncio vale primeiro.',
   reply: 'Média do tempo entre a 1ª mensagem do cliente e a 1ª mensagem nossa registrada. "Calcular a partir da 2ª mensagem": ignora a 1ª mensagem nossa (automática / saudação) e mede até a 2ª. "Só horário comercial": conta só os minutos dentro do horário do motor de envios. Conversas sem resposta e as com início não registrado não entram.',
   origin: 'Conversas ativas por dia (o 1º dia delas no período), separadas pela origem. O número dentro de cada pedaço é a quantidade.',
   funnel: 'Fez contato = conversas ativas do período (100%). Comprou = as que tiveram venda pelo WhatsApp (💰, 📈 ou o telefone da venda) depois do 1º contato. Canceladas/reembolsadas não contam.',
@@ -109,7 +112,7 @@ export default function WaTracking() {
   const funnel = useMemo(() => (list ? buyFunnel(list) : null), [list]);
   const salesDaily = useMemo(() => (model ? salesByDay(model, r, origin, salesMode) : null), [model, r, origin, salesMode]);
   const salesTot = useMemo(() => (salesDaily ? salesDaily.reduce((a, x) => ({ n: a.n + x.vendas, v: a.v + x.receita }), { n: 0, v: 0 }) : null), [salesDaily]);
-  const originTot = useMemo(() => (daily ? daily.reduce((a, x) => ({ ad: a.ad + x.anuncio, un: a.un + x.nao_rastreada }), { ad: 0, un: 0 }) : null), [daily]);
+  const originTot = useMemo(() => (daily ? daily.reduce((a, x) => ({ ad: a.ad + x.anuncio, ig: a.ig + x.instagram, un: a.un + x.nao_rastreada }), { ad: 0, ig: 0, un: 0 }) : null), [daily]);
   const tag = `${r.fromDay}_a_${r.toDay}`;
   const fbReady = !!fbData && fbData.key === key;
   const fbGap = useMemo<SalesFbGap | null>(() => (fbReady && fbData ? salesFbGap(fbData.load.sales, fbData.load.conversions, r) : null), [fbReady, fbData, r]);
@@ -161,7 +164,7 @@ export default function WaTracking() {
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
           Até <input type="date" aria-label="Data final" value={preset === 'custom' ? end : r.toDay} onChange={(e) => { setEnd(e.target.value); if (preset !== 'custom') setStart(r.fromDay); setPreset('custom'); }} style={input} />
         </label>
-        <Segmented label="Origem" options={ORIGINS} value={origin} onChange={setOrigin} small colors={{ anuncio: META, nao_rastreada: UNTR }} />
+        <Segmented label="Origem" options={ORIGINS} value={origin} onChange={setOrigin} small colors={ORIGIN_COLORS} />
         <span style={{ flex: 1 }} />
         <button type="button" style={btn} disabled={!list || !list.length} onClick={() => list && download(conversationsCsv(sortConversations(list, DEFAULT_SORT.key, DEFAULT_SORT.desc)), `conversas_whatsapp_${tag}.csv`)} data-testid="track-report">
           <Download size={14} /> Baixar relatório
@@ -180,6 +183,7 @@ export default function WaTracking() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))', gap: 16, alignItems: 'center' }}>
             <Metric testId="track-active" label="Total de conversas novas ativas" info={INFO.active} value={fmtInt(s.active)} sub={`${fmtInt(s.leads)} leads novos no período`} />
             <Metric testId="track-ad" label="Conversas rastreadas" info={INFO.ad} value={fmtInt(s.activeAd)} color={META} sub={`${fmtPct(s.activeAdPct, 1)} das conversas`} />
+            <Metric testId="track-ig" label="Instagram (orgânico)" info={INFO.ig} value={fmtInt(s.activeIg)} color={IGC} sub={`${fmtPct(s.activeIgPct, 1)} das conversas`} />
             <Metric testId="track-untracked" label="Não rastreadas" info={INFO.untracked} value={fmtInt(s.activeUntracked)} color={UNTR} sub={`${fmtPct(s.activeUntrackedPct, 1)} das conversas`} />
             <Metric testId="track-reply" label="Tempo médio de 1ª resposta" info={INFO.reply} value={fmtMinutes(s.avgReplyMinutes)} sub={(
               <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -188,7 +192,7 @@ export default function WaTracking() {
                 <Toggle on={businessOnly} onChange={setBusinessOnly} label={`Só horário comercial (${businessHoursLabel(bh)})`} />
               </span>
             )} />
-            <Gauge ad={s.activeAd} untracked={s.activeUntracked} />
+            <Gauge ad={s.activeAd} ig={s.activeIg} untracked={s.activeUntracked} />
           </div>
         )}
       </Card>
@@ -197,10 +201,11 @@ export default function WaTracking() {
       <Card title="Origem das conversas" info={INFO.origin} testId="track-origin" right={originTot && (
         <span style={{ display: 'flex', gap: 14, fontSize: 13 }}>
           <span><b style={{ color: META, fontSize: 18 }}>{fmtInt(originTot.ad)}</b> Meta Ads</span>
+          <span data-testid="track-origin-ig"><b style={{ color: IGC, fontSize: 18 }}>{fmtInt(originTot.ig)}</b> Instagram</span>
           <span><b style={{ color: UNTR, fontSize: 18 }}>{fmtInt(originTot.un)}</b> Não rastreada</span>
         </span>
       )}>
-        {!daily ? <Skeleton h={260} /> : daily.every((x) => !x.anuncio && !x.nao_rastreada) ? <EmptyState /> : (
+        {!daily ? <Skeleton h={260} /> : daily.every((x) => !x.anuncio && !x.instagram && !x.nao_rastreada) ? <EmptyState /> : (
           <div style={{ width: '100%', height: 280 }}>
             <ResponsiveContainer>
               <BarChart data={daily.map((x) => ({ ...x, dia: br(x.day) }))} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
@@ -209,12 +214,17 @@ export default function WaTracking() {
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} />
                 <Tooltip cursor={{ fill: 'rgba(37,99,235,0.06)' }} contentStyle={tooltipStyle} labelStyle={{ color: 'var(--text-primary)', fontWeight: 700 }} formatter={(v, name) => [fmtInt(Number(v)), name]} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                {origin !== 'nao_rastreada' && (
+                {(origin === 'todas' || origin === 'anuncio') && (
                   <Bar dataKey="anuncio" name="Meta Ads" stackId="o" fill={META} maxBarSize={40}>
                     <LabelList dataKey="anuncio" position="center" fill="#fff" fontSize={11} fontWeight={700} formatter={hideZero} />
                   </Bar>
                 )}
-                {origin !== 'anuncio' && (
+                {(origin === 'todas' || origin === 'instagram') && (
+                  <Bar dataKey="instagram" name="Instagram (orgânico)" stackId="o" fill={IGC} maxBarSize={40}>
+                    <LabelList dataKey="instagram" position="center" fill="#fff" fontSize={11} fontWeight={700} formatter={hideZero} />
+                  </Bar>
+                )}
+                {(origin === 'todas' || origin === 'nao_rastreada') && (
                   <Bar dataKey="nao_rastreada" name="Não rastreada" stackId="o" fill={UNTR} radius={[6, 6, 0, 0]} maxBarSize={40}>
                     <LabelList dataKey="nao_rastreada" position="center" fill="#fff" fontSize={11} fontWeight={700} formatter={hideZero} />
                   </Bar>
@@ -379,21 +389,21 @@ function Toggle({ on, onChange, label, testId }: { on: boolean; onChange: (v: bo
   );
 }
 // meia-lua (gauge) rastreadas × não rastreadas
-function Gauge({ ad, untracked }: { ad: number; untracked: number }) {
-  const total = ad + untracked;
-  const data = total ? [{ name: 'Meta Ads', value: ad }, { name: 'Não rastreada', value: untracked }] : [{ name: 'Sem conversas', value: 1 }];
+function Gauge({ ad, ig, untracked }: { ad: number; ig: number; untracked: number }) {
+  const total = ad + ig + untracked;
+  const data = total ? [{ name: 'Meta Ads', value: ad }, { name: 'Instagram (orgânico)', value: ig }, { name: 'Não rastreada', value: untracked }] : [{ name: 'Sem conversas', value: 1 }];
   return (
-    <div style={{ position: 'relative', width: '100%', height: 130 }} data-testid="track-gauge" aria-label={`Rastreadas ${ad}, não rastreadas ${untracked}`}>
+    <div style={{ position: 'relative', width: '100%', height: 130 }} data-testid="track-gauge" aria-label={`Meta Ads ${ad}, Instagram ${ig}, não rastreadas ${untracked}`}>
       <ResponsiveContainer>
         <PieChart>
           <Pie data={data} dataKey="value" startAngle={180} endAngle={0} cx="50%" cy="100%" innerRadius="120%" outerRadius="175%" paddingAngle={total ? 1 : 0} stroke="none" isAnimationActive={false}>
-            {data.map((d) => <Cell key={d.name} fill={d.name === 'Meta Ads' ? META : d.name === 'Não rastreada' ? UNTR : 'var(--bg-inner)'} />)}
+            {data.map((d) => <Cell key={d.name} fill={d.name === 'Meta Ads' ? META : d.name === 'Instagram (orgânico)' ? IGC : d.name === 'Não rastreada' ? UNTR : 'var(--bg-inner)'} />)}
           </Pie>
           {total > 0 && <Tooltip contentStyle={tooltipStyle} formatter={(v, name) => [`${fmtInt(Number(v))} (${fmtPct(Number(v) / total, 1)})`, name]} />}
         </PieChart>
       </ResponsiveContainer>
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
-        <b style={{ color: META }}>{fmtPct(total ? ad / total : null, 0)}</b> rastreadas
+        <b style={{ color: META }}>{fmtPct(total ? (ad + ig) / total : null, 0)}</b> rastreadas
       </div>
     </div>
   );
@@ -428,6 +438,12 @@ function Segmented<T extends string>({ label, options, value, onChange, small = 
 const STAGE_COLOR: Record<Stage, string> = { contato: SLATE, respondeu: META, comprou: GREEN };
 
 function OriginBadge({ c }: { c: Conversation }) {
+  if (!c.ad && c.ig) return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+      <span title={igLabel(c.ig)} data-testid="track-ig-badge" style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(192,38,211,0.12)', color: IGC, alignSelf: 'flex-start', whiteSpace: 'nowrap' }}>Instagram</span>
+      <span style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{igLabel(c.ig).split(' · ').slice(1).join(' · ')}</span>
+    </span>
+  );
   if (!c.ad) return <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(249,115,22,0.12)', color: UNTR, whiteSpace: 'nowrap' }}>Não rastreada</span>;
   return (
     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
@@ -481,8 +497,8 @@ function ConversationsTable({ list, input: data, fileTag, resetKey, awaitingOnly
   const lastAwait = useRef(awaitingOnly);
   if (lastReset.current !== resetKey) { lastReset.current = resetKey; if (page !== 0) setPage(0); }
   if (lastAwait.current !== awaitingOnly) { lastAwait.current = awaitingOnly; if (page !== 0) setPage(0); }
-  const base = useMemo(() => searchConversations(list, q).filter((c) => originMatches(c.ad, orig) && (!awaitingOnly || c.awaiting)), [list, q, orig, awaitingOnly]);
-  const totals = useMemo(() => ({ all: base.length, ad: base.filter((c) => c.ad).length }), [base]);
+  const base = useMemo(() => searchConversations(list, q).filter((c) => originMatches(c, orig) && (!awaitingOnly || c.awaiting)), [list, q, orig, awaitingOnly]);
+  const totals = useMemo(() => ({ all: base.length, ad: base.filter((c) => c.ad).length, ig: base.filter((c) => !c.ad && !!c.ig).length }), [base]);
   const rows = useMemo(() => sortConversations(filterStage(base, stage), sort.key, sort.desc), [base, stage, sort]);
   const pi = pageInfo(rows.length, page, PAGE);
   const cur = rows.slice(pi.from, pi.to);
@@ -508,7 +524,8 @@ function ConversationsTable({ list, input: data, fileTag, resetKey, awaitingOnly
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 13 }} data-testid="track-totals">
         <span><b style={{ fontSize: 18 }}>{fmtInt(totals.all)}</b> Total</span>
         <span><b style={{ fontSize: 18, color: META }}>{fmtInt(totals.ad)}</b> Meta Ads</span>
-        <span><b style={{ fontSize: 18, color: UNTR }}>{fmtInt(totals.all - totals.ad)}</b> Não rastreada</span>
+        <span><b style={{ fontSize: 18, color: IGC }}>{fmtInt(totals.ig)}</b> Instagram</span>
+        <span><b style={{ fontSize: 18, color: UNTR }}>{fmtInt(totals.all - totals.ad - totals.ig)}</b> Não rastreada</span>
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <label style={{ position: 'relative', flex: '1 1 220px', maxWidth: 320 }}>
@@ -516,7 +533,7 @@ function ConversationsTable({ list, input: data, fileTag, resetKey, awaitingOnly
           <input type="search" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder="Buscar por telefone ou nome" aria-label="Buscar conversa por telefone ou nome"
             style={{ ...input, width: '100%', paddingLeft: 30, boxSizing: 'border-box' }} />
         </label>
-        <div data-testid="track-table-origin"><Segmented label="Origem da conversa" small options={ORIGINS} value={orig} onChange={(v) => { setOrig(v); setPage(0); }} colors={{ anuncio: META, nao_rastreada: UNTR }} /></div>
+        <div data-testid="track-table-origin"><Segmented label="Origem da conversa" small options={ORIGINS} value={orig} onChange={(v) => { setOrig(v); setPage(0); }} colors={ORIGIN_COLORS} /></div>
         <button type="button" aria-pressed={awaitingOnly} onClick={() => setAwaitingOnly(!awaitingOnly)} data-testid="track-awaiting-filter"
           style={{ ...btn, ...(awaitingOnly ? { background: META, color: '#fff', border: `1px solid ${META}` } : {}) }}>Conversas aguardando primeira resposta</button>
         <div data-testid="track-stage"><Segmented label="Etapa" small options={STAGE_FILTERS} value={stage} onChange={(v) => { setStage(v); setPage(0); }} /></div>
@@ -576,7 +593,7 @@ function ConversationsTable({ list, input: data, fileTag, resetKey, awaitingOnly
   );
 }
 
-const KIND_ICON: Record<string, string> = { contato: '👋', anuncio: '📣', loja: '🏪', follow: '🔁', disparo: '📢', resposta: '💬', venda: '💰', facebook: '📈' };
+const KIND_ICON: Record<string, string> = { contato: '👋', anuncio: '📣', instagram: '📸', loja: '🏪', follow: '🔁', disparo: '📢', resposta: '💬', venda: '💰', facebook: '📈' };
 function ConversationDrawer({ c, input: data, onClose }: { c: Conversation; input: TrackInput; onClose: () => void }) {
   const events = useMemo(() => conversationTimeline(c, data, fmtMoney), [c, data]);
   // anúncio: o registro já carregado; se não veio na janela da aba, busca só os chats desta conversa

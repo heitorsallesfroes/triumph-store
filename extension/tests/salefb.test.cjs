@@ -72,7 +72,7 @@ test('painel: pergunta depois da venda, mesmo envio do 📈 ligado à venda, nã
   assert.ok(c.includes("[['ask', 'Perguntar (padrão)'], ['auto', 'Enviar sempre automático'], ['off', 'Não perguntar']]"));
   assert.ok(c.includes("state: r.duplicate ? 'dup' : 'sent'") && c.includes("Não consegui enviar a compra: "), 'enviado / já enviado / erro');
   assert.ok(src('background.js').includes('saleConversion:'));
-  assert.strictEqual(JSON.parse(src('manifest.json')).version, '2.17.2');
+  assert.strictEqual(JSON.parse(src('manifest.json')).version, '2.18.0');
 });
 
 (async () => {

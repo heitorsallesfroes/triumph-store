@@ -191,24 +191,59 @@ async function accountTop(get: Any, ig: string, days: number, now: number) {
   };
 }
 
+// Dia de uma linha da série diária da Meta: end_time é o FIM do dia da Meta (ex.: 2026-11-09T08:00:00+0000 = dia 08/11)
+export const dayOfEndTime = (endTime: string) => new Date(Date.parse(endTime) - 12 * 3600000).toISOString().slice(0, 10);
+
+// Instagram FASE 2 (conferência dos dias "quase zerados"): por dia, o ALCANCE vem da série diária da própria Meta
+// (metric_type time_series, uma chamada por bloco de até 30 dias, já nos dias da Meta); se a Meta não aceitar, cai no
+// total de cada dia como antes. Visualizações e seguidores: o total de cada dia. "check" confere a soma das
+// visualizações dos dias com o total do período (mesma métrica, somável): se bater, os dias baixos são dado real.
 async function accountDaily(get: Any, ig: string, days: number, now: number) {
   const warn = new Warnings(); const skip = new Set<string>();
   const w = windowsOf(days, now).cur;
   const b = bucketsOf(w);
+  let series: Map<string, number> | null = null;
+  if (b.size === 'day') {
+    try {
+      const m = new Map<string, number>();
+      for (const c of chunksOf(w)) {
+        const r = await get(`${ig}/insights`, { metric: 'reach', period: 'day', metric_type: 'time_series', since: c.since, until: c.until });
+        const it = (r && Array.isArray(r.data) ? r.data : []).find((x: Any) => x && x.name === 'reach');
+        (it && Array.isArray(it.values) ? it.values : []).forEach((v: Any) => { const n = num(v && v.value); if (n != null && v.end_time) m.set(dayOfEndTime(String(v.end_time)), n); });
+      }
+      series = m.size ? m : null;
+    } catch (e) {
+      if (e instanceof GraphError && e.fatal) throw e;
+      series = null;
+    }
+  }
   const rows = await pool(b.list, 6, async (c) => {
     const base = { metric_type: 'total_value', period: 'day', since: c.since, until: c.until };
     const [m, f] = await Promise.all([
-      insights(get, `${ig}/insights`, ['reach', 'views'], base, warn, 'Gráfico', skip),
+      insights(get, `${ig}/insights`, series ? ['views'] : ['reach', 'views'], base, warn, 'Gráfico', skip),
       insights(get, `${ig}/insights`, ['follows_and_unfollows'], { ...base, breakdown: 'follow_type' }, warn, 'Gráfico', skip),
     ]);
     const br = breakdownOf(f.follows_and_unfollows);
     return {
-      day: c.fromDay, reach: valueOf(m.reach), views: valueOf(m.views),
+      day: c.fromDay, reach: series ? (series.has(c.fromDay) ? series.get(c.fromDay) as number : null) : valueOf(m.reach), views: valueOf(m.views),
       gained: f.follows_and_unfollows ? br.filter((x) => x.keys[0] === 'FOLLOWER').reduce((s, x) => s + x.value, 0) : null,
       lost: f.follows_and_unfollows ? br.filter((x) => x.keys[0] === 'NON_FOLLOWER').reduce((s, x) => s + x.value, 0) : null,
     };
   });
-  return { size: b.size, rows, warnings: warn.list() };
+  // conferência: soma das visualizações dos dias × total do período (em blocos de 30 dias)
+  let periodViews: number | null = null;
+  for (const c of chunksOf(w)) {
+    const m = await insights(get, `${ig}/insights`, ['views'], { metric_type: 'total_value', period: 'day', since: c.since, until: c.until }, warn, 'Gráfico', skip);
+    periodViews = addN(periodViews, valueOf(m.views));
+  }
+  const vs = rows.map((r) => r.views).filter((v): v is number => v != null);
+  const dailySum = vs.length ? vs.reduce((a, x) => a + x, 0) : null;
+  const diffPct = dailySum != null && periodViews ? (dailySum - periodViews) / periodViews : null;
+  return {
+    size: b.size, rows, reach_source: series ? 'serie' : 'dia',
+    check: { metric: 'views', daily_sum: dailySum, period_total: periodViews, diff_pct: diffPct, ok: diffPct == null ? null : Math.abs(diffPct) <= 0.05 },
+    warnings: warn.list(),
+  };
 }
 
 async function accountAudience(get: Any, ig: string) {

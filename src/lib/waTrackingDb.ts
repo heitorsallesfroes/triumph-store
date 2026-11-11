@@ -5,7 +5,7 @@ import { fetchAllRows } from './resumoAnualCalc';
 import { INVALID_STATUSES } from './crmBridge';
 import type { ActivityDayRow, ActivityRow, Range, ReplyRow, SendRow } from './waPanel';
 import {
-  fbGapWindow, saleDateFilter, trackingWindow, type ChatNameRow, type TrackAttributionRow, type TrackConversionRow, type TrackInput, type TrackLeadRow, type TrackSaleRow,
+  fbGapWindow, saleDateFilter, trackingWindow, type ChatNameRow, type TrackAttributionRow, type TrackConversionRow, type TrackIgLeadRow, type TrackInput, type TrackLeadRow, type TrackSaleRow,
 } from './waTracking';
 
 // settings: horário comercial do motor de envios (wa_settings), ou null
@@ -75,7 +75,27 @@ export async function loadTracking(r: Range): Promise<TrackLoad> {
     const { data } = await supabase.from('wa_settings').select('business_days, business_start, business_end').eq('id', 1).maybeSingle();
     settings = (data as BusinessSettings | null) || null;
   } catch { settings = null; }
-  return { input: { leads, attributions, sends, replies, sales, names, conversions, activity, activityDays, items }, missing: [...new Set(missing)], settings };
+  const igLeads = await loadIgLeads(w.knownFrom, r.to, missing);
+  return { input: { leads, attributions, sends, replies, sales, names, conversions, activity, activityDays, items, igLeads }, missing: [...new Set(missing)], settings };
+}
+
+// Instagram FASE 2: conversas que começaram com o código de um link rastreável (ig_link_leads, gravadas pela extensão
+// 2.18.0) + o canal e o apelido do link (pelo link_id ou pelo código). Sem a migration 20261113120000: lista vazia + aviso.
+export const IG_MISSING = 'Instagram orgânico (migration 20261113120000_ig_links.sql + extensão 2.18.0)';
+export async function loadIgLeads(fromMs: number, toMs: number, missing: string[]): Promise<TrackIgLeadRow[]> {
+  return orEmpty<TrackIgLeadRow>(IG_MISSING, missing, async () => {
+    const [rows, links] = await Promise.all([
+      fetchAllRows<TrackIgLeadRow>((f, t) => supabase.from('ig_link_leads').select('chat_id, phone, first_message_at, code, link_id')
+        .gte('first_message_at', iso(fromMs)).lte('first_message_at', iso(toMs)).order('id').range(f, t) as any), // eslint-disable-line @typescript-eslint/no-explicit-any
+      fetchAllRows<{ id: string; code: string; slug: string; channel: string }>((f, t) => supabase.from('ig_links').select('id, code, slug, channel').order('id').range(f, t) as any), // eslint-disable-line @typescript-eslint/no-explicit-any
+    ]);
+    const byId = new Map(links.map((l) => [l.id, l]));
+    const byCode = new Map(links.map((l) => [l.code, l]));
+    return rows.map((l) => {
+      const k = (l.link_id && byId.get(l.link_id)) || byCode.get(l.code);
+      return { ...l, channel: k ? k.channel : null, slug: k ? k.slug : null };
+    });
+  });
 }
 
 // ERP 09/11: anúncio de uma conversa pelo 👁 quando o registro não veio na janela da aba (1ª mensagem antiga ou sem data).

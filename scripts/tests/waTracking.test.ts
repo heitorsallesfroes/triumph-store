@@ -256,8 +256,8 @@ test('filtro de origem: anúncio / não rastreada', () => {
 test('origem por dia: barras empilhadas com todos os dias do período', () => {
   const d = originByDay(conversationsIn(buildConversations(scenario()), R, 'todas'), R);
   assert.equal(d.length, 7);
-  assert.deepEqual(d.find((x) => x.day === '2026-11-02'), { day: '2026-11-02', anuncio: 1, nao_rastreada: 0 });
-  assert.deepEqual(d.find((x) => x.day === '2026-11-03'), { day: '2026-11-03', anuncio: 0, nao_rastreada: 1 });
+  assert.deepEqual(d.find((x) => x.day === '2026-11-02'), { day: '2026-11-02', anuncio: 1, instagram: 0, nao_rastreada: 0 });
+  assert.deepEqual(d.find((x) => x.day === '2026-11-03'), { day: '2026-11-03', anuncio: 0, instagram: 0, nao_rastreada: 1 });
   assert.equal(d.reduce((x, p) => x + p.anuncio + p.nao_rastreada, 0), 3);
 });
 test('jornada acumulada: Fez contato → Respondeu → Comprou', () => {
@@ -373,7 +373,7 @@ test('visão geral: rastreadas × não rastreadas entre as ATIVAS; origem por di
   assert.deepEqual([s.active, s.activeAd, s.activeUntracked], [5, 1, 4]);
   const days = originByDay(list, R);
   assert.equal(days.reduce((x, d) => x + d.anuncio + d.nao_rastreada, 0), s.active);
-  assert.deepEqual(days.find((d) => d.day === '2026-11-06'), { day: '2026-11-06', anuncio: 0, nao_rastreada: 1 }); // a OLD voltou a falar
+  assert.deepEqual(days.find((d) => d.day === '2026-11-06'), { day: '2026-11-06', anuncio: 0, instagram: 0, nao_rastreada: 1 }); // a OLD voltou a falar
   assert.deepEqual(buyFunnel(list), { contact: 5, bought: 1, boughtPct: 0.2 });
 });
 test('detalhes da conversa (👁): linha do tempo com 1º contato, anúncio, envios, respostas, venda e eventos do Facebook', () => {

@@ -1483,7 +1483,43 @@
       rows.push({ chat_id: it.chatId, phone: panelPhone(it.phone), first_message_at: isoOfSec(it.t), origin: it.ad ? 'anuncio' : 'organico', ad_id: adId, ad_title: adTitle });
     }
     if (rows.length) await rest('wa_leads?on_conflict=chat_id', json('POST', 'resolution=ignore-duplicates,return=minimal', rows));
-    return { saved: rows.length };
+    let ig = 0;
+    try { ig = await saveIgLeads(items); } catch { /* sem a tabela ou erro: os leads já foram gravados */ }
+    return { saved: rows.length, ig };
+  }
+
+  // ── 2.18.0: conversa que começou com o código de um link rastreável do Instagram ([IG-BIO]) → ig_link_leads ──
+  // (migration 20261113120000_ig_links.sql). Só o código (nunca o texto). O link é achado pelo código (lista relida a
+  // cada 5 min; código que ainda não está na lista fica sem link_id e o ERP acha pelo código). Sem a tabela: não grava.
+  const IG_CODE = /^IG-[A-Z0-9][A-Z0-9-]{0,18}[A-Z0-9]$/;
+  const igLeadsTable = () => probe('ig_link_leads', async () => {
+    try { await rest('ig_link_leads?select=id&limit=1'); return true; } catch (err) {
+      if (tableMissing(err, ['ig_link_leads'])) return false;
+      throw err;
+    }
+  }, 30 * 60 * 1000);
+  const igLinkCodes = { map: new Map(), at: 0 };
+  async function igLinkIdOf(code) {
+    if (Date.now() - igLinkCodes.at > 5 * 60 * 1000 || !igLinkCodes.map.has(code)) {
+      if (Date.now() - igLinkCodes.at > 30 * 1000) {
+        try { const list = await rest('ig_links?select=id,code'); igLinkCodes.map = new Map(list.map((r) => [r.code, r.id])); } catch { /* sem a tabela */ }
+        igLinkCodes.at = Date.now();
+      }
+    }
+    return igLinkCodes.map.get(code) || null;
+  }
+  async function saveIgLeads(items) {
+    const seen = new Set();
+    const list = (Array.isArray(items) ? items : []).filter((it) => {
+      if (!it || !PANEL_CHAT_RE.test(it.chatId || '') || typeof it.ig !== 'string' || !IG_CODE.test(it.ig) || seen.has(it.chatId)) return false;
+      seen.add(it.chatId);
+      return true;
+    });
+    if (!list.length || !(await igLeadsTable())) return 0;
+    const rows = [];
+    for (const it of list) rows.push({ chat_id: it.chatId, phone: panelPhone(it.phone), first_message_at: isoOfSec(it.t), code: it.ig, link_id: await igLinkIdOf(it.ig) });
+    await rest('ig_link_leads?on_conflict=chat_id', json('POST', 'resolution=ignore-duplicates,return=minimal', rows));
+    return rows.length;
   }
 
   // Envio de mensagem rápida pelo painel (seta / prévia), já enviado. Sem a migration: não registra (como antes).

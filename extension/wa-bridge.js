@@ -1519,6 +1519,15 @@
   const realMsg = (x) => !SKIP_TYPES.has(String(safe(() => x.type, '') || '')) && !safe(() => x.isNotification, false);
   const convChatId = (m) => safe(() => m.id.remote._serialized, '') || String(safe(() => m.id.remote, '') || '');
   const noEarlierOf = (chat) => safe(() => chat.msgs.msgLoadState.noEarlierMsgs, undefined);
+  // 2.18.0: código de link rastreável do Instagram na 1ª mensagem do cliente ("Olá! Vim pelo Instagram 😊 [IG-BIO]").
+  // Sai SÓ o código (nunca o texto); a mensagem não é alterada. A mesma regra do ERP (src/lib/igLinks.ts codeInText).
+  const IG_CODE_RE = /\[\s*(IG-[A-Z0-9][A-Z0-9-]{0,18}[A-Z0-9])\s*\]/i;
+  function igCodeOf(m) {
+    const type = safe(() => m.type, '');
+    const text = type === 'chat' ? safe(() => m.body, '') : safe(() => m.caption, '');
+    const hit = typeof text === 'string' ? IG_CODE_RE.exec(text) : null;
+    return hit ? hit[1].toUpperCase() : null;
+  }
   function leadAd(m) {
     const ctx = ctxOf(m);
     if (!ctx) return null;
@@ -1538,7 +1547,7 @@
       const chat = safe(() => wpp.chat.get(chatId), null);
       const msgs = (chat && safe(() => chat.msgs.getModelsArray(), null)) || [];
       const earlier = msgs.some((x) => x !== m && realMsg(x) && msgT(x) <= t && safe(() => x.id.id, 1) !== safe(() => m.id.id, 2));
-      if (!earlier && noEarlierOf(chat) !== false) { ev.first = true; ev.ad = leadAd(m); }
+      if (!earlier && noEarlierOf(chat) !== false) { ev.first = true; ev.ad = leadAd(m); ev.ig = igCodeOf(m); }
     }
     convQueue.push(ev);
     if (convQueue.length > CONV_MAX) convQueue.splice(0, convQueue.length - CONV_MAX);
@@ -1627,7 +1636,7 @@
         const first = msgs[0];
         firstAt = msgT(first);
         isNewLead = safe(() => first.id.fromMe, true) === false;
-        if (isNewLead && firstAt >= since) leads.push({ chatId: c.id, fromMe: false, t: firstAt, first: true, ad: leadAd(first), scan: true });
+        if (isNewLead && firstAt >= since) leads.push({ chatId: c.id, fromMe: false, t: firstAt, first: true, ad: leadAd(first), ig: igCodeOf(first), scan: true });
       }
       const lastAt = Math.max(c.t, last ? msgT(last) : 0);
       items.push({

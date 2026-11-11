@@ -214,7 +214,7 @@ async function main() {
         salesN: tv('track-sales-n'), totals: txt(document.querySelector('[data-testid="track-totals"]')) };`).catch((e) => ({ err: String(e) }));
     check('Rastreamento (Tintim): aguardando 1ª resposta (2) e tempo de jornada no topo; filtros e "Baixar relatório"; visão geral 60 ativas = 5 Meta Ads + 55 não rastreadas, meia-lua, origem, funil Fez contato → Comprou, vendas',
       trackOk && t1.active === '60' && t1.ad === '5' && t1.un === '55' && t1.awaiting === '2' && /dia/.test(t1.journey) && t1.sections.length === 0 && t1.report
-      && JSON.stringify(t1.funnel) === '["Fez contato60 (100,0%)","Comprou3 (5,0%)"]' && t1.salesN === '3' && /60 Total5 Meta Ads55 Não rastreada/.test(t1.totals),
+      && JSON.stringify(t1.funnel) === '["Fez contato60 (100,0%)","Comprou3 (5,0%)"]' && t1.salesN === '3' && /60 Total5 Meta Ads0 Instagram55 Não rastreada/.test(t1.totals),
       JSON.stringify({ active: t1.active, ad: t1.ad, un: t1.un, awaiting: t1.awaiting, journey: t1.journey, sections: t1.sections, funnel: t1.funnel, salesN: t1.salesN, totals: t1.totals }));
     check('Rastreamento: sem "Possíveis vendas não marcadas"', trackOk && t1.unmarked === false);
     await shot('rastreamento.png');

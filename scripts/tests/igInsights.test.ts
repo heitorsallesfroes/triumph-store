@@ -8,7 +8,7 @@ import {
   audienceShare, bestFormat, bestTimes, bioTaps, deltaOf, deltaText, engagementOf, fmtDuration, fmtN, fmtWhen, frequencyVsReach, sortAges, sortMedia, topBy,
   type IgMedia, type IgMetrics, type MediaKind,
 } from '../../src/lib/igInsights.ts';
-import { bucketsOf, chunksOf, handle, windowsOf, type Deps } from '../../supabase/functions/instagram/ig.ts';
+import { bucketsOf, chunksOf, dayOfEndTime, handle, windowsOf, type Deps } from '../../supabase/functions/instagram/ig.ts';
 
 const tests: [string, () => unknown][] = [];
 const test = (name: string, fn: () => unknown) => tests.push([name, fn]);
@@ -263,6 +263,38 @@ test('function: gráfico diário, público, detalhe só da conta, erro sem token
   assert.ok(!JSON.stringify(bad.json).includes(TOKEN), JSON.stringify(bad.json));
   assert.equal((await handle('Bearer jwt-ok', { action: 'publicar' }, deps(fakeGraph()))).status, 400);
   assert.equal((await handle('Bearer jwt-ok', { action: 'account', days: 45 }, deps(fakeGraph()))).status, 400);
+});
+
+test('function: gráfico diário com o alcance da série diária da Meta (dias da Meta) e a conferência soma dos dias × total', async () => {
+  const day0 = windowsOf(7, NOW).cur.since;
+  const views = (since: number) => (new Date((since + 12 * 3600) * 1000).getUTCDay() === 0 ? 40 : 1000); // domingo baixo (dado real)
+  const calls: string[] = [];
+  const g: Deps['fetch'] = async (url) => {
+    const u = new URL(url); const q = u.searchParams; const m = q.get('metric') || '';
+    calls.push(`${m}|${q.get('metric_type')}`);
+    const since = Number(q.get('since')); const until = Number(q.get('until'));
+    const res = (o: unknown) => ({ ok: true, status: 200, json: async () => o });
+    if (q.get('metric_type') === 'time_series') {
+      // a Meta devolve um valor por dia dela, com end_time no fim do dia (08:00 UTC)
+      const values = []; for (let t = day0; t < until; t += 86400) { const d = new Date((t + 12 * 3600) * 1000).toISOString().slice(0, 10); values.push({ value: views(t) / 2, end_time: `${new Date(Date.parse(`${d}T00:00:00Z`) + 86400000 + 8 * 3600000).toISOString().slice(0, 19)}+0000` }); }
+      return res({ data: [{ name: 'reach', period: 'day', values }] });
+    }
+    if (m === 'follows_and_unfollows') return res({ data: [{ name: m, total_value: { breakdowns: [{ results: [{ dimension_values: ['FOLLOWER'], value: 2 }, { dimension_values: ['NON_FOLLOWER'], value: 1 }] }] } }] });
+    // total de views no intervalo = soma dos dias
+    let total = 0; for (let t = since; t < until; t += 86400) total += views(t);
+    return res({ data: m.split(',').map((k) => ({ name: k, total_value: { value: total } })) });
+  };
+  const r = await handle('Bearer jwt-ok', { action: 'account', part: 'daily', days: 7 }, { token: TOKEN, getUser: async () => ({ id: 'u1' }), fetch: g, now: () => NOW });
+  const j = r.json as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  assert.equal(r.status, 200, JSON.stringify(j));
+  assert.equal(j.reach_source, 'serie');
+  const sun = j.rows.find((x: any) => new Date(`${x.day}T12:00:00Z`).getUTCDay() === 0); // eslint-disable-line @typescript-eslint/no-explicit-any
+  assert.deepEqual([sun.views, sun.reach], [40, 20], 'domingo baixo = dado real, no dia certo');
+  assert.ok(j.rows.every((x: any) => x.reach != null), JSON.stringify(j.rows)); // eslint-disable-line @typescript-eslint/no-explicit-any
+  assert.equal(j.check.ok, true, JSON.stringify(j.check));
+  assert.equal(j.check.daily_sum, j.check.period_total);
+  assert.ok(!calls.some((c) => c.startsWith('reach,views')), 'com a série, o alcance não é pedido dia a dia');
+  assert.equal(dayOfEndTime('2026-11-09T08:00:00+0000'), '2026-11-08');
 });
 
 let fail = 0;

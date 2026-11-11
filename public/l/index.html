@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Triumph Store — abrindo o WhatsApp…</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0a0a0f; color: #fff; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; padding: 16px; box-sizing: border-box; }
+    main { text-align: center; max-width: 360px; width: 100%; }
+    .logo { width: 48px; height: 48px; border-radius: 12px; background: #f97316; color: #fff; font-weight: 700; font-size: 22px; display: inline-flex; align-items: center; justify-content: center; }
+    h1 { font-size: 18px; margin: 14px 0 4px; }
+    p { color: #aaa; margin: 0 0 18px; font-size: 14px; }
+    a.btn { display: block; background: #25d366; color: #fff; text-decoration: none; font-weight: 700; padding: 14px; border-radius: 12px; }
+    .spin { width: 18px; height: 18px; border: 2px solid #444; border-top-color: #f97316; border-radius: 50%; display: inline-block; vertical-align: middle; margin-right: 6px; animation: s .8s linear infinite; }
+    @keyframes s { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+  </style>
+</head>
+<body>
+<main>
+  <span class="logo">T</span>
+  <h1>Triumph Store</h1>
+  <p><span class="spin" aria-hidden="true"></span>Abrindo o WhatsApp da loja…</p>
+  <a class="btn" id="go" href="https://wa.me/5521980921808?text=Ol%C3%A1!%20Vim%20pelo%20Instagram%20%F0%9F%98%8A">Abrir o WhatsApp</a>
+</main>
+<script>
+// Link rastreável do Instagram: /l/<apelido> → edge function ig-link (registra o clique, sem guardar o IP) →
+// WhatsApp da loja com a mensagem e o código ([IG-BIO]). Se a função não responder em 3 s, abre o WhatsApp sem o código.
+// A chave anon é pública por design (a mesma de extension/config.js); a função só aceita o apelido.
+(function () {
+  var SUPABASE_URL = 'https://jcnvlqfpmmejtzfhfjix.supabase.co';
+  var ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpjbnZscWZwbW1lanR6Zmhmaml4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUwMDY1MjcsImV4cCI6MjA5MDU4MjUyN30.REFNo9-HeFnMaNpGla7ke1Ndsl8NeByHrFiFr8E66-I';
+  var fallback = document.getElementById('go').href;
+  var done = false;
+  function go(url) { if (done) return; done = true; document.getElementById('go').href = url; try { window.location.replace(url); } catch (e) { window.location.href = url; } }
+  var m = /^\/l\/([a-z0-9-]{2,40})\/?$/i.exec(window.location.pathname);
+  if (!m) { go(fallback); return; }
+  var timer = setTimeout(function () { go(fallback); }, 3000);
+  try {
+    fetch(SUPABASE_URL + '/functions/v1/ig-link', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + ANON, apikey: ANON },
+      body: JSON.stringify({ slug: m[1].toLowerCase() }), cache: 'no-store', keepalive: true,
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      clearTimeout(timer);
+      go(d && typeof d.url === 'string' && /^https:\/\/wa\.me\//.test(d.url) ? d.url : fallback);
+    }, function () { clearTimeout(timer); go(fallback); });
+  } catch (e) { clearTimeout(timer); go(fallback); }
+})();
+</script>
+</body>
+</html>

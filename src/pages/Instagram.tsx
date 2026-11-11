@@ -1,10 +1,16 @@
-// Aba Instagram — FASE 1: métricas profissionais da conta, SÓ LEITURA (nada é publicado, respondido ou alterado e
-// nada grava no ERP). Dados: edge function "instagram" (src/lib/igDb.ts); regras de "O que funciona":
-// src/lib/igInsights.ts. README: src/pages/Instagram.README.md
+// Página Instagram com abas internas (FASE 2), como a página WhatsApp (?pagina=instagram&aba=rastreio):
+//   - Visão geral (FASE 1): métricas profissionais da conta, SÓ LEITURA (nada é publicado, respondido ou alterado e
+//     nada grava no ERP). Dados: edge function "instagram" (src/lib/igDb.ts); regras de "O que funciona":
+//     src/lib/igInsights.ts.
+//   - Rastreio (FASE 2): links rastreáveis /l/<apelido> → WhatsApp → venda (src/components/instagram/IgTracking.tsx).
+//   - Direct e Automações: "em breve" (desabilitadas).
+// README: src/pages/Instagram.README.md
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, RefreshCw, X } from 'lucide-react';
+import { ExternalLink, Instagram as InstagramIcon, RefreshCw, X } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useErpRefresh } from '../lib/erpRefresh';
+import { initialTab, writeTab } from '../lib/erpRoute';
+import IgTracking from '../components/instagram/IgTracking';
 import {
   IG_PERIODS, KIND_COLOR, KIND_LABEL, SORT_LABEL, GENDER_LABEL,
   audienceShare, bestFormat, bestTimes, bioTaps, deltaOf, deltaText, engagementOf, fmtDuration, fmtN, fmtPct, fmtWhen, frequencyVsReach, sortAges, sortMedia, sortValue, topBy,
@@ -39,7 +45,44 @@ const KPIS: { id: string; label: string; get: (t: IgTotals) => number | null; hi
 const SORTS: SortKey[] = ['views', 'reach', 'likes', 'comments', 'saved', 'shares', 'follows', 'engagement'];
 const fmtSort = (m: IgMedia, k: SortKey) => (k === 'engagement' ? fmtPct(sortValue(m, k)) : fmtN(sortValue(m, k)));
 
+// ── abas da página (mesmo visual das abas da página WhatsApp) ──
+type PageTab = 'visao-geral' | 'rastreio';
+const PAGE_TABS: { id: string; label: string; ready: boolean }[] = [
+  { id: 'visao-geral', label: 'Visão geral', ready: true }, { id: 'rastreio', label: 'Rastreio', ready: true },
+  { id: 'direct', label: 'Direct', ready: false }, { id: 'automacoes', label: 'Automações', ready: false },
+];
 export default function Instagram() {
+  const [tab, setTab] = useState<PageTab>(() => initialTab('instagram', ['visao-geral', 'rastreio'] as const, 'visao-geral'));
+  useEffect(() => { writeTab('instagram', tab); }, [tab]);
+  return (
+    <div className="igs" data-testid="ig-shell">
+      <style>{'.igs .igs-head{padding:24px 24px 0}@media (max-width:760px){.igs .igs-head{padding:16px 16px 0}}'}</style>
+      <div className="igs-head">
+        <h1 style={{ fontSize: 26, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 12, margin: 0 }}>
+          <InstagramIcon size={28} color={ORANGE} /> Instagram
+        </h1>
+        <div role="tablist" aria-label="Abas do Instagram" style={{ display: 'flex', gap: 4, marginTop: 18, borderBottom: '1px solid var(--border-main)', flexWrap: 'wrap' }}>
+          {PAGE_TABS.map((t) => {
+            const on = tab === t.id;
+            return (
+              <button key={t.id} type="button" role="tab" aria-selected={on} disabled={!t.ready} aria-disabled={!t.ready} data-testid={`ig-tab-${t.id}`}
+                onClick={() => { if (t.ready) setTab(t.id as PageTab); }} title={t.ready ? undefined : 'Em breve'}
+                style={{ padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: t.ready ? 'pointer' : 'not-allowed', background: 'transparent', border: 'none', marginBottom: -1,
+                  borderBottom: on ? `2px solid ${ORANGE}` : '2px solid transparent', color: on ? ORANGE : 'var(--text-muted)', opacity: t.ready ? 1 : 0.55 }}>
+                {t.label}{!t.ready && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>em breve</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {tab === 'visao-geral' && <IgOverview />}
+      {tab === 'rastreio' && <div style={{ padding: 24, color: 'var(--text-primary)' }} className="igs-body"><IgTracking /></div>}
+    </div>
+  );
+}
+
+// ── Visão geral (FASE 1, sem mudanças além da conferência do gráfico diário) ──
+function IgOverview() {
   const [days, setDays] = useState<IgPeriod>(() => { const v = Number(store.get('ig:dias')); return (IG_PERIODS as number[]).includes(v) ? (v as IgPeriod) : 30; });
   const [mode, setMode] = useState<Mode>(() => (store.get('ig:modo') === 'completo' ? 'completo' : 'simples'));
   const [sort, setSort] = useState<SortKey>('views');
@@ -81,8 +124,7 @@ export default function Instagram() {
       <style>{CSS}</style>
       <div className="igx-head">
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0 }}>Instagram</h1>
-          <p style={{ ...muted, margin: '2px 0 0' }}>Métricas da conta profissional · só leitura</p>
+          <p style={{ ...muted, margin: 0 }}>Métricas da conta profissional · só leitura</p>
         </div>
         <div className="igx-tools">
           <div className="igx-chips" role="group" aria-label="Período">
@@ -204,6 +246,14 @@ function Charts({ load }: { load: Load<IgDaily> }) {
               </LineChart>
             </ResponsiveContainer>
           </div>
+        )}
+        {d && d.check && d.check.daily_sum != null && d.check.period_total != null && (
+          <p style={{ ...muted, margin: '6px 0 0', color: d.check.ok === false ? '#ef4444' : 'var(--text-muted)' }} data-testid="ig-chart-check" data-ok={String(d.check.ok)}
+            title="Visualizações somam (o alcance não: a mesma pessoa conta em vários dias). Se a soma dos dias bate com o total do período na Meta, os dias baixos são dado real.">
+            {d.check.ok === false ? '⚠ ' : '✓ '}Conferência com a Meta: soma dos dias {fmtN(d.check.daily_sum)} · total do período {fmtN(d.check.period_total)} visualizações
+            {d.check.ok === false ? ' — não bate: pode faltar dia na Meta' : ' — os dias batem com o total'}
+            {d.reach_source === 'serie' ? ' · alcance pela série diária da Meta' : ''}
+          </p>
         )}
       </div>
     </div>
