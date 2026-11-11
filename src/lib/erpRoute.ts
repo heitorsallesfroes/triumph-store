@@ -8,7 +8,7 @@
 export const PAGE_SLUGS: Record<string, string> = {
   home: 'inicio', sales: 'nova-venda', 'small-sales': 'pequenas-vendas', history: 'historico', logistics: 'logistica',
   'rastreamento-sedex': 'correios', products: 'produtos', stock: 'estoque', motoboys: 'motoboys', marketing: 'marketing',
-  'ad-manager': 'anuncios', costs: 'custos', whatsapp: 'whatsapp', 'resumo-vendas': 'resumo-vendas', resumo: 'relatorio-mensal',
+  'ad-manager': 'anuncios', costs: 'custos', whatsapp: 'whatsapp', instagram: 'instagram', 'resumo-vendas': 'resumo-vendas', resumo: 'relatorio-mensal',
   'resumo-anual': 'resumo-anual', settings: 'configuracoes',
 };
 const PAGE_OF_SLUG: Record<string, string> = Object.fromEntries(Object.entries(PAGE_SLUGS).map(([id, slug]) => [slug, id]));

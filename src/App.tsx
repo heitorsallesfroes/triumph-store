@@ -10,6 +10,7 @@ import Logistics from './pages/Logistics';
 import Marketing from './pages/Marketing';
 import AdDashboard from './pages/AdDashboard'; // Gerenciador novo (a versão antiga fica dentro dele)
 import WhatsApp from './pages/WhatsApp';
+import Instagram from './pages/Instagram';
 import Settings from './pages/Settings';
 import OperationalCosts from './pages/OperationalCosts';
 import ResumoMensal from './pages/ResumoMensal';
@@ -112,6 +113,8 @@ function App() {
         return <AdDashboard />;
       case 'whatsapp':
         return <WhatsApp />;
+      case 'instagram':
+        return <Instagram />;
       case 'costs':
         return <OperationalCosts />;
       case 'resumo-vendas':

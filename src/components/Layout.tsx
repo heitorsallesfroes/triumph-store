@@ -22,6 +22,7 @@ import {
   Sun,
   Moon,
   MessageCircle,
+  Instagram,
   LogOut,
   RefreshCw,
 } from 'lucide-react';
@@ -66,6 +67,7 @@ const menuGroups = [
     label: 'CANAIS DE VENDAS',
     items: [
       { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
+      { id: 'instagram', label: 'Instagram', icon: Instagram },
     ],
   },
   {
