@@ -4,7 +4,8 @@ import { supabase } from '../lib/supabase';
 
 // Login do ERP (Supabase Auth, e-mail e senha). Sem sessão mostra só a tela de login;
 // com sessão mostra o ERP. A sessão fica lembrada e é renovada pelo próprio supabase-js.
-// Não há telas públicas no ERP (todas as páginas ficam atrás do login).
+// As telas do ERP ficam atrás do login; as únicas públicas são as páginas estáticas /privacidade e /exclusao-de-dados
+// (public/), com links discretos no rodapé desta tela.
 
 const ORANGE = '#f97316';
 
@@ -49,7 +50,7 @@ function LoginScreen() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{ background: 'var(--bg-base)' }}>
+    <div className="min-h-screen flex flex-col items-center justify-center px-4" style={{ background: 'var(--bg-base)' }}>
       <form
         onSubmit={handleSubmit}
         className="w-full max-w-sm rounded-xl p-8"
@@ -106,6 +107,12 @@ function LoginScreen() {
           {busy ? 'Entrando...' : 'Entrar'}
         </button>
       </form>
+      {/* páginas públicas exigidas pela Meta (public/privacidade e public/exclusao-de-dados, abrem sem login) */}
+      <nav aria-label="Páginas legais" data-testid="login-legal" className="mt-5 text-xs flex gap-3" style={{ color: 'var(--text-muted)' }}>
+        <a href="/privacidade" target="_blank" rel="noopener" style={{ color: 'var(--text-muted)' }}>Política de Privacidade</a>
+        <span aria-hidden="true">·</span>
+        <a href="/exclusao-de-dados" target="_blank" rel="noopener" style={{ color: 'var(--text-muted)' }}>Exclusão de Dados</a>
+      </nav>
     </div>
   );
 }
