@@ -2,8 +2,11 @@
 // scripts/tests/igInsights.test.ts. Os dados vêm da edge function "instagram" (src/lib/igDb.ts).
 // Tudo o que aparece em "O que funciona" sai daqui, com a conta escrita no cartão ("Por quê").
 
-export type IgPeriod = 7 | 14 | 30 | 90;
-export const IG_PERIODS: IgPeriod[] = [7, 14, 30, 90];
+export type IgPeriod = 7 | 14 | 30 | 90 | 180 | 365;
+export const IG_PERIODS: IgPeriod[] = [7, 14, 30, 90, 180, 365];
+// 6 e 12 meses: montados com o HISTÓRICO GUARDADO (a Meta só devolve totais em blocos de 30 dias)
+export const HISTORY_PERIODS: IgPeriod[] = [180, 365];
+export const periodLabel = (d: number) => (d === 180 ? "6 meses" : d === 365 ? "12 meses" : `${d} dias`);
 export type MediaKind = 'REEL' | 'CAROUSEL' | 'IMAGE' | 'VIDEO';
 export const KIND_LABEL: Record<MediaKind, string> = { REEL: 'Reel', CAROUSEL: 'Carrossel', IMAGE: 'Foto', VIDEO: 'Vídeo' };
 export const KIND_COLOR: Record<MediaKind, string> = { REEL: '#c026d3', CAROUSEL: '#2563eb', IMAGE: '#059669', VIDEO: '#ea580c' };
@@ -164,4 +167,115 @@ export function deltaText(d: Delta): string {
   if (d.dir === 'flat') return '= 0%';
   if (d.pct == null) return d.dir === 'up' ? '▲ novo' : '▼';
   return `${d.dir === 'up' ? '▲' : '▼'} ${Math.abs(Math.round(d.pct * 100))}%`;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HISTÓRICO PRÓPRIO — stories (ig_stories) e a foto do dia da conta (ig_daily_account) / posts (ig_daily_media),
+// guardados pela edge function "instagram" (collect_stories a cada 1 h; collect_daily 1x por dia).
+// ════════════════════════════════════════════════════════════════════════════
+export interface IgStory {
+  id: string; media_type: string | null; thumb: string | null; permalink: string | null; posted_at: string; expires_at: string; last_read_at: string;
+  views: number | null; reach: number | null; replies: number | null; shares: number | null; total_interactions: number | null; follows: number | null; profile_visits: number | null;
+  navigation: number | null; taps_forward: number | null; taps_back: number | null; exits: number | null; swipe_forward: number | null;
+}
+export interface IgDayAccount { day: string; followers: number | null; reach: number | null; views: number | null; accounts_engaged: number | null; total_interactions: number | null; profile_views: number | null; profile_links_taps: number | null; gained: number | null; lost: number | null }
+export const storyDay = (s: Pick<IgStory, 'posted_at'>) => spParts(s.posted_at).day;
+export const storyHour = (s: Pick<IgStory, 'posted_at'>) => spParts(s.posted_at).h;
+// a leitura guardada é a final? (a última leitura foi com 23 h ou mais do story no ar)
+export const storyFinal = (s: Pick<IgStory, 'posted_at' | 'last_read_at'>) => Date.parse(s.last_read_at) - Date.parse(s.posted_at) >= 23 * 3600000;
+
+// stories por dia (o dia mais novo primeiro; dentro do dia, pela hora)
+export interface StoryDay { day: string; stories: IgStory[]; views: number; reach: number; replies: number }
+export function storiesByDay(list: IgStory[]): StoryDay[] {
+  const m = new Map<string, IgStory[]>();
+  list.forEach((s) => { const d = storyDay(s); m.set(d, [...(m.get(d) || []), s]); });
+  return [...m.entries()].sort(([a], [b]) => b.localeCompare(a)).map(([day, ss]) => {
+    const stories = [...ss].sort((a, b) => a.posted_at.localeCompare(b.posted_at));
+    const sum = (k: 'views' | 'reach' | 'replies') => stories.reduce((n, s) => n + (s[k] || 0), 0);
+    return { day, stories, views: sum('views'), reach: sum('reach'), replies: sum('replies') };
+  });
+}
+// ranking dos melhores stories: mais views; empate: mais alcance, mais respostas
+export function bestStories(list: IgStory[], n = 5): IgStory[] {
+  return [...list].filter((s) => s.views != null).sort((a, b) => (b.views as number) - (a.views as number) || (b.reach ?? 0) - (a.reach ?? 0) || (b.replies ?? 0) - (a.replies ?? 0)).slice(0, n);
+}
+// taxa de saída (saídas ÷ views), quando a Meta devolveu
+export const exitRate = (s: Pick<IgStory, 'exits' | 'views'>) => (s.exits != null && s.views ? s.exits / s.views : null);
+
+// "O que funciona" nos stories — regras transparentes:
+//   - média de views por story (todos os do período com views);
+//   - melhor horário: média de views dos stories publicados em cada hora (São Paulo); só horas com 2+ stories disputam;
+//   - quantos stories por dia rendem mais: dias agrupados por quantidade (1 · 2–3 · 4–6 · 7+); compara a média de views
+//     POR STORY e o total de views do DIA; vence o grupo (com 2+ dias) com mais views por dia.
+export interface StoryHourRow { hour: number; label: string; stories: number; avgViews: number | null }
+export interface StoryPerDayRow { id: string; label: string; days: number; avgPerStory: number | null; avgPerDay: number | null }
+export interface StoryWorks { avgViews: number | null; stories: number; hours: StoryHourRow[]; bestHour: StoryHourRow | null; perDay: StoryPerDayRow[]; bestPerDay: StoryPerDayRow | null; why: string }
+const PER_DAY = [{ id: '1', label: '1 story', from: 1, to: 1 }, { id: '2-3', label: '2–3 stories', from: 2, to: 3 }, { id: '4-6', label: '4–6 stories', from: 4, to: 6 }, { id: '7+', label: '7 ou mais', from: 7, to: Infinity }];
+export function storyWhatWorks(list: IgStory[]): StoryWorks {
+  const withV = list.filter((s) => s.views != null);
+  const hours: StoryHourRow[] = Array.from({ length: 24 }, (_, h) => {
+    const g = withV.filter((s) => storyHour(s) === h);
+    return { hour: h, label: `${String(h).padStart(2, '0')}h`, stories: g.length, avgViews: avg(g.map((s) => s.views)) };
+  }).filter((r) => r.stories > 0);
+  const bestHour = [...hours].filter((r) => r.stories >= MIN_POSTS && r.avgViews != null).sort((a, b) => (b.avgViews as number) - (a.avgViews as number) || b.stories - a.stories)[0] || null;
+  const days = storiesByDay(withV);
+  const perDay: StoryPerDayRow[] = PER_DAY.map((b) => {
+    const g = days.filter((d) => d.stories.length >= b.from && d.stories.length <= b.to);
+    return { id: b.id, label: b.label, days: g.length, avgPerStory: avg(g.flatMap((d) => d.stories.map((s) => s.views))), avgPerDay: avg(g.map((d) => d.views)) };
+  }).filter((r) => r.days > 0);
+  const bestPerDay = [...perDay].filter((r) => r.days >= MIN_POSTS && r.avgPerDay != null).sort((a, b) => (b.avgPerDay as number) - (a.avgPerDay as number))[0] || null;
+  return {
+    avgViews: avg(withV.map((s) => s.views)), stories: withV.length, hours: [...hours].sort((a, b) => (b.avgViews ?? -1) - (a.avgViews ?? -1)), bestHour, perDay, bestPerDay,
+    why: `Views de cada story na última leitura guardada (antes de expirar). Melhor horário: média de views por hora de publicação (São Paulo), só horas com ${MIN_POSTS}+ stories. Stories por dia: dias agrupados pela quantidade; vence o grupo com ${MIN_POSTS}+ dias e mais views por dia.`,
+  };
+}
+
+// cruzamento com o link rastreável do canal "stories" (ig_links): cliques, conversas e vendas por dia de story
+export interface StoryLinkDay { day: string; stories: number; views: number; clicks: number; conversations: number; sales: number; revenue: number }
+export function storyLinkByDay(days: StoryDay[], clicks: { created_at: string }[], convs: { firstAt: number; sales: number; revenue: number }[]): StoryLinkDay[] {
+  const out = new Map<string, StoryLinkDay>();
+  const row = (d: string) => { if (!out.has(d)) out.set(d, { day: d, stories: 0, views: 0, clicks: 0, conversations: 0, sales: 0, revenue: 0 }); return out.get(d) as StoryLinkDay; };
+  days.forEach((d) => { const r = row(d.day); r.stories = d.stories.length; r.views = d.views; });
+  clicks.forEach((c) => { row(spParts(c.created_at).day).clicks++; });
+  convs.forEach((c) => { const r = row(spParts(new Date(c.firstAt).toISOString()).day); r.conversations++; r.sales += c.sales; r.revenue = Math.round((r.revenue + c.revenue) * 100) / 100; });
+  return [...out.values()].sort((a, b) => b.day.localeCompare(a.day));
+}
+
+// ── conta: séries do histórico (períodos maiores que 30 dias e seguidores ao longo do tempo) ──
+export const historySince = (rows: Pick<IgDayAccount, 'day'>[]): string | null => (rows.length ? [...rows].map((r) => r.day).sort()[0] : null);
+const sumN = (xs: (number | null)[]) => { const v = xs.filter((x): x is number => x != null); return v.length ? v.reduce((a, b) => a + b, 0) : null; };
+// totais do período pela soma dos dias guardados (o ALCANCE somado conta a mesma pessoa em dias diferentes)
+export function historyTotals(rows: IgDayAccount[], fromDay: string, toDay: string): IgTotals & { days: number } {
+  const r = rows.filter((x) => x.day >= fromDay && x.day <= toDay);
+  const follows = sumN(r.map((x) => x.gained));
+  const unfollows = sumN(r.map((x) => x.lost));
+  return {
+    reach: sumN(r.map((x) => x.reach)), views: sumN(r.map((x) => x.views)), accounts_engaged: sumN(r.map((x) => x.accounts_engaged)), total_interactions: sumN(r.map((x) => x.total_interactions)),
+    profile_views: sumN(r.map((x) => x.profile_views)), website_clicks: null, profile_links_taps: sumN(r.map((x) => x.profile_links_taps)),
+    follows, unfollows, net_followers: follows == null ? null : follows - (unfollows || 0), days: r.length,
+  };
+}
+// série por semana (segunda-feira) do histórico, no formato do gráfico
+export function historyWeekly(rows: IgDayAccount[], fromDay: string, toDay: string): IgDailyRow[] {
+  const m = new Map<string, IgDailyRow>();
+  const add = (a: number | null, b: number | null) => (a == null ? b : b == null ? a : a + b);
+  rows.filter((x) => x.day >= fromDay && x.day <= toDay).forEach((x) => {
+    const k = weekKey(x.day);
+    const cur = m.get(k) || { day: k, reach: null, views: null, gained: null, lost: null };
+    m.set(k, { day: k, reach: add(cur.reach, x.reach), views: add(cur.views, x.views), gained: add(cur.gained, x.gained), lost: add(cur.lost, x.lost) });
+  });
+  return [...m.values()].sort((a, b) => a.day.localeCompare(b.day));
+}
+// seguidores ao longo do tempo: a foto do dia quando existe; nos dias sem foto, refeito a partir do dia seguinte
+// (seguidores do dia seguinte − ganhos + perdas do dia seguinte). real = foto do dia; senão estimado.
+export function followersSeries(rows: IgDayAccount[]): { day: string; followers: number | null; real: boolean }[] {
+  const s = [...rows].sort((a, b) => a.day.localeCompare(b.day));
+  const out = s.map((r) => ({ day: r.day, followers: r.followers, real: r.followers != null }));
+  for (let i = out.length - 2; i >= 0; i--) {
+    if (out[i].followers != null) continue;
+    const next = out[i + 1];
+    const nr = s[i + 1];
+    if (next.followers != null && nr.gained != null) out[i].followers = next.followers - (nr.gained || 0) + (nr.lost || 0);
+  }
+  return out;
 }

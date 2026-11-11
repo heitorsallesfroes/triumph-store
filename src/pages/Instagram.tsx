@@ -3,6 +3,8 @@
 //     nada grava no ERP). Dados: edge function "instagram" (src/lib/igDb.ts); regras de "O que funciona":
 //     src/lib/igInsights.ts.
 //   - Rastreio (FASE 2): links rastreáveis /l/<apelido> → WhatsApp → venda (src/components/instagram/IgTracking.tsx).
+//   - Stories e histórico: src/components/instagram/IgStories.tsx; 6/12 meses e seguidores ao longo do tempo pelo
+//     histórico guardado (ig_daily_account / ig_daily_media).
 //   - Direct e Automações (FASE 3): src/components/instagram/IgDirect.tsx e IgAutomations.tsx (tudo nasce desligado).
 // README: src/pages/Instagram.README.md
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -14,12 +16,13 @@ import IgTracking from '../components/instagram/IgTracking';
 import IgAutomations from '../components/instagram/IgAutomations';
 import IgDirect from '../components/instagram/IgDirect';
 import IgFunnel from '../components/instagram/IgFunnel';
+import IgStories from '../components/instagram/IgStories';
 import {
-  IG_PERIODS, KIND_COLOR, KIND_LABEL, SORT_LABEL, GENDER_LABEL,
+  IG_PERIODS, HISTORY_PERIODS, KIND_COLOR, followersSeries, historySince, historyTotals, historyWeekly, periodLabel, KIND_LABEL, SORT_LABEL, GENDER_LABEL,
   audienceShare, bestFormat, bestTimes, bioTaps, deltaOf, deltaText, engagementOf, fmtDuration, fmtN, fmtPct, fmtWhen, frequencyVsReach, sortAges, sortMedia, sortValue, topBy,
   type IgMedia, type IgPeriod, type IgTotals, type SortKey,
 } from '../lib/igInsights';
-import { IgError, loadAudience, loadDaily, loadMedia, loadMediaDetail, loadTop, type IgAudience, type IgDaily, type IgMediaLoad, type IgTop } from '../lib/igDb';
+import { IgError, IG_HISTORY_MIGRATION, loadDayAccount, loadDayMedia, loadAudience, loadDaily, loadMedia, loadMediaDetail, loadTop, type IgAudience, type IgDaily, type IgMediaLoad, type IgTop } from '../lib/igDb';
 
 const ORANGE = '#f97316';
 const bd = 'var(--border-main)';
@@ -49,13 +52,13 @@ const SORTS: SortKey[] = ['views', 'reach', 'likes', 'comments', 'saved', 'share
 const fmtSort = (m: IgMedia, k: SortKey) => (k === 'engagement' ? fmtPct(sortValue(m, k)) : fmtN(sortValue(m, k)));
 
 // ── abas da página (mesmo visual das abas da página WhatsApp) ──
-type PageTab = 'visao-geral' | 'rastreio' | 'direct' | 'automacoes';
+type PageTab = 'visao-geral' | 'stories' | 'rastreio' | 'direct' | 'automacoes';
 const PAGE_TABS: { id: string; label: string; ready: boolean }[] = [
-  { id: 'visao-geral', label: 'Visão geral', ready: true }, { id: 'rastreio', label: 'Rastreio', ready: true },
+  { id: 'visao-geral', label: 'Visão geral', ready: true }, { id: 'stories', label: 'Stories', ready: true }, { id: 'rastreio', label: 'Rastreio', ready: true },
   { id: 'direct', label: 'Direct', ready: true }, { id: 'automacoes', label: 'Automações', ready: true },
 ];
 export default function Instagram() {
-  const [tab, setTab] = useState<PageTab>(() => initialTab('instagram', ['visao-geral', 'rastreio', 'direct', 'automacoes'] as const, 'visao-geral'));
+  const [tab, setTab] = useState<PageTab>(() => initialTab('instagram', ['visao-geral', 'stories', 'rastreio', 'direct', 'automacoes'] as const, 'visao-geral'));
   useEffect(() => { writeTab('instagram', tab); }, [tab]);
   return (
     <div className="igs" data-testid="ig-shell">
@@ -79,6 +82,7 @@ export default function Instagram() {
         </div>
       </div>
       {tab === 'visao-geral' && <IgOverview />}
+      {tab === 'stories' && <div style={{ padding: 24, color: 'var(--text-primary)' }} className="igs-body"><IgStories /></div>}
       {tab === 'rastreio' && <div style={{ padding: 24, color: 'var(--text-primary)' }} className="igs-body"><IgTracking /></div>}
       {tab === 'direct' && <div style={{ padding: 24, color: 'var(--text-primary)' }} className="igs-body"><IgDirect /></div>}
       {tab === 'automacoes' && <div style={{ padding: 24, color: 'var(--text-primary)' }} className="igs-body"><IgAutomations /></div>}
@@ -110,6 +114,7 @@ function IgOverview() {
     setMedia(reset);
     setAud(reset);
     // 1º o topo (perfil + cartões); depois gráfico, conteúdos e público ao mesmo tempo
+    if (HISTORY_PERIODS.includes(d as IgPeriod)) { await loadFromHistory(d, fresh, ok, { setTop, setDaily, setMedia, setAud }); if (ok()) setAt(Date.now()); return; }
     try { const t = await loadTop(d, fresh); if (ok()) setTop({ data: t, error: null, loading: false }); } catch (e) { if (ok()) setTop({ data: null, error: errText(e), loading: false }); }
     if (!ok()) return;
     const part = <T,>(p: Promise<T>, set: (l: Load<T>) => void) => p.then((v) => { if (ok()) set({ data: v, error: null, loading: false }); }, (e) => { if (ok()) set({ data: null, error: errText(e), loading: false }); });
@@ -133,7 +138,7 @@ function IgOverview() {
         </div>
         <div className="igx-tools">
           <div className="igx-chips" role="group" aria-label="Período">
-            {IG_PERIODS.map((d) => <button key={d} type="button" style={chip(d === days)} aria-pressed={d === days} data-testid={`ig-period-${d}`} onClick={() => pickDays(d)}>{d} dias</button>)}
+            {IG_PERIODS.map((d) => <button key={d} type="button" style={chip(d === days)} aria-pressed={d === days} data-testid={`ig-period-${d}`} onClick={() => pickDays(d)}>{periodLabel(d)}</button>)}
           </div>
           <div className="igx-chips" role="group" aria-label="Modo">
             {(['simples', 'completo'] as Mode[]).map((m) => <button key={m} type="button" style={chip(m === mode)} aria-pressed={m === mode} data-testid={`ig-mode-${m}`} onClick={() => pickMode(m)}>{m === 'simples' ? 'Simples' : 'Completo'}</button>)}
@@ -161,6 +166,8 @@ function IgOverview() {
 
       <IgFunnel days={days} />
 
+      <FollowersHistory days={days} />
+
       <Charts load={daily} />
 
       <Ranking load={media} sort={sort} setSort={setSort} mode={mode} showAll={showAll} setShowAll={setShowAll} onOpen={setOpen} />
@@ -170,6 +177,81 @@ function IgOverview() {
       {mode === 'completo' && <Audience load={aud} />}
 
       {open && <Detail item={open} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+// ── 6 e 12 meses: tudo pelo HISTÓRICO GUARDADO (ig_daily_account / ig_daily_media). O perfil vem da Meta (30 dias). ──
+const spDayOf = (ms: number) => new Date(ms - 3 * 3600000).toISOString().slice(0, 10);
+const dayMs = (day: string) => Date.parse(`${day}T00:00:00-03:00`);
+function historyWindows(days: number, now = Date.now()) {
+  const toDay = spDayOf(now - 86400000); // até ONTEM: o dia de hoje ainda não tem a foto (a coleta é de madrugada)
+  const curFrom = spDayOf(dayMs(toDay) - (days - 1) * 86400000 + 3600000);
+  const prevTo = spDayOf(dayMs(curFrom) - 1);
+  const prevFrom = spDayOf(dayMs(curFrom) - days * 86400000 + 3600000);
+  const win = (a: string, b: string) => ({ since: Math.floor(dayMs(a) / 1000), until: Math.floor((dayMs(b) + 86400000) / 1000), fromDay: a, toDay: b });
+  return { cur: win(curFrom, toDay), prev: win(prevFrom, prevTo) };
+}
+const ddmm = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}/${day.slice(0, 4)}`;
+type Setters = { setTop: (l: Load<IgTop>) => void; setDaily: (l: Load<IgDaily>) => void; setMedia: (l: Load<IgMediaLoad>) => void; setAud: (l: Load<IgAudience>) => void };
+async function loadFromHistory(d: number, fresh: boolean, ok: () => boolean, s: Setters) {
+  const w = historyWindows(d);
+  const errOf = (e: unknown) => errText(e);
+  try {
+    const [t, h] = await Promise.all([loadTop(30, fresh), loadDayAccount(w.prev.fromDay, w.cur.toDay)]);
+    if (!ok()) return;
+    if (h.missing) throw new Error(`Para ${periodLabel(d)}, aplique a migration ${IG_HISTORY_MIGRATION} (o histórico guardado).`);
+    const since = h.since;
+    const note = since ? `${periodLabel(d)} montado com o histórico guardado (dados guardados desde ${ddmm(since)}). Alcance e contas com engajamento são a soma dos dias (a mesma pessoa conta em vários dias).` : 'Ainda não há histórico guardado: a coleta diária começa a guardar a partir de hoje.';
+    const cur = historyTotals(h.rows, w.cur.fromDay, w.cur.toDay);
+    const prev = historyTotals(h.rows, w.prev.fromDay, w.prev.toDay);
+    const curFirst = historySince(h.rows.filter((x) => x.day >= w.cur.fromDay));
+    const warn = [note, ...(curFirst && curFirst > w.cur.fromDay ? [`O histórico deste período começa em ${ddmm(curFirst)} (antes disso não há dado guardado).`] : [])];
+    s.setTop({ data: { ...t, period: { days: d, cur: w.cur, prev: w.prev }, cur, prev, warnings: warn }, error: null, loading: false });
+    s.setDaily({ data: { size: 'week', rows: historyWeekly(h.rows, w.cur.fromDay, w.cur.toDay), warnings: [] }, error: null, loading: false });
+  } catch (e) {
+    if (!ok()) return;
+    s.setTop({ data: null, error: errOf(e), loading: false });
+    s.setDaily({ data: null, error: errOf(e), loading: false });
+  }
+  try {
+    const items = await loadDayMedia(w.cur.since * 1000, w.cur.until * 1000);
+    if (ok()) s.setMedia({ data: { items, truncated: false, warnings: items.length ? [`Conteúdos de ${periodLabel(d)}: os números da última foto guardada de cada post (a coleta guarda os posts dos últimos 30 dias, todo dia).`] : [] }, error: null, loading: false });
+  } catch (e) { if (ok()) s.setMedia({ data: null, error: errOf(e), loading: false }); }
+  try { const a = await loadAudience(fresh); if (ok()) s.setAud({ data: a, error: null, loading: false }); } catch (e) { if (ok()) s.setAud({ data: null, error: errOf(e), loading: false }); }
+}
+
+// ── seguidores ao longo do tempo (histórico guardado) ──
+function FollowersHistory({ days }: { days: number }) {
+  const [h, setH] = useState<{ rows: ReturnType<typeof followersSeries>; since: string | null; missing: boolean } | null>(null);
+  useEffect(() => {
+    let off = false;
+    setH(null);
+    const w = historyWindows(Math.max(days, 30));
+    loadDayAccount(w.cur.fromDay, w.cur.toDay).then((r) => { if (!off) setH({ rows: followersSeries(r.rows), since: r.since, missing: r.missing }); }, () => { if (!off) setH({ rows: [], since: null, missing: true }); });
+    return () => { off = true; };
+  }, [days]);
+  const data = (h?.rows || []).filter((r) => r.followers != null).map((r) => ({ dia: `${r.day.slice(8, 10)}/${r.day.slice(5, 7)}`, Seguidores: r.followers, real: r.real }));
+  return (
+    <div style={{ ...box, marginBottom: 16 }} data-testid="ig-followers-history">
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <div style={eyebrow}>Seguidores ao longo do tempo</div>
+        <span style={muted} data-testid="ig-history-since">{!h ? 'Carregando…' : h.missing ? `Aplique a migration ${IG_HISTORY_MIGRATION} para guardar o histórico.` : h.since ? `Dados guardados desde ${ddmm(h.since)}` : 'Ainda sem histórico guardado (a coleta diária começa hoje).'}</span>
+      </div>
+      {h && data.length > 1 ? (
+        <div style={{ height: 200 }} data-testid="ig-chart-followers-history">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 10, right: 8, left: -4, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-main)" vertical={false} />
+              <XAxis dataKey="dia" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} minTickGap={16} />
+              <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickFormatter={(v) => fmtN(Number(v))} domain={['auto', 'auto']} />
+              <Tooltip contentStyle={{ background: 'var(--bg-card)', border: `1px solid ${bd}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmtN(Number(v))} />
+              <Line type="monotone" dataKey="Seguidores" stroke={ORANGE} strokeWidth={2} dot={false} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : h && !h.missing ? <p style={muted}>Precisa de pelo menos 2 dias guardados para o gráfico.</p> : null}
+      <p style={{ ...muted, margin: '6px 0 0' }}>A foto de cada dia vem da coleta diária; dias sem foto são refeitos pelos ganhos e perdas do dia seguinte.</p>
     </div>
   );
 }

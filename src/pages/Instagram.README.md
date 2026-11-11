@@ -200,3 +200,65 @@ conversas no WhatsApp → vendas → R$.
 - `node scripts/tests/igAutoErp.test.ts`: contas da tela ("foi para o WhatsApp", métricas, funil, textos).
 - `node scripts/tests/igAutoChrome.test.ts`: Chrome real — Automações, Direct, funil, celular, só grava o permitido.
 - `node extension/tests/igphrase.test.cjs`: a frase na 1ª mensagem do WhatsApp (extensão 2.18.2).
+
+---
+
+# HISTÓRICO PRÓPRIO — stories e métricas (a Meta continua SÓ LEITURA)
+
+Os insights de **story** somem 24 h depois e a Meta só devolve totais da conta em blocos de 30 dias. A edge function
+**`instagram`** (a mesma, token `IG_ACCESS_TOKEN`, graph.facebook.com, **só GET**) ganhou duas ações que guardam o que
+leem no banco — nada é publicado nem enviado:
+
+| ação | quando | o que guarda |
+|---|---|---|
+| `collect_stories` | a cada 1 h | stories ativos (id, tipo, miniatura, link, hora) + insights: views, reach, replies, shares, total_interactions, follows, profile_visits e navigation (avanços, voltas, saídas, deslizes) → `ig_stories`. Cada hora atualiza a linha; fica a **última leitura antes de expirar**. |
+| `collect_daily` | 1x por dia, de madrugada | o dia de **ontem** da conta (seguidores, alcance, views, contas engajadas, interações, visitas ao perfil, toques no link da bio, ganhos/perdidos) → `ig_daily_account`, completando os dias que faltarem dos últimos 30; posts/reels dos últimos 30 dias (views, reach, likes, comments, saved, shares, total_interactions) → `ig_daily_media` (uma foto por post por dia). |
+
+- Métrica que a Meta recusar: **pulada** (a leitura anterior não é apagada) e registrada como aviso em `ig_collect_log`.
+- Quem pode chamar: a rotina do banco (cabeçalho `x-cron-key` = chave aleatória guardada em `ig_collect_keys`, tabela
+  só do servidor) ou um usuário logado no ERP (botão **Coletar agora** na aba Stories). **Nenhum segredo novo.**
+- Lógica em `supabase/functions/instagram/collect.ts`; `index.ts` manda as ações `collect_*` para lá.
+
+## Subaba **Stories**
+Período 7/14/30/90 dias: números do período, **O que funciona** (melhor horário — média de views por hora, só horas
+com 2+ stories; média de views por story; quantos stories por dia rendem mais — dias agrupados em 1 · 2–3 · 4–6 · 7+,
+vence o grupo com 2+ dias e mais views por dia), **Melhores stories**, a **grade por dia** (miniatura, views, alcance,
+respostas, compartilhamentos, avanços/voltas/saídas e a taxa de saída quando a Meta devolve, visitas ao perfil; selo
+**parcial** quando a última leitura foi antes das 23 h do story no ar) e, se houver link rastreável do canal
+**stories** (`ig_links`), **cliques → conversas → vendas por dia de story**. Regras em `src/lib/igInsights.ts`
+(`storiesByDay`, `bestStories`, `storyWhatWorks`, `storyLinkByDay`).
+
+## Visão geral
+- Novos períodos **6 meses** e **12 meses**: cartões, gráfico (por semana) e conteúdos montados com o **histórico
+  guardado** (até ontem). A função nunca é chamada com 180/365 dias (só o perfil, de 30 dias). Aviso: "… montado com o
+  histórico guardado (dados guardados desde DD/MM/AAAA)"; alcance e contas engajadas = soma dos dias.
+- Cartão **Seguidores ao longo do tempo** (todos os períodos) com **"Dados guardados desde DD/MM/AAAA"**: a foto de
+  cada dia vem da coleta diária; os dias sem foto (completados depois) são refeitos pelos ganhos e perdas do dia seguinte.
+- 7/14/30/90 dias continuam vindo da Meta, como antes.
+
+## Aplicar / publicar / agendar
+1. Migration **`supabase/migrations/20261116120000_ig_history.sql`** (ig_stories, ig_daily_account, ig_daily_media,
+   ig_collect_log com RLS igual às wa_*; ig_collect_keys só do servidor, já com a chave aleatória).
+2. Publicar a edge function **`instagram`** atualizada (`supabase functions deploy instagram`; as configurações dela
+   não mudam).
+3. Agendar: migration **`supabase/migrations/20261116130000_ig_history_cron.sql`** (pg_cron + pg_net). Passo a passo:
+   - no Supabase → **Database → Extensions**, confira que **pg_cron** e **pg_net** estão disponíveis (a migration liga as
+     duas; sem elas só avisa e nada quebra);
+   - rode a migration no **SQL Editor** (pode rodar de novo: troca os agendamentos pelos mesmos);
+   - confira em **Integrations → Cron** (ou `select jobname, schedule from cron.job;`): `ig-stories-hourly` (`7 * * * *`,
+     a cada hora) e `ig-daily` (`40 6 * * *` = 03:40 de Brasília);
+   - para ver as chamadas: `select status_code, content from net._http_response order by created desc limit 5;` e, no
+     ERP, a linha **Última coleta** da aba Stories (ou a tabela `ig_collect_log`).
+   - A chamada leva a chave anon do projeto (a pública do app, só para passar pelo "Verify JWT" do Supabase) e a
+     `x-cron-key` (é ela que libera a coleta).
+4. Logo depois de aplicar, clique em **Coletar agora** na aba Stories para não esperar a 1ª hora; a 1ª coleta diária
+   já completa os últimos 30 dias da conta.
+
+## Testes (nunca chamam a Meta de verdade)
+- `node scripts/tests/igHistory.test.ts`: a coleta com a Graph SIMULADA — acesso (x-cron-key/login), stories com a
+  navegação, última leitura que fica, métrica recusada que não apaga e vira aviso, foto do dia + dias que faltavam,
+  erro grave sem o token.
+- `node scripts/tests/igStories.test.ts`: as regras (stories por dia, ranking, o que funciona, link dos stories,
+  totais/semanas do histórico, seguidores ao longo do tempo).
+- `node scripts/tests/igHistoryChrome.test.ts`: Chrome real — aba Stories (inclusive "Coletar agora"), 6/12 meses,
+  seguidores ao longo do tempo, sem a migration, celular, só GET na Meta, ERP sem gravar.

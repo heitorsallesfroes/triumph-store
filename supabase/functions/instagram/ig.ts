@@ -70,9 +70,9 @@ export class GraphError extends Error {
     this.fatal = [190, 102, 4, 17, 32, 613, 80001, 80002].includes(code);
   }
 }
-const clean = (s: unknown) => String(s ?? '').replace(/access_token=[^&\s"]+/gi, 'access_token=***').slice(0, 300);
+export const clean = (s: unknown) => String(s ?? '').replace(/access_token=[^&\s"]+/gi, 'access_token=***').slice(0, 300);
 
-function makeGet(deps: Deps) {
+export function makeGet(deps: Deps) {
   let calls = 0;
   const get = async (path: string, params: Record<string, string | number | undefined> = {}): Promise<Any> => {
     const q = new URLSearchParams();
@@ -105,30 +105,30 @@ async function pool<T, R>(items: T[], n: number, fn: (x: T, i: number) => Promis
 }
 
 // Avisos: um por métrica (não um por post)
-class Warnings {
+export class Warnings {
   private map = new Map<string, string>();
   add(metric: string, where: string, msg: string) { const k = `${where}|${metric}`; if (!this.map.has(k)) this.map.set(k, `${where}: métrica "${metric}" não aceita pela Meta e foi pulada (${msg})`); }
   note(msg: string) { this.map.set(msg, msg); }
   list() { return [...this.map.values()]; }
 }
 
-const num = (v: unknown): number | null => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : null; };
+export const num = (v: unknown): number | null => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : null; };
 
 // valor de um item de insights (total_value ou values[]), e o detalhamento (breakdowns) se houver
-function valueOf(item: Any): number | null {
+export function valueOf(item: Any): number | null {
   if (!item) return null;
   if (item.total_value && item.total_value.value !== undefined) return num(item.total_value.value);
   if (Array.isArray(item.values)) { let s = 0; let any = false; item.values.forEach((v: Any) => { const n = num(v && v.value); if (n != null) { s += n; any = true; } }); return any ? s : null; }
   return null;
 }
-function breakdownOf(item: Any): { keys: string[]; value: number }[] {
+export function breakdownOf(item: Any): { keys: string[]; value: number }[] {
   const b = item && item.total_value && Array.isArray(item.total_value.breakdowns) ? item.total_value.breakdowns[0] : null;
   return b && Array.isArray(b.results) ? b.results.map((r: Any) => ({ keys: (r.dimension_values || []).map(String), value: num(r.value) || 0 })) : [];
 }
 
 // Pede várias métricas numa chamada; se a Meta recusar, tenta uma por uma e pula as recusadas (com aviso).
 // "skip" guarda as métricas já recusadas nesta execução (não pergunta de novo em cada dia/post).
-async function insights(get: (p: string, q: Record<string, string | number | undefined>) => Promise<Any>, path: string, metrics: string[], params: Record<string, string | number | undefined>,
+export async function insights(get: (p: string, q: Record<string, string | number | undefined>) => Promise<Any>, path: string, metrics: string[], params: Record<string, string | number | undefined>,
   warn: Warnings, where: string, skip: Set<string>): Promise<Record<string, Any>> {
   const list = metrics.filter((m) => !skip.has(`${where}|${m}`));
   const out: Record<string, Any> = {};
@@ -151,7 +151,7 @@ async function insights(get: (p: string, q: Record<string, string | number | und
 }
 
 // ── conta ──
-const ACCOUNT_METRICS = ['reach', 'views', 'accounts_engaged', 'total_interactions', 'profile_views', 'website_clicks', 'profile_links_taps'];
+export const ACCOUNT_METRICS = ['reach', 'views', 'accounts_engaged', 'total_interactions', 'profile_views', 'website_clicks', 'profile_links_taps'];
 export interface Totals { reach: number | null; views: number | null; accounts_engaged: number | null; total_interactions: number | null; profile_views: number | null; website_clicks: number | null; profile_links_taps: number | null; follows: number | null; unfollows: number | null; net_followers: number | null }
 
 const addN = (a: number | null, b: number | null) => (a == null ? b : b == null ? a : a + b);
@@ -300,7 +300,7 @@ async function mediaWithInsights(get: Any, m: Any, warn: Warnings, skip: Set<str
   };
 }
 
-async function mediaList(get: Any, ig: string, days: number, now: number) {
+export async function mediaList(get: Any, ig: string, days: number, now: number) {
   const warn = new Warnings(); const skip = new Set<string>();
   const w = windowsOf(days, now).cur;
   const list: Any[] = [];
