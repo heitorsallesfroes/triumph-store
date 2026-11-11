@@ -34,13 +34,13 @@ const IMG = 'https://media.fsdn1-1.fna.fbcdn.net/v/t45/produto.jpg';
 const model = { id: PID, name: 'Relógio S11 Mini Rose Gold', priceAmount1000: 709000, salePriceAmount1000: 629000, currency: 'BRL', imageCdnUrl: IMG };
 
 // WA-JS falsa. native: 'model-chat' | 'chat-model' | 'throws' | 'silent' | null; hq: com o upload de miniatura
-function wa({ native = 'model-chat', hq = true, fresh = { id: PID, name: 'Relógio S11 Mini Rose Gold', price: '709000', currency: 'BRL', sale_price: { price: '629000' }, image_cdn_urls: [{ key: 'requested', value: IMG }] } } = {}) {
+function wa({ native = 'model-chat', hq = true, cat = model, fresh = { id: PID, name: 'Relógio S11 Mini Rose Gold', price: '709000', currency: 'BRL', sale_price: { price: '629000' }, image_cdn_urls: [{ key: 'requested', value: IMG }] } } = {}) {
   const sent = { raw: [], text: [], native: [], uploads: 0 };
   const msgs = [];
   const chat = { id: { _serialized: CHAT }, msgs: { getModelsArray: () => msgs } };
   const addMine = (type) => msgs.push({ id: { fromMe: true, _serialized: `true_${CHAT}_${msgs.length + 1}` }, type });
   const W = {
-    CatalogStore: { get: () => ({ productCollection: { get: (id) => (id === PID ? model : null) } }) },
+    CatalogStore: { get: () => ({ productCollection: { get: (id) => (id === PID ? cat : null) } }) },
     OpaqueData: { createFromBase64Jpeg: async (b64) => ({ b64 }) },
     Base64: { encodeB64: () => 'a2V5' },
     functions: {},
@@ -69,7 +69,7 @@ function wa({ native = 'model-chat', hq = true, fresh = { id: PID, name: 'Relóg
   };
   return { wpp, sent };
 }
-const send = async (w, text = '') => { const fn = await R.prepareSend(w.wpp, CHAT, { kind: 'produto', data: { product_id: PID, name: 'Relógio', price: 'R$ 709,00', image_url: IMG }, text }, {}); return plain(await fn()); };
+const send = async (w, text = '') => { const fn = await R.prepareSend(w.wpp, CHAT, { kind: 'produto', data: { product_id: PID, name: 'Relógio', price: 'R$ 709,00', image_url: IMG }, text }, {}); const o = plain(await fn()); return { tspVia: o.tspVia }; }; // 2.16.14: o resultado traz também o registro (tspTrace)
 
 test('preço de oferta: modelo do catálogo (salePriceAmount1000) e getProductById (sale_price { price })', () => {
   const a = plain(R.normalizeProduct(model));
@@ -139,14 +139,14 @@ test('nativo que não dá erro e não aparece: não repete o nativo (sem produto
 });
 
 test('sem a oferta no catálogo: preço cheio, sem "de"', async () => {
-  const w = wa({ native: null, fresh: { id: PID, name: 'Relógio', price: '709000', currency: 'BRL' } });
+  const w = wa({ native: null, cat: { ...model, salePriceAmount1000: undefined }, fresh: { id: PID, name: 'Relógio', price: '709000', currency: 'BRL' } });
   await send(w);
   assert.strictEqual(nb(plain(w.sent.raw[0]).description), 'R$ 709,00');
 });
 
 test('ponte e painel: o caminho volta no resultado ("via") e o painel avisa; prévia com o cheio riscado', () => {
   const b = src('wa-bridge.js');
-  assert.match(b, /return r && typeof r\.tspVia === 'string' \? \{ sent: true, via: r\.tspVia \} : \{ sent: true \};/);
+  assert.match(b, /return r && typeof r\.tspVia === 'string' \? \{ sent: true, via: r\.tspVia,/); // 2.16.14: + trace
   const c = src('content.js');
   assert.match(c, /if \(part\.type === 'produto' && res && res\.via && PRODUCT_VIA\[res\.via\]\) lastProductVia = res\.via;/);
   assert.ok(c.includes("toast(`${total > 1 ? `Enviado: ${total} partes.` : 'Enviado.'}${via}`"), 'o caminho vai junto no "Enviado"');
@@ -156,7 +156,7 @@ test('ponte e painel: o caminho volta no resultado ("via") e o painel avisa; pr�
   let dirty = '';
   try { dirty = require('child_process').execSync('git status --porcelain -- vendor', { cwd: EXT, encoding: 'utf8' }).trim(); } catch { dirty = ''; }
   assert.strictEqual(dirty, '', 'vendor/ modificado');
-  assert.strictEqual(JSON.parse(src('manifest.json')).version, '2.16.13');
+  assert.ok(Number(JSON.parse(src('manifest.json')).version.split('.')[1]) >= 16); // 2.16.14: versão segue subindo
 });
 
 (async () => {

@@ -2338,6 +2338,43 @@ async function main() {
     const l26 = await send26('link-grande');
     check('2.16.13: na reserva o painel avisa "Enviado. 🛍️ Produto como link com foto grande (reserva)."', l26.ok && l26.t === 'Enviado. 🛍️ Produto como link com foto grande (reserva).', JSON.stringify(l26));
     check('nenhum erro no console na 2.16.13', errors.length === 0, errors.slice(0, 8).join(' | '));
+    // 27. 2.16.14: Diagnóstico do Produto (Mais → Manutenção) e o log da extensão de cada envio de Produto. Ponte simulada:
+    // o envio devolve o registro (trace); a leitura (productDiag) volta preço, oferta, fotos e o nativo; o teste só sai
+    // com a conversa "Meu Numero Pessoal" aberta e depois de confirmar.
+    const TRACE = { product_id: '7012345678901234', via: 'link-grande', native: { exists: true, arity: 2, attempts: [{ order: 1, result: 'erro: ordem errada' }, { order: 2, result: 'nenhuma mensagem nova' }] }, reserve: { hq: 'ok (800x800)', previewAccepted: true } };
+    await inExt(`new Promise((r) => chrome.storage.local.remove('productSendLog', () => r(true)))`);
+    await pg(`window.__rich = []; window.__fakeBridge.sendRich = (p) => { window.__rich.push(p); return { sent: true, via: 'link-grande', trace: ${JSON.stringify(TRACE)} }; };
+      window.__fakeBridge.catalogProducts = { ok: true, products: [{ id: '7012345678901234', name: 'Raptor GPS', price: 'R$ 629,00', full_price: 'R$ 709,00', image_url: null }] };
+      window.__fakeBridge.productDiag = (p) => ({ product_id: p.productId, read: { getProductById: { price: '709000', sale_price: '{"price":"629000"}' } }, native: { exists: true, arity: 2, signature: 'function(e,t)' }, chosen: { description: 'R$ 629,00 · de R$ 709,00' } });
+      return true;`);
+    await send26('link-grande');
+    const log27 = await inExt(`new Promise((r) => chrome.storage.local.get('productSendLog', (x) => r(x.productSendLog || [])))`);
+    check('2.16.14: cada envio de Produto vai para o log da extensão (sem a conversa)', Array.isArray(log27) && log27.length === 1 && log27[0].reserve.hq === 'ok (800x800)' && !JSON.stringify(log27).includes('5521900000001'), JSON.stringify(log27));
+    await q(`sh.querySelector('.pmore').click(); await wait(200); sh.querySelector('.ppdiag').click(); return true;`);
+    const opened27 = await waitFor(`const s = sh.querySelector('.pdg-sel'); return !!s && !!s.querySelector('option[value="7012345678901234"]');`, 10000);
+    await q(`[...sh.querySelectorAll('.pdg-b button')].find((b) => b.textContent === 'Ler produto').click(); return true;`);
+    const read27 = await waitFor(`return /sale_price/.test(sh.querySelector('.pdg-out').value) && /"arity": 2/.test(sh.querySelector('.pdg-out').value);`, 10000);
+    const txt27 = await q(`return sh.querySelector('.pdg-out').value;`);
+    check('2.16.14: Diagnóstico do Produto abre em Mais → Manutenção, lê o produto (preço, oferta, nativo) e mostra o log', opened27 && read27 && /Log dos últimos envios de Produto \(1\)/.test(txt27) && /R\$ 629,00 · de R\$ 709,00/.test(txt27), txt27.slice(0, 400));
+    await shot('produto-diagnostico.png');
+    const testBtn27 = `[...sh.querySelectorAll('.pdg-b button')].find((b) => /Testar envio|Confirmar: enviar/.test(b.textContent))`;
+    await pg(`window.__rich = []; const s = document.querySelector('#main header span'); window.__oldName = s.textContent; s.textContent = 'Cliente 1'; s.title = 'Cliente 1'; return true;`);
+    await q(`${testBtn27}.click(); await wait(300); return true;`);
+    const blocked27 = await q(`return { msg: sh.querySelector('.pdg-msg').textContent, sent: 0 };`);
+    await pg(`const s = document.querySelector('#main header span'); s.textContent = 'Meu Numero Pessoal'; s.title = 'Meu Numero Pessoal'; return true;`);
+    await sleep(600);
+    await q(`${testBtn27}.click(); await wait(300); return true;`);
+    const armed27 = await q(`return ${testBtn27}.textContent;`);
+    const before27 = await pg(`return window.__rich.length;`);
+    await q(`${testBtn27}.click(); return true;`);
+    const sent27 = await waitFor(`return /Teste de envio em Meu Numero Pessoal/.test(sh.querySelector('.pdg-out').value);`, 10000);
+    const rich27 = await pg(`return window.__rich.map((p) => ({ kind: p.kind, id: p.data.product_id, text: p.text }));`);
+    check('2.16.14: "Testar envio" só com "Meu Numero Pessoal" aberta e depois de confirmar; o resultado vai para o texto',
+      /Abra a conversa "Meu Numero Pessoal"/.test(blocked27.msg) && /^Confirmar: enviar "Raptor GPS"/.test(armed27) && before27 === 0 && sent27 && rich27.length === 1 && rich27[0].kind === 'produto' && rich27[0].text === '',
+      JSON.stringify({ blocked27, armed27, before27, sent27, rich27 }));
+    await q(`[...sh.querySelectorAll('.pdg-b button')].find((b) => b.textContent === 'Fechar').click(); return true;`);
+    await pg(`const s = document.querySelector('#main header span'); s.textContent = window.__oldName || 'Cliente 1'; s.title = s.textContent; return true;`);
+    check('nenhum erro no console na 2.16.14', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

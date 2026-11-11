@@ -809,6 +809,34 @@ guardada.
 
 ## O que mudou
 
+### 2.16.14 — Diagnóstico do Produto e prévia da reserva sempre a da extensão
+- **Por quê**: no teste real da 2.16.13 (conversa "Meu Numero Pessoal", 3 partes Produto) os três saíram como link
+  com foto pequena e "R$ 709,00" cheio, sem o cartão nativo. Faltava ver o que aconteceu em cada passo.
+- **Mais → Manutenção → Diagnóstico do Produto**: escolha um produto do catálogo e clique em **Ler produto**. O texto
+  (botão **Copiar**) mostra o que cada leitura trouxe — `getProductById` e o catálogo carregado no WhatsApp: preço,
+  `sale_price`/`salePriceAmount1000` e as datas da oferta, URLs das fotos e os nomes dos campos —, se
+  `WPP.whatsapp.functions.sendProductToChat` existe, com aridade e assinatura, e a descrição que a prévia vai usar.
+  Nada é enviado.
+- **Testar envio em Meu Numero Pessoal**: só funciona com a conversa "Meu Numero Pessoal" aberta; o 1º clique pede
+  confirmação ("Confirmar: enviar …"), o 2º envia. O texto mostra cada tentativa: nativo ordem 1 e ordem 2 (erro
+  exato ou "nenhuma mensagem nova"), reserva (upload da foto grande `thumbnailHQ`: ok ou o motivo — upload
+  indisponível, foto não carregou, foto pequena, erro do upload), o que foi enviado (título, descrição, miniatura) e o
+  que a mensagem ficou tendo depois de enviada (`previewAccepted`: a prévia ficou a nossa ou foi trocada).
+- **Log da extensão**: cada envio de Produto (mensagem rápida, sequência, disparo) guarda esse mesmo registro neste
+  computador (últimos 30, `chrome.storage.local`, chave `productSendLog`), **sem dados de cliente** (nem conversa, nem
+  número, nem o texto da mensagem). Os 10 últimos aparecem no fim do texto do Diagnóstico do Produto, para copiar e
+  mandar.
+- **Correções na reserva**:
+  - a prévia é sempre a montada pela extensão (título = nome, descrição com a oferta, miniatura), no mesmo formato da
+    prévia da WA-JS (`richPreviewType: 0`, `doNotPlayInline`, `canonicalUrl`), enviada com `linkPreview: false` para a
+    biblioteca não buscar outra;
+  - **oferta**: além do `getProductById`, lê também o produto do catálogo carregado no WhatsApp (onde vem
+    `salePriceAmount1000`). Se nenhuma leitura traz campo de oferta e a parte foi salva com oferta cujo cheio bate com
+    o preço atual, usa a oferta salva. Oferta vencida ou futura nunca entra. A foto vem de qualquer leitura que tenha;
+  - foto grande: o tamanho mínimo passou a ser o da WA-JS (140 x 100; antes 300 de largura), e cada falha diz o motivo.
+- Vendor WA-JS intocado. Testes simulados: `productdiag.test.cjs` (registro do envio, prévia, oferta, leitura) e
+  `chrome-real.test.cjs` (botão, leitura, log, teste só em "Meu Numero Pessoal" com confirmação).
+
 ### 2.16.13 — Parte "Produto" com o cartão do catálogo e o preço de oferta
 - **Preço de oferta**: a parte Produto passa a usar o preço **promocional** do catálogo quando houver (ex.: R$ 629,00,
   com R$ 709,00 riscado). Antes só aparecia o cheio, porque a oferta vem em `sale_price` na leitura do produto e

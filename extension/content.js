@@ -1462,6 +1462,13 @@
       .rp-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
       .rp-t { font-weight: 600; font-size: var(--fs-2); overflow-wrap: anywhere; }
       .rp-s { font-size: var(--fs-1); color: var(--muted); overflow-wrap: anywhere; }
+      .pdg-bg { position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center; background: rgba(11,20,26,.35); }
+      .pdg { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-4); border-radius: var(--r-lg); background: var(--card); color: var(--fg); border: 1px solid var(--border); box-shadow: var(--sh-3); }
+      .pdg-h { font-weight: 700; font-size: var(--fs-3); }
+      .pdg-sel { width: 100%; min-height: 32px; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--bg); color: var(--fg); }
+      .pdg-b { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+      .pdg-msg { font-size: var(--fs-1); color: var(--muted); min-height: 1em; }
+      .pdg-out { width: 100%; min-height: 260px; flex: 1; resize: vertical; font: 11px/1.4 ui-monospace, Consolas, monospace; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--bg); color: var(--fg); padding: var(--s-2); box-sizing: border-box; }
       .rp-price { color: var(--fg); font-weight: 600; } .rp-full { color: var(--muted); font-weight: 400; }
       .rp-link { font-size: var(--fs-1); color: var(--accent); overflow-wrap: anywhere; }
       .rp-ed { display: flex; flex-direction: column; gap: var(--s-2); }
@@ -1913,7 +1920,7 @@
               <button type="button" data-sec="agendados" title="Agendados" aria-pressed="false">${svg('clock')}<span>Agendados</span></button>
               <button type="button" data-sec="disparos" title="Disparos (envio para uma etiqueta CRM)" aria-pressed="false">${svg('megaphone')}<span>Disparos</span></button>
               <button type="button" data-sec="follows" title="Automações (Quando → Se → Então)" aria-pressed="false">${svg('repeat')}<span>Automações</span></button>
-              <div class="pmaint"><div class="pmaint-h">Manutenção</div><button type="button" class="pmerge" title="Junta no mais antigo os contatos com a mesma conversa ou o mesmo telefone">${svg('repeat')}<span>Juntar contatos duplicados</span></button></div>
+              <div class="pmaint"><div class="pmaint-h">Manutenção</div><button type="button" class="pmerge" title="Junta no mais antigo os contatos com a mesma conversa ou o mesmo telefone">${svg('repeat')}<span>Juntar contatos duplicados</span></button><button type="button" class="ppdiag" title="Lê um produto do catálogo e testa o envio do Produto (só em Meu Numero Pessoal)">${svg('activity')}<span>Diagnóstico do Produto</span></button></div>
             </div>
           </div>
         </nav>
@@ -2418,6 +2425,99 @@
   }
   pmergeBtn.addEventListener('click', () => { setMoreOpen(false); runMergeDuplicates(true); });
   setTimeout(() => runMergeDuplicates(false), 6000);
+
+  // 2.16.14: Diagnóstico do Produto (Mais → Manutenção). Lê um produto do catálogo (preço, oferta e datas, fotos) e o
+  // envio nativo (sendProductToChat: existe? aridade/assinatura). "Testar envio" só na conversa aberta "Meu Numero
+  // Pessoal", com confirmação; o resultado de cada tentativa vai para o texto e para o log da extensão.
+  const normTxt = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const isTestChatName = (name) => normTxt(name) === 'meu numero pessoal';
+  function productDiagText(info, test, log) {
+    const L = [`Diagnóstico do Produto - Triumph Store Mensagens ${chrome.runtime.getManifest().version} (${new Date().toLocaleString('pt-BR')})`];
+    const j = (v) => { try { return JSON.stringify(v, null, 2); } catch { return String(v); } };
+    if (info) L.push('', '== Leitura do produto ==', j(info));
+    if (test) L.push('', '== Teste de envio em Meu Numero Pessoal ==', j(test));
+    if (log && log.length) L.push('', `== Log dos últimos envios de Produto (${log.length}) ==`, ...log.slice(-10).map((t) => j(t)));
+    return L.join('\n');
+  }
+  async function openProductDiag() {
+    setMoreOpen(false);
+    shadow.querySelectorAll('.pdg-bg').forEach((n) => n.remove());
+    const bg = el('div', 'pdg-bg');
+    const box = el('div', 'pdg');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Diagnóstico do Produto');
+    const head = el('div', 'pdg-h', 'Diagnóstico do Produto');
+    const sel = el('select', 'pdg-sel');
+    sel.setAttribute('aria-label', 'Produto do catálogo');
+    const out = el('textarea', 'pdg-out');
+    out.readOnly = true;
+    out.setAttribute('aria-label', 'Resultado do diagnóstico');
+    const msg = el('div', 'pdg-msg');
+    const btns = el('div', 'pdg-b');
+    const mk = (t, cls = 'btn') => { const b = el('button', cls, t); b.type = 'button'; return b; };
+    const readBtn = mk('Ler produto', 'btn primary');
+    const testBtn = mk('Testar envio em Meu Numero Pessoal');
+    const copyBtn = mk('Copiar');
+    const closeBtn = mk('Fechar');
+    btns.append(readBtn, testBtn, copyBtn, closeBtn);
+    box.append(head, sel, btns, msg, out);
+    bg.append(box);
+    shadow.append(bg);
+    let info = null;
+    let test = null;
+    let armed = false;
+    const refresh = async () => { out.value = productDiagText(info, test, await productLog()); };
+    const close = () => bg.remove();
+    closeBtn.addEventListener('click', close);
+    bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+    copyBtn.addEventListener('click', async () => { const ok = await copyToClipboard(out.value); msg.textContent = ok ? 'Copiado.' : 'Não foi possível copiar.'; });
+    const product = () => (catalog.products || []).find((x) => x.id === sel.value) || null;
+    readBtn.addEventListener('click', async () => {
+      if (!sel.value) return;
+      readBtn.disabled = true;
+      msg.textContent = 'Lendo o produto…';
+      try { info = await waRequest('productDiag', { productId: sel.value }, { timeout: 40000 }); msg.textContent = 'Leitura pronta.'; } catch (e) { info = { erro: String((e && e.message) || e) }; msg.textContent = 'A leitura falhou (veja o texto).'; }
+      readBtn.disabled = false;
+      refresh();
+    });
+    testBtn.addEventListener('click', async () => {
+      const p = product();
+      if (!p) { msg.textContent = 'Escolha um produto.'; return; }
+      const name = getContext().fullName;
+      let chat = null;
+      try { chat = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { chat = null; }
+      if (!isTestChatName(name) || !chat || chat.kind !== 'individual' || !chat.chatId) { armed = false; testBtn.textContent = 'Testar envio em Meu Numero Pessoal'; msg.textContent = 'Abra a conversa "Meu Numero Pessoal" para testar (o teste só envia nela).'; return; }
+      if (!armed) { armed = true; testBtn.textContent = `Confirmar: enviar "${p.name}" para Meu Numero Pessoal`; msg.textContent = 'Clique de novo para confirmar o envio de teste.'; return; }
+      armed = false;
+      testBtn.textContent = 'Testar envio em Meu Numero Pessoal';
+      testBtn.disabled = true;
+      msg.textContent = 'Enviando o teste…';
+      const data = { product_id: p.id, name: p.name, price: p.price, image_url: p.image_url, ...(p.full_price ? { full_price: p.full_price } : {}) };
+      try {
+        const res = await waRequest('sendRich', { chatId: chat.chatId, kind: 'produto', data, text: '', typingMs: 0 }, { id: newRequestId('w'), timeout: 90000 });
+        logProductTrace(res);
+        test = { via: res && res.via, ...(res && res.trace ? res.trace : {}) };
+        msg.textContent = `Teste enviado (${(res && res.via) || '?'}).`;
+      } catch (e) {
+        test = { erro: String((e && e.message) || e), code: e && e.code, stage: e && e.stage };
+        msg.textContent = 'O teste falhou (veja o texto).';
+      }
+      testBtn.disabled = false;
+      refresh();
+    });
+    sel.addEventListener('change', () => { armed = false; testBtn.textContent = 'Testar envio em Meu Numero Pessoal'; });
+    sel.append(el('option', '', 'Carregando o catálogo…'));
+    refresh();
+    await loadCatalog(true);
+    sel.textContent = '';
+    const list = catalog.products || [];
+    if (!list.length) sel.append(el('option', '', CATALOG_REASON[catalog.reason] || 'Catálogo vazio'));
+    list.forEach((x) => { const o = el('option', '', `${x.name}${x.price ? ` · ${x.price}` : ''}${x.full_price ? ` (de ${x.full_price})` : ''}`); o.value = x.id; sel.append(o); });
+    readBtn.disabled = !list.length;
+    testBtn.disabled = !list.length;
+  }
+  shadow.querySelector('.ppdiag').addEventListener('click', () => { openProductDiag(); });
 
   function renderPanelNav() {
     let moreOn = false;
@@ -4957,6 +5057,21 @@
   // 2.16.13: por qual caminho o produto saiu (vai junto no aviso "Enviado" do fim do envio)
   const PRODUCT_VIA = { nativo: '🛍️ Produto como cartão do catálogo.', 'link-grande': '🛍️ Produto como link com foto grande (reserva).', link: '🛍️ Produto como link (reserva).' };
   let lastProductVia = null;
+  // 2.16.14: log da extensão com o resultado de cada envio de Produto (últimos 30, só neste computador; sem dados de
+  // cliente: nada de conversa, número ou texto da mensagem). Aparece no Diagnóstico do Produto (Mais → Manutenção).
+  const PRODUCT_LOG_KEY = 'productSendLog';
+  function logProductTrace(res) {
+    const t = res && res.trace;
+    if (!t || typeof t !== 'object') return;
+    try {
+      chrome.storage.local.get([PRODUCT_LOG_KEY], (r) => {
+        const list = Array.isArray(r && r[PRODUCT_LOG_KEY]) ? r[PRODUCT_LOG_KEY] : [];
+        list.push(t);
+        storageSet({ [PRODUCT_LOG_KEY]: list.slice(-30) });
+      });
+    } catch { /* extensão recarregada */ }
+  }
+  const productLog = () => new Promise((resolve) => { try { chrome.storage.local.get([PRODUCT_LOG_KEY], (r) => resolve(Array.isArray(r && r[PRODUCT_LOG_KEY]) ? r[PRODUCT_LOG_KEY] : [])); } catch { resolve([]); } });
   const partAsItem = (p, i) => ({ id: p.id || `parte${i}`, file_url: p.file_url, file_name: p.file_name });
 
   // Envia uma parte; erros vêm com stage ('before-send', 'sending' ou 'unknown' quando não houve resposta)
@@ -4976,10 +5091,11 @@
     if (Rich.isRich(part.type)) {
       const text = Rich.allowsText(part.type) && part.body ? fillVars(part.body, firstName).slice(0, SEQ_TEXT_MAX) : '';
       const rich = { kind: part.type, data: part.data || {}, text };
-      if (newChat) { await campaignSend(rich); return; }
+      if (newChat) { const cr = await campaignSend(rich); if (part.type === 'produto') logProductTrace(cr); return; }
       const res = await waRequest('sendRich', { chatId, ...rich, typingMs: typingMs || 0 }, { id: reqId, timeout: (typingMs || 0) + 60000 });
       // 2.16.13: qual caminho o produto usou (para conferir na conversa)
       if (part.type === 'produto' && res && res.via && PRODUCT_VIA[res.via]) lastProductVia = res.via;
+      if (part.type === 'produto') logProductTrace(res); // 2.16.14
       return;
     }
     if (Array.isArray(part.files) && part.files.length > 1) return sendAlbum(part, i, chatId, firstName, reqId, newChat, typingMs);

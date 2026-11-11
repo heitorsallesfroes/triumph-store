@@ -647,7 +647,8 @@
         throw onFail ? onFail() : new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
       }
       // 2.16.13: por qual caminho o produto saiu (nativo / link-grande / link)
-      return r && typeof r.tspVia === 'string' ? { sent: true, via: r.tspVia } : { sent: true };
+      // 2.16.14: + o registro do envio do produto (trace) para o log da extensão
+      return r && typeof r.tspVia === 'string' ? { sent: true, via: r.tspVia, ...(r.tspTrace ? { trace: r.tspTrace } : {}) } : { sent: true };
     } finally {
       jobs.delete(requestId);
     }
@@ -683,6 +684,18 @@
     await individualLoadedChat(p.chatId);
     const send = await richSendFn(p.chatId, p, { createChat: false, markIsRead: false });
     return sendJob(requestId, p.chatId, ms, send, richFail(p.kind));
+  }
+
+  // 2.16.14: Diagnóstico do Produto (só leitura): o que a leitura trouxe e se o envio nativo existe
+  async function productDiag(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    if (!Rich || typeof Rich.productDiag !== 'function') throw new BridgeError('rich_unavailable', 'Tipo de parte indisponível nesta versão', 'before-send');
+    try {
+      return await Rich.productDiag(wpp, payload && payload.productId);
+    } catch (e) {
+      if (e && e.richCode) throw new BridgeError(e.richCode, e.message, 'before-send');
+      throw new BridgeError('rich_prepare', 'Não consegui ler o produto', 'before-send');
+    }
   }
 
   function richInfo() {
@@ -1832,7 +1845,8 @@
         throw onFail ? onFail() : new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
       }
       // 2.16.13: por qual caminho o produto saiu (nativo / link-grande / link)
-      return r && typeof r.tspVia === 'string' ? { sent: true, via: r.tspVia } : { sent: true };
+      // 2.16.14: + o registro do envio do produto (trace) para o log da extensão
+      return r && typeof r.tspVia === 'string' ? { sent: true, via: r.tspVia, ...(r.tspTrace ? { trace: r.tspTrace } : {}) } : { sent: true };
     } finally {
       jobs.delete(requestId);
     }
@@ -1877,6 +1891,7 @@
     sendRich: (payload, requestId) => sendRich(requestId, payload),
     richInfo: () => richInfo(),
     catalogProducts: () => catalogProducts(),
+    productDiag: (payload) => productDiag(payload), // 2.16.14
     catalogExport: () => catalogExport(), // 2.15.3
     catalogImage: (payload) => catalogImage(payload),
     contactSearch: (payload) => contactSearch(payload),

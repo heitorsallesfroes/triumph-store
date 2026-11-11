@@ -263,17 +263,72 @@
 
   const withTimeout = (p, ms) => new Promise((resolve, reject) => { const t = setTimeout(() => reject(new Error('timeout')), ms); Promise.resolve(p).then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); }); });
   const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+  // 2.16.14: textos curtos para o diagnóstico (nunca dados de cliente)
+  const brief = (v, n = 160) => { try { return String(v == null ? '' : v).slice(0, n); } catch { return ''; } };
+  const errText = (e) => brief((e && (e.message || e.code)) || e || 'erro', 200);
+  function safeJson(v) { try { return JSON.stringify(v); } catch { return String(v); } }
+  const plain = (v) => (v == null ? null : typeof v === 'number' || typeof v === 'boolean' ? v : typeof v === 'string' ? brief(v, 300) : brief(safeJson(v), 300));
+
+  // 2.16.14: o que uma leitura do produto trouxe (preço, oferta e datas, fotos e os nomes dos campos)
+  function productReadInfo(o) {
+    if (!o || typeof o !== 'object') return null;
+    const sp = pick(o, ['sale_price', 'salePrice']);
+    const imgs = [];
+    const direct = pick(o, ['imageCdnUrl', 'image_cdn_url', 'image_url']);
+    if (typeof direct === 'string') imgs.push(direct);
+    const list = pick(o, ['image_cdn_urls', 'imageCdnUrls']);
+    if (Array.isArray(list)) list.slice(0, 4).forEach((x) => { if (x) imgs.push(`${x.key ? `${x.key}: ` : ''}${x.value || x.url || ''}`); });
+    let keys = [];
+    try { keys = Object.keys(o.attributes && typeof o.attributes === 'object' ? o.attributes : o).slice(0, 50); } catch { keys = []; }
+    return {
+      priceAmount1000: plain(pick(o, ['priceAmount1000', 'price_amount1000'])), price: plain(pick(o, ['price'])), currency: plain(pick(o, ['currency'])),
+      salePriceAmount1000: plain(pick(o, ['salePriceAmount1000', 'sale_price_amount1000'])),
+      salePriceStartDate: plain(pick(o, ['salePriceStartDate', 'sale_price_start_date'])), salePriceEndDate: plain(pick(o, ['salePriceEndDate', 'sale_price_end_date'])),
+      sale_price: plain(sp), images: imgs.map((u) => brief(u, 300)), keys,
+    };
+  }
+  const hasSaleFields = (o) => !!o && (pick(o, ['salePriceAmount1000', 'sale_price_amount1000']) != null || !!pick(o, ['sale_price', 'salePrice']));
+
+  // 2.16.14: preço/oferta da prévia juntando as leituras ao vivo (getProductById e o catálogo carregado no WhatsApp) e,
+  // em último caso, o que ficou salvo na parte. Oferta só quando válida (menor que o cheio e dentro das datas).
+  const sameMoney = (a, b) => String(a || '').replace(/\s/g, ' ') === String(b || '').replace(/\s/g, ' '); // Intl usa espaço fixo
+  function productOffer(live, saved) {
+    let base = null;
+    let liveSale = false;
+    const all = live.map((s) => (s && s.o ? normalizeProduct(s.o) : null));
+    const img = (all.find((n) => n && n.image_url) || {}).image_url || (saved && saved.image_url) || null; // foto de qualquer leitura
+    for (let i = 0; i < live.length; i++) {
+      const s = live[i];
+      const n = all[i];
+      if (!n) continue;
+      if (n.full_price) return { name: n.name, price: n.price, full_price: n.full_price, image_url: n.image_url || img, from: s.tag };
+      if (hasSaleFields(s.o)) liveSale = true; // a leitura tem os campos da oferta, mas ela não vale agora
+      if (!base) base = { ...n, from: s.tag };
+    }
+    const sv = saved || {};
+    const mk = (p) => ({ name: (base && base.name) || sv.name || 'Produto', price: p.price || '', full_price: p.full_price || '', image_url: (base && base.image_url) || img, from: p.from });
+    // a parte guardou uma oferta e o cheio dela bate com o preço lido agora: usa a oferta salva
+    if (!liveSale && sv.full_price && sv.price && (!base || !base.price || sameMoney(base.price, sv.full_price))) return mk({ price: sv.price, full_price: sv.full_price, from: base ? `${base.from}+salvo` : 'salvo' });
+    if (base) return mk({ price: base.price || sv.price || '', full_price: '', from: base.from });
+    return mk({ price: sv.price || '', full_price: sv.full_price || '', from: 'salvo' });
+  }
 
   // 2.16.13: miniatura GRANDE da prévia, como o WhatsApp Web faz nas prévias em alta (thumbnailHQ): a foto do catálogo
   // vira JPEG e sobe pelo upload de miniatura do próprio WhatsApp (functions.uploadThumbnail). Nenhum servidor de fora.
-  async function hqThumbnail(wpp, url) {
+  // 2.16.14: cada passo diz por que falhou (trace.hq); tamanho mínimo igual ao da WA-JS (140 x 100).
+  async function hqThumbnail(wpp, url, trace = {}) {
     const W = wpp && wpp.whatsapp;
     const up = W && W.functions && W.functions.uploadThumbnail;
     const OD = W && W.OpaqueData;
     const B64 = W && W.Base64;
-    if (typeof up !== 'function' || !OD || typeof OD.createFromBase64Jpeg !== 'function' || !B64 || typeof B64.encodeB64 !== 'function') return null;
+    if (typeof up !== 'function' || !OD || typeof OD.createFromBase64Jpeg !== 'function' || !B64 || typeof B64.encodeB64 !== 'function') {
+      trace.hq = `indisponível (uploadThumbnail: ${typeof up}, OpaqueData: ${!!OD}, Base64: ${!!B64})`;
+      return null;
+    }
+    if (!url) { trace.hq = 'produto sem foto'; return null; }
     const big = await thumbnail(url, 800);
-    if (!big || big.width < 300) return null;
+    if (!big) { trace.hq = 'a foto não carregou no navegador (rede ou CORS)'; return null; }
+    if (big.width < 140 || big.height < 100) { trace.hq = `foto pequena demais (${big.width}x${big.height})`; return null; }
     const small = await thumbnail(url, 140);
     try {
       const data = await OD.createFromBase64Jpeg(big.data);
@@ -283,10 +338,11 @@
       const r = await withTimeout(up({ thumbnail: data, mediaType: 'thumbnail-link', mediaKeyInfo: { key: B64.encodeB64(key), timestamp: Math.floor(Date.now() / 1000) },
         uploadOrigin: 1, forwardedFromWeb: false, signal: ctl ? ctl.signal : undefined, timeout: 5000, isViewOnce: false }), 10000);
       const e = r && r.mediaEntry;
-      if (!e || !e.mediaKey || !e.directPath) return null;
+      if (!e || !e.mediaKey || !e.directPath) { trace.hq = `upload sem mediaEntry (campos: ${brief(Object.keys(r || {}).join(','), 120)})`; return null; }
+      trace.hq = `ok (${big.width}x${big.height})`;
       return { thumbnail: (small || big).data, thumbnailHQ: big.data, mediaKey: e.mediaKey, mediaKeyTimestamp: e.mediaKeyTimestamp, thumbnailDirectPath: e.directPath,
         thumbnailSha256: r.filehash, thumbnailEncSha256: e.encFilehash, thumbnailWidth: big.width, thumbnailHeight: big.height };
-    } catch { return null; }
+    } catch (err) { trace.hq = `upload falhou: ${errText(err)}`; return null; }
   }
 
   // 2.16.13: envio NATIVO do produto (o mesmo cartão do catálogo: foto grande, preço de oferta com o cheio riscado e
@@ -294,26 +350,71 @@
   // Só vale se uma mensagem NOVA nossa aparecer na conversa; senão, a reserva (link com prévia) vai no lugar.
   const mineIds = (chat) => { try { return new Set(chat.msgs.getModelsArray().filter((m) => m && m.id && m.id.fromMe).map((m) => String(m.id._serialized || m.id.id || m.id))); } catch { return new Set(); } };
   const newMine = (chat, before) => { try { return chat.msgs.getModelsArray().filter((m) => m && m.id && m.id.fromMe && !before.has(String(m.id._serialized || m.id.id || m.id))); } catch { return []; } };
-  async function nativeProduct(wpp, chatId, productId, me) {
+  const catalogModel = (W, me, productId) => { try { const cat = W.CatalogStore && W.CatalogStore.get(me.wid); const col = cat && cat.productCollection; return col && typeof col.get === 'function' ? col.get(productId) || null : null; } catch { return null; } };
+  const chatOf = (wpp, chatId) => { try { return (wpp.chat && typeof wpp.chat.get === 'function' && wpp.chat.get(chatId)) || (wpp.whatsapp && wpp.whatsapp.ChatStore && wpp.whatsapp.ChatStore.get(chatId)) || null; } catch { return null; } };
+  // 2.16.14: existe a função? qual a aridade e a assinatura (para o diagnóstico)
+  function nativeInfo(wpp) {
     const W = wpp && wpp.whatsapp;
     const fn = W && W.functions && W.functions.sendProductToChat;
-    if (typeof fn !== 'function') return null;
-    const modelOf = () => { try { const cat = W.CatalogStore && W.CatalogStore.get(me.wid); const col = cat && cat.productCollection; return col && typeof col.get === 'function' ? col.get(productId) || null : null; } catch { return null; } };
-    let model = modelOf();
-    if (!model && hasFn(wpp.catalog, 'getMyCatalog')) { try { await withTimeout(wpp.catalog.getMyCatalog(), 8000); } catch { /* sem catálogo carregado */ } model = modelOf(); }
-    let chat = null;
-    try { chat = (wpp.chat && wpp.chat.get(chatId)) || (W.ChatStore && W.ChatStore.get(chatId)) || null; } catch { chat = null; }
-    if (!model || !chat || !chat.msgs) return null;
+    if (typeof fn !== 'function') return { exists: false, arity: null, signature: null };
+    let sig = '';
+    try { sig = brief(String(Function.prototype.toString.call(fn)).split('{')[0].replace(/\s+/g, ' ').trim(), 120); } catch { sig = ''; }
+    return { exists: true, arity: fn.length, signature: sig || null };
+  }
+  async function nativeProduct(wpp, chatId, productId, me, trace = {}) {
+    const W = wpp && wpp.whatsapp;
+    const fn = W && W.functions && W.functions.sendProductToChat;
+    trace.native = { ...nativeInfo(wpp), attempts: [] };
+    if (typeof fn !== 'function') { trace.native.skipped = 'WPP.whatsapp.functions.sendProductToChat não existe'; return null; }
+    let model = catalogModel(W, me, productId);
+    if (!model && hasFn(wpp.catalog, 'getMyCatalog')) { try { await withTimeout(wpp.catalog.getMyCatalog(), 8000); } catch { /* sem catálogo carregado */ } model = catalogModel(W, me, productId); }
+    const chat = chatOf(wpp, chatId);
+    if (!model) { trace.native.skipped = 'o produto não está no catálogo carregado no WhatsApp (CatalogStore)'; return null; }
+    if (!chat || !chat.msgs) { trace.native.skipped = 'conversa não carregada'; return null; }
     return async (waitMs = 6000) => {
       const before = mineIds(chat);
-      for (const args of [[model, chat], [chat, model]]) { // a ordem dos parâmetros muda entre versões do WhatsApp Web
-        let threw = false;
-        try { await withTimeout(Promise.resolve().then(() => fn(...args)), 15000); } catch { threw = true; }
-        for (let i = 0; i < (threw ? 1000 : waitMs) / 200; i++) { if (newMine(chat, before).length) return true; await sleepMs(200); }
+      const orders = [[model, chat], [chat, model]]; // a ordem dos parâmetros muda entre versões do WhatsApp Web
+      for (let k = 0; k < orders.length; k++) {
+        let threw = null;
+        let ret;
+        try { ret = await withTimeout(Promise.resolve().then(() => fn(...orders[k])), 15000); } catch (e) { threw = e || new Error('erro'); }
+        let got = false;
+        for (let i = 0; i < (threw ? 1000 : waitMs) / 200; i++) { if (newMine(chat, before).length) { got = true; break; } await sleepMs(200); }
+        trace.native.attempts.push({ order: k + 1, params: k === 0 ? '(produto, conversa)' : '(conversa, produto)',
+          result: got ? 'ok: mensagem nova na conversa' : threw ? `erro: ${errText(threw)}` : `nenhuma mensagem nova (a função devolveu ${brief(ret === undefined ? 'undefined' : safeJson(ret), 80)})` });
+        if (got) return true;
         if (!threw) return false; // não deu erro e nada apareceu: não tenta de novo (evita mandar duas vezes)
       }
       return false;
     };
+  }
+
+  // 2.16.14: o que a mensagem do link ficou tendo depois de enviada (a prévia que vale é a que está na mensagem)
+  function sentLinkInfo(m) {
+    if (!m) return null;
+    const g = (k) => { try { return m[k] !== undefined ? m[k] : m.attributes ? m.attributes[k] : undefined; } catch { return undefined; } };
+    return { type: plain(g('type')), subtype: plain(g('subtype')), title: plain(g('title')), description: plain(g('description')), canonicalUrl: plain(g('canonicalUrl')),
+      richPreviewType: plain(g('richPreviewType')), thumbnail: !!g('thumbnail'), thumbnailHQ: !!g('thumbnailHQ'), thumbnailDirectPath: !!g('thumbnailDirectPath') };
+  }
+
+  // 2.16.14: leitura do produto para o diagnóstico (nada é enviado)
+  async function productDiag(wpp, productId) {
+    const id = String(productId == null ? '' : productId).trim();
+    if (!PRODUCT_ID_RE.test(id)) throw preErr('invalid_data', 'Produto inválido');
+    const me = myUser(wpp);
+    const W = wpp && wpp.whatsapp;
+    const out = { product_id: id, read: {}, native: nativeInfo(wpp), hqAvailable: !!(W && W.functions && typeof W.functions.uploadThumbnail === 'function' && W.OpaqueData && W.Base64) };
+    let fresh = null;
+    if (hasFn(wpp.catalog, 'getProductById')) {
+      try { fresh = await withTimeout(wpp.catalog.getProductById(String(me.wid._serialized || me.wid), id), 15000); out.read.getProductById = productReadInfo(fresh) || 'vazio'; } catch (e) { out.read.getProductById = `erro: ${errText(e)}`; }
+    } else out.read.getProductById = 'função não existe';
+    let model = catalogModel(W, me, id);
+    if (!model && hasFn(wpp.catalog, 'getMyCatalog')) { try { await withTimeout(wpp.catalog.getMyCatalog(), 8000); } catch { /* sem catálogo */ } model = catalogModel(W, me, id); }
+    out.read.catalogModel = model ? productReadInfo(model) : 'não está no catálogo carregado (CatalogStore)';
+    out.native.modelLoaded = !!model;
+    const offer = productOffer([{ tag: 'getProductById', o: fresh }, { tag: 'catalogo', o: model }], null);
+    out.chosen = { name: offer.name, price: offer.price, full_price: offer.full_price || null, description: productDescription(offer), from: offer.from, image_url: offer.image_url || null };
+    return out;
   }
 
   async function prepareSend(wpp, chatId, { kind, data, text }, opts) {
@@ -351,34 +452,55 @@
     if (!hasFn(wpp.chat, 'sendRawMessage')) throw preErr('rich_unavailable', 'Produto: esta versão da WA-JS não envia o link do produto');
     if (av.business === false) throw preErr('catalog_unavailable', 'Produto do catálogo só existe em conta WhatsApp Business');
     let fresh = null;
-    try { fresh = hasFn(wpp.catalog, 'getProductById') ? normalizeProduct(await wpp.catalog.getProductById(String(me.wid._serialized || me.wid), d.product_id)) : null; } catch { fresh = null; }
-    const prod = fresh
-      ? { name: fresh.name || d.name || 'Produto', price: fresh.price || d.price || '', full_price: fresh.full_price || '', image_url: fresh.image_url || d.image_url }
-      : { name: d.name || 'Produto', price: d.price || '', full_price: d.full_price || '', image_url: d.image_url };
+    try { fresh = hasFn(wpp.catalog, 'getProductById') ? await withTimeout(wpp.catalog.getProductById(String(me.wid._serialized || me.wid), d.product_id), 15000) : null; } catch { fresh = null; }
+    // 2.16.14: cada envio de Produto registra o que aconteceu (vai para o log da extensão; sem dados de cliente)
+    const trace = { product_id: d.product_id, at: new Date().toISOString() };
+    const native = await nativeProduct(wpp, chatId, d.product_id, me, trace).catch((e) => { trace.native = { ...(trace.native || {}), skipped: `erro: ${errText(e)}` }; return null; });
+    const model = catalogModel(wpp.whatsapp, me, d.product_id);
+    const prod = productOffer([{ tag: 'getProductById', o: fresh }, { tag: 'catalogo', o: model }], d);
+    trace.read = { getProductById: fresh ? productReadInfo(fresh) : 'sem resposta', catalogModel: model ? productReadInfo(model) : 'não carregado' };
+    trace.chosen = { name: prod.name, price: prod.price, full_price: prod.full_price || null, from: prod.from };
     const url = productLink(d.product_id, me.user);
-    const native = await nativeProduct(wpp, chatId, d.product_id, me).catch(() => null);
     const linkSend = async () => {
-      const th = (await hqThumbnail(wpp, prod.image_url).catch(() => null)) || (await thumbnail(prod.image_url).then((t) => (t ? { thumbnail: t.data, thumbnailHeight: t.height, thumbnailWidth: t.width } : null)));
+      const rv = (trace.reserve = {});
+      const th = (await hqThumbnail(wpp, prod.image_url, rv).catch((e) => { rv.hq = `upload falhou: ${errText(e)}`; return null; }))
+        || (await thumbnail(prod.image_url).then((t) => (t ? { thumbnail: t.data, thumbnailHeight: t.height, thumbnailWidth: t.width } : null)));
+      // 2.16.14: a prévia é SEMPRE a montada aqui (título, descrição com a oferta, miniatura), no mesmo formato da
+      // prévia da WA-JS; linkPreview: false para a biblioteca não trocar pela prévia que ela buscaria.
       const raw = {
-        type: 'chat', subtype: 'url', richPreviewType: 0, matchedText: url, canonicalUrl: url, body: caption ? `${caption}\n${url}` : url,
+        type: 'chat', subtype: 'url', richPreviewType: 0, doNotPlayInline: true, matchedText: url, canonicalUrl: url, body: caption ? `${caption}\n${url}` : url,
         title: prod.name, description: productDescription(prod), ...(th || {}),
       };
-      await wpp.chat.sendRawMessage(chatId, raw, o);
-      return { tspVia: th && th.thumbnailHQ ? 'link-grande' : 'link' };
+      rv.thumbnail = th ? (th.thumbnailHQ ? 'grande (thumbnailHQ)' : 'pequena') : 'sem miniatura (a foto não carregou)';
+      rv.sent = { title: raw.title, description: raw.description, thumbnail: !!raw.thumbnail, thumbnailHQ: !!raw.thumbnailHQ };
+      const chat = chatOf(wpp, chatId);
+      const before = chat ? mineIds(chat) : null;
+      await wpp.chat.sendRawMessage(chatId, raw, { ...o, linkPreview: false });
+      if (chat && before) {
+        await sleepMs(300);
+        const m = newMine(chat, before).find((x) => { try { return String(x.body || (x.attributes && x.attributes.body) || '').includes(url); } catch { return false; } });
+        const fin = sentLinkInfo(m);
+        rv.final = fin || 'mensagem não encontrada na conversa';
+        rv.previewAccepted = !!fin && fin.title === raw.title && fin.description === raw.description && fin.thumbnail === !!raw.thumbnail;
+      }
+      return { tspVia: th && th.thumbnailHQ ? 'link-grande' : 'link', tspTrace: trace };
     };
     return async () => {
-      if (native && (await native().catch(() => false))) {
+      if (native && (await native().catch((e) => { trace.native.attempts.push({ result: `erro: ${errText(e)}` }); return false; }))) {
         if (caption && hasFn(wpp.chat, 'sendTextMessage')) await wpp.chat.sendTextMessage(chatId, caption, o);
-        return { tspVia: 'nativo' };
+        trace.via = 'nativo';
+        return { tspVia: 'nativo', tspTrace: trace };
       }
-      return linkSend();
+      const r = await linkSend();
+      trace.via = r.tspVia;
+      return r;
     };
   }
 
   root.TspRich = Object.freeze({
     TYPES, LABEL, EMOJI, COLOR, PIX_KEY_TYPES,
     isRich, allowsText, empty, normalize, summary, mirrorText, fmtPhone, pixTypeLabel, normPhone,
-    parseMapsLink, placeNameFromLink, isShortMapsLink, productLink, mapsUrl, normalizeProduct, priceLabel, saleAmountOf, productDescription,
-    availability, prepareSend,
+    parseMapsLink, placeNameFromLink, isShortMapsLink, productLink, mapsUrl, normalizeProduct, priceLabel, saleAmountOf, productDescription, productOffer, productReadInfo,
+    availability, prepareSend, productDiag,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : self);
