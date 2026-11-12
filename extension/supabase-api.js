@@ -86,7 +86,7 @@
   // Coluna opcional que o banco disser que não existe sai da consulta, e tenta de novo
   let itemOptionalCols = []; // 2.8.6: colunas opcionais que a última leitura conseguiu pedir
   async function fetchItems() {
-    let optional = ['record_seconds', ...ON_SEND_COLUMNS.split(','), ...ON_SEND_WA_COLUMNS.split(','), ...ON_SEND_ALL_COLUMNS.split(','), 'follow_step'];
+    let optional = ['record_seconds', ...ON_SEND_COLUMNS.split(','), ...ON_SEND_WA_COLUMNS.split(','), ...ON_SEND_ALL_COLUMNS.split(','), 'follow_step', 'is_followup'];
     // cada grupo "ao enviar" (CRM, WhatsApp, tirar de todas) vem junto na sua migration
     const group = (c) => (c.startsWith('on_send_remove_all_') ? 'on_send_all' : c.startsWith('on_send_') ? (c.includes('_wa_') ? 'on_send_wa' : 'on_send_crm') : c);
     for (;;) {
@@ -135,12 +135,56 @@
     return null;
   }
 
+  // 2.18.8: follow-up por categoria ("Mensagens desta categoria são follow-up") e por mensagem ("Contar como
+  // follow-up nos Resultados do ERP"): colunas wa_categories.is_followup / wa_items.is_followup (migration
+  // 20261119120000) e, sempre, system_config "wa_followup_marks" { categories: [ids], items: [ids] } (funciona sem a
+  // migration). Vale a coluna OU a lista.
+  const FOLLOW_MARKS_KEY = 'wa_followup_marks';
+  const idList = (x) => (Array.isArray(x) ? x.filter((i) => typeof i === 'string' && /^[0-9a-f-]{36}$/i.test(i)) : []);
+  async function followMarks(fresh = false) {
+    try {
+      const path = `system_config?select=key,value&key=eq.${FOLLOW_MARKS_KEY}`;
+      const rows = fresh ? await restRaw(path, {}) : await rest(path);
+      const v = rows && rows.length ? JSON.parse(rows[0].value) : null;
+      return { categories: idList(v && v.categories), items: idList(v && v.items) };
+    } catch { return { categories: [], items: [] }; }
+  }
+  async function setFollowMark(kind, id, on) {
+    const cur = await followMarks(true); // relê (outra aba pode ter gravado)
+    const set = new Set(cur[kind]);
+    if (on) set.add(id); else set.delete(id);
+    const next = { ...cur, [kind]: [...set] };
+    await rest('system_config?on_conflict=key', json('POST', 'resolution=merge-duplicates,return=minimal', { key: FOLLOW_MARKS_KEY, value: JSON.stringify(next), updated_at: new Date().toISOString() }));
+  }
+  async function fetchCategories() {
+    try {
+      return await rest('wa_categories?select=id,name,position,created_at,is_followup&order=position.asc,created_at.asc');
+    } catch (err) {
+      if (!missingColumn(err, 'is_followup')) throw err;
+      return rest('wa_categories?select=id,name,position,created_at&order=position.asc,created_at.asc');
+    }
+  }
+  async function setCategoryFollow({ id, on }) {
+    checkUuid(id, 'Categoria inválida');
+    const flag = on === true;
+    if (await probe('wa_categories.is_followup', () => hasColumn('wa_categories', 'is_followup'))) {
+      await rest(`wa_categories?id=eq.${id}`, json('PATCH', 'return=minimal', { is_followup: flag }));
+    }
+    await setFollowMark('categories', id, flag);
+    return { id, is_followup: flag };
+  }
+
   async function fetchLibrary() {
-    const [categories, items, parts] = await Promise.all([
-      rest('wa_categories?select=id,name,position,created_at&order=position.asc,created_at.asc'),
+    const [categories, items, parts, marks] = await Promise.all([
+      fetchCategories(),
       fetchItems(),
       fetchParts(),
+      followMarks(),
     ]);
+    const catMarks = new Set(marks.categories);
+    const itemMarks = new Set(marks.items);
+    categories.forEach((c) => { c.is_followup = c.is_followup === true || catMarks.has(c.id); });
+    items.forEach((i) => { i.is_followup = i.is_followup === true || itemMarks.has(i.id); });
     if (parts) {
       const byItem = new Map();
       parts.forEach((p) => {
@@ -762,7 +806,7 @@
     return s;
   };
 
-  async function saveItem({ id, category_id, title, parts, on_send_add_label_id, on_send_remove_label_id, on_send_add_wa_label_id, on_send_remove_wa_label_id, on_send_remove_all_crm, on_send_remove_all_wa, follow_step }) {
+  async function saveItem({ id, category_id, title, parts, on_send_add_label_id, on_send_remove_label_id, on_send_add_wa_label_id, on_send_remove_wa_label_id, on_send_remove_all_crm, on_send_remove_all_wa, follow_step, is_followup }) {
     if (id !== undefined && id !== null) checkUuid(id, 'Item inválido');
     checkUuid(category_id, 'Categoria inválida');
     const cleanTitle = cleanText(title, TITLE_MAX, 'Título');
@@ -825,6 +869,12 @@
       const anyFiles = list.some((p) => p.files);
       if (anyFiles && !(await probe('wa_item_parts.files', () => hasColumn('wa_item_parts', 'files')))) throw new Error('Atualize o banco para usar este recurso');
       await rest('wa_item_parts', json('POST', 'return=minimal', list.map((p, i) => ({ ...p, ...(anyFiles ? { files: p.files || null } : {}), ...(anyData ? { data: p.data || null } : {}), item_id: itemId, position: i }))));
+    }
+    // 2.18.8: "Contar como follow-up nos Resultados do ERP" (sem etapa: o ERP numera sozinho)
+    if (is_followup !== undefined) {
+      const flag = is_followup === true;
+      if (await probe('wa_items.is_followup', () => hasColumn('wa_items', 'is_followup'))) await rest(`wa_items?id=eq.${itemId}`, json('PATCH', 'return=minimal', { is_followup: flag }));
+      await setFollowMark('items', itemId, flag);
     }
     return { id: itemId };
   }
@@ -4647,7 +4697,7 @@
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,
-    saveItem, deleteItem, itemUsage, createCategory, renameCategory, deleteCategory, reorderCategories, moveItems,
+    saveItem, deleteItem, itemUsage, createCategory, renameCategory, setCategoryFollow, deleteCategory, reorderCategories, moveItems,
     getChatName, setChatName, saveContactNames, getGreetings, setGreetings, uploadFile, partsTableExists,
     fetchMediaLibrary, createMediaFolder, renameMediaFolder, deleteMediaFolder, reorderMediaFolders, uploadMedia, updateMedia,
     incrementMediaUsage, mediaUsage, deleteMedia, importMediaFromItems,

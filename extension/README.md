@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.18.7** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.18.8** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,37 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.18.8 — follow manual por categoria + ERP Resultados: tipo de cada automação, cards e projeção
+- **Aba Mensagens → "···" da categoria → "Mensagens desta categoria são follow-up"**: toda mensagem rápida dessa
+  categoria conta como **follow manual** nos Resultados do ERP (a categoria ganha o selo **follow-up**). Clique de novo
+  para desligar.
+- **Editor da mensagem**: a caixinha virou **"Contar como follow-up nos Resultados do ERP (mesmo fora de uma categoria
+  de follow)"**, para casos soltos. **Não escolhe mais a etapa**: o ERP numera sozinho (1º, 2º, 3º follow manual que a
+  conversa recebeu desde a última resposta do cliente ou a última compra). Mensagem que já tinha etapa gravada
+  (2.10.0) continua com ela.
+- Onde fica: colunas `wa_categories.is_followup` e `wa_items.is_followup` (migration
+  `20261119120000_wa_followup_categories.sql`, **não aplicada**: aplique você) e, sempre, `system_config`
+  **`wa_followup_marks`** (`{ categories: [ids], items: [ids] }`). Sem a migration tudo funciona pelo `system_config`.
+  Vale a coluna **ou** a lista. O motor de envio não muda.
+- **ERP: WhatsApp → Resultados**
+  - **Tipo** em cada bloco do "Funil por caminho": **Follow-up de venda**, **Pós-venda** ou **Outro** (grava em
+    `system_config` **`wa_results_types`**: id da automação → tipo; não mexe em `wa_automations`). Padrão de quem nunca
+    foi escolhido: **Pós-venda** se a automação começa pela etiqueta do WhatsApp **"Cliente"** (`trigger_wa_label_id`
+    `'1'`) ou se o nome tem avaliação, instru, pós/pos venda, configura ou garantia; senão **Follow-up de venda**.
+  - Só **Follow-up de venda** e o **follow manual** entram nas contas de follow (cards, funil, comprou, faturamento,
+    mensagens, "depois de um follow" do rodapé). **Pós-venda e Outro** vão para a seção recolhida no fim, **"Pós-venda
+    e outras (não contam como follow)"**, só com entraram e responderam (com o seletor de Tipo para trocar).
+  - **Envio para quem já comprou** (venda ligada à conversa nos 30 dias **antes** do envio) nunca conta como follow de
+    venda, mesmo numa automação de follow-up (a aba carrega 30 dias antes do período para isso).
+  - **Cards no topo** (período escolhido, só follow de venda): **Conversas em follow** (nº de follows enviados
+    embaixo), **Responderam** (% e nº), **Faturamento dos follows** (com ticket médio) e **Conversão** (% das conversas
+    que compraram), cada um com (i). Embaixo: **"Projeção dos próximos 30 dias: ~X vendas e R$ Y, no ritmo do
+    período"** (por dia nos dias que já passaram × 30).
+  - "Acumulados" agora é o follow manual pela etapa (gravada ou automática). O Painel e as outras abas não mudam.
+- Testes: `followcat.test.cjs` (novo: com e sem a migration, categoria, mensagem solta, telas),
+  `scripts/tests/waResults.test.ts` (tipo padrão, pós-venda fora das contas, já comprou, etapa automática, cards e
+  projeção) e o Chrome real.
 
 ### 2.18.7 — categorias de mensagens rápidas se recolhem sozinhas
 - Na aba **Mensagens**, cada categoria aberta se recolhe sozinha depois de **5 min sem uso** (sem clicar, enviar,
@@ -2043,7 +2074,7 @@ claro/escuro, com esqueleto ao carregar.
     conversa 3 min antes/depois. A extensão espera 45 s antes de gravar, para isso dar certo.
   - O limite por hora/dia, o intervalo entre envios, o histórico e o "pular quem recebeu" dos disparos
     continuam contando **só** os envios automáticos (como antes).
-- **Mensagem rápida é follow-up**: no editor, "Esta mensagem é um follow-up" + **Etapa** (1 a 10).
+- **Mensagem rápida é follow-up**: no editor, "Esta mensagem é um follow-up" + **Etapa** (1 a 10). (2.18.8: virou a categoria de follow-up / "Contar como follow-up", etapa automática.)
   Automações que enviam a mensagem herdam a etapa (fica gravada em cada envio).
 - Nunca guarda o texto das mensagens: só conversa, lado (loja/cliente) e hora.
 - Banco: migration `20261106150000_wa_panel.sql` (tabelas `wa_leads` e `wa_replies` com as mesmas

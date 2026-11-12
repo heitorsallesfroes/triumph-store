@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { periodRanges, type PanelInput, type SendRow } from '../../src/lib/waPanel.ts';
 import { computeResults } from '../../src/lib/waResults.ts';
+import * as results from '../../src/lib/waResults.ts';
 
 const tests: [string, () => void][] = [];
 const test = (name: string, fn: () => void) => tests.push([name, fn]);
@@ -96,6 +97,94 @@ test('fora do período / sem dados: nada quebra', () => {
   assert.deepEqual([r.paths.length, r.accumulated.length, r.messages.length, r.campaigns.length], [0, 0, 0, 0]);
   const e = computeResults({ leads: [], attributions: [], names: {}, items: [], sends: [], replies: [], sales: [] }, R);
   assert.deepEqual([e.paths, e.accumulated, e.messages, e.campaigns, e.footer.sales], [[], [], [], [], 0]);
+});
+
+// ── ERP 12/11: tipo de cada automação, follow manual por categoria, cards e projeção ──
+const POS = 'a0000000-0000-4000-8000-000000000002';
+const CLI = 'a0000000-0000-4000-8000-000000000003';
+const CAT_F = 'cat-follow'; const CAT_X = 'cat-outra';
+test('tipo padrão: etiqueta do WhatsApp "Cliente" (1) ou nome de pós-venda → Pós-venda; senão Follow-up de venda', () => {
+  assert.equal(results.defaultPathType('Régua de follow-up'), 'follow');
+  for (const n of ['Avaliação Google', 'Instruções - Séries 11', 'Pós venda', 'pos-venda', 'Configuração do relógio', 'Garantia']) assert.equal(results.defaultPathType(n), 'posvenda', n);
+  assert.equal(results.defaultPathType('Boas-vindas', { id: 'x', trigger_label_source: 'whatsapp', trigger_wa_label_id: '1' }), 'posvenda');
+  assert.equal(results.defaultPathType('Boas-vindas', { id: 'x', trigger_label_source: 'crm', trigger_wa_label_id: '1' }), 'follow');
+  assert.deepEqual(results.parseTypes('{"a":"posvenda","b":"x","c":"outro"}'), { a: 'posvenda', c: 'outro' });
+  assert.deepEqual(results.parseTypes('lixo'), {});
+});
+function typed(): PanelInput {
+  const sc = scenario();
+  const P1 = chat(20); const P2 = chat(21); const X = chat(22);
+  sc.names[POS] = 'Avaliação Google'; sc.names[CLI] = 'Boas-vindas cliente';
+  const p1 = send(P1, '2026-11-02T10:00:00', { source_id: POS, item_id: 'av' });
+  sc.sends.push(p1, send(P2, '2026-11-02T10:00:00', { source_id: POS, item_id: 'av' }), send(X, '2026-11-03T10:00:00', { source_id: CLI, item_id: 'bv' }));
+  sc.replies.push(reply(P1, '2026-11-02T11:00:00', p1.id, 60));
+  sc.sales.push(sale('v7', P1, '2026-11-03T10:00:00', 999)); // venda depois do pós-venda: não é de follow
+  sc.items.push({ id: 'av', title: 'Avalie a loja' }, { id: 'bv', title: 'Bem-vindo' });
+  return sc;
+}
+const EXTRA = { automations: [{ id: CLI, trigger_label_source: 'whatsapp', trigger_wa_label_id: '1' }], now: NOW };
+test('Pós-venda e Outro: fora do funil, dos cards, das mensagens e do rodapé; seção à parte só com entraram e responderam', () => {
+  const r = computeResults(typed(), R, EXTRA);
+  assert.deepEqual(r.paths.map((p) => [p.name, p.type, p.typeSaved]), [['Régua de follow-up', 'follow', false]]);
+  assert.deepEqual(plain(r.others.map((o) => [o.name, o.type, o.entered, o.responded, o.respondedPct])), [['Avaliação Google', 'posvenda', 2, 1, 0.5], ['Boas-vindas cliente', 'posvenda', 1, 0, 0]]);
+  assert.ok(!('bought' in r.others[0]));
+  assert.ok(!r.messages.some((m) => m.title === 'Avalie a loja' || m.title === 'Bem-vindo'));
+  assert.equal(r.footer.afterFollow, 3); // a venda de R$ 999 (depois do pós-venda) não é "depois de um follow"
+  assert.equal(r.cards.revenue, 350);
+  // tipo escolhido (system_config wa_results_types) manda; "Outro" também fica fora
+  const r2 = computeResults(typed(), R, { ...EXTRA, types: { [POS]: 'follow', [AUTO]: 'outro' } });
+  assert.deepEqual(r2.paths.map((p) => [p.name, p.typeSaved]), [['Avaliação Google', true]]);
+  assert.deepEqual(r2.others.map((o) => [o.name, o.type]), [['Régua de follow-up', 'outro'], ['Boas-vindas cliente', 'posvenda']]);
+  assert.equal(r2.paths[0].bought, 1);
+});
+test('envio para quem comprou nos 30 dias antes nunca conta como follow de venda (nem em automação de follow-up)', () => {
+  const sc = scenario();
+  const Z = chat(30);
+  sc.sales.push(sale('v0', Z, '2026-10-20T10:00:00', 70)); // comprou 12 dias antes
+  sc.sends.push(send(Z, '2026-11-01T10:00:00', { item_id: F1 }));
+  sc.replies.push(reply(Z, '2026-11-01T11:00:00', 'x', 60));
+  const base = computeResults(scenario(), R, { now: NOW });
+  const r = computeResults(sc, R, { now: NOW });
+  assert.equal(r.paths[0].entered, base.paths[0].entered);
+  assert.equal(r.cards.conversations, base.cards.conversations);
+  // compra há mais de 30 dias: conta
+  const sc2 = scenario();
+  sc2.sales.push(sale('v0', Z, '2026-09-20T10:00:00', 70));
+  sc2.sends.push(send(Z, '2026-11-01T10:00:00', { item_id: F1 }));
+  assert.equal(computeResults(sc2, R, { now: NOW }).paths[0].entered, base.paths[0].entered + 1);
+});
+test('follow manual por categoria (e caixinha solta): etapa automática desde a última resposta/compra; etapa gravada é respeitada', () => {
+  const sc = scenario();
+  const M = chat(40); const N = chat(41);
+  const rq = (c: string, at: string, item: string) => send(c, at, { source: 'rapida', origin: 'rapida', source_id: null, item_id: item, follow_step: null });
+  sc.items.push({ id: 'c1', title: 'Conseguiu ver?' }, { id: 'c2', title: 'Ainda tem interesse?' }, { id: 'solta', title: 'Solta' }, { id: 'nada', title: 'Endereço da loja' });
+  // M: c1, c2 (sem resposta) → etapas 1 e 2; respondeu; c1 de novo → etapa 1
+  const m1 = rq(M, '2026-11-01T10:00:00', 'c1'); const m2 = rq(M, '2026-11-02T10:00:00', 'c2'); const m3 = rq(M, '2026-11-04T10:00:00', 'c1');
+  // N: mensagem solta marcada; uma mensagem que não é follow; depois c2 → etapas 1 e 2
+  const n1 = rq(N, '2026-11-01T10:00:00', 'solta'); const n0 = rq(N, '2026-11-01T12:00:00', 'nada'); const n2 = rq(N, '2026-11-03T10:00:00', 'c2');
+  sc.sends.push(m1, m2, m3, n1, n0, n2);
+  sc.replies.push(reply(M, '2026-11-03T10:00:00', m2.id, 60));
+  const extra = { followCategories: [CAT_F], followItems: ['solta'], itemCategory: { c1: CAT_F, c2: CAT_F, nada: CAT_X, solta: CAT_X }, now: NOW };
+  const acc = computeResults(sc, R, extra).accumulated;
+  // etapa 1: D, E (gravadas), M (2x: fica o 1º), N; etapa 2: E (gravada), M, N
+  assert.deepEqual(plain(acc.map((s) => [s.step, s.reached])), [[1, 4], [2, 3]]);
+  const titles = computeResults(sc, R, extra).messages.map((m) => m.title);
+  assert.ok(titles.includes('Conseguiu ver?') && titles.includes('Solta') && !titles.includes('Endereço da loja'));
+  // sem marcar a categoria, essas mensagens não são follow
+  assert.deepEqual(plain(computeResults(sc, R, { now: NOW }).accumulated.map((s) => [s.step, s.reached])), [[1, 2], [2, 1]]);
+});
+test('cards do topo (só follow-up de venda) e projeção dos próximos 30 dias no ritmo do período', () => {
+  const c = computeResults(typed(), R, EXTRA).cards;
+  // conversas: A, B, C (régua) + D, E (manual); 6 + 3 follows; responderam A, C, D; compraram B, C, E
+  assert.deepEqual([c.conversations, c.sent, c.responded, c.sales, c.revenue, c.bought], [5, 9, 3, 3, 350, 3]);
+  assert.equal(c.ticket, 116.67);
+  assert.equal(c.conversion, 0.6);
+  assert.equal(Math.round((c.respondedPct as number) * 100), 60);
+  // 30 dias que já passaram → ×1; período ainda em andamento conta só os dias que passaram
+  assert.deepEqual(plain(c.projection), { days: 30, sales: 3, revenue: 350 });
+  const mes = periodRanges('mes', NOW).cur; // 01/11 a 06/11 (6 dias)
+  const p = computeResults(typed(), mes, EXTRA).cards.projection;
+  assert.deepEqual(plain(p), { days: 6, sales: 15, revenue: 1750 });
 });
 
 let ok = 0;

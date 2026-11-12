@@ -628,6 +628,7 @@
       .cat:not(.collapsed) .cat-head .chev { transform: rotate(90deg); }
       .cat-head .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .count { font-size: var(--fs-1); font-weight: 600; color: var(--cat); background: color-mix(in srgb, var(--cat) 15%, transparent); border-radius: var(--r-pill) ; padding: 1px 8px ; }
+      .cat-fu { font-size: var(--fs-1); font-weight: 700; color: var(--accent-text); border: 1px solid var(--accent); border-radius: var(--r-pill) ; padding: 0 6px ; white-space: nowrap; }
       .cat-body { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .22s ease; }
       .cat.collapsed .cat-body { grid-template-rows: 0fr; }
       .cat-inner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 4px ; padding: 0 8px 8px ; }
@@ -4408,6 +4409,7 @@
     grip.title = 'Arraste para mudar a ordem';
     head.prepend(grip);
     head.append(el('span', 'name', cat.name), el('span', 'count', String(catItems.length)));
+    if (cat.is_followup) { const fu = el('span', 'cat-fu', 'follow-up'); fu.title = 'Mensagens desta categoria contam como follow-up nos Resultados do ERP'; head.append(fu); } // 2.18.8
     head.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
     head.addEventListener('click', () => {
       section.classList.remove('cat-autoclose');
@@ -5786,6 +5788,14 @@
         btn('Apagar', () => deleteCategoryNow(cat, total), 'danger'),
         btn('Cancelar', () => { catMenu = null; renderList(); }));
     } else {
+      // 2.18.8: toda mensagem rápida desta categoria conta como follow manual nos Resultados do ERP
+      const fol = cat.is_followup === true;
+      const fb = btn(`${fol ? '☑' : '☐'} Mensagens desta categoria são follow-up`, () => categoryOp('setCategoryFollow', { id: cat.id, on: !fol },
+        fol ? 'A categoria não conta mais como follow-up.' : 'Mensagens desta categoria agora contam como follow-up nos Resultados do ERP.'));
+      fb.setAttribute('aria-pressed', String(fol));
+      fb.dataset.catFollow = '1';
+      fb.title = 'Toda mensagem rápida desta categoria conta como follow manual nos Resultados do ERP (etapa automática: 1º, 2º, 3º follow desde a última resposta ou compra)';
+      box.append(fb);
       box.append(btn('Renomear', () => { catMenu = { id: cat.id, mode: 'rename' }; renderList(); }));
       box.append(btn('Apagar', () => { catMenu = { id: cat.id, mode: 'delete' }; renderList(); }, 'danger'));
     }
@@ -6546,6 +6556,7 @@
       on_send_remove_wa_label_id: (item && item.on_send_remove_all_wa) ? REMOVE_ALL : (item && item.on_send_remove_wa_label_id) || '',
       // 2.10.0: "Esta mensagem é um follow-up" + etapa (para o painel do ERP)
       follow_step: item && Number.isInteger(item.follow_step) ? item.follow_step : null,
+      is_followup: !!(item && item.is_followup), // 2.18.8: "Contar como follow-up" (sem etapa: o ERP numera)
       saving: false, msg: '', error: false, duplicate,
     };
     state.view = 'editor';
@@ -6808,25 +6819,24 @@
     wrap.append(add);
     if (multiOff) wrap.append(el('div', 'ed-note', `Várias partes: ${DB_MISSING.toLowerCase()}.`));
     wrap.append(el('div', 'ed-total', `Tempo total ~${edTotalSeconds()}s`));
-    // 2.10.0: follow-up (o painel do ERP mostra o funil Follow 1 → 2 → 3…); automações que enviam esta mensagem herdam
-    if (state.followAvailable || ed.follow_step != null) {
+    // 2.18.8: follow-up para os Resultados do ERP. A categoria inteira pode ser de follow-up (menu ··· da categoria);
+    // esta caixinha é para casos soltos. Sem escolher etapa: o ERP numera (1º, 2º, 3º follow manual desde a última
+    // resposta do cliente ou a última compra); etapa já gravada (2.10.0) é respeitada.
+    {
       const fu = el('div', 'ed-follow');
       const lbl = el('label', 'ed-check');
       const cb = el('input');
       cb.type = 'checkbox';
-      cb.checked = ed.follow_step != null;
+      cb.checked = ed.is_followup || ed.follow_step != null;
       cb.disabled = ed.saving;
-      cb.addEventListener('change', () => { ed.follow_step = cb.checked ? (ed.follow_step || 1) : null; renderEditor(); });
-      lbl.append(cb, ' Esta mensagem é um follow-up');
+      cb.addEventListener('change', () => { ed.is_followup = cb.checked; if (!cb.checked) ed.follow_step = null; renderEditor(); });
+      lbl.append(cb, ' Contar como follow-up nos Resultados do ERP (mesmo fora de uma categoria de follow)');
       fu.append(lbl);
-      if (ed.follow_step != null) {
-        const stepSel = el('select', 'ed-cat');
-        stepSel.setAttribute('aria-label', 'Etapa do follow-up');
-        for (let n = 1; n <= 10; n++) { const o = el('option', null, `Etapa ${n}`); o.value = String(n); o.selected = ed.follow_step === n; stepSel.append(o); }
-        stepSel.addEventListener('change', () => { ed.follow_step = Number(stepSel.value); });
-        fu.append(stepSel);
-      }
-      fu.append(el('div', 'ed-varhint', 'Para o painel de resultados do ERP (funil Follow 1 → 2 → 3). Automações que enviam esta mensagem contam como esta etapa.'));
+      const fcat = state.categories.find((c) => c.id === ed.category_id);
+      const hints = [];
+      if (fcat && fcat.is_followup) hints.push(`A categoria "${fcat.name}" é de follow-up: esta mensagem já conta, mesmo sem marcar.`);
+      hints.push(ed.follow_step != null ? `Etapa gravada: ${ed.follow_step} (respeitada nos Resultados).` : 'A etapa é automática: 1º, 2º, 3º follow manual da conversa desde a última resposta do cliente ou a última compra.');
+      fu.append(el('div', 'ed-varhint', hints.join(' ')));
       wrap.append(fu);
     }
     // 2.1.0: mensagem rápida que etiqueta (só quando a mensagem inteira sair com sucesso)
@@ -6927,6 +6937,8 @@
         // 2.8.6: "Todas" vai em colunas próprias (só manda se a opção existe ou se o item já tinha)
         ...(state.removeAllAvailable ? { on_send_remove_all_crm: current.on_send_remove_label_id === REMOVE_ALL, on_send_remove_all_wa: current.on_send_remove_wa_label_id === REMOVE_ALL } : {}),
         ...(state.followAvailable || current.follow_step != null ? { follow_step: current.follow_step } : {}), // 2.10.0
+        // 2.18.8: só manda quando marcou ou quando a mensagem já estava marcada (desmarcar)
+        ...(current.is_followup || (current.id && state.items.some((x) => x.id === current.id && x.is_followup)) ? { is_followup: !!current.is_followup } : {}),
         ...(current.on_send_add_wa_label_id || current.on_send_remove_wa_label_id
           ? { on_send_add_wa_label_id: current.on_send_add_wa_label_id || null, on_send_remove_wa_label_id: current.on_send_remove_wa_label_id === REMOVE_ALL ? null : current.on_send_remove_wa_label_id || null }
           : current.id && state.items.some((x) => x.id === current.id && (x.on_send_add_wa_label_id || x.on_send_remove_wa_label_id))

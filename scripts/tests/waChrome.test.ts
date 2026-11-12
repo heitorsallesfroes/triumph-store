@@ -380,6 +380,30 @@ async function main() {
         && /^↓ 60% seguiram/.test(res.follow[0]) && /responderam/.test(res.resp) && /^💰 1 compraram/.test(res.buy[1]) && res.msgs === 2 && /^Vendas pelo WhatsApp: 3/.test(res.footer) && res.sections.length === 0 && res.repeated.length === 0,
         JSON.stringify(res));
     });
+    // ERP 12/11: cards do follow-up de venda + projeção; Tipo do bloco (grava só system_config wa_results_types)
+    await step('Resultados: cards, projeção e Tipo', async () => {
+      const cards = await ev(`${H} const c = document.querySelector('[data-testid="res-cards"]');
+        return c ? { convs: txt(c.querySelector('[data-testid="res-card-convs"]')), resp: txt(c.querySelector('[data-testid="res-card-resp"]')), rev: txt(c.querySelector('[data-testid="res-card-rev"]')),
+          conv: txt(c.querySelector('[data-testid="res-card-conv"]')), proj: txt(c.querySelector('[data-testid="res-projection"]')), tips: c.querySelectorAll('button[aria-label^="Como"]').length,
+          type: (document.querySelector('[data-testid="res-path"] [data-testid="res-type"]') || {}).value, others: txt(document.querySelector('[data-testid="res-others-toggle"]')) } : null;`);
+      check('Cards no topo (só follow-up de venda): Conversas em follow (follows enviados), Responderam (% e nº), Faturamento dos follows (ticket médio), Conversão; cada um com (i); projeção dos próximos 30 dias; Tipo padrão "Follow-up de venda"; seção "Pós-venda e outras" recolhida',
+        !!cards && /^Conversas em follow.*5\s*\d+ follows? enviados?/.test(cards.convs) && /^Responderam.*%.*\d+ conversas?/.test(cards.resp) && /^Faturamento dos follows.*R\$.*ticket médio/.test(cards.rev)
+        && /^Conversão.*20%.*1 de 5 conversas compraram/.test(cards.conv) && /^Projeção dos próximos 30 dias: ~\d+ vendas? e R\$ .*, no ritmo do período/.test(cards.proj) && cards.tips >= 5
+        && cards.type === 'follow' && /Pós-venda e outras \(não contam como follow\)/.test(cards.others) && !(await ev(`return !!document.querySelector('[data-testid="res-other"]');`)),
+        JSON.stringify(cards));
+      await ev(`window.__FAKE_WRITES = []; const s = document.querySelector('[data-testid="res-path"] [data-testid="res-type"]');
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, 'posvenda'); s.dispatchEvent(new Event('change', { bubbles: true })); return true;`);
+      const moved = await waitFor(`return !document.querySelector('[data-testid="res-path"]');`, 8000);
+      await ev(`document.querySelector('[data-testid="res-others-toggle"]').click(); return true;`);
+      const other = await waitFor(`return !!document.querySelector('[data-testid="res-other"]');`, 5000);
+      const after = await ev(`${H} return { other: txt(document.querySelector('[data-testid="res-other"]')), convs: txt(document.querySelector('[data-testid="res-card-convs"]')),
+        writes: (window.__FAKE_WRITES || []).map((x) => ({ table: x.table, op: x.op, key: x.row && x.row.key, value: x.row && x.row.value })) };`);
+      const w = after.writes;
+      check('Tipo "Pós-venda": o bloco sai do funil e dos cards e vai para "Pós-venda e outras" (entraram e responderam, sem comprou); grava só system_config wa_results_types',
+        moved && other && /^Régua teste\s*5 entraram\s*💬 .*responderam/.test(after.other) && !/compraram/.test(after.other) && /^Conversas em follow\s*0/.test(after.convs)
+        && w.length === 1 && w[0].table === 'system_config' && w[0].op === 'upsert' && w[0].key === 'wa_results_types' && JSON.parse(w[0].value)['a0000000-0000-4000-8000-0000000000aa'] === 'posvenda',
+        JSON.stringify(after));
+    });
 
     check('nenhum erro no console nem exceção', errors.length === 0, errors.slice(0, 5).join(' | '));
   } catch (e) {

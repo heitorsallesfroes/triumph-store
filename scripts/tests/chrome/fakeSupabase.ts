@@ -1,9 +1,10 @@
 // Supabase FALSO para o teste da aba WhatsApp no Chrome real (scripts/tests/waChrome.test.ts). Substitui
 // src/lib/supabase.ts no pacote do teste: lê e filtra as tabelas de window.__DB (como o PostgREST), sem rede.
 // window.__MISSING = ['tabela'] faz a tabela "não existir". window.__QUERIES guarda cada consulta (para conferir).
+// window.__FAKE_WRITES guarda cada insert/update/upsert/delete pedido (tabela, operação e linha), sem mudar o resultado.
 type Row = Record<string, unknown>;
 type Filter = (r: Row) => boolean;
-interface W { __DB: Record<string, Row[]>; __MISSING?: string[]; __QUERIES?: { table: string; filters: string[]; range: [number, number] | null }[] }
+interface W { __DB: Record<string, Row[]>; __FAKE_WRITES?: { table: string; op: string; row: unknown }[]; __MISSING?: string[]; __QUERIES?: { table: string; filters: string[]; range: [number, number] | null }[] }
 const w = () => globalThis as unknown as W;
 
 const cmp = (a: unknown, b: unknown) => {
@@ -42,10 +43,11 @@ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: numb
   match() { return this; }
   contains() { return this; }
   single() { this.single = true; return this; }
-  insert() { return this; }
-  update() { return this; }
-  upsert() { return this; }
-  delete() { return this; }
+  private wrote(op: string, row?: unknown) { const g = w(); (g.__FAKE_WRITES = g.__FAKE_WRITES || []).push({ table: this.table, op, row: row ?? null }); return this; }
+  insert(row?: unknown) { return this.wrote('insert', row); }
+  update(row?: unknown) { return this.wrote('update', row); }
+  upsert(row?: unknown) { return this.wrote('upsert', row); }
+  delete() { return this.wrote('delete'); }
   order(c: string, o?: { ascending?: boolean }) { this.orders.push([c, !o || o.ascending !== false]); return this; }
   range(a: number, b: number) { this.rng = [a, b]; return this; }
   limit(n: number) { this.lim = n; return this; }

@@ -2678,6 +2678,59 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console na 2.18.7', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 30. 2.18.8: follow-up por CATEGORIA (menu ··· → "Mensagens desta categoria são follow-up") e a caixinha da mensagem
+    // ("Contar como follow-up nos Resultados do ERP…", sem escolher etapa). Banco em memória (com as colunas novas).
+    const C30 = { id: '30000000-0000-4000-8000-0000000000c1', name: 'Follow de venda', position: 0 };
+    const C30b = { id: '30000000-0000-4000-8000-0000000000c2', name: 'Endereço', position: 1 };
+    const I30 = '30000000-0000-4000-8000-0000000000e1';
+    const it30 = mkIt(I30, C30b.id, 'Ainda tem interesse?');
+    await inExt(`new Promise((r) => chrome.storage.local.set({ collapsed: {}, library: ${JSON.stringify({ categories: [C30, C30b], items: [it30], savedAt: '2026-11-12T10:00:00Z' })} }, () => r(true)))`);
+    fake.on = true;
+    fake.generic = true;
+    fake.db.wa_categories = [C30, C30b].map((c) => ({ ...c, created_at: '2026-11-12T10:00:00Z' }));
+    fake.db.wa_items = [{ ...it30, follow_step: null, updated_at: '2026-11-12T10:00:00Z' }].map(({ parts, ...x }) => x);
+    fake.db.wa_item_parts = [];
+    fake.db.system_config = (fake.db.system_config || []).filter((r) => r.key !== 'wa_followup_marks');
+    await s('Page.reload', { ignoreCache: true });
+    await sleep(1500);
+    await pg(`window.__fakeBridge = { status: { ready: true, version: 'teste' }, activeChat: { kind: 'individual', chatId: '5521900000001@c.us' } }; return true;`);
+    let ready30 = false;
+    for (const stop = Date.now() + 20000; Date.now() < stop && !ready30;) {
+      ready30 = await evalPage(`(() => { const sh = document.getElementById('tsp-wa-host')?.shadowRoot; const t = sh && sh.querySelector('.toggle'); if (t && !sh.querySelector('.root.open')) t.click(); return !!(sh && sh.querySelector('section.cat[data-cat="${C30.id}"]') && sh.querySelector('.card[data-id="${I30}"]')); })()`);
+      if (!ready30) await sleep(300);
+    }
+    const marks30 = () => { const r = (fake.db.system_config || []).find((x) => x.key === 'wa_followup_marks'); return r ? JSON.parse(r.value) : null; };
+    // a) menu ··· da categoria: a opção desligada; ligar grava na categoria e no system_config, e aparece o selo
+    await q(`sh.querySelector('section.cat[data-cat="${C30.id}"] .cat-opts').click(); await wait(200); return true;`);
+    const opt30 = await q(`const b = sh.querySelector('section.cat[data-cat="${C30.id}"] [data-cat-follow]'); return b ? [b.textContent, b.getAttribute('aria-pressed')] : null;`);
+    await q(`sh.querySelector('section.cat[data-cat="${C30.id}"] [data-cat-follow]').click(); return true;`);
+    let on30 = false;
+    for (const stop = Date.now() + 10000; Date.now() < stop && !on30;) { on30 = (fake.db.wa_categories.find((c) => c.id === C30.id) || {}).is_followup === true; if (!on30) await sleep(200); }
+    const badge30 = await waitFor(`return !!sh.querySelector('section.cat[data-cat="${C30.id}"] .cat-fu') && !sh.querySelector('section.cat[data-cat="${C30b.id}"] .cat-fu');`, 8000);
+    check('2.18.8: "···" da categoria → "☐ Mensagens desta categoria são follow-up"; ligar grava em wa_categories.is_followup e em system_config wa_followup_marks; a categoria ganha o selo "follow-up"',
+      ready30 && JSON.stringify(opt30) === JSON.stringify(['☐ Mensagens desta categoria são follow-up', 'false']) && on30 && badge30 && JSON.stringify((marks30() || {}).categories) === JSON.stringify([C30.id]),
+      JSON.stringify({ ready30, opt30, on30, badge30, marks: marks30() }));
+    // b) editor da mensagem (outra categoria): caixinha com o texto novo, sem seletor de etapa; marcar e salvar
+    await q(`sh.querySelector('.card[data-id="${I30}"] .iopts').click(); await wait(200); [...sh.querySelectorAll('.imenu button')].find((b) => b.textContent === 'Editar').click(); return true;`);
+    const edOk30 = await waitFor(`return !!sh.querySelector('.ed-follow input[type=checkbox]');`, 8000);
+    const ed30 = await q(`const f = sh.querySelector('.ed-follow'); return { label: f.querySelector('label').textContent.trim(), checked: f.querySelector('input').checked, step: !!sh.querySelector('select[aria-label="Etapa do follow-up"]'), hint: f.querySelector('.ed-varhint').textContent };`);
+    await q(`const cb = sh.querySelector('.ed-follow input[type=checkbox]'); cb.click(); await wait(150); [...sh.querySelectorAll('button.btn.primary')].find((b) => b.textContent === 'Salvar').click(); return true;`);
+    let item30 = false;
+    for (const stop = Date.now() + 10000; Date.now() < stop && !item30;) { item30 = ((marks30() || {}).items || []).includes(I30); if (!item30) await sleep(200); }
+    const row30 = fake.db.wa_items.find((x) => x.id === I30) || {};
+    check('2.18.8: editor: "Contar como follow-up nos Resultados do ERP (mesmo fora de uma categoria de follow)", sem escolher etapa (automática); marcar e salvar grava a mensagem (is_followup) sem etapa',
+      edOk30 && ed30.label === 'Contar como follow-up nos Resultados do ERP (mesmo fora de uma categoria de follow)' && ed30.checked === false && !ed30.step && /A etapa é automática/.test(ed30.hint)
+      && item30 && row30.is_followup === true && row30.follow_step == null, JSON.stringify({ edOk30, ed30, item30, row30: { f: row30.is_followup, s: row30.follow_step } }));
+    // c) desligar a categoria: tira dos dois lugares e o selo some
+    await waitFor(`return !!sh.querySelector('section.cat[data-cat="${C30.id}"] .cat-opts');`, 8000);
+    await q(`sh.querySelector('section.cat[data-cat="${C30.id}"] .cat-opts').click(); await wait(200); const b = sh.querySelector('section.cat[data-cat="${C30.id}"] [data-cat-follow]'); window.__opt30 = b ? b.textContent : null; b.click(); return true;`);
+    const off30 = await waitFor(`return !sh.querySelector('section.cat[data-cat="${C30.id}"] .cat-fu');`, 8000);
+    check('2.18.8: desligar a opção da categoria tira de wa_categories e do system_config; o selo some',
+      off30 && (fake.db.wa_categories.find((c) => c.id === C30.id) || {}).is_followup === false && JSON.stringify((marks30() || {}).categories) === '[]', JSON.stringify({ off30, marks: marks30() }));
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console na 2.18.8', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

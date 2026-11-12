@@ -1,27 +1,39 @@
-// Aba "Resultados" ("meus follow-ups funcionam?"): funil por caminho (cada automação/régua e sequência), follow-ups
-// acumulados fora de uma régua, resultado por mensagem de follow-up, disparos e o rodapé das vendas. Contas em
-// src/lib/waResults.ts (mesma leitura do Painel: src/lib/waPanelDb.ts). Só leitura.
+// Aba "Resultados" ("meus follow-ups funcionam?"): cards do follow-up de venda + projeção, funil por caminho (cada
+// automação/régua "Follow-up de venda", com o seletor de Tipo), follow manual acumulado, resultado por mensagem,
+// disparos, pós-venda e outras (recolhida) e o rodapé das vendas. Contas em src/lib/waResults.ts (mesma leitura do
+// Painel: src/lib/waPanelDb.ts + src/lib/waResultsDb.ts). Só leitura; grava só system_config "wa_results_types".
 import { useEffect, useMemo, useState } from 'react';
-import { periodRanges, type PeriodPreset } from '../../lib/waPanel';
+import { DAY_MS, periodRanges, type PeriodPreset, type PeriodRanges } from '../../lib/waPanel';
 import { loadPanel, type PanelLoad } from '../../lib/waPanelDb';
 import { useErpRefresh } from '../../lib/erpRefresh';
-import { computeResults, type FollowMessageCard, type PathFunnel, type StageStats } from '../../lib/waResults';
+import { BOUGHT_BEFORE_DAYS, computeResults, PATH_TYPES, type FollowCards, type FollowMessageCard, type OtherPath, type PathFunnel, type PathType, type ResultsExtra, type StageStats } from '../../lib/waResults';
+import { loadResultsExtra, saveResultsType } from '../../lib/waResultsDb';
 import { ORANGE } from './shared';
-import { EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoTip, panel, SectionHeader, Skeleton, SkeletonStyle, SLATE, BLUE } from './ui';
+import { EmptyState, eyebrow, fmtInt, fmtMinutes, fmtMoney, fmtPct, GREEN, InfoTip, panel, SectionHeader, Skeleton, SkeletonStyle, SLATE, BLUE, StatCard } from './ui';
 import { br, Card, PeriodPicker, TableSkeleton, ymd } from './WaPanel';
 
+// carrega 30 dias antes do período (venda antes do envio = "já comprou"; etapa automática do follow manual)
+const withLookback = (rg: PeriodRanges): PeriodRanges => ({ cur: rg.cur, prev: { ...rg.prev, from: Math.min(rg.prev.from, rg.cur.from - BOUGHT_BEFORE_DAYS * DAY_MS) } });
+
 const INFO = {
-  paths: 'Um bloco por automação/régua (construtor visual da extensão 2.13.0) e por sequência. Etapa = o 1º, 2º, 3º… envio da automação para a conversa; contam as conversas que ENTRARAM no período (1º envio no período). Conta conversas, não envios.',
+  cConvs: 'Conversas que receberam pelo menos um follow-up de venda no período: envio de automação/régua do tipo "Follow-up de venda" ou follow manual (mensagem de uma categoria de follow-up, mensagem marcada como follow-up). Embaixo, quantos follows foram enviados. Envio para quem comprou nos 30 dias antes não conta.',
+  cResp: 'Das conversas em follow, quantas responderam depois de um follow do período e antes do próximo follow.',
+  cRev: 'Vendas pelo WhatsApp ligadas à conversa até 7 dias depois de um follow de venda do período (antes do próximo follow). Cada venda conta uma vez. Ticket médio = faturamento ÷ nº de vendas.',
+  cConv: 'Das conversas em follow, quantas compraram (venda até 7 dias depois de um follow do período, antes do próximo).',
+  projection: 'Vendas e faturamento dos follows por dia no período (só os dias que já passaram) × 30.',
+  others: 'Automações/réguas marcadas como "Pós-venda" ou "Outro" (padrão: começam pela etiqueta do WhatsApp "Cliente" ou têm avaliação, instruções, pós-venda, configuração ou garantia no nome). Entraram = conversas com o 1º envio da automação no período; responderam = depois de um envio e antes do próximo. Não contam como follow nem como venda.',
+  paths: 'Um bloco por automação/régua do tipo "Follow-up de venda" (construtor visual da extensão 2.13.0) e por sequência. Etapa = o 1º, 2º, 3º… envio da automação para a conversa; contam as conversas que ENTRARAM no período (1º envio no período). Conta conversas, não envios. Envio para quem comprou nos 30 dias antes não conta.',
   responded: 'Respondeu = o cliente mandou mensagem depois daquele envio e antes do próximo follow. O tempo é a mediana até a resposta.',
   bought: 'Comprou = venda pelo WhatsApp ligada à conversa até 7 dias depois do último follow recebido (antes do próximo).',
   followed: 'Seguiu = recebeu a etapa seguinte. O tempo é a mediana entre as duas etapas.',
-  accumulated: 'Follow-ups enviados fora de uma régua: mensagens rápidas marcadas como follow-up (etapa 1, 2, 3…) mandadas à mão. Agrupados pela etapa marcada, com as mesmas regras.',
-  messages: 'Cada mensagem marcada como follow-up ou enviada por uma automação: quantas conversas receberam no período, quantas responderam (antes do próximo follow) e quantas compraram até 7 dias depois.',
+  accumulated: 'Follow manual (fora de uma régua): mensagens rápidas de uma categoria de follow-up ou marcadas como follow-up, mandadas à mão. Etapa = 1º, 2º, 3º follow manual da conversa desde a última resposta do cliente ou a última compra (ou a etapa gravada na mensagem). Mesmas regras.',
+  messages: 'Cada mensagem de follow-up de venda (follow manual ou automação "Follow-up de venda"): quantas conversas receberam no período, quantas responderam (antes do próximo follow) e quantas compraram até 7 dias depois.',
   campaigns: 'Por disparo: mensagens enviadas no período, quantas foram respondidas e as vendas pelo WhatsApp da conversa em até 7 dias depois do envio. Com variações da mensagem, o mesmo para cada variação.',
-  footer: 'Vendas pelo WhatsApp do período (data da venda). "Depois de um follow": até 7 dias depois do último follow recebido. "Vieram de anúncio": conversa de anúncio ou venda com origem anúncio.',
+  footer: 'Vendas pelo WhatsApp do período (data da venda). "Depois de um follow": até 7 dias depois do último follow de venda recebido. "Vieram de anúncio": conversa de anúncio ou venda com origem anúncio.',
 };
 
-type Loaded = { load: PanelLoad; key: string };
+type Loaded = { load: PanelLoad; key: string; extra: ResultsExtra };
+const loadAll = (rg: PeriodRanges) => Promise.all([loadPanel(withLookback(rg)), loadResultsExtra()]);
 
 export default function WaResults() {
   const today = new Date();
@@ -36,12 +48,21 @@ export default function WaResults() {
   useEffect(() => {
     let alive = true;
     setError('');
-    loadPanel(ranges).then((load) => { if (alive) setData({ load, key }); }).catch((e) => { if (alive) setError((e && e.message) || 'Erro ao carregar'); });
+    loadAll(ranges).then(([load, extra]) => { if (alive) setData({ load, key, extra }); }).catch((e) => { if (alive) setError((e && e.message) || 'Erro ao carregar'); });
     return () => { alive = false; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  useErpRefresh(() => loadPanel(ranges).then((load) => setData({ load, key }))); // "Atualizar" do topo
+  useErpRefresh(() => loadAll(ranges).then(([load, extra]) => setData({ load, key, extra }))); // "Atualizar" do topo
   const loading = !data || data.key !== key;
-  const res = useMemo(() => (data && !loading ? computeResults(data.load.input, r) : null), [data, loading, r]);
+  const res = useMemo(() => (data && !loading ? computeResults(data.load.input, r, data.extra) : null), [data, loading, r]);
+  const [typeErr, setTypeErr] = useState('');
+  // Tipo do bloco: grava só system_config "wa_results_types" e reconta na hora
+  const setType = (id: string, type: PathType) => {
+    setTypeErr('');
+    setData((d) => (d ? { ...d, extra: { ...d.extra, types: { ...(d.extra.types || {}), [id]: type } } } : d));
+    saveResultsType(id, type).then((types) => setData((d) => (d ? { ...d, extra: { ...d.extra, types } } : d)))
+      .catch((e) => setTypeErr(`Não deu para gravar o tipo: ${(e && e.message) || 'erro'}`));
+  };
+  const [othersOpen, setOthersOpen] = useState(false);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }} data-testid="wa-results">
@@ -49,15 +70,18 @@ export default function WaResults() {
       <SectionHeader title="Resultados" subtitle={`Meus follow-ups funcionam? ${br(r.fromDay)} a ${br(r.toDay)}`}
         right={<PeriodPicker preset={preset} setPreset={setPreset} start={start} end={end} setStart={setStart} setEnd={setEnd} />} />
       {error && <div style={{ ...panel, color: '#ef4444', fontSize: 13 }}>{error}</div>}
+      {typeErr && <div style={{ ...panel, color: '#ef4444', fontSize: 13 }}>{typeErr}</div>}
 
-      <Card title="Funil por caminho" info={INFO.paths} right={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>conta conversas, não envios</span>} testId="res-paths">
-        {!res ? <Skeleton h={180} /> : !res.paths.length ? <EmptyState text="Nenhuma automação ou régua enviou follow-up para conversas que entraram neste período." /> : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>{res.paths.map((p) => <PathBlock key={p.id} p={p} />)}</div>
+      <TopCards c={res ? res.cards : null} />
+
+      <Card title="Funil por caminho" info={INFO.paths} right={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>só follow-up de venda · conta conversas, não envios</span>} testId="res-paths">
+        {!res ? <Skeleton h={180} /> : !res.paths.length ? <EmptyState text="Nenhuma automação ou régua de follow-up de venda enviou para conversas que entraram neste período." /> : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>{res.paths.map((p) => <PathBlock key={p.id} p={p} onType={setType} />)}</div>
         )}
       </Card>
 
-      <Card title="Acumulados" info={INFO.accumulated} right={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>follow-ups fora de uma régua, por etapa</span>} testId="res-acc">
-        {!res ? <Skeleton h={140} /> : !res.accumulated.length ? <EmptyState text="Nenhum follow-up fora de régua neste período. Marque as mensagens rápidas como follow-up (etapa 1, 2, 3…) na extensão." /> : (
+      <Card title="Acumulados" info={INFO.accumulated} right={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>follow manual (fora de uma régua), por etapa</span>} testId="res-acc">
+        {!res ? <Skeleton h={140} /> : !res.accumulated.length ? <EmptyState text="Nenhum follow manual neste período. Na extensão, marque a categoria como follow-up (Mensagens desta categoria são follow-up) ou a mensagem." /> : (
           <Stages stages={res.accumulated} label={(s) => `Etapa ${s.step}`} />
         )}
       </Card>
@@ -90,6 +114,21 @@ export default function WaResults() {
         )}
       </Card>
 
+      <section style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 12 }} data-testid="res-others">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button type="button" onClick={() => setOthersOpen((v) => !v)} aria-expanded={othersOpen} data-testid="res-others-toggle"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', font: 'inherit', textAlign: 'left', color: 'var(--text-primary)' }}>
+            <span style={{ color: 'var(--text-muted)', width: 12 }}>{othersOpen ? '▾' : '▸'}</span>
+            <b style={{ fontSize: 15 }}>Pós-venda e outras (não contam como follow)</b>
+            {res && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{fmtInt(res.others.length)} automaç{res.others.length === 1 ? 'ão' : 'ões'}</span>}
+          </button>
+          <InfoTip text={INFO.others} label='Como "Pós-venda e outras" é calculado' />
+        </div>
+        {othersOpen && (!res ? <Skeleton h={60} /> : !res.others.length ? <EmptyState text="Nenhuma automação de pós-venda ou outra enviou para conversas que entraram neste período." /> : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{res.others.map((o) => <OtherRow key={o.id} o={o} onType={setType} />)}</div>
+        ))}
+      </section>
+
       <section style={{ ...panel, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', fontSize: 13 }} data-testid="res-footer">
         {!res ? <Skeleton h={16} w="60%" /> : (<>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, color: 'var(--text-primary)' }}>Vendas pelo WhatsApp: {fmtInt(res.footer.sales)} ({fmtMoney(res.footer.revenue)}) <InfoTip text={INFO.footer} /></span>
@@ -103,12 +142,56 @@ export default function WaResults() {
   );
 }
 
-function PathBlock({ p }: { p: PathFunnel }) {
+function TopCards({ c }: { c: FollowCards | null }) {
+  if (!c) return <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} h={96} />)}</div>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="res-cards">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+        <div data-testid="res-card-convs"><StatCard accent label="Conversas em follow" value={fmtInt(c.conversations)} info={INFO.cConvs} sub={`${fmtInt(c.sent)} follow${c.sent === 1 ? '' : 's'} enviado${c.sent === 1 ? '' : 's'}`} /></div>
+        <div data-testid="res-card-resp"><StatCard label="Responderam" value={fmtPct(c.respondedPct)} info={INFO.cResp} sub={`${fmtInt(c.responded)} conversa${c.responded === 1 ? '' : 's'}`} /></div>
+        <div data-testid="res-card-rev"><StatCard label="Faturamento dos follows" value={fmtMoney(c.revenue)} info={INFO.cRev} sub={`${fmtInt(c.sales)} venda${c.sales === 1 ? '' : 's'} · ticket médio ${c.ticket != null ? fmtMoney(c.ticket) : '—'}`} /></div>
+        <div data-testid="res-card-conv"><StatCard label="Conversão" value={fmtPct(c.conversion)} info={INFO.cConv} sub={`${fmtInt(c.bought)} de ${fmtInt(c.conversations)} conversas compraram`} /></div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-secondary)' }} data-testid="res-projection">
+        Projeção dos próximos 30 dias: ~{fmtInt(c.projection.sales)} venda{c.projection.sales === 1 ? '' : 's'} e {fmtMoney(c.projection.revenue)}, no ritmo do período
+        <InfoTip text={`${INFO.projection} (${fmtInt(c.projection.days)} dia${c.projection.days === 1 ? '' : 's'} neste período)`} label='Como a "Projeção" é calculada' />
+      </div>
+    </div>
+  );
+}
+
+function TypeSelect({ id, type, saved, onType }: { id: string; type: PathType; saved: boolean; onType: (id: string, t: PathType) => void }) {
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }} title={saved ? 'Tipo escolhido' : 'Tipo padrão (ainda não escolhido)'}>
+      Tipo
+      <select value={type} onChange={(e) => onType(id, e.target.value as PathType)} data-testid="res-type" aria-label="Tipo da automação"
+        style={{ fontSize: 12, padding: '2px 6px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+        {PATH_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}{!saved && t.id === type ? ' (padrão)' : ''}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function OtherRow({ o, onType }: { o: OtherPath; onType: (id: string, t: PathType) => void }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center', padding: '10px 12px', borderRadius: 12, background: 'var(--bg-inner)', border: '1px solid var(--border-main)', fontSize: 13 }} data-testid="res-other">
+      <b style={{ flex: '1 1 200px', color: 'var(--text-primary)' }}>{o.name}</b>
+      <span>{fmtInt(o.entered)} entraram</span>
+      <span>💬 {fmtPct(o.respondedPct)} responderam ({fmtInt(o.responded)})</span>
+      <TypeSelect id={o.id} type={o.type} saved={o.typeSaved} onType={onType} />
+    </div>
+  );
+}
+
+function PathBlock({ p, onType }: { p: PathFunnel; onType: (id: string, t: PathType) => void }) {
   return (
     <div style={{ padding: 14, borderRadius: 14, border: '1px solid var(--border-main)', background: 'var(--bg-inner)', display: 'flex', flexDirection: 'column', gap: 12 }} data-testid="res-path">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ ...eyebrow, color: ORANGE }}>{p.name}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ ...eyebrow, color: ORANGE }}>{p.name}</span>
+            <TypeSelect id={p.id} type={p.type} saved={p.typeSaved} onType={onType} />
+          </div>
           <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', textTransform: 'uppercase', overflowWrap: 'anywhere' }} data-testid="res-path-title">{p.titles.join(' → ')}</div>
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-muted)' }} data-testid="res-path-head">
