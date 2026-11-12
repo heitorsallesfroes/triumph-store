@@ -13,7 +13,7 @@ import { useErpRefresh } from '../lib/erpRefresh';
 import { buildConversations, businessHoursOf, adsManagerUrl, type TrackModel, type TrackSaleRow } from '../lib/waTracking';
 import {
   AD_PERIODS, ATTRIB_LABEL, CATEGORY_COLOR, CATEGORY_LABEL, CATEGORY_ORDER, DEFAULT_GOALS, TIER_COLOR, TIER_LABEL,
-  attributeSales, dayBR, periodSales, roasTrio, salesTxt, startsBeforeTracking,
+  adStartOf, attributeSales, dayBR, dayFull, igOrganicSaleIds, periodSales, roasTrio, salesTxt, startsBeforeTracking,
   adRanges, buildAdCards, categoryBoxes, deltaOf, erpByAd, hourMap, metaCheck, moneySplit, replyBands, roasTier, suggestGoals, totalsOf,
   type AdCard, type AdPeriod, type AttribMode, type Attribution, type Category, type Goals, type MetaCreative, type RoasTrio, type SaleCost, type Window,
 } from '../lib/adInsights';
@@ -181,7 +181,8 @@ function Dashboard({ onOld }: { onOld: () => void }) {
   // vendas sem origem repartidas pelas conversas de cada anúncio (modo Estimado)
   const att = useMemo(() => {
     if (!ready || !data) return null;
-    const of = (w: Window): Attribution => attributeSales(erpByAd(data.model, w), periodSales(data.sales, w), data.costs, trackStart ?? null);
+    // 12/11: as vendas do Instagram orgânico têm origem e não são de anúncio: ficam fora da repartição
+    const of = (w: Window): Attribution => attributeSales(erpByAd(data.model, w), periodSales(data.sales, w), data.costs, trackStart ?? null, igOrganicSaleIds(data.model, w));
     return { cur: of(data.ranges.cur), prev: of(data.ranges.prev) };
   }, [ready, data, trackStart]);
   const totals = useMemo(() => (ready && data && att ? {
@@ -396,7 +397,8 @@ function RoasRow({ trio, loading }: { trio: { cur: RoasTrio; prev: RoasTrio } | 
                 <span className="adx-big" style={{ color: 'var(--text-primary)' }}>{fmtInt(t.cur.unattributed.count)}</span>
                 <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)' }}>{fmtMoney(t.cur.unattributed.revenue)}</span>
               </div>
-              <span style={muted}>Vendas do período sem anúncio ligado{t.cur.preTrack.count ? ` (${fmtInt(t.cur.preTrack.count)} antes do início do rastreio, não repartidas)` : ''}; no modo Estimado são repartidas pelas conversas de cada anúncio.</span>
+              <span style={muted}>Vendas do período sem anúncio ligado e que não vieram do Instagram orgânico{t.cur.preTrack.count ? ` (${fmtInt(t.cur.preTrack.count)} antes do início do rastreio, não repartidas)` : ''}; no modo Estimado são repartidas pelas conversas de cada anúncio.</span>
+              <span style={muted} data-testid="ads-ig-organico">Instagram (orgânico), fora da repartição: {fmtInt(t.cur.instagram.count)} · {fmtMoney(t.cur.instagram.revenue)}</span>
             </div>
           </>
         )}
@@ -543,6 +545,7 @@ function AdCardView({ c, cr, selected, onSelect, owner, budgetsReady, busy, act 
   const status = cr && cr.status ? STATUS_LABEL[cr.status] || cr.status : null;
   const active = cr && cr.status === 'ACTIVE';
   const link = (cr && cr.preview_url) || (c.adId ? adsManagerUrl(c.adId) : null);
+  const start = adStartOf(cr, c.firstDeliveryDay); // 12/11: data de início e dias rodando
   const maxFunnel = Math.max(1, ...c.funnel.steps.map((s) => s.value));
   const series = c.wear.series;
   return (
@@ -563,6 +566,12 @@ function AdCardView({ c, cr, selected, onSelect, owner, budgetsReady, busy, act 
             <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--text-primary)', lineHeight: 1.25, wordBreak: 'break-word' }} data-testid="ads-card-name">{c.name}</div>
           </label>
           {(c.campaign || c.adset) && <div style={{ ...muted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${c.campaign || ''} › ${c.adset || ''}`}>{c.campaign || '—'} › {c.adset || '—'}</div>}
+          {start && (
+            <div style={{ ...muted, marginTop: 2 }} data-testid="ads-card-start"
+              title={start.exact ? 'Início pela Meta (criação do anúncio ou início do conjunto, o que for depois). Conta os dias desde o início, inclusive pausado.' : 'A Meta não mandou a data de início (publique a função ad-manager atualizada): este é o 1º dia com entrega nos dados carregados.'}>
+              {start.exact ? `Início ${dayFull(start.day)} · ${start.days} dia${start.days === 1 ? '' : 's'} rodando` : `Entrega desde ${dayFull(start.day)} · pelo menos ${start.days} dia${start.days === 1 ? '' : 's'}`}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
             {status && <span style={pill(active ? '#22c55e' : '#94a3b8')}>{status}</span>}
             {tier && <span style={pill(tierColor)} data-testid="ads-card-tier">ROAS {TIER_LABEL[tier]}</span>}

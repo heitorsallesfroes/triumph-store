@@ -69,7 +69,8 @@ try {
 const cards = A.buildAdCards({ model, meta: meta.daily, period: meta.period, costs, taxRate: tax, goals: A.DEFAULT_GOALS }, r.cur);
 const t = A.totalsOf(model, meta.daily, costs, tax, r.cur);
 const p = A.totalsOf(model, meta.daily, costs, tax, r.prev);
-if (t.spendReal > 0) assert.ok(Math.abs((t.roas ?? 0) - t.revenue / t.spendReal) < 1e-9, 'ROAS = faturamento ÷ (gasto + imposto)');
+// 12/11: margem relativa — o ROAS usa os valores sem arredondar e t.revenue/t.spendReal já vêm arredondados em centavos
+if (t.spendReal > 0) assert.ok(Math.abs((t.roas ?? 0) - t.revenue / t.spendReal) <= 1e-6 * Math.max(1, t.revenue / t.spendReal), 'ROAS = faturamento ÷ (gasto + imposto)');
 console.log(`\nComo estou? (30 dias${metaOk ? '' : ', sem a Meta'})`);
 console.log(`  Gasto ${money(t.spendReal)} (${money(t.spend)} + ${money(t.tax)} imposto) · Faturamento ${money(t.revenue)}`);
 console.log(`  ROAS real ${t.roas == null ? '—' : t.roas.toFixed(2)} (${A.roasTier(t.roas) || '—'}) · Custo/venda ${money(t.cpa)} · Custo/conversa ${money(t.cpc)} · ${t.sales} vendas · ${t.conversations} conversas`);

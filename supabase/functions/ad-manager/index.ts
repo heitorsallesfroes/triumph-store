@@ -35,7 +35,8 @@ Deno.serve(async (req: Request) => {
 
     // ── DASHBOARD (Gerenciador novo, FASE 1: SÓ LEITURA, só GET na Meta) ───────
     // part "metrics": insights por anúncio da conta inteira, um por dia (time_increment=1), + alcance/frequência do
-    // período. part "creatives": nome, status, miniatura, vídeo e link de prévia dos anúncios pedidos.
+    // período. part "creatives": nome, status, miniatura, vídeo e link de prévia dos anúncios pedidos (12/11: + a criação
+    // do anúncio e o início do conjunto, para "Início · N dias rodando" nos cartões; só leitura).
     if (action === "dashboard") {
       const DAY = /^\d{4}-\d{2}-\d{2}$/;
       const getAll = async (url: string, maxPages = 40): Promise<any[]> => {
@@ -59,7 +60,7 @@ Deno.serve(async (req: Request) => {
         const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).filter((id: string) => /^\d{5,25}$/.test(id)).slice(0, 300);
         const ads: any[] = [];
         const videos = new Map<string, string>();
-        const fields = "id,name,effective_status,preview_shareable_link,creative.thumbnail_width(480).thumbnail_height(480){thumbnail_url,image_url,video_id,object_type}";
+        const fields = "id,name,effective_status,created_time,adset{start_time},preview_shareable_link,creative.thumbnail_width(480).thumbnail_height(480){thumbnail_url,image_url,video_id,object_type}";
         for (let i = 0; i < ids.length; i += 50) {
           const r = await fetch(`${BASE}/?ids=${ids.slice(i, i + 50).join(",")}&fields=${encodeURIComponent(fields)}&access_token=${FB_TOKEN}`);
           const d = await r.json();
@@ -84,6 +85,7 @@ Deno.serve(async (req: Request) => {
               thumbnail_url: cr.thumbnail_url || null, image_url: cr.image_url || null,
               is_video: !!cr.video_id || cr.object_type === "VIDEO", video_url: cr.video_id ? videos.get(String(cr.video_id)) || null : null,
               preview_url: a.preview_shareable_link || null,
+              created_time: a.created_time || null, start_time: (a.adset && a.adset.start_time) || null,
             };
           }),
         });

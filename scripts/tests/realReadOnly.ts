@@ -25,6 +25,7 @@ export function readOnlyClient(url: string, key: string, onQuery?: (method: stri
     lte(c: string, v: unknown) { return this.f(c, 'lte', enc(v)); }
     lt(c: string, v: unknown) { return this.f(c, 'lt', enc(v)); }
     is(c: string, v: unknown) { return this.f(c, 'is', String(v)); }
+    not(c: string, op: string, v: unknown) { return this.f(c, `not.${op}`, String(v)); } // 12/11: .not('x', 'is', null)
     in(c: string, v: unknown[]) { return this.f(c, 'in', enc(list(v))); }
     ilike(c: string, v: string) { return this.f(c, 'ilike', enc(v.replace(/%/g, '*'))); }
     order(c: string, o?: { ascending?: boolean }) { this.params.push(`order=${enc(c)}.${o && o.ascending === false ? 'desc' : 'asc'}`); return this; }

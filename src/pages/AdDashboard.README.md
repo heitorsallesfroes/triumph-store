@@ -27,11 +27,15 @@ Custo por conversa. Categorias e cores usam só o ROAS e o custo por venda.
 - **Três números no topo**:
   - **ROAS geral da loja** = faturamento de TODAS as vendas do ERP no período ÷ (gasto + imposto);
   - **ROAS identificado** = só as vendas ligadas com certeza a um anúncio ÷ (gasto + imposto);
-  - **Vendas sem origem** = quantidade e R$ das vendas do período sem anúncio ligado.
+  - **Vendas sem origem** = quantidade e R$ das vendas do período sem anúncio ligado e que **não** vieram do
+    Instagram orgânico; logo abaixo, a linha **"Instagram (orgânico), fora da repartição"** (12/11).
 - **Estimado** (padrão) × **Só identificado** (botão no topo):
   - no Estimado, as vendas sem origem (a partir do início do rastreio) são repartidas entre os anúncios na
     proporção das conversas que cada anúncio gerou no período (cartão: "3 vendas identificadas + 1,8 estimada");
   - anúncio sem conversa no período não recebe nada; vendas antes do início do rastreio não são repartidas;
+  - **12/11: vendas do Instagram orgânico** (conversa que começou por um link rastreável do Instagram —
+    `ig_link_leads`, ligada por código, frase ou horário — e não veio de anúncio) têm origem e **não** são repartidas
+    entre os anúncios (`igOrganicSaleIds` + `attributeSales`). Venda ligada a anúncio E ao Instagram: vale o anúncio;
   - ROAS, custo por venda, categorias e cores dos cartões seguem o modo escolhido;
   - no topo, o Estimado usa o faturamento de TODAS as vendas do período;
   - "Por quê?" mostra as vendas identificadas e a conta da estimada (conversas do anúncio ÷ total × vendas sem origem).
@@ -73,8 +77,15 @@ Tempo até a venda.
 - **Proteções**: orçamento mínimo R$ 10/dia; no máximo +50% ou −50% por ação; nenhuma ação numa campanha que
   recebeu outra há menos de 1 minuto (dá certo ou não); botões desabilitados enquanto envia; um item por vez.
 
+## Cartões: início do anúncio e dias rodando (12/11)
+Cada cartão mostra **"Início DD/MM/AAAA · N dias rodando"**: o início é o mais tarde entre a criação do anúncio
+(`created_time`) e o início do conjunto (`adset.start_time`), no dia de São Paulo; os dias contam desde o início,
+inclusive o dia do início e os dias pausados. Sem essas datas (função `ad-manager` ainda não publicada de novo): "Entrega
+desde DD/MM/AAAA · pelo menos N dias" (o 1º dia com gasto/impressão nos dados carregados). Regra: `adStartOf`.
+
 ## Publicar a função (uma vez)
-`supabase functions deploy ad-manager`
+`supabase functions deploy ad-manager` (12/11: de novo, para a data de início nos cartões — só leitura, campos novos
+no pedido dos criativos)
 
 Sem isso, a página avisa e mostra só os números do ERP.
 
@@ -83,3 +94,7 @@ Sem isso, a página avisa e mostra só os números do ERP.
 - `node scripts/tests/adActions.test.ts`: novo orçamento, agrupamento por campanha, limites, 1 minuto, histórico.
 - `node scripts/tests/adChrome.test.ts`: a página no Chrome real, com a Meta SIMULADA (nunca chama a Meta).
 - `node scripts/tests/adInsightsReal.test.ts`: confere com os dados reais, só lendo (GET/HEAD).
+- `node scripts/tests/adAttributionReal.test.ts` (12/11): revisão do modo Estimado e dos números do topo com os dados
+  reais, só lendo — nenhuma venda contada duas vezes, identificadas + Instagram + sem origem = todas, a repartição
+  soma o que foi repartido, ROAS, e avisos (início do rastreio, conversas sem ad_id, vendas de conversas orgânicas,
+  fuso, anúncio diferente na mesma conversa).

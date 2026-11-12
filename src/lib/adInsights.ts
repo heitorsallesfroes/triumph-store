@@ -22,6 +22,7 @@ export interface MetaPeriod { ad_id: string; reach: number; frequency: number; i
 export interface MetaCreative {
   id: string; name: string | null; status: string | null; thumbnail_url: string | null; image_url: string | null;
   is_video: boolean; video_url: string | null; preview_url: string | null;
+  created_time?: string | null; start_time?: string | null; // 12/11: criação do anúncio e início do conjunto (ad-manager novo)
 }
 // custo e modelos de uma venda do ERP
 export interface SaleCost { id: string; productCost: number | null; models: { name: string; qty: number }[] }
@@ -118,6 +119,8 @@ export function erpByAd(model: TrackModel, w: Pick<Window, 'from' | 'to'>): Map<
 // depois várias vendas não ficam ligadas. Modo "Estimado" (padrão): as vendas do período SEM anúncio ligado (feitas a
 // partir do início do rastreio) são repartidas entre os anúncios na proporção das conversas que cada um gerou no
 // período. Anúncio sem conversa não recebe nada. Vendas antes do início do rastreio não são repartidas.
+// 12/11: vendas ligadas a uma conversa do INSTAGRAM ORGÂNICO (ig_link_leads: código, frase ou horário; sem anúncio)
+// têm origem e NÃO são de anúncio: ficam fora da repartição (e fora de "sem origem").
 // Modo "Só identificado": só as vendas ligadas com certeza.
 export type AttribMode = 'estimado' | 'identificado';
 export const ATTRIB_LABEL: Record<AttribMode, string> = { estimado: 'Estimado', identificado: 'Só identificado' };
@@ -136,6 +139,7 @@ export interface SalesSum { count: number; revenue: number; productCost: number;
 export interface AdShare { key: string; conversations: number; share: number; sales: number; revenue: number; productCost: number; costMissing: number }
 export interface Attribution {
   all: SalesSum; identified: SalesSum; unattributed: SalesSum;
+  instagram: SalesSum; // ligadas ao Instagram orgânico (não repartidas)
   preTrack: SalesSum; // sem origem e antes do início do rastreio (não repartidas)
   distributable: SalesSum; // sem origem a partir do início do rastreio (repartidas, se houver conversa de anúncio)
   totalConversations: number; distributed: boolean; trackStart: number | null;
@@ -146,11 +150,22 @@ const sumOf = (list: PeriodSale[], costs: Map<string, SaleCost>): SalesSum => {
   list.forEach((s) => { const c = costs.get(s.id); if (!c || c.productCost == null) costMissing++; else productCost += c.productCost; });
   return { count: list.length, revenue: r2(list.reduce((x, s) => x + s.total, 0)), productCost: r2(productCost), costMissing, ids: list.map((s) => s.id) };
 };
+// vendas do período ligadas a conversas do Instagram orgânico (a mesma regra de erpByAd: venda depois do 1º contato)
+export function igOrganicSaleIds(model: TrackModel, w: Pick<Window, 'from' | 'to'>): Set<string> {
+  const out = new Set<string>();
+  model.conversations.forEach((c) => {
+    if (c.ad || !c.ig) return;
+    c.saleLinks.forEach((s) => { if (inWin(s.t, w) && (!c.tracked || s.t >= c.firstAt)) out.add(s.id); });
+  });
+  return out;
+}
 // trackStart: início do rastreio (ms); null = ainda sem nenhum registro de anúncio → nada é repartido
-export function attributeSales(erp: Map<string, ErpAd>, sales: PeriodSale[], costs: Map<string, SaleCost>, trackStart: number | null): Attribution {
+// igOrganic: as vendas do Instagram orgânico (igOrganicSaleIds); ligada a anúncio vale primeiro
+export function attributeSales(erp: Map<string, ErpAd>, sales: PeriodSale[], costs: Map<string, SaleCost>, trackStart: number | null, igOrganic: Set<string> = new Set()): Attribution {
   const linked = new Set<string>(); erp.forEach((a) => a.saleIds.forEach((id) => linked.add(id)));
   const identified = sales.filter((s) => linked.has(s.id));
-  const unattributed = sales.filter((s) => !linked.has(s.id));
+  const instagram = sales.filter((s) => !linked.has(s.id) && igOrganic.has(s.id));
+  const unattributed = sales.filter((s) => !linked.has(s.id) && !igOrganic.has(s.id));
   const before = unattributed.filter((s) => trackStart == null || s.t < trackStart);
   const after = unattributed.filter((s) => trackStart != null && s.t >= trackStart);
   const dist = sumOf(after, costs);
@@ -164,13 +179,28 @@ export function attributeSales(erp: Map<string, ErpAd>, sales: PeriodSale[], cos
     shares.set(a.key, { key: a.key, conversations: a.conversations, share, sales: dist.count * k, revenue: dist.revenue * k, productCost: dist.productCost * k, costMissing: dist.costMissing * k });
   });
   return {
-    all: sumOf(sales, costs), identified: sumOf(identified, costs), unattributed: sumOf(unattributed, costs), preTrack: sumOf(before, costs), distributable: dist,
+    all: sumOf(sales, costs), identified: sumOf(identified, costs), unattributed: sumOf(unattributed, costs), instagram: sumOf(instagram, costs), preTrack: sumOf(before, costs), distributable: dist,
     totalConversations, distributed, trackStart, shares,
   };
+}
+// ── 12/11: início do anúncio e "dias rodando" ──
+// Início = o mais tarde entre a criação do anúncio e o início do conjunto (Meta, dia de São Paulo). Sem isso (função
+// ad-manager antiga): o 1º dia com entrega nos dados carregados (exact = false: "pelo menos N dias"). Dias rodando =
+// dias de calendário desde o início, contando o dia do início (pausas não descontam).
+export interface AdStart { day: string; days: number; exact: boolean }
+const metaTime = (v: string | null | undefined) => (v ? Date.parse(String(v).replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN);
+export function adStartOf(cr: Pick<MetaCreative, 'created_time' | 'start_time'> | null, firstDeliveryDay: string | null, now = Date.now()): AdStart | null {
+  const ts = cr ? [metaTime(cr.created_time), metaTime(cr.start_time)].filter(Number.isFinite) : [];
+  const day = ts.length ? spDay(Math.max(...ts)) : firstDeliveryDay;
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const today = spDay(now);
+  const days = day > today ? 0 : Math.round((Date.parse(`${today}T12:00:00-03:00`) - Date.parse(`${day}T12:00:00-03:00`)) / 86400000) + 1;
+  return { day, days, exact: ts.length > 0 };
 }
 // o período começa antes do início do rastreio?
 export const startsBeforeTracking = (w: Pick<Window, 'fromDay'>, trackStartDay: string | null) => !!trackStartDay && w.fromDay < trackStartDay;
 export const dayBR = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+export const dayFull = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}/${day.slice(0, 4)}`;
 // vendas com 1 casa quando estimadas (3 · 1,8)
 export const salesTxt = (n: number) => (Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1).replace('.', ','));
 
@@ -330,6 +360,7 @@ export interface AdCard {
   wear: Wear; funnel: ReturnType<typeof funnelOf>; verdict: Verdict;
   // vendas identificadas (ligadas com certeza) e estimadas (repartição das sem origem; 0 no modo "Só identificado")
   mode: AttribMode; identifiedSales: number; identifiedRevenue: number; estimatedSales: number; estimatedRevenue: number; share: number | null;
+  firstDeliveryDay: string | null; // 1º dia com gasto/impressão nos dados carregados (reserva do "início")
 }
 export interface BuildInput {
   model: TrackModel; meta: MetaDaily[]; period: MetaPeriod[]; costs: Map<string, SaleCost>; taxRate: number; goals: Goals;
@@ -368,6 +399,7 @@ export function buildAdCards(inp: BuildInput, w: Window): AdCard[] {
       medianMinutesToSale: e ? median(e.minutesToSale) : null,
       models: [...models.entries()].map(([name, qty]) => ({ name, qty })).sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name)),
       costMissing, wear: wearOf(m ? m.days : [], w.toDay),
+      firstDeliveryDay: m ? m.days.filter((d) => d.spend > 0 || d.impressions > 0).map((d) => d.date).sort()[0] || null : null,
     };
   });
   const ref = accountRef(base.map((b) => ({ impressions: b.impressions, clicks: b.clicks, conversations: b.money.conversations, responded: b.responded, sales: b.money.sales })));
@@ -407,10 +439,10 @@ export function totalsOf(model: TrackModel, meta: MetaDaily[], costs: Map<string
   return { ...moneyOf(metaSpendIn(meta, w), taxRate, revenue, productCost, sales, conversations), costMissing };
 }
 // Os três números de ROAS do topo
-export interface RoasTrio { general: number | null; identified: number | null; unattributed: SalesSum; preTrack: SalesSum; all: SalesSum; identifiedSum: SalesSum }
+export interface RoasTrio { general: number | null; identified: number | null; unattributed: SalesSum; preTrack: SalesSum; all: SalesSum; identifiedSum: SalesSum; instagram: SalesSum }
 export function roasTrio(meta: MetaDaily[], taxRate: number, w: Window, att: Attribution): RoasTrio {
   const spend = spendReal(metaSpendIn(meta, w), taxRate);
-  return { general: div(att.all.revenue, spend), identified: div(att.identified.revenue, spend), unattributed: att.unattributed, preTrack: att.preTrack, all: att.all, identifiedSum: att.identified };
+  return { general: div(att.all.revenue, spend), identified: div(att.identified.revenue, spend), unattributed: att.unattributed, preTrack: att.preTrack, all: att.all, identifiedSum: att.identified, instagram: att.instagram };
 }
 export interface CategoryBox { category: Category; count: number; spendReal: number; revenue: number }
 export function categoryBoxes(cards: AdCard[]): CategoryBox[] {

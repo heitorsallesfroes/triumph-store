@@ -66,7 +66,8 @@ function fixtures(now: number) {
   };
   spread('120210000000111', 'Relógio A', 300, 30000, 600, 4); spread('120210000000222', 'Relógio B', 500, 50000, 1000); spread('120210000000333', 'Relógio C', 20, 2000, 30); spread('120210000000444', 'Relógio D', 200, 20000, 400);
   const creatives = [
-    { id: '120210000000111', name: 'Relógio A', status: 'ACTIVE', thumbnail_url: SVG('#f97316'), image_url: null, is_video: false, video_url: null, preview_url: 'https://fb.me/adspreview/111' },
+    // 12/11: A com a data de início da Meta (criado há 9 dias; o conjunto começou antes) → "Início … · 10 dias rodando"
+    { id: '120210000000111', name: 'Relógio A', status: 'ACTIVE', thumbnail_url: SVG('#f97316'), image_url: null, is_video: false, video_url: null, preview_url: 'https://fb.me/adspreview/111', created_time: new Date(now - 9 * DAY).toISOString().replace(/\.\d{3}Z$/, '+0000'), start_time: new Date(now - 30 * DAY).toISOString() },
     { id: '120210000000222', name: 'Relógio B', status: 'ACTIVE', thumbnail_url: SVG('#ef4444'), image_url: null, is_video: true, video_url: null, preview_url: 'https://fb.me/adspreview/222' },
     { id: '120210000000333', name: 'Relógio C', status: 'PAUSED', thumbnail_url: SVG('#3b82f6'), image_url: null, is_video: false, video_url: null, preview_url: null },
     { id: '120210000000444', name: 'Relógio D', status: 'ACTIVE', thumbnail_url: SVG('#eab308'), image_url: null, is_video: false, video_url: null, preview_url: null },
@@ -289,6 +290,22 @@ async function main() {
     await ev(`${H} tid('ads-attrib-estimado').click(); tid('ads-track-use').click(); return true;`);
     const used = await waitFor(`${H} return tid('ads-period-custom').getAttribute('aria-pressed') === 'true' && !tid('ads-track-warn') && $$('[data-testid="ads-card"]').length > 0;`, 8000);
     check('"Usar desde" troca o período para o início do rastreio (o aviso some)', used);
+
+    // ── 12/11: Instagram orgânico fora da repartição; início do anúncio e dias rodando ──
+    await ev(`const t = Date.now(); const day = new Date(t - 3 * 3600000).toISOString().slice(0, 10);
+      window.__DB.ig_links = [{ id: 'l-bio', code: 'IG-BIO', slug: 'bio', channel: 'bio' }];
+      window.__DB.ig_link_leads = [{ chat_id: '5521977770001@c.us', phone: '5521977770001', first_message_at: new Date(t - 2 * 86400000).toISOString(), code: 'IG-BIO', link_id: 'l-bio', match: 'frase' }];
+      window.__DB.sales.push({ id: 'vig', sale_date: day, created_at: new Date(t - 3600000).toISOString(), total_sale_price: 500, customer_phone: '21977770001', customer_name: 'Cliente IG', wa_chat_id: '5521977770001@c.us', origin: null, status: 'finalizado', total_cost: 200, delivery_fee: 0, delivery_cost: 0 });
+      return true;`);
+    await ev(`${H} tid('ads-refresh').click(); return true;`);
+    await waitFor(`${H} return /fora da repartição: 1 ·/.test(txt(tid('ads-ig-organico')) || '');`, 10000);
+    const igx = await ev(`${H} const a = $$('[data-testid="ads-card"]').find((c) => c.dataset.ad === '120210000000111'); const b = $$('[data-testid="ads-card"]').find((c) => c.dataset.ad === '120210000000222');
+      return { sem: txt(tid('ads-sem-origem')), ig: txt(tid('ads-ig-organico')), geral: txt($('[data-testid="ads-roas-geral"] .adx-big')), split: a ? txt($('[data-testid="ads-card-split"]', a)) : null, startA: a ? txt($('[data-testid="ads-card-start"]', a)) : null, startB: b && $('[data-testid="ads-card-start"]', b) ? txt($('[data-testid="ads-card-start"]', b)) : null };`);
+    const dA = new Date(Date.now() - 9 * 86400000 - 3 * 3600000).toISOString().slice(0, 10);
+    check('12/11: venda do Instagram orgânico (ig_link_leads) fica FORA da repartição: "sem origem" continua 1 (R$ 800), linha "Instagram (orgânico)" 1 · R$ 500, ROAS geral com todas, a estimada do A não muda',
+      /^Vendas sem origem1R\$ 800,00/.test(igx.sem) && /Instagram \(orgânico\), fora da repartição: 1 · R\$ 500,00/.test(igx.ig) && igx.geral === '6,1×' && igx.split === '3 vendas identificadas + 0,4 estimada', JSON.stringify(igx));
+    check('12/11: cartão com "Início DD/MM/AAAA · N dias rodando" (Meta) e, sem a data da Meta, "Entrega desde … · pelo menos N dias"',
+      igx.startA === `Início ${dA.slice(8, 10)}/${dA.slice(5, 7)}/${dA.slice(0, 4)} · 10 dias rodando` && /^Entrega desde \d{2}\/\d{2}\/\d{4} · pelo menos \d+ dias?$/.test(igx.startB || ''), JSON.stringify(igx));
 
     // ── FASE 2: ações na Meta SIMULADA (o harness responde toggle/update_budget; nada sai do Chrome) ──
     const card = (ad: string) => `$('[data-ad="${ad}"]')`;

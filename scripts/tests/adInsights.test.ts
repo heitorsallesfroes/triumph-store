@@ -10,7 +10,7 @@ import { buildConversations, type TrackInput } from '../../src/lib/waTracking.ts
 import {
   ACTION, DEFAULT_GOALS, adRanges, buildAdCards, categoryBoxes, erpByAd, funnelOf, goalsJson, hourMap, metaCheck, metaFetchWindow, moneyOf,
   moneySplit, parseGoals, replyBands, roasTier, suggestGoals, totalsOf, verdictOf, wearOf, windowOf,
-  attributeSales, dayBR, periodSales, roasTrio, salesTxt, startsBeforeTracking,
+  attributeSales, dayBR, periodSales, roasTrio, salesTxt, startsBeforeTracking, adStartOf, dayFull, igOrganicSaleIds,
   type MetaDaily, type SaleCost, type Goals,
 } from '../../src/lib/adInsights.ts';
 
@@ -315,6 +315,48 @@ test('estimado: período antes do início do rastreio', () => {
 });
 
 let failed = 0;
+// ── 12/11: Instagram orgânico fora da repartição; início do anúncio e dias rodando ──
+test('estimado: venda ligada ao Instagram orgânico (ig_link_leads) NÃO é repartida entre anúncios', () => {
+  const inp = input();
+  // a conversa orgânica da venda "vorg" (R$ 900) começou pelo link da bio (reconhecida pela frase)
+  inp.igLeads = [{ chat_id: '5521900009999@c.us', phone: '5521900009999', first_message_at: sp('2026-11-05T10:00:00'), code: 'IG-BIO', link_id: 'l1', channel: 'bio', slug: 'bio', match: 'frase' }];
+  const m = buildConversations(inp);
+  const ig = igOrganicSaleIds(m, R.cur);
+  assert.deepEqual([...ig], ['vorg']);
+  const a = attributeSales(erpByAd(m, R.cur), periodSales(inp.sales, R.cur), costs(), T0, ig);
+  assert.equal(a.all.count, 7); near(a.all.revenue, 7200);
+  assert.equal(a.identified.count, 5);
+  assert.equal(a.instagram.count, 1); near(a.instagram.revenue, 900);
+  assert.equal(a.unattributed.count, 1, 'sem origem: só a venda antes do 1º contato'); near(a.unattributed.revenue, 700);
+  near([...a.shares.values()].reduce((x, s) => x + s.sales, 0), 1, 'só 1 venda repartida');
+  near([...a.shares.values()].reduce((x, s) => x + s.revenue, 0), 700, 'R$ repartido sem o Instagram');
+  const est = buildAdCards({ model: m, meta: metaRows(), period: [], costs: costs(), taxRate: TAX, goals, mode: 'estimado', attribution: a }, R.cur);
+  near(est.reduce((x, c) => x + c.money.revenue, 0), 5600 + 700, 'cartões: identificado + repartido, sem o Instagram');
+  const trio = roasTrio(metaRows(), TAX, R.cur, a);
+  near(trio.general!, 7200 / 1122, 'ROAS geral continua com todas as vendas');
+  assert.equal(trio.instagram.count, 1);
+  // venda ligada a anúncio E a Instagram: o anúncio vale primeiro (fica identificada, não vai para o Instagram)
+  const both = attributeSales(erpByAd(m, R.cur), periodSales(inp.sales, R.cur), costs(), T0, new Set(['vorg', 'va0']));
+  assert.equal(both.identified.count, 5); assert.equal(both.instagram.count, 1);
+  // sem o conjunto (chamada antiga): como antes
+  assert.equal(attributeSales(erpCur, pSales, costs(), T0).instagram.count, 0);
+});
+test('cartão: início do anúncio (Meta) e dias rodando; sem a data da Meta, o 1º dia com entrega', () => {
+  const now = Date.parse('2026-11-12T10:00:00-03:00');
+  assert.deepEqual(adStartOf({ created_time: '2026-11-03T22:10:00-0300', start_time: '2026-11-01T00:00:00-0300' }, '2026-11-05', now), { day: '2026-11-03', days: 10, exact: true }, 'o mais tarde entre criação e início do conjunto');
+  assert.deepEqual(adStartOf({ created_time: '2026-11-04T01:30:00+0000', start_time: null }, null, now), { day: '2026-11-03', days: 10, exact: true }, 'dia de São Paulo (01:30 UTC = 22:30 do dia 3)');
+  assert.deepEqual(adStartOf({ created_time: '2026-11-12T08:00:00-0300' }, null, now), { day: '2026-11-12', days: 1, exact: true }, 'começou hoje = 1 dia');
+  assert.deepEqual(adStartOf(null, '2026-11-08', now), { day: '2026-11-08', days: 5, exact: false });
+  assert.deepEqual(adStartOf({ created_time: null, start_time: null }, '2026-11-08', now), { day: '2026-11-08', days: 5, exact: false });
+  assert.equal(adStartOf(null, null, now), null);
+  assert.deepEqual(adStartOf({ start_time: '2026-11-20T00:00:00-0300' }, null, now), { day: '2026-11-20', days: 0, exact: true }, 'agendado para depois: 0 dias');
+  assert.equal(dayFull('2026-11-03'), '03/11/2026');
+  const cards = buildAdCards({ model, meta: metaRows(), period: [], costs: costs(), taxRate: TAX, goals }, R.cur);
+  const cA = cards.find((c) => c.key === '111')!;
+  const firstMeta = metaRows().filter((r) => r.ad_id === '111' && (r.spend > 0 || r.impressions > 0)).map((r) => r.date).sort()[0];
+  assert.equal(cA.firstDeliveryDay, firstMeta, 'o 1º dia com entrega nos dados carregados (inclui os dias antes do período, que vêm para o desgaste)');
+});
+
 for (const [name, fn] of tests) {
   try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e instanceof Error ? e.message : e}`); }
 }
