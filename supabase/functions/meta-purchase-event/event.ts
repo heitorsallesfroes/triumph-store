@@ -65,7 +65,8 @@ export function validate(body: any, nowS: number): { ok: true; input: PurchaseIn
     input: {
       event_name: name, chat_id: b.chat_id, phone, contact_name: str(b.contact_name, 100), value, currency: 'BRL', event_time: t,
       ad: { title: str(ad.title, 200), source_id: str(ad.source_id, 100), source_app: str(ad.source_app, 40), conversion_source: str(ad.conversion_source, 40), ctwa_clid: clid },
-      description: name === 'Purchase' ? str(b.description, 200) : null, test: b.test === true, event_id: name === 'Purchase' ? b.event_id : '',
+      description: name === 'Purchase' ? str(b.description, 200) : null, test: false, // 12/11: sempre real (sem modo teste)
+      event_id: name === 'Purchase' ? b.event_id : '',
     },
   };
 }
@@ -176,7 +177,6 @@ export async function handle(method: string, authorization: string | null, body:
   if (!v.ok) return { status: 400, json: { ok: false, error: v.error } };
   const input = v.input;
   if (input.event_name === 'Contact') input.event_id = await contactEventId(input.chat_id, input.test);
-  if (input.test && !env.META_TEST_EVENT_CODE) return { status: 400, json: { ok: false, error: 'Modo teste ligado, mas falta o secret META_TEST_EVENT_CODE' } };
   // Mesmo event_id já enviado: não manda de novo (no Contato: a mesma conversa nunca duplica)
   const prev = await deps.findEvent(input.event_id).catch(() => null);
   if (prev && prev.status === 'enviado') return { status: 200, json: { ok: true, duplicate: true, events_received: prev.events_received ?? 0, event_name: input.event_name } };
@@ -184,7 +184,6 @@ export async function handle(method: string, authorization: string | null, body:
   const send = async (withClid: boolean) => {
     const built = await buildEvent(input, env, { withClid });
     const payload: Record<string, unknown> = { data: [built.event] };
-    if (input.test) payload.test_event_code = env.META_TEST_EVENT_CODE;
     return { how: built.method, fb: await postToFacebook(deps, url, payload) };
   };
   let { how, fb } = await send(true);

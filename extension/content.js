@@ -8821,10 +8821,8 @@
     head.append(sw, el('span', 'fw-name', a.name), missing.length
       ? el('span', 'fw-badge draft', `RASCUNHO · falta${missing.length === 1 ? '' : 'm'} ${missing.length} ite${missing.length === 1 ? 'm' : 'ns'}`)
       : el('span', `fw-badge${a.active ? ' on' : ''}`, a.active ? 'LIGADA' : 'DESLIGADA'));
-    if (a.test_chat_id) head.append(el('span', 'fw-badge test', 'EM TESTE')); // 2.8.8
     card.append(head);
     if (missing.length) card.append(el('div', 'crm-intro fw-draft-tip', `Para ligar, complete: ${missing.join('; ')}. Toque em Editar.`));
-    if (a.test_chat_id) card.append(el('div', 'crm-intro', `Em teste: roda só para ${testChatLabel(a.test_chat_id)}; ignora todos os outros.`));
     const ign = fl.stats && fl.stats.ignored ? fl.stats.ignored[a.id] : null; // 2.12.5
     if (Number.isFinite(ign)) card.append(el('div', 'crm-intro fw-ignored', `Ignorados por já estarem na etiqueta: ${ign}`));
     if (a.active && a.activated_at) card.append(el('div', 'crm-intro', `Vale daqui pra frente: desde ${new Date(a.activated_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}${a.include_existing ? ' (incluiu quem já estava na etiqueta)' : ''}.`));
@@ -8886,10 +8884,6 @@
 
   // ── 2.8.8: ativar = vale daqui pra frente ──
   const LABEL_TRIGGERS = ['sem_resposta', 'entrou_etiqueta', 'respondeu'];
-  function testChatLabel(chatId) {
-    const c = (fl.recentChats || []).find((x) => x.id === chatId);
-    return c && c.name ? `${c.name} (${chatId.split('@')[0]})` : chatId.split('@')[0];
-  }
   // quem já está na etiqueta do gatilho (CRM pelo banco; WhatsApp: 2.12.5 TODAS as conversas da etiqueta, não só as
   // carregadas na lista). Também para a sequência que começa por etiqueta do WhatsApp.
   async function loadActivationInfo(a) {
@@ -9116,8 +9110,9 @@
   function openSeqEditor(a, templateKey = null) {
     const def = a && a.sequence ? clone(a.sequence) : E.seqTemplate(templateKey === 'lead_followup' ? 'lead_followup' : 'blank');
     fl.seq = {
-      id: a ? a.id : null, name: a ? a.name : templateKey === 'lead_followup' ? 'Follow-up de lead novo' : 'Sequência', active: !!(a && a.active), wasActive: !!(a && a.id && a.active),
-      testOn: !!(a && a.test_chat_id), test_chat_id: (a && a.test_chat_id) || '', def, msg: '', err: false, triedSave: false, invalid: [],
+      // 12/11: sem modo teste — uma que estava ligada só em teste abre desligada (salvar não liga para todos)
+      id: a ? a.id : null, name: a ? a.name : templateKey === 'lead_followup' ? 'Follow-up de lead novo' : 'Sequência', active: !!(a && a.active && !a.test_chat_id), wasActive: !!(a && a.id && a.active && !a.test_chat_id),
+      def, msg: '', err: false, triedSave: false, invalid: [],
     };
     fl.view = 'seq';
     if (!Array.isArray(state.waLabels)) refreshBar().then(() => { if (fl.view === 'seq') renderFollows(); }).catch(() => {});
@@ -9289,27 +9284,7 @@
     ocb.checked = f.active;
     ocb.addEventListener('change', () => { f.active = ocb.checked; });
     on.append(ocb, ' Ligada');
-    const test = el('label', 'sc-radio');
-    const tcb = el('input');
-    tcb.type = 'checkbox';
-    tcb.checked = f.testOn;
-    tcb.addEventListener('change', async () => {
-      f.testOn = tcb.checked;
-      if (f.testOn && !fl.recentChats) { try { fl.recentChats = await waRequest('recentChats', { limit: 30 }, { timeout: 6000 }); } catch { fl.recentChats = []; } }
-      renderFollows();
-    });
-    test.append(tcb, ' Testar comigo (só a conversa escolhida)');
-    sec.append(on, test);
-    if (f.testOn) {
-      const sel = el('select', 'ed-cat');
-      sel.setAttribute('aria-label', 'Conversa de teste');
-      const none = el('option', null, (fl.recentChats || []).length ? 'Escolha a conversa de teste…' : 'Nenhuma conversa carregada no WhatsApp');
-      none.value = '';
-      sel.append(none);
-      (fl.recentChats || []).forEach((c) => { const o = el('option', null, c.name || c.id.split('@')[0]); o.value = c.id; o.selected = c.id === f.test_chat_id; sel.append(o); });
-      sel.addEventListener('change', () => { f.test_chat_id = sel.value; });
-      sec.append(sel);
-    }
+    sec.append(on);
     sec.append(el('div', 'crm-intro', 'Segurança de sempre: nunca para "Não enviar" (sai da sequência), limites por hora/dia, horário comercial e o WhatsApp Web aberto.'));
     const row = el('div', 'ed-add');
     const save = fbtn('bbtn primary sq-save', fl.saving ? 'Salvando…' : 'Salvar', () => saveSeq());
@@ -9324,7 +9299,6 @@
     f.triedSave = true;
     const problems = E.seqValidate(f.def);
     if (!String(f.name || '').trim()) problems.unshift({ node: 'name', msg: 'Dê um nome para a sequência.' });
-    if (f.testOn && !f.test_chat_id) problems.unshift({ node: 'test', msg: 'Escolha a conversa de teste.' });
     if (problems.length) {
       f.msg = problems.length === 1 ? problems[0].msg : `${problems[0].msg} (e mais ${problems.length - 1} marcado${problems.length === 2 ? '' : 's'} em vermelho)`;
       f.err = true;
@@ -9345,10 +9319,10 @@
       if (def.start.label_id) def.start.label_id = fake[0].trigger_label_id;
       E.seqIndex(def).forEach(({ node: n }) => { if (n.hint) delete n.hint; });
       const base = f.active ? await baselineWaLabel({ kind: 'sequencia', sequence: def }).catch(() => null) : null; // 2.12.5
-      await call('saveAutomation', { id: f.id || undefined, automation: { kind: 'sequencia', name: f.name, active: f.active, sequence: def, test_chat_id: f.testOn ? f.test_chat_id : null }, includeExisting: false });
+      await call('saveAutomation', { id: f.id || undefined, automation: { kind: 'sequencia', name: f.name, active: f.active, sequence: def, test_chat_id: null }, includeExisting: false });
       await motor.loadAutomations();
       fl.statsAt = 0;
-      flash(f.active ? (f.testOn ? 'Sequência ligada em teste: só a conversa escolhida.' : `Sequência ligada: vale para quem entrar daqui pra frente.${baselineText(base)}`) : 'Sequência salva (desligada).');
+      flash(f.active ? `Sequência ligada: vale para quem entrar daqui pra frente.${baselineText(base)}` : 'Sequência salva (desligada).');
       fl.seq = null;
       fl.saving = false;
       backToList();
@@ -9742,7 +9716,7 @@
     } else if (template) def = vbFillTemplate(E.seqTemplate(template));
     vb.f = {
       mode: def ? 'edit' : 'templates', id: a ? a.id : null, name: a ? a.name : template ? VB_TPL_NAME[template] : '', def, converted, legacyReason,
-      wasActive: !!(a && a.id && a.active), testOn: !!(a && a.test_chat_id), test_chat_id: (a && a.test_chat_id) || '', include: !!(a && a.include_existing),
+      wasActive: !!(a && a.id && a.active && !a.test_chat_id), wasTest: !!(a && a.id && a.test_chat_id), include: !!(a && a.include_existing),
       sel: def ? 'start' : null, zoom: 1, insert: null, triedSave: false, invalid: [], msg: '', err: false, existing: null, existingKey: '', modal: null, dirty: false, saving: false,
     };
     if (a && !a.active && def && vbProblems(vb.f).length) vb.f.showErrors = true; // 2.16.3: rascunho continua em vermelho
@@ -9868,24 +9842,21 @@
     if (vbBad(f, 'name').length) name.classList.add('vb-bad');
     const left = el('div', 'vb-tl');
     left.append(el('span', 'vb-brand', '🔁 Automação'), name);
-    if (f.testOn && f.wasActive) left.append(el('span', 'fw-badge test', 'EM TESTE'));
-    else if (f.wasActive) left.append(el('span', 'fw-badge on', 'LIGADA'));
+    if (f.wasActive) left.append(el('span', 'fw-badge on', 'LIGADA'));
     const right = el('div', 'vb-tr');
     const b = (cls, text, fn) => { const x = fbtn(cls, text, fn); x.disabled = !!f.saving; return x; };
     if (f.mode === 'edit') {
       if (f.wasActive) {
         right.append(b('bbtn primary vb-save', f.saving ? 'Salvando…' : 'Salvar', () => vbSave('keep')), b('bbtn vb-save-disable', 'Salvar e desligar', () => vbSave('off')));
-        if (f.testOn) right.append(b('bbtn vb-all', 'Ligar para todos', () => vbAskOn('todos')));
       } else {
         right.append(b('bbtn vb-save-off', f.saving ? 'Salvando…' : 'Salvar desligada', () => vbSave('off')), b('bbtn primary vb-save-on', 'Salvar e ligar', () => vbAskOn('on')));
       }
     }
     right.append(fbtn('bbtn vb-close', 'Fechar', () => vbClose()));
-    // 2.14.1: Simular e Testar comigo ficam no "⋯" (funcionam igual)
+    // 2.14.1: Simular fica no "⋯"
     if (f.mode === 'edit') {
       right.append(moreMenu([
         { cls: 'vb-sim', text: 'Simular', fn: () => { f.modal = { kind: 'sim' }; vbRender(); }, disabled: !!f.saving },
-        !f.wasActive && { cls: 'vb-test', text: 'Testar comigo', fn: () => vbAskTest(), disabled: !!f.saving },
       ], 'Mais opções da automação'));
     }
     top.append(left, right);
@@ -10449,7 +10420,7 @@
     openMessageEditorFor((id) => { n.item_id = id; delete n.hint; vbChange(); }, item, () => { if (vb.f === f && vb.el) { vb.el.hidden = false; vbRender(); } });
   }
 
-  // ── Simular · Testar comigo · Salvar e ligar ──
+  // ── Simular · Salvar e ligar (12/11: sem modo teste; liga direto, conferindo as caixas incompletas) ──
   function vbCheck(f) {
     f.showErrors = true;
     f.invalid = vbProblems(f);
@@ -10474,21 +10445,6 @@
     vbRender();
     const st = f.def.start;
     if (st.type === 'etiqueta' && (f.existing == null || f.existingKey !== vbStartKey(st))) vbLoadExisting(f);
-  }
-  async function vbAskTest() {
-    const f = vb.f;
-    f.checkFor = 'testar';
-    if (!vbCheck(f)) return;
-    f.modal = { kind: 'test' };
-    vbRender();
-    let c = null;
-    try { c = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { c = null; }
-    if (!fl.recentChats) { try { fl.recentChats = await waRequest('recentChats', { limit: 30 }, { timeout: 6000 }); } catch { fl.recentChats = []; } }
-    if (c && c.kind === 'individual') {
-      if (!(fl.recentChats || []).some((x) => x.id === c.chatId)) fl.recentChats = [{ id: c.chatId, name: c.name || null }, ...(fl.recentChats || [])];
-      if (!f.test_chat_id) f.test_chat_id = c.chatId;
-    }
-    if (vb.f === f && f.modal && f.modal.kind === 'test') vbRender();
   }
   function vbModal(f) {
     const back = el('div', 'vb-modal-bg');
@@ -10524,19 +10480,6 @@
         cols.append(col);
       });
       m.append(cols, fbtn('bbtn vb-simclose', 'Fechar', close));
-    } else if (f.modal.kind === 'test') {
-      m.append(el('div', 'vb-sh', 'Testar comigo'), el('div', 'vb-sub', 'Liga EM TESTE: só a conversa escolhida recebe; todos os outros são ignorados. Para valer para todos depois, use "Ligar para todos".'));
-      const opts = [['', 'Escolha a conversa…'], ...(fl.recentChats || []).map((c) => [c.id, c.name || c.id.split('@')[0]])];
-      if (f.test_chat_id && !opts.some(([v]) => v === f.test_chat_id)) opts.push([f.test_chat_id, f.test_chat_id.split('@')[0]]);
-      const sel = el('select', 'ed-cat vb-testchat');
-      sel.setAttribute('aria-label', 'Conversa de teste');
-      opts.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === (f.test_chat_id || ''); sel.append(o); });
-      sel.addEventListener('change', () => { f.test_chat_id = sel.value; });
-      const row = el('div', 'ed-add');
-      const go = fbtn('bbtn primary vb-test-go', f.saving ? 'Ligando…' : 'Ligar em teste', () => { if (!f.test_chat_id) { f.msg = 'Escolha a conversa de teste.'; f.err = true; vbRender(); return; } vbSave('test'); });
-      go.disabled = !!f.saving;
-      row.append(go, fbtn('bbtn', 'Cancelar', close));
-      m.append(sel, row);
     } else if (f.modal.kind === 'on') {
       const st = f.def.start;
       const byLabel = st.type === 'etiqueta';
@@ -10559,7 +10502,7 @@
     back.append(m);
     return back;
   }
-  // Salvar. mode: 'off' (desligada), 'keep' (como está), 'on' (ligar para todos), 'todos' (sair do teste), 'test'
+  // Salvar. mode: 'off' (desligada), 'keep' (como está), 'on' (ligar)
   async function vbSave(mode) {
     const f = vb.f;
     if (!f || f.saving) return;
@@ -10572,15 +10515,13 @@
       missingN = f.invalid.length;
       if (f.modal && f.modal.kind === 'close') f.modal = null;
     } else {
-      f.checkFor = mode === 'test' ? 'testar' : mode === 'keep' ? 'salvar ligada' : 'ligar';
+      f.checkFor = mode === 'keep' ? 'salvar ligada' : 'ligar';
       if (!vbCheck(f)) { if (f.modal) f.modal = null; vbRender(); return; }
     }
     let active = f.wasActive;
-    let testOn = f.testOn;
     if (mode === 'off') active = false;
-    if (mode === 'on' || mode === 'todos') { active = true; testOn = false; }
-    if (mode === 'test') { active = true; testOn = true; }
-    const include = (mode === 'on' || mode === 'todos') && f.def.start.type === 'etiqueta' && !!f.include;
+    if (mode === 'on') active = true;
+    const include = mode === 'on' && f.def.start.type === 'etiqueta' && !!f.include;
     f.saving = true;
     vbRender();
     try {
@@ -10592,15 +10533,15 @@
       await resolveNewLabels(fake);
       if (def.start.label_id) def.start.label_id = fake[0].trigger_label_id;
       E.seqIndex(def).forEach(({ node: n }) => { if (n.hint) delete n.hint; });
-      const base = active && !testOn ? await baselineWaLabel({ kind: 'sequencia', sequence: def }).catch(() => null) : null; // 2.12.5
-      const saved = await call('saveAutomation', { id: f.id || undefined, automation: { kind: 'sequencia', name: f.name.trim() || (draft ? 'Rascunho' : ''), active, sequence: def, test_chat_id: testOn ? f.test_chat_id : null }, includeExisting: include });
-      if (mode === 'todos') await call('setAutomationActive', { id: (saved && saved.id) || f.id, active: true, includeExisting: include });
+      const base = active ? await baselineWaLabel({ kind: 'sequencia', sequence: def }).catch(() => null) : null; // 2.12.5
+      const saved = await call('saveAutomation', { id: f.id || undefined, automation: { kind: 'sequencia', name: f.name.trim() || (draft ? 'Rascunho' : ''), active, sequence: def, test_chat_id: null }, includeExisting: include });
+      // 12/11: a que estava em teste, ao ligar, recomeça o "daqui pra frente" agora
+      if (mode === 'on' && f.wasTest) await call('setAutomationActive', { id: (saved && saved.id) || f.id, active: true, includeExisting: include });
       await motor.loadAutomations();
       fl.statsAt = 0;
       flash({
-        off: missingN ? `Rascunho salvo (desligado): falta${missingN === 1 ? '' : 'm'} ${missingN} ite${missingN === 1 ? 'm' : 'ns'} para poder ligar.` : 'Automação salva (desligada).', test: 'Ligada EM TESTE: só a conversa escolhida recebe.',
+        off: missingN ? `Rascunho salvo (desligado): falta${missingN === 1 ? '' : 'm'} ${missingN} ite${missingN === 1 ? 'm' : 'ns'} para poder ligar.` : 'Automação salva (desligada).',
         on: include ? 'Automação ligada (incluindo quem já estava na etiqueta).' : `Automação ligada: vale para quem se encaixar daqui pra frente.${baselineText(base)}`,
-        todos: include ? 'Ligada para todos (incluindo quem já estava na etiqueta).' : `Ligada para todos: vale daqui pra frente.${baselineText(base)}`,
         keep: active ? 'Automação salva (continua ligada).' : 'Automação salva.',
       }[mode]);
       vb.f = null;
@@ -10672,7 +10613,7 @@
     fl.wiz = {
       kind: key, step: 1, name: t.title, trigger, amount: t.amount, unit: t.unit, nStages: n,
       stages: Array.from({ length: followup ? 4 : 1 }, (_, k) => ({ itemId: '', labelId: k === 0 ? trigger.id : labelRef(`Follow Up ${k + 1}`) })),
-      itemId: '', moveTo: '', count: null, countErr: '', testChat: '', testing: false, saving: false, msg: '', err: false,
+      itemId: '', moveTo: '', count: null, countErr: '', saving: false, msg: '', err: false,
     };
     fl.view = 'wizard';
     if (!Array.isArray(state.waLabels)) refreshBar().then(() => { if (fl.view === 'wizard') renderFollows(); }).catch(() => {});
@@ -10791,16 +10732,6 @@
       name.addEventListener('input', () => { w.name = name.value; });
       body.append(schedField('Nome', name));
       body.append(el('div', 'crm-intro', 'Segurança de sempre: só vale para quem entrar depois de ligar, nunca para quem tem "Não enviar", respeita os limites e o horário comercial.'));
-      if (w.testing) {
-        const sel = el('select', 'ed-cat');
-        sel.setAttribute('aria-label', 'Conversa de teste');
-        const none = el('option', null, (fl.recentChats || []).length ? 'Escolha a conversa de teste…' : 'Nenhuma conversa carregada no WhatsApp');
-        none.value = '';
-        sel.append(none);
-        (fl.recentChats || []).forEach((c) => { const o = el('option', null, c.name || c.id.split('@')[0]); o.value = c.id; o.selected = c.id === w.testChat; sel.append(o); });
-        sel.addEventListener('change', () => { w.testChat = sel.value; });
-        body.append(schedField('Testar só com esta conversa (a sua)', sel), el('div', 'crm-intro', 'Em teste, a automação roda só para essa conversa e ignora todo o resto. Coloque essa conversa na etiqueta para ver acontecer.'));
-      }
     }
     sec.append(body);
     const problem = w.step < 4 ? '' : wizStepProblem(w, 3);
@@ -10816,20 +10747,10 @@
       }));
     } else {
       const busy = w.saving;
-      const test = fbtn('bbtn wiz-test', w.testing ? 'Ligar em teste' : 'Testar comigo', async () => {
-        if (!w.testing) {
-          w.testing = true;
-          if (!fl.recentChats) { try { fl.recentChats = await waRequest('recentChats', { limit: 30 }, { timeout: 6000 }); } catch { fl.recentChats = []; } }
-          renderFollows();
-          return;
-        }
-        if (!w.testChat) { w.msg = 'Escolha a conversa de teste.'; w.err = true; renderFollows(); return; }
-        saveWizard({ active: true, test: true });
-      });
       const on = fbtn('bbtn primary wiz-on', busy ? 'Salvando…' : 'Ligar', () => saveWizard({ active: true }));
       const off = fbtn('bbtn wiz-off', 'Salvar desligada', () => saveWizard({ active: false }));
-      [test, on, off].forEach((b) => { b.disabled = busy || !!problem; });
-      row.append(test, on, off);
+      [on, off].forEach((b) => { b.disabled = busy || !!problem; });
+      row.append(on, off);
       if (problem) w.msg = problem;
     }
     sec.append(row, el('div', `ed-msg${w.err || problem ? ' err' : ''}`, w.msg));
@@ -10859,7 +10780,7 @@
     if (Object.keys(cache).length) await syncLabels().catch(() => {});
     return list;
   }
-  async function saveWizard({ active, test = false }) {
+  async function saveWizard({ active }) {
     const w = fl.wiz;
     if (!w || w.saving) return;
     const problem = wizStepProblem(w, 3);
@@ -10868,18 +10789,18 @@
     w.msg = '';
     renderFollows();
     try {
-      const list = E.wizardToAutomations(w.kind, { ...wizInput(w), testChatId: test ? w.testChat : null }, { settings: motor.state.settings });
+      const list = E.wizardToAutomations(w.kind, { ...wizInput(w), testChatId: null }, { settings: motor.state.settings });
       await resolveNewLabels(list);
       for (const a of list) {
         a.active = active;
-        const bad = E.validateAutomationDraft(a, { testOn: test });
+        const bad = E.validateAutomationDraft(a, { testOn: false });
         if (bad.length) throw new Error(`${a.name}: ${bad[0].msg}`);
         if (active) fl.lastBase = (await baselineWaLabel(a).catch(() => null)) || fl.lastBase; // 2.12.5
         await call('saveAutomation', { automation: a, includeExisting: false });
       }
       await motor.loadAutomations();
       fl.statsAt = 0;
-      flash(active ? (test ? `Ligada em teste: roda só para a conversa escolhida.` : `Ligada: ${E.wizardSentence(w.kind, wizInput(w), wizNames)}${baselineText(fl.lastBase)}`) : 'Automação salva (desligada).');
+      flash(active ? `Ligada: ${E.wizardSentence(w.kind, wizInput(w), wizNames)}${baselineText(fl.lastBase)}` : 'Automação salva (desligada).');
       fl.lastBase = null;
       fl.wiz = null;
       fl.saving = false;
@@ -10914,8 +10835,9 @@
     const wait = Number(src.wait_minutes) || 60;
     const unit = wait % 1440 === 0 ? 'dias' : wait % 60 === 0 ? 'horas' : 'minutos';
     fl.edit = {
-      wasActive: !!src.id && !!src.active, testOn: !!src.test_chat_id, test_chat_id: src.test_chat_id || '', activation: null, // 2.8.8
-      id: src.id || null, name: src.name || '', active: !!src.active, trigger_type: src.trigger_type || 'sem_resposta', trigger_label_id: src.trigger_label_id || '',
+      // 12/11: sem modo teste — uma que estava ligada só em teste abre desligada (salvar não liga para todos)
+      wasActive: !!src.id && !!src.active && !src.test_chat_id, wasTest: !!src.id && !!src.test_chat_id, testOn: false, activation: null, // 2.8.8
+      id: src.id || null, name: src.name || '', active: !!src.active && !src.test_chat_id, trigger_type: src.trigger_type || 'sem_resposta', trigger_label_id: src.trigger_label_id || '',
       trigger_label_source: src.trigger_label_source === 'whatsapp' ? 'whatsapp' : 'crm', trigger_wa_label_id: src.trigger_wa_label_id || '',
       wait_minutes_sale: src.trigger_type === 'venda_registrada' ? Number(src.wait_minutes) || 0 : 0, // 2.11.0
       wait_minutes: wait, wait_unit: unit, schedule_days: [...(src.schedule_days || [1, 2, 3, 4, 5])], schedule_time: String(src.schedule_time || '10:00').slice(0, 5),
@@ -10960,7 +10882,7 @@
 
   function editorToAutomation(f) {
     return {
-      test_chat_id: f.testOn ? f.test_chat_id || null : null, // 2.8.8
+      test_chat_id: null, // 12/11: sem modo teste
       name: f.name, active: f.active, trigger_type: f.trigger_type, trigger_label_id: f.trigger_label_source === 'whatsapp' ? null : f.trigger_label_id || null,
       trigger_label_source: f.trigger_label_source, trigger_wa_label_id: f.trigger_label_source === 'whatsapp' ? f.trigger_wa_label_id || null : null,
       wait_minutes: f.trigger_type === 'venda_registrada' ? (Number(f.wait_minutes_sale) > 0 ? f.wait_minutes_sale : null) : f.wait_minutes,
@@ -11083,7 +11005,7 @@
     name.placeholder = 'Ex.: Follow de venda';
     name.addEventListener('input', () => { f.name = name.value; });
     sec.append(mark(schedField('Nome', name), 'name'));
-    if (f.wasActive) sec.append(el('div', `crm-intro fw-state${f.testOn ? ' test' : ''}`, f.testOn ? 'EM TESTE: liga só para a conversa escolhida.' : 'Esta automação está LIGADA.'));
+    if (f.wasActive) sec.append(el('div', 'crm-intro fw-state', 'Esta automação está LIGADA.'));
 
     // QUANDO
     const q = el('div', 'fw-block');
@@ -11300,36 +11222,31 @@
     return false;
   }
 
-  // "Salvar e ligar" / "Ligar para todos": valida e abre a confirmação (mesma da lista)
+  // "Salvar e ligar": valida e abre a confirmação (mesma da lista)
   function openEditorConfirm(f, mode) {
-    const was = { active: f.active, testOn: f.testOn };
+    const was = f.active;
     f.active = true;
-    f.testOn = false;
     const bad = editorProblems(f);
-    f.active = was.active;
-    f.testOn = was.testOn;
+    f.active = was;
     if (bad) return;
     f.msg = '';
     f.err = false;
-    f.testPick = false;
     f.confirm = { mode, include: false, info: null, advanced: false };
     f.activation = f.confirm; // loadActivationInfo lê daqui
     renderFollows();
     loadActivationInfo({ ...editorToAutomation(f), active: true, test_chat_id: null });
   }
 
-  // Salvar. mode: 'off' (desligada), 'keep' (como está: ligada, ou em teste), 'on' (ligar para todos, depois da
-  // confirmação), 'todos' (sair do teste e ligar para todos), 'test' (ligar só para a conversa escolhida)
+  // Salvar. mode: 'off' (desligada), 'keep' (como está), 'on' (ligar, depois da confirmação)
   async function saveAutomationForm(mode = 'keep') {
     const f = fl.edit;
     if (!f || fl.saving) return;
-    const prevState = { active: f.active, testOn: f.testOn };
+    const prevState = { active: f.active };
     if (mode === 'off') f.active = false;
-    if (mode === 'on' || mode === 'todos') { f.active = true; f.testOn = false; }
-    if (mode === 'test') { f.active = true; f.testOn = true; }
+    if (mode === 'on') f.active = true;
     if (editorProblems(f)) { Object.assign(f, prevState); renderFollows(); return; }
     const automation = editorToAutomation(f);
-    const include = (mode === 'on' || mode === 'todos') && !!(f.confirm && f.confirm.include);
+    const include = mode === 'on' && !!(f.confirm && f.confirm.include);
     fl.saving = true;
     if (f.confirm) f.confirm.busy = true;
     f.msg = '';
@@ -11338,15 +11255,13 @@
       // 2.8.8: ligar (ou trocar gatilho/etiqueta de uma ligada) = vale daqui pra frente
       const base = automation.active ? await baselineWaLabel(automation).catch(() => null) : null; // 2.12.5
       const saved = await call('saveAutomation', { id: f.id || undefined, automation, includeExisting: include });
-      // sair do teste e ligar para todos: o "daqui pra frente" recomeça agora
-      if (mode === 'todos') await call('setAutomationActive', { id: (saved && saved.id) || f.id, active: true, includeExisting: include });
+      // 12/11: a que estava em teste, ao ligar, recomeça o "daqui pra frente" agora
+      if (mode === 'on' && f.wasTest) await call('setAutomationActive', { id: (saved && saved.id) || f.id, active: true, includeExisting: include });
       await motor.loadAutomations();
       fl.statsAt = 0;
       const msg = {
         off: 'Automação salva (desligada).',
-        test: 'Ligada EM TESTE: roda só para a conversa escolhida.',
         on: include ? 'Automação ligada (incluindo quem já estava na etiqueta).' : `Automação ligada: vale para quem entrar daqui pra frente.${baselineText(base)}`,
-        todos: include ? 'Ligada para todos (incluindo quem já estava na etiqueta).' : `Ligada para todos: vale para quem entrar daqui pra frente.${baselineText(base)}`,
         keep: automation.active ? 'Automação salva (continua ligada).' : 'Automação salva.',
       }[mode];
       flash(msg);
@@ -11364,8 +11279,7 @@
   }
 
   // 2.12.6: rodapé do editor: uma linha de segurança e só os botões de salvar.
-  //   desligada: [Salvar desligada] [Salvar e ligar] [Testar comigo] · ligada: [Salvar] [Salvar e desligar]
-  //   em teste: [Salvar] [Salvar e desligar] [Ligar para todos]
+  //   desligada: [Salvar desligada] [Salvar e ligar] · ligada: [Salvar] [Salvar e desligar]
   function automationFooterEl(f) {
     const box = el('div', 'fw-footer');
     box.append(el('div', 'fw-safety-line', 'Só vale para quem entrar depois de ligar. Nunca envia para "Não enviar".'));
@@ -11373,53 +11287,18 @@
       box.append(activationEl({ ...editorToAutomation(f), active: true }, f.confirm, () => saveAutomationForm(f.confirm.mode), () => { f.confirm = null; f.activation = null; renderFollows(); }));
       return box;
     }
-    if (f.testPick) { box.append(testPickEl(f)); return box; }
     const row = el('div', 'ed-add fw-save-row');
     const b = (cls, text, fn) => { const x = fbtn(cls, text, fn); x.disabled = !!fl.saving; return x; };
     if (f.wasActive) {
       row.append(b('bbtn primary fw-save', fl.saving ? 'Salvando…' : 'Salvar', () => saveAutomationForm('keep')), b('bbtn fw-save-disable', 'Salvar e desligar', () => saveAutomationForm('off')));
-      if (f.testOn) row.append(b('bbtn fw-all', 'Ligar para todos', () => openEditorConfirm(f, 'todos')));
     } else {
-      row.append(b('bbtn fw-save-off', fl.saving ? 'Salvando…' : 'Salvar desligada', () => saveAutomationForm('off')), b('bbtn primary fw-save-on', 'Salvar e ligar', () => openEditorConfirm(f, 'on')),
-        b('bbtn fw-test-me', 'Testar comigo', () => openTestPick(f)));
+      row.append(b('bbtn fw-save-off', fl.saving ? 'Salvando…' : 'Salvar desligada', () => saveAutomationForm('off')), b('bbtn primary fw-save-on', 'Salvar e ligar', () => openEditorConfirm(f, 'on')));
     }
     row.append(fbtn('bbtn', 'Cancelar', () => backToList()));
     box.append(row);
     return box;
   }
 
-  // "Testar comigo": escolhe a conversa (a aberta já vem escolhida) e liga só para ela
-  async function openTestPick(f) {
-    f.testPick = true;
-    f.msg = '';
-    renderFollows();
-    let c = null;
-    try { c = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { c = null; }
-    if (!fl.recentChats) { try { fl.recentChats = await waRequest('recentChats', { limit: 30 }, { timeout: 6000 }); } catch { fl.recentChats = []; } }
-    if (c && c.kind === 'individual') {
-      if (!(fl.recentChats || []).some((x) => x.id === c.chatId)) fl.recentChats = [{ id: c.chatId, name: c.name || null }, ...(fl.recentChats || [])];
-      if (!f.test_chat_id) f.test_chat_id = c.chatId;
-    }
-    if (fl.edit === f && f.testPick) renderFollows();
-  }
-  function testPickEl(f) {
-    const box = el('div', 'fw-block act-box fw-testpick');
-    box.setAttribute('role', 'group');
-    box.setAttribute('aria-label', 'Testar comigo');
-    box.append(el('div', 'act-text', 'Ligar EM TESTE: roda só para esta conversa e ignora todos os outros. Para valer para todos depois, use "Ligar para todos".'));
-    const opts = [['', 'Escolha a conversa…'], ...(fl.recentChats || []).map((c) => [c.id, `${c.name || c.id.split('@')[0]}`])];
-    if (f.test_chat_id && !opts.some(([v]) => v === f.test_chat_id)) opts.push([f.test_chat_id, f.test_chat_id.split('@')[0]]);
-    const sel = el('select', 'ed-cat');
-    sel.setAttribute('aria-label', 'Conversa de teste');
-    opts.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; o.selected = v === (f.test_chat_id || ''); sel.append(o); });
-    sel.addEventListener('change', () => { f.test_chat_id = sel.value; });
-    const row = el('div', 'ed-add');
-    const go = fbtn('bbtn primary fw-test-go', fl.saving ? 'Ligando…' : 'Ligar em teste', () => saveAutomationForm('test'));
-    go.disabled = !!fl.saving;
-    row.append(go, fbtn('bbtn', 'Cancelar', () => { f.testPick = false; renderFollows(); }));
-    box.append(sel, row);
-    return box;
-  }
 
   // ── Limites e horário ──
 
@@ -12700,7 +12579,7 @@
   // ── 2.17.2: compra para o Facebook logo depois de salvar a venda (💰) ──
   // Pergunta "Enviar a compra para o Facebook? R$ 734,00" (ou envia sozinho / não pergunta, conforme Mais → "Ao salvar
   // venda"). O envio é o MESMO do 📈 (sendPurchaseEvent: mesmo valor da venda, mesma conversa, o anúncio salvo da
-  // conversa, o modo teste do 📈) e a compra real fica ligada à venda recém-criada (sale_id). Se a venda já tem
+  // conversa) e a compra real fica ligada à venda recém-criada (sale_id). Se a venda já tem
   // compra enviada (mesmo sale_id), não pergunta. Escolha guardada neste computador (chrome.storage.local).
   const SALE_FB_KEY = 'saleFbMode';
   const SALE_FB_MODES = [['ask', 'Perguntar (padrão)'], ['auto', 'Enviar sempre automático'], ['off', 'Não perguntar']];
@@ -12737,7 +12616,7 @@
       const saved = await call('getAdAttribution', { chatId: f.chatId }).catch(() => null);
       const ad = saved && saved.row ? adFromAttribution(saved.row) : null;
       const eventId = crypto.randomUUID();
-      const test = !!cv.test;
+      const test = false; // 12/11: sempre real
       const r = await call('sendPurchaseEvent', { event: {
         event_id: eventId, chat_id: f.chatId, phone, contact_name: f.customer_name || '', value, event_time: Math.floor(Date.now() / 1000), description: '', test,
         ad: ad ? { title: ad.title, source_id: ad.sourceId, source_app: ad.platform || ad.sourceApp, conversion_source: ad.conversionSource || null, ctwa_clid: ad.ctwaClid || null } : null,
@@ -12761,13 +12640,12 @@
     else if (fb.state === 'ask') {
       box.append(el('div', 'vd-fb-t', `📈 Enviar a compra para o Facebook? ${money}`));
       if (fb.recent) box.append(el('div', 'ed-note', `Atenção: já foi enviada uma compra de ${TS.money(fb.recent.value)} em ${dmHm(fb.recent.at)} nesta conversa. Envie só se for outro pedido.`));
-      if (cv.test) box.append(el('div', 'ed-note', 'Modo teste do 📈 ligado: vai como teste.'));
       const row = el('div', 'ed-add');
       row.append(fbtn('bbtn primary vd-fb-go', 'Enviar agora', () => saleFbSend(done.f || {}, done)), fbtn('bbtn vd-fb-no', 'Agora não', () => { done.fb = null; saleFbRender(done); }));
       box.append(row);
     } else if (fb.state === 'sending') box.append(el('div', 'lt-none loading', `Enviando a compra (${money}) para o Facebook…`));
     else if (fb.state === 'sent') {
-      box.append(el('div', 'vd-fb-t', `📈 Compra enviada ao Facebook ✓ ${money}${fb.test ? ' · modo teste' : ''} (o Facebook recebeu ${fb.n} evento${fb.n === 1 ? '' : 's'})`));
+      box.append(el('div', 'vd-fb-t', `📈 Compra enviada ao Facebook ✓ ${money} (o Facebook recebeu ${fb.n} evento${fb.n === 1 ? '' : 's'})`));
       if (fb.linkErr) box.append(el('div', 'ed-note', `Não consegui ligar a compra à venda: ${fb.linkErr}`));
     } else if (fb.state === 'dup') box.append(el('div', 'vd-fb-t', `📈 Essa compra já tinha sido enviada (não mandei de novo).`));
     else if (fb.state === 'error') {
@@ -13654,7 +13532,8 @@
 
   const ctabEl = shadow.querySelector('.ctab');
   const cv = { open: false, view: 'list', form: null, history: null, historyError: '', status: null, test: false, busy: false, msg: '', err: false, done: null, contactCfg: null, contactBusy: false, contactMsg: '', contactErr: false };
-  try { chrome.storage.local.get(['metaTestMode'], (r) => { cv.test = !!(r && r.metaTestMode); }); } catch { /* extensão recarregada */ }
+  // 12/11: sem modo teste — a compra vai sempre real; o modo teste salvo neste computador é desligado
+  try { chrome.storage.local.get(['metaTestMode'], (r) => { if (r && r.metaTestMode) storageSet({ metaTestMode: false }); }); } catch { /* extensão recarregada */ }
 
   shadow.querySelector('.conv-quick').addEventListener('click', () => { if (!state.open) setOpen(true); setSection('conversoes'); openConversionForm(); });
   // 2.5.0: 🔁 abre "Esta conversa nas automações" (seção Automações)
@@ -14024,7 +13903,7 @@
     if (phone && (await phoneLock(l.chatId, phone, { requireActive: false }))) { ca.lastSkip = 'telefone não confere com a conversa'; return; } // não bate: não envia
     try {
       await call('sendContactEvent', { event: {
-        chat_id: l.chatId, phone, contact_name: name || null, event_time: Math.floor(Number(l.t)), test: !!cfg.test,
+        chat_id: l.chatId, phone, contact_name: name || null, event_time: Math.floor(Number(l.t)), test: false,
         ad: { title: ad.title, source_id: ad.sourceId, source_app: ad.platform || ad.sourceApp, conversion_source: ad.conversionSource, ctwa_clid: ad.ctwaClid || null },
       } });
       ca.lastSkip = '';
@@ -14369,7 +14248,6 @@
     const r2 = el('div', 'sc-row');
     r2.append(schedField('Valor (R$)', val), schedField('Data e hora da compra', when));
     sec.append(r2, inputField('Descrição / produto (opcional)', f.description, (v) => { f.description = v; }, { max: 200, aria: 'Descrição da compra' }));
-    if (cv.test) sec.append(el('div', 'ed-note', 'Modo teste ligado: o evento aparece em "Testar eventos" no Gerenciador de Eventos.'));
     if (f.recent && f.askAgain) {
       // 2.9.0: trava contra compra duplicada (só compras REAIS dos últimos 7 dias contam)
       const box = el('div', 'fw-test cv-dup');
@@ -14406,7 +14284,7 @@
     try {
       const r = await call('sendPurchaseEvent', { event: {
         event_id: f.eventId, chat_id: f.chatId, phone: f.phone, contact_name: f.name, value, event_time: Math.floor(whenMs / 1000),
-        description: f.description, test: cv.test,
+        description: f.description, test: false,
         ad: f.ad ? { title: f.ad.title, source_id: f.ad.sourceId, source_app: f.ad.platform || f.ad.sourceApp, conversion_source: f.ad.conversionSource || null, ctwa_clid: f.ad.ctwaClid || null } : null,
       } });
       if (cv.form === f) { cv.done = { ...r, value }; cv.view = 'done'; }
@@ -14424,7 +14302,7 @@
     if (cv.view === 'form' && cv.form) { renderConversionForm(); return; }
     if (cv.view === 'done' && cv.done) {
       const sec = el('section', 'crmsec');
-      sec.append(el('div', 'fw-test', cv.done.duplicate ? 'Esse evento já tinha sido enviado (não mandei de novo).' : `Enviado ✓ (o Facebook recebeu ${cv.done.events_received} evento${cv.done.events_received === 1 ? '' : 's'})${cv.done.test ? ' · modo teste' : ''}`));
+      sec.append(el('div', 'fw-test', cv.done.duplicate ? 'Esse evento já tinha sido enviado (não mandei de novo).' : `Enviado ✓ (o Facebook recebeu ${cv.done.events_received} evento${cv.done.events_received === 1 ? '' : 's'})`));
       // 2.10.5: compra real → liga à venda do ERP
       const fd = cv.form;
       const lk = !cv.done.test && fd && saleLinkEl({ eventId: fd.eventId, chatId: fd.chatId, phone: fd.phone, value: cv.done.value }, { auto: true });
@@ -14435,15 +14313,8 @@
     }
     const top = el('div', 'ed-add');
     top.append(fbtn('bbtn primary', '📈 Compra desta conversa', () => openConversionForm()));
-    const tl = el('label', 'sc-radio');
-    const tc = el('input');
-    tc.type = 'checkbox';
-    tc.checked = cv.test;
-    tc.addEventListener('change', () => { cv.test = tc.checked; storageSet({ metaTestMode: cv.test }); });
-    tl.append(tc, 'Modo teste');
-    top.append(tl);
     ctabEl.append(top);
-    ctabEl.append(el('div', 'ed-note', 'Se o Tintim ainda estiver ativo, não envie a mesma compra pelos dois (o Facebook conta duas vezes). Use o modo teste até desligar o Tintim.'));
+    ctabEl.append(el('div', 'ed-note', 'Se o Tintim ainda estiver ativo, não envie a mesma compra pelos dois (o Facebook conta duas vezes).'));
     // 2.6.0: "Contato" automático (vale para todos os computadores; a aba que executa os envios manda)
     const auto = el('section', 'crmsec');
     auto.append(el('div', 'wt-head', 'CONTATO AUTOMÁTICO'));
@@ -14460,8 +14331,7 @@
         l.append(i, label);
         return l;
       };
-      auto.append(mk('Enviar \'Contato\' ao Facebook quando um lead novo de anúncio chamar', cc.on, (v) => saveContactCfg({ on: v, test: cc.test })));
-      auto.append(mk('Modo teste (só para o Contato)', cc.test, (v) => saveContactCfg({ on: cc.on, test: v })));
+      auto.append(mk('Enviar \'Contato\' ao Facebook quando um lead novo de anúncio chamar', cc.on, (v) => saveContactCfg({ on: v, test: false })));
       auto.append(el('div', 'crm-intro', cc.on
         ? `Ligado${cc.since ? ` desde ${schedWhen(cc.since)}` : ''}: só conversas novas que chegarem de anúncio depois disso, uma vez por conversa (no máximo 1 a cada 10 s), pela aba que executa os envios.`
         : 'Desligado. Ao ligar, vale só para os leads que chegarem depois (nunca para conversas antigas).'));

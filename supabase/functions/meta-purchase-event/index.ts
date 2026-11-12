@@ -1,7 +1,7 @@
 // Edge Function: eventos de compra (Purchase) e contato (Contact, 2.6.0) para o Facebook pela API de Conversões.
 // Só para usuário LOGADO (o JWT do Authorization é conferido no Supabase Auth; a chave anon sozinha
-// é recusada). Secrets: META_ACCESS_TOKEN, META_DATASET_ID e, opcionais, META_WABA_ID e
-// META_TEST_EVENT_CODE. A lógica fica em event.ts.
+// é recusada). Secrets: META_ACCESS_TOKEN, META_DATASET_ID e, opcional, META_WABA_ID (12/11: sem modo teste;
+// META_TEST_EVENT_CODE não é mais usado, o envio é sempre real). A lógica fica em event.ts.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { handle } from "./event.ts";

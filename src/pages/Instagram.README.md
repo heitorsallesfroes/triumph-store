@@ -102,8 +102,10 @@ do Instagram (sem etiquetas, quadro ou régua).
 ## Segurança (como fica ligado)
 - **Chave geral** `system_config.ig_automations_enabled` (nasce `false`): desligada, o webhook **recebe e grava** tudo
   e **não envia nada** (nem resposta pública). Ligar pede confirmação.
-- **Modo teste** `ig_test_mode` (nasce `true`): só as contas da lista `ig_test_accounts` (@ ou IGSID) recebem; as
-  outras ficam no histórico como "pulado: modo teste". Desligar o modo teste também pede confirmação.
+- **Sem modo teste** (12/11): a tela tem só **"Automações do Instagram: ligadas / desligadas"** (um botão) e o Antispam;
+  o sistema fica sempre no modo real. A migration `20261118120000_sem_modo_teste.sql` grava `ig_test_mode = false` e
+  `ig_test_accounts = []` (o servidor ainda lê essas chaves, mas sem tela). A chave geral e as automações ligadas não
+  mudam: com a chave ligada, as automações ligadas respondem a **todos**.
 - **Antispam** `ig_dm_cooldown_hours` (24): no máximo 1 DM automática por pessoa a cada X horas, **somando todas as
   automações**, com trava atômica no Postgres (`ig_claim_dm`: dois eventos no mesmo segundo → só 1 passa). Se a Meta
   recusar o envio, a vez volta (`ig_release_dm`).
@@ -137,7 +139,7 @@ os campos do webhook e volta para o ERP (`?pagina=instagram&aba=automacoes&ig=co
 
 ## Automações (aba **Automações**)
 Cartões como no ManyChat: **Quando…** · **E o comentário possui…** · **Responder no comentário** · **Eles receberão
-(DM)**, com ligar/desligar de cada uma (o selo mostra a chave geral e o modo teste) e as métricas do período (7/30/90
+(DM)**, com ligar/desligar de cada uma (selo **LIGADA** / **DESLIGADA**) e as métricas do período (7/30/90
 dias): disparos, DMs enviadas, cliques (com link /l/), conversas no WhatsApp, vendas, R$ e CTR (cliques ÷ DMs; com a
 frase: conversas ÷ DMs).
 - Gatilhos: comentário em qualquer post/reel ou em **posts escolhidos** (grade de miniaturas), com "qualquer palavra"
@@ -194,14 +196,15 @@ conversas no WhatsApp → vendas → R$.
 7. Com o app em **modo de desenvolvimento**, só contas com função no app (testadores) recebem; para todos, peça na
    **Análise do app** o acesso avançado a `instagram_business_manage_messages` e `instagram_business_manage_comments` e
    publique o app.
-8. Teste com a chave geral ligada **em modo teste** e a sua conta pessoal na lista; só depois desligue o modo teste.
+8. Desligue a automação do ManyChat antes de ligar a daqui (para não responder em dobro).
 
 ## Testes (nunca chamam a Meta de verdade)
 - `node scripts/tests/igAuto.test.ts`: servidor com a Meta SIMULADA e o banco em memória — assinatura válida/inválida,
   200 sempre, eco, duplicados (mid e comment_id), antispam concorrente, janelas de 24 h e 7 dias, chave geral desligada,
   modo teste, fallback do botão, erro da Meta, renovação do token, Conectar (OAuth), cron e Direct.
 - `node scripts/tests/igAutoErp.test.ts`: contas da tela ("foi para o WhatsApp", métricas, funil, textos).
-- `node scripts/tests/igAutoChrome.test.ts`: Chrome real — Automações, Direct, funil, celular, só grava o permitido.
+- `node scripts/tests/igAutoChrome.test.ts`: Chrome real — Automações (sem modo teste na tela, mesmo com
+  `ig_test_mode = true` no banco), Direct, funil, celular, só grava o permitido.
 - `node extension/tests/igphrase.test.cjs`: a frase na 1ª mensagem do WhatsApp (extensão 2.18.2).
 
 ---

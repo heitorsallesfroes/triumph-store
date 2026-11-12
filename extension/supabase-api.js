@@ -3949,7 +3949,7 @@
     const body = {
       chat_id: e.chat_id, phone: String(e.phone || '').replace(/\D/g, '').slice(0, 15), contact_name: clip(e.contact_name, 100),
       value: Math.round(value * 100) / 100, currency: 'BRL', event_time: Math.floor(Number(e.event_time)), event_id: e.event_id,
-      description: clip(e.description, 200), test: e.test === true,
+      description: clip(e.description, 200), test: false, // 12/11: sempre real
       ad: adBody(ad),
     };
     const r = await callMetaFunction(body);
@@ -3967,7 +3967,7 @@
     const ad = e.ad && typeof e.ad === 'object' ? e.ad : {};
     const body = {
       event_name: 'Contact', chat_id: e.chat_id, phone: String(e.phone || '').replace(/\D/g, '').slice(0, 15), contact_name: clip(e.contact_name, 100),
-      currency: 'BRL', event_time: Math.floor(Number(e.event_time)), test: e.test === true, ad: adBody(ad),
+      currency: 'BRL', event_time: Math.floor(Number(e.event_time)), test: false, ad: adBody(ad), // 12/11: sempre real
     };
     const r = await callMetaFunction(body);
     if (r.status === 404) throw new Error('A função meta-purchase-event ainda não foi publicada no Supabase');

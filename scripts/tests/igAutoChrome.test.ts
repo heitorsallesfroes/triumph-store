@@ -6,8 +6,8 @@
 //   - Conectar: "Conectado como @store_triumph · token válido até DD/MM", alerta (< 7 dias), segredos que faltam
 //     (botão desligado), passo a passo da Meta com as URLs, volta do login (?ig=conectado) e o botão levando ao
 //     Login do Instagram com os escopos certos;
-//   - chave geral "Automações do Instagram: desligadas" → ligadas em MODO TESTE (com confirmação), contas de teste,
-//     antispam; a automação "Comentários → WhatsApp (cópia do ManyChat)" DESLIGADA com os textos do ManyChat;
+//   - chave geral "Automações do Instagram: desligadas" → "ligadas" (com confirmação; 12/11: sem modo teste, sem contas
+//     de teste e sem os selos "MODO TESTE" / "chave geral desligada", mesmo com ig_test_mode = true no banco), antispam; a automação "Comentários → WhatsApp (cópia do ManyChat)" DESLIGADA com os textos do ManyChat;
 //     ligar/desligar; métricas (disparos, DMs, cliques, conversas, vendas, R$, CTR);
 //   - Nova automação: posts escolhidos (grade da Meta simulada), palavras-chave, erros, salva DESLIGADA;
 //   - Direct: lista, "✅ foi para o WhatsApp" / "⏳ ainda não foi", filtro com contador, responder (24 h), "Mandar o
@@ -168,10 +168,10 @@ async function main() {
       await shot('automacoes.png');
     });
     await step('chave geral e cartões', async () => {
-      const st0 = await ev(`${Hs} return { main: txt(tid('iga-main-state')), test: tid('iga-test-mode').checked, cards: $$('[data-testid="iga-card"]').map((c) => txt(c)) };`);
+      const st0 = await ev(`${Hs} return { main: txt(tid('iga-main-state')), test: !!tid('iga-test-mode') || !!tid('iga-test-list') || !!$('input[aria-label="Conta de teste (@ ou IGSID)"]') || /modo teste|contas? de teste|chave geral/i.test(txt(tid('iga-safety'))), cards: $$('[data-testid="iga-card"]').map((c) => txt(c)) };`);
       const mc = st0.cards[0];
-      check('tudo nasce desligado: "Automações do Instagram: desligadas", modo teste marcado; a cópia do ManyChat DESLIGADA',
-        st0.main === 'Automações do Instagram: desligadas' && st0.test && /Comentários → WhatsApp \(cópia do ManyChat\)\s*DESLIGADA/.test(mc), JSON.stringify(st0).slice(0, 400));
+      check('tudo nasce desligado: "Automações do Instagram: desligadas"; 12/11: sem a caixa "Modo teste" nem a lista de contas de teste; a cópia do ManyChat DESLIGADA',
+        st0.main === 'Automações do Instagram: desligadas' && !st0.test && /Comentários → WhatsApp \(cópia do ManyChat\)\s*DESLIGADA/.test(mc), JSON.stringify(st0).slice(0, 400));
       check('cartão do ManyChat: Quando… qualquer post/reel · qualquer palavra · as 3 respostas públicas · a DM · botão "WhatsApp Loja" com a frase',
         /Quando…\s*Alguém comenta em qualquer post ou reel/.test(mc) && /E o comentário possui…\s*Qualquer palavra/.test(mc) && mc.includes('Te enviei todos os detalhes no direct 🔥') && mc.includes('Dá uma olhada no seu direct 👀') && mc.includes('Oiii, iniciamos seu atendimento pelo direct')
         && mc.includes('estamos com uma promoção top rolando nesse momento 🔥') && /WhatsApp Loja/.test(mc) && mc.includes('WhatsApp com a frase: “Olá! Vi o comentário no Instagram e quero saber da promoção 🔥”'), mc);
@@ -180,21 +180,20 @@ async function main() {
       const met = await ev(`${Hs} return $$('[data-testid="iga-metrics"]').map(txt);`);
       check('métricas: ManyChat 1 disparo · 1 DM · cliques — · 1 conversa · 1 venda · R$ 499,90 · DM → conversa 100%; Story: 1 · 1 · 2 cliques · CTR 200%',
         /1\s*Disparos\s*1\s*DMs enviadas\s*—\s*Cliques\s*1\s*Conversas no WhatsApp\s*1\s*Vendas\s*R\$\s*499,90\s*Faturamento\s*100%\s*DM → conversa/.test(met[0]) && /1\s*Disparos\s*1\s*DMs enviadas\s*2\s*Cliques\s*0\s*Conversas no WhatsApp/.test(met[1]) && /200%\s*CTR/.test(met[1]), JSON.stringify(met));
-      // ligar a chave geral (confirmação) → MODO TESTE; adicionar conta de teste; antispam
+      // ligar a chave geral (confirmação) → "ligadas"; antispam
       await ev(`${Hs} tid('iga-main-switch').click(); return true;`);
-      await waitFor(`${Hs} return /MODO TESTE/.test(txt(tid('iga-main-state')));`);
-      await ev(`${Hs} setVal($('input[aria-label="Conta de teste (@ ou IGSID)"]'), '@MinhaConta'); await wait(50); tid('iga-test-add').click(); return true;`);
-      await waitFor(`${Hs} return /@minhaconta/.test(txt(tid('iga-test-list')));`);
+      await waitFor(`${Hs} return txt(tid('iga-main-state')) === 'Automações do Instagram: ligadas';`);
       await ev(`${Hs} setVal($('input[aria-label="Horas entre DMs automáticas"]'), '12'); await wait(50); tid('iga-cooldown-save').click(); return true;`);
       await sleep(500);
       const cfg = await ev(`return Object.fromEntries(window.__DB.system_config.map((r) => [r.key, r.value]));`);
       const confirms = await ev(`return window.__CONFIRMS;`);
-      check('chave geral: confirma antes de ligar → "ligadas em MODO TESTE"; conta de teste @minhaconta; antispam 12 h (system_config)',
-        cfg.ig_automations_enabled === 'true' && cfg.ig_test_mode === 'true' && cfg.ig_test_accounts === JSON.stringify([{ username: 'minhaconta' }]) && cfg.ig_dm_cooldown_hours === '12' && confirms.length === 1 && /modo teste/.test(confirms[0]), JSON.stringify({ cfg, confirms }));
+      check('chave geral: confirma antes de ligar ("Ligar as automações do Instagram?") → "Automações do Instagram: ligadas"; antispam 12 h (system_config); a tela não grava modo teste',
+        cfg.ig_automations_enabled === 'true' && cfg.ig_test_mode === 'true' && cfg.ig_test_accounts === '[]' && cfg.ig_dm_cooldown_hours === '12' && confirms.length === 1 && confirms[0] === 'Ligar as automações do Instagram?', JSON.stringify({ cfg, confirms }));
       await ev(`${Hs} $$('[data-testid="iga-card"]')[0].querySelector('[data-testid="iga-card-toggle"]').click(); return true;`);
-      await waitFor(`${Hs} return /LIGADA · MODO TESTE/.test(txt($$('[data-testid="iga-card"]')[0]));`);
+      await waitFor(`${Hs} return txt($$('[data-testid="iga-card"]')[0].querySelector('[data-testid="iga-card-status"]')) === 'LIGADA';`);
       const act = await ev(`return window.__DB.ig_automations.map((a) => a.active);`);
-      check('ligar a automação: só ela liga (no cartão: "LIGADA · MODO TESTE")', JSON.stringify(act) === '[true,false]', JSON.stringify(act));
+      const badges = await ev(`${Hs} return $$('[data-testid="iga-card-status"]').map(txt);`);
+      check('ligar a automação: só ela liga (no cartão só "LIGADA", sem "MODO TESTE" / "chave geral desligada")', JSON.stringify(act) === '[true,false]' && JSON.stringify(badges) === '["LIGADA","DESLIGADA"]', JSON.stringify({ act, badges }));
       await shot('automacoes-ligadas.png');
     });
     await step('nova automação', async () => {

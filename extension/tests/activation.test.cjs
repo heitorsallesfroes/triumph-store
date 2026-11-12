@@ -33,18 +33,29 @@ test('editor: sem a caixa "Ativa" e sem o quadro Segurança; os botões de cada 
   const ed = c.slice(c.indexOf('  function renderAutomationEditor() {'), c.indexOf('  // ── Limites e horário ──'));
   assert.ok(!/act\.append\(cb, 'Ativa'\)/.test(ed), 'a caixa "Ativa" saiu');
   assert.ok(!/'SEGURANÇA'/.test(ed) && !/function automationSafetyEl/.test(c), 'o quadro Segurança saiu');
-  ['Salvar desligada', 'Salvar e ligar', 'Testar comigo', 'Salvar e desligar', 'Ligar para todos', 'Só vale para quem entrar depois de ligar. Nunca envia para "Não enviar".']
+  ['Salvar desligada', 'Salvar e ligar', 'Salvar e desligar', 'Só vale para quem entrar depois de ligar. Nunca envia para "Não enviar".']
     .forEach((t) => assert.ok(ed.includes(t), t));
+  // 12/11: sem modo teste — nada de "Testar comigo", "Ligar em teste", "Ligar para todos" nem conversa de teste
+  ['Testar comigo', 'Ligar em teste', 'Ligar para todos', 'Conversa de teste', 'EM TESTE'].forEach((t) => assert.ok(!ed.includes(t), `sem ${t}`));
+  assert.ok(/test_chat_id: null, \/\/ 12\/11/.test(c), 'salva sempre sem conversa de teste');
   assert.ok(/'bbtn primary fw-save-on', 'Salvar e ligar'/.test(ed) && /'bbtn fw-save-off'/.test(ed), 'laranja e cinza');
-  // "Ligar para todos" religa (setAutomationActive) para o "daqui pra frente" recomeçar
-  assert.ok(/if \(mode === 'todos'\) await call\('setAutomationActive'/.test(ed));
 });
 test('lista: interruptor (role=switch) liga com a confirmação e desliga na hora; sem o botão "Ligar"/"Desligar"', () => {
   const c = src('content.js');
   const card = c.slice(c.indexOf('  function automationCard(a) {'), c.indexOf('  // ── 2.8.8: ativar = vale daqui pra frente ──'));
   assert.ok(/'fw-switch'/.test(card) && /setAttribute\('role', 'switch'\)/.test(card) && /toggleAutomation\(a\)/.test(card));
   assert.ok(!/fbtn\('ed-mini', a\.active \? 'Desligar' : 'Ligar'/.test(card));
-  assert.ok(/'EM TESTE'/.test(card));
+  assert.ok(!/EM TESTE|Em teste/.test(card), '12/11: sem selo de teste');
+});
+test('12/11: sem modo teste em nenhuma tela da extensão (automações, réguas, disparos, 📈 e compra ao Facebook)', () => {
+  const c = src('content.js');
+  ['Testar comigo', 'Ligar em teste', 'Conversa de teste', 'conversa de teste', 'Modo teste', 'modo teste do 📈', 'Testar só com esta conversa', "'EM TESTE'", 'Ligada EM TESTE']
+    .forEach((t) => assert.ok(!c.includes(t), `sem "${t}"`));
+  assert.ok(!/function (vbAskTest|openTestPick|testPickEl)\b/.test(c), 'sem as funções do teste');
+  assert.ok(/const test = false; \/\/ 12\/11: sempre real/.test(c) && /description: f\.description, test: false,/.test(c), 'compra ao Facebook sempre real');
+  assert.ok(/metaTestMode\) storageSet\(\{ metaTestMode: false \}\)/.test(c), 'modo teste salvo neste computador é desligado');
+  const api = src('supabase-api.js');
+  assert.ok(/description: clip\(e\.description, 200\), test: false,/.test(api) && /test: false, ad: adBody\(ad\), \/\/ 12\/11/.test(api), 'a API manda test=false');
 });
 
 let ok = 0;

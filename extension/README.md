@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.18.5** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.18.6** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -669,7 +669,7 @@ o que hoje é feito pelo Tintim.
   embaralhado (hash SHA-256), nunca em texto. O token do Facebook fica só no
   Supabase (secret da função), nunca na extensão.
 - Seção **Conversões** no menu: histórico (data, cliente, valor, anúncio,
-  método, status, teste) e o interruptor **Modo teste**.
+  método, status). A compra vai sempre real (12/11: sem modo teste).
 - "Detalhes técnicos do anúncio" (recolhido) mostra só os nomes e tamanhos
   dos campos do anúncio. Mande um print dele se o anúncio não for detectado.
 
@@ -693,14 +693,14 @@ o que hoje é feito pelo Tintim.
   o número verdadeiro.
 - **Contato automático:** em Conversões → **CONTATO AUTOMÁTICO**, o
   interruptor "Enviar 'Contato' ao Facebook quando um lead novo de anúncio
-  chamar" (**desligado** por padrão) e um **Modo teste** só para ele. Ligado,
+  chamar" (**desligado** por padrão; sempre real). Ligado,
   a aba que executa os envios manda **1 evento "Contact" por conversa** nova
   que chegar de anúncio **depois de ligar** (nunca para conversas antigas), no
   máximo 1 a cada 10 s. A detecção usa só o WhatsApp Web aberto (sem consultar
   o banco); o interruptor vale para todos os computadores. Os Contatos
   aparecem no histórico como "Contato (lead de anúncio)".
 - **Tintim:** se ainda estiver ativo, não envie a mesma compra pelos dois (o
-  Facebook conta duas vezes). Use o modo teste até desligar o Tintim.
+  Facebook conta duas vezes).
 - **Publique a função de novo** depois de atualizar (passo 6 abaixo): a 2.6.0
   mudou `supabase/functions/meta-purchase-event/`. Sem migration nova.
 
@@ -752,9 +752,7 @@ o que hoje é feito pelo Tintim.
 2. **Token da API de Conversões:** no mesmo Conjunto de dados, aba
    **Configurações** → seção **API de Conversões** → **Gerar token de
    acesso**. Copie o token (ele só aparece uma vez).
-3. **Código de teste:** aba **Testar eventos** → em "API de Conversões" há um
-   código como `TEST12345`. Copie.
-4. **(Opcional) ID da conta do WhatsApp Business (WABA):** em
+3. **(Opcional) ID da conta do WhatsApp Business (WABA):** em
    business.facebook.com → **Configurações** → **Contas** → **Contas do
    WhatsApp**. Só ajuda quando o WhatsApp entrega o identificador do clique do
    anúncio. Sem ele, o evento vai pelo telefone (método "chat").
@@ -762,22 +760,18 @@ o que hoje é feito pelo Tintim.
    → **Secrets** (ou "Manage secrets") → adicione, com estes nomes exatos:
    - `META_ACCESS_TOKEN` = o token do passo 2
    - `META_DATASET_ID` = o ID do passo 1
-   - `META_TEST_EVENT_CODE` = o código do passo 3
-   - `META_WABA_ID` = o ID do passo 4 (opcional)
-6. **Publicar a função** (no computador com o projeto, na pasta `project`):
+   - `META_WABA_ID` = o ID do passo 3 (opcional)
+   - (`META_TEST_EVENT_CODE` não é mais usado: desde 12/11 o envio é sempre real)
+5. **Publicar a função** (no computador com o projeto, na pasta `project`):
    ```
    npx supabase login
    npx supabase functions deploy meta-purchase-event --project-ref jcnvlqfpmmejtzfhfjix
    ```
-7. **Aplicar a migration** `supabase/migrations/20261103190000_wa_conversion_events.sql`
+6. **Aplicar a migration** `supabase/migrations/20261103190000_wa_conversion_events.sql`
    (SQL Editor do Supabase).
 
-**Testar:** Diagnóstico → linha "Conversões Facebook" deve dizer "função
-publicada; secrets ok". Depois, em **Conversões**, ligue **Modo teste**, abra a
-conversa **"Meu Numero Pessoal"**, clique em 📈, coloque **R$ 1** e clique em
-**Enviar compra**. Deve aparecer "Enviado ✓ (o Facebook recebeu 1 evento)". No
-Gerenciador de Eventos → **Testar eventos**, o evento "Purchase" aparece em
-alguns segundos. Depois desligue o Modo teste.
+**Conferir:** Diagnóstico → linha "Conversões Facebook" deve dizer "função
+publicada; secrets ok".
 
 ### Privacidade da biblioteca WA-JS
 
@@ -808,6 +802,23 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.18.6 — sem "modo teste": o sistema fica sempre no modo real
+- **Automações, réguas e disparos**: saíram "Testar comigo", "Ligar em teste", "Ligar para todos" (sair do teste), a
+  escolha da "conversa de teste" e o selo **EM TESTE** — no editor antigo, no construtor (o "⋯" fica só com
+  **Simular**), na sequência antiga e no "+ Nova automação" (passo a passo). **Salvar e ligar** liga direto, com a
+  mesma confirmação ("vale daqui pra frente") e conferindo as caixas incompletas (caixa vermelha / "Para ligar, falta…").
+- **Uma automação que ficou salva ligada só em teste** abre **desligada** no editor (salvar não a liga para todos sem
+  querer) e é salva sempre sem conversa de teste; ao ligar ("Salvar e ligar"), o "daqui pra frente" recomeça. A migration `20261118120000_sem_modo_teste.sql` desliga no banco as
+  que estavam em teste (hoje: nenhuma). As ligadas de verdade não mudam.
+- **📈 Compra / "Enviar a compra para o Facebook" / Contato automático**: sem a caixa **Modo teste**; o envio vai sempre
+  real (`test: false`; a função `meta-purchase-event` não manda mais `test_event_code` — publique a função de novo).
+  O modo teste salvo neste computador (`metaTestMode`) é desligado ao abrir.
+- O motor continua lendo `test_chat_id` (sem tela). "Testar com a conversa aberta" (só mostra onde a conversa está
+  nas automações; não liga nada) e o "Testar envio" do diagnóstico do produto continuam.
+- Testes: `activation.test.cjs` (sem nenhum texto de teste nas telas, compra sempre real) e o Chrome real (editor e
+  construtor sem "Testar comigo"; "Salvar e ligar" direto; salva "em teste" abre desligada e liga para todos sem
+  conversa de teste; 📈 sem "Modo teste"; a compra vai com `test: false`).
 
 ### 2.18.5 — "🔁 ESTA CONVERSA": a pessoa da conversa aberta nas automações, com ações
 - **Causa** (2.18.2): o painel procurava os percursos só pelo chat_id da conversa aberta; quando o percurso estava

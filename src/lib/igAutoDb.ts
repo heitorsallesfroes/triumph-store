@@ -1,6 +1,6 @@
 // Instagram FASE 3 — leitura e gravação das abas Automações e Direct.
-// Grava SÓ em ig_automations (criar/editar/ligar/desligar) e nas chaves ig_* do system_config (chave geral, modo
-// teste, contas de teste, antispam, DM do Direct). Mandar mensagem, Conectar e a lista de posts passam pela edge
+// Grava SÓ em ig_automations (criar/editar/ligar/desligar) e nas chaves ig_* do system_config (chave geral,
+// antispam; ig_test_mode/ig_test_accounts ficam no banco sem tela desde 12/11, DM do Direct). Mandar mensagem, Conectar e a lista de posts passam pela edge
 // function "ig-manage" (o token fica nela). Sem a migration 20261115120000: "missing" = true e as telas explicam.
 import { supabase } from './supabase';
 import { fetchAllRows } from './resumoAnualCalc';

@@ -1,8 +1,8 @@
 // Aba Instagram → Automações (FASE 3, substituto do ManyChat). TUDO NASCE DESLIGADO:
 //   - Conectar Instagram (Login do Instagram, token de longa duração no servidor, renovação automática) + passo a passo
 //     da Meta;
-//   - chave geral "Automações do Instagram", modo teste (só as contas da lista recebem) e o antispam (1 DM automática
-//     por pessoa a cada X horas, todas as automações somadas);
+//   - chave geral "Automações do Instagram" (ligadas / desligadas; 12/11: sem modo teste, sempre real) e o antispam
+//     (1 DM automática por pessoa a cada X horas, todas as automações somadas);
 //   - cartões "Quando… / E o comentário possui… / Responder no comentário / Eles receberão (DM)" com ligar/desligar,
 //     editar e as métricas do período (disparos, DMs, cliques, conversas no WhatsApp, vendas, R$, CTR).
 // Regras: src/lib/igAuto.ts (as mesmas do servidor) · banco: src/lib/igAutoDb.ts · README: src/pages/Instagram.README.md
@@ -11,8 +11,8 @@ import { CheckCircle2, ExternalLink, Pencil, Plus, RefreshCw, ShieldAlert, X } f
 import { useErpRefresh } from '../../lib/erpRefresh';
 import { lastDays } from '../../lib/igLinksDb';
 import {
-  TRIGGERS, automationMetrics, blankAutomation, cleanUser, hasText, linkOf, suggestAutoCode, validateAutomation, whenText,
-  type AutoMetrics, type Automation, type ConvSale, type IgRun, type IgSettings, type TestAccount, type Trigger,
+  TRIGGERS, automationMetrics, blankAutomation, hasText, linkOf, suggestAutoCode, validateAutomation, whenText,
+  type AutoMetrics, type Automation, type ConvSale, type IgRun, type IgSettings, type Trigger,
 } from '../../lib/igAuto';
 import {
   IG_AUTO_MIGRATION, IG_CRON_MIGRATION, ManageError, callManage, loadAutomations, loadClicksByLink, loadConvSales, loadLinkCodes, loadRuns, loadSettings, loadWebhookLog, saveAutomation, saveSetting, setAutomationActive,
@@ -75,7 +75,7 @@ export default function IgAutomations() {
       {!data && !error && <div style={muted}>Carregando…</div>}
       {data && !data.missing && !data.list.length && <div style={{ ...box, ...muted }}>Nenhuma automação ainda.</div>}
       <div className="iga-cards">
-        {data && data.list.map((a) => <AutoCard key={a.id} a={a} m={metrics.get(a.id)!} settings={data.settings} links={data.links} onEdit={() => setEdit(a)} onToggled={load} />)}
+        {data && data.list.map((a) => <AutoCard key={a.id} a={a} m={metrics.get(a.id)!} links={data.links} onEdit={() => setEdit(a)} onToggled={load} />)}
       </div>
 
       {data && data.log.length > 0 && (
@@ -158,17 +158,16 @@ function Steps({ st }: { st: ManageStatus | null }) {
         <li>No celular, no app do Instagram: <b>Configurações → Mensagens e respostas aos stories → Ferramentas conectadas → Permitir acesso às mensagens</b> (ligado).</li>
         <li>Volte aqui e clique em <b>Conectar Instagram</b> (entre como @store_triumph). Aplique também a migration {code(IG_CRON_MIGRATION)} (renovação diária do token).</li>
         <li>Enquanto o app estiver em <b>modo de desenvolvimento</b>, só contas com função no app recebem respostas; para todos, peça as permissões {code('instagram_business_manage_messages')} e {code('instagram_business_manage_comments')} na Análise do app e publique o app.</li>
-        <li>Teste primeiro com o <b>modo teste</b> ligado e a sua conta pessoal na lista. Só depois desligue o modo teste. Desligue a automação no ManyChat antes, para não responder em dobro.</li>
+        <li>Desligue a automação no ManyChat antes de ligar aqui, para não responder em dobro.</li>
       </ol>
     </details>
   );
 }
 
-// ── chave geral, modo teste, contas de teste e antispam ──
+// ── chave geral e antispam (12/11: sem modo teste) ──
 function SafetyCard({ settings, onSaved }: { settings: IgSettings; onSaved: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const [add, setAdd] = useState('');
   const [hours, setHours] = useState(String(settings.cooldownHours));
   useEffect(() => { setHours(String(settings.cooldownHours)); }, [settings.cooldownHours]);
   const save = async (key: string, value: string) => {
@@ -176,25 +175,11 @@ function SafetyCard({ settings, onSaved }: { settings: IgSettings; onSaved: () =
     try { await saveSetting(key, value); onSaved(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   const toggleMain = () => {
-    if (!settings.enabled && !window.confirm(settings.testMode ? 'Ligar as automações do Instagram? No modo teste só as contas da lista recebem.' : 'Ligar as automações do Instagram para TODOS?')) return;
+    if (!settings.enabled && !window.confirm('Ligar as automações do Instagram?')) return;
     save('ig_automations_enabled', settings.enabled ? 'false' : 'true');
   };
-  const toggleTest = () => {
-    if (settings.testMode && !window.confirm('Desligar o modo teste? Todos que comentarem/mandarem mensagem vão receber as automações ligadas.')) return;
-    save('ig_test_mode', settings.testMode ? 'false' : 'true');
-  };
-  const addAccount = () => {
-    const v = add.trim();
-    const acc: TestAccount | null = /^[0-9]{5,30}$/.test(v) ? { igsid: v } : cleanUser(v) ? { username: cleanUser(v) } : null;
-    if (!acc) { setErr('Escreva o @ (ex.: @minhaconta) ou o IGSID (só números).'); return; }
-    const list = [...settings.testAccounts.filter((t) => !(t.igsid && t.igsid === acc.igsid) && !(t.username && t.username === acc.username)), acc];
-    setAdd('');
-    save('ig_test_accounts', JSON.stringify(list));
-  };
-  const remove = (t: TestAccount) => save('ig_test_accounts', JSON.stringify(settings.testAccounts.filter((x) => x !== t)));
   const state = !settings.enabled ? { text: 'Automações do Instagram: desligadas', color: 'var(--text-muted)', sub: 'O webhook recebe e grava tudo, mas não envia nada.' }
-    : settings.testMode ? { text: 'Automações do Instagram: ligadas em MODO TESTE', color: ORANGE, sub: 'Só as contas da lista abaixo recebem respostas.' }
-    : { text: 'Automações do Instagram: ligadas para todos', color: GREEN, sub: 'As automações ligadas respondem a todos.' };
+    : { text: 'Automações do Instagram: ligadas', color: GREEN, sub: 'As automações ligadas respondem a todos.' };
   return (
     <div style={{ ...box, borderColor: settings.enabled ? state.color : bd }} data-testid="iga-safety">
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
@@ -206,24 +191,6 @@ function SafetyCard({ settings, onSaved }: { settings: IgSettings; onSaved: () =
           style={{ ...btn, ...(settings.enabled ? { background: GREEN, borderColor: GREEN, color: '#fff' } : {}) }}>{settings.enabled ? 'Ligadas · desligar' : 'Desligadas · ligar'}</button>
       </div>
       <div className="iga-safety-grid">
-        <div>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
-            <input type="checkbox" checked={settings.testMode} onChange={toggleTest} disabled={busy} data-testid="iga-test-mode" /> Modo teste (só as contas da lista recebem)
-          </label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }} data-testid="iga-test-list">
-            {!settings.testAccounts.length && <span style={muted}>Nenhuma conta de teste.</span>}
-            {settings.testAccounts.map((t, i) => (
-              <span key={i} style={{ ...badge('var(--bg-inner)', 'var(--text-primary)'), border: `1px solid ${bd}`, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                {t.username ? `@${t.username}` : t.igsid}
-                <button type="button" aria-label={`Tirar ${t.username || t.igsid} da lista`} onClick={() => remove(t)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, color: 'var(--text-muted)' }}><X size={12} /></button>
-              </span>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            <input aria-label="Conta de teste (@ ou IGSID)" placeholder="@suaconta ou IGSID" value={add} onChange={(e) => setAdd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addAccount(); }} style={{ ...field, maxWidth: 240 }} />
-            <button type="button" style={btn} onClick={addAccount} disabled={busy || !add.trim()} data-testid="iga-test-add">Adicionar</button>
-          </div>
-        </div>
         <div>
           <div style={{ fontWeight: 700, fontSize: 13 }}>Antispam</div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
@@ -241,7 +208,7 @@ function SafetyCard({ settings, onSaved }: { settings: IgSettings; onSaved: () =
 }
 
 // ── cartão de uma automação ──
-function AutoCard({ a, m, settings, links, onEdit, onToggled }: { a: Automation; m: AutoMetrics; settings: IgSettings; links: Link[]; onEdit: () => void; onToggled: () => void }) {
+function AutoCard({ a, m, links, onEdit, onToggled }: { a: Automation; m: AutoMetrics; links: Link[]; onEdit: () => void; onToggled: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const toggle = async () => {
@@ -250,7 +217,7 @@ function AutoCard({ a, m, settings, links, onEdit, onToggled }: { a: Automation;
     try { await setAutomationActive(a.id, !a.active); onToggled(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   const link = linkOf(a, a.link_mode === 'link' ? links.find((l) => l.id === a.link_id) || null : null);
-  const status = !a.active ? { t: 'DESLIGADA', bg: 'var(--bg-inner)', c: 'var(--text-muted)' } : !settings.enabled ? { t: 'LIGADA · chave geral desligada', bg: '#fef3c7', c: '#92400e' } : settings.testMode ? { t: 'LIGADA · MODO TESTE', bg: '#ffedd5', c: '#9a3412' } : { t: 'LIGADA', bg: '#dcfce7', c: '#166534' };
+  const status = !a.active ? { t: 'DESLIGADA', bg: 'var(--bg-inner)', c: 'var(--text-muted)' } : { t: 'LIGADA', bg: '#dcfce7', c: '#166534' };
   const Row = ({ title, children, color }: { title: string; children: React.ReactNode; color: string }) => (
     <div style={{ borderLeft: `3px solid ${color}`, padding: '6px 10px', background: 'var(--bg-inner)', borderRadius: 8, marginTop: 8 }}>
       <div style={{ ...eyebrow, color }}>{title}</div>
@@ -282,7 +249,7 @@ function AutoCard({ a, m, settings, links, onEdit, onToggled }: { a: Automation;
           <div key={String(k)}><div style={{ fontSize: 16, fontWeight: 800 }}>{v}</div><div style={muted}>{k}</div></div>
         ))}
       </div>
-      {(m.skipped > 0 || m.failed > 0) && <div style={{ ...muted, marginTop: 6 }}>{m.skipped} pulado(s) (antispam, janela ou modo teste) · {m.failed} com erro da Meta</div>}
+      {(m.skipped > 0 || m.failed > 0) && <div style={{ ...muted, marginTop: 6 }}>{m.skipped} pulado(s) (antispam ou janela) · {m.failed} com erro da Meta</div>}
       {err && <div role="alert" style={{ color: RED, marginTop: 6, fontSize: 13 }}>{err}</div>}
     </div>
   );
@@ -413,7 +380,7 @@ function Editor({ initial, all, links, onClose, onSaved }: { initial: Automation
 const CSS = `
 .iga .iga-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}
 .iga .iga-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border-main)}
-.iga .iga-safety-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border-main)}
+.iga .iga-safety-grid{display:grid;grid-template-columns:1fr;gap:20px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border-main)}
 .iga-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;z-index:60;overflow-y:auto}
 .iga-modal-box{width:min(680px,100%);box-sizing:border-box}
 .iga-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:8px;margin-top:8px;max-height:320px;overflow-y:auto}

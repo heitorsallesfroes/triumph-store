@@ -237,7 +237,6 @@ function Detail({ a, st, names, items, tick, now, onBack, onPerson }: DetailProp
           <span>▶ {startText(a, names)}</span>
           <span>{a.activated_at ? `Vale desde: ${fmtDateTime(msOf(a.activated_at))}` : 'Ainda não foi ligada'}</span>
           <span>🕘 {scheduleSummary(def)}</span>
-          {a.test_chat_id && <span style={{ color: AMBER }}>Em teste (só com uma conversa)</span>}
         </div>
         {st?.error ? <Warn text={st.error} /> : <FourNumbers st={st?.data} />}
       </div>
