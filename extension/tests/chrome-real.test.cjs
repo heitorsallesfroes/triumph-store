@@ -170,14 +170,24 @@ async function main() {
         const m = /^(eq|neq|is|in|gte|lte|gt|lt|like|not)\.(.*)$/.exec(v);
         if (m) filters.push([k, m[1], m[2]]);
       }
-      const match = (r) => filters.every(([k, op, val]) => {
+      const one = (r, [k, op, val]) => {
         const x = r[k];
         if (op === 'eq') return String(x) === val;
         if (op === 'neq') return String(x) !== val;
         if (op === 'is') return val === 'null' ? x == null : true;
         if (op === 'in') return inVals(`in.${val}`).includes(String(x));
         return true;
-      });
+      };
+      // 2.18.5: or=(a.in.(...),b.eq.x) — qualquer uma das condições
+      const ors = [];
+      if (q.get('or')) {
+        const body = q.get('or').replace(/^\(|\)$/g, ''); let depth = 0; let cur = '';
+        for (const ch of body) { if (ch === '(') depth++; if (ch === ')') depth--; if (ch === ',' && depth === 0) { ors.push(cur); cur = ''; } else cur += ch; }
+        if (cur) ors.push(cur);
+      }
+      const parsed = ors.map((p) => { const m = /^([a-z_]+)\.(eq|neq|is|in)\.(.*)$/.exec(p); return m ? [m[1], m[2], m[3]] : null; });
+      const orConds = parsed.every(Boolean) ? parsed : []; // com alguma condição que o falso não entende (lt, and(...)): ignora o or, como antes
+      const match = (r) => filters.every((f) => one(r, f)) && (!orConds.length || orConds.some((f) => one(r, f)));
       if (method === 'HEAD') return [200, null, tbl(table).filter(match).length];
       if (method === 'GET') { let rows = tbl(table).filter(match); const lim = Number(q.get('limit')); if (lim) rows = rows.slice(0, lim); return [200, rows]; }
       if (method === 'POST') {
@@ -2186,6 +2196,58 @@ async function main() {
     const again28 = await q(`const s = sh.querySelector('.cseq .cseq-skipped'); return s ? { badge: s.querySelector('.cseq-skip-badge').textContent, btn: !!sh.querySelector('.cseq .cseq-skip') } : null;`);
     check('2.16.8: sair e voltar na conversa: o mesmo selo (vem do banco), sem o botão de pular', !!again28 && again28.badge === sk28.badge && !again28.btn, JSON.stringify(again28));
     check('nenhum erro no console no "Pular espera"', errors.length === 0, errors.slice(0, 8).join(' | '));
+    // 2.18.5: "🔁 ESTA CONVERSA". Alyson: a conversa aberta é o @lid 33344…; o percurso (Régua 6 follows, na ❓ de 3
+    // dias) foi gravado no @c.us do MESMO telefone e já recebeu o Follow 1 e o 2. Fabiola: percurso num @lid qualquer, mas
+    // com o contact_id do contato dela (a conversa aberta é o @c.us). Topo da aba Automações, antes da lista geral.
+    const LIDX = '33344455566677@lid'; const RUN29 = uuid(); const C29 = uuid(); const RUN29B = uuid();
+    const ent29 = Date.now() - 2 * 86400000;
+    fake.db.wa_sequence_runs = [...fake.db.wa_sequence_runs,
+      { id: RUN29, automation_id: REG, chat_id: '5521979762603@c.us', contact_id: null, entry_key: 'manual@29', node: 'w2', status: 'ativo', version: 0, branches: [{ node: 'w1', result: 'nao', at: ent29 + 86400000 }], skip_wait: false, wait_started_at: new Date(ent29).toISOString(), due_at: new Date(ent29 + 3 * 86400000).toISOString(), created_at: new Date(ent29).toISOString(), updated_at: new Date(ent29 + 86400000).toISOString() },
+      { id: uuid(), automation_id: REG, chat_id: '5521979762603@c.us', contact_id: null, entry_key: 'manual@29a', node: null, status: 'saiu', outcome: 'respondeu', version: 1, branches: [], skip_wait: false, created_at: new Date(ent29 - 9 * 86400000).toISOString(), updated_at: new Date(ent29 - 5 * 86400000).toISOString(), ended_at: new Date(ent29 - 5 * 86400000).toISOString() },
+      { id: RUN29B, automation_id: REG, chat_id: '44455566677788@lid', contact_id: C29, entry_key: 'manual@29b', node: 'w1', status: 'ativo', version: 0, branches: [], skip_wait: false, due_at: new Date(Date.now() + 86400000).toISOString(), created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+    fake.db.wa_contacts = [...fake.db.wa_contacts, { id: C29, key: 'tel:5521986216333', name: 'Fabiola', phone: '5521986216333', chat_id: '88899900011122@lid' }];
+    fake.db.wa_send_log = [...fake.db.wa_send_log,
+      { id: uuid(), source: 'follow', source_id: REG, status: 'enviado', chat_id: '5521979762603@c.us', item_id: itemId, reason: null, created_at: new Date(ent29 + 60000).toISOString() },
+      { id: uuid(), source: 'follow', source_id: REG, status: 'enviado', chat_id: '5521979762603@c.us', item_id: itemId, reason: null, created_at: new Date(ent29 + 86400000 + 60000).toISOString() }];
+    await pg(`window.__fakeBridge = { ...window.__fakeBridge, activeChat: { kind: 'individual', chatId: ${JSON.stringify(LIDX)} }, chatPhone: { phone: '5521979762603', name: 'Cliente Alyson', via: 'lid' } }; return true;`);
+    const line29 = await waitFor(`return [...sh.querySelectorAll('.cseq .cseq-line')].some((l) => /Régua 6 follows · Esperando resposta — até 3 dias/.test(l.textContent));`, 15000); // (espera trocar da conversa anterior)
+    const top29 = await q(`return [...sh.querySelectorAll('.cseq .cseq-line .cseq-t')].map((x) => x.textContent);`);
+    check('2.18.5: aba Mensagens: o percurso gravado com OUTRO chat_id (o @c.us do mesmo telefone) aparece, com a etapa em português ("Esperando resposta — até 3 dias depois de entrar"), sem "passo:"',
+      line29 && top29.length === 1 && /^🔁 Na automação Régua 6 follows · Esperando resposta — até 3 dias depois de entrar \(faltam /.test(top29[0]) && !/passo:/.test(top29[0]), JSON.stringify(top29));
+    await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(200); sh.querySelector('[data-sec="vendas"]').click(); await wait(200); sh.querySelector('[data-sec="follows"]').click(); await wait(400); return true;`);
+    await waitFor(`return !!sh.querySelector('.ftab .fwc .fwc-card');`, 15000);
+    const blk29 = await q(`const t = sh.querySelector('.ftab'); const b = t.querySelector('.fwc'); const list = t.querySelector('.fw-listhead');
+      const c = b && b.querySelector('.fwc-card'); return b ? { head: b.querySelector('.wt-head').textContent, before: !!list && !!(b.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING),
+        name: c && c.querySelector('.fwc-name').textContent, step: c && c.querySelector('.fwc-step').textContent, recv: c && c.querySelector('.fwc-recv').textContent, next: c && (c.querySelector('.fwc-next') || {}).textContent,
+        btns: c ? [...c.querySelectorAll('.fwc-btns button')].map((x) => x.textContent) : [], past: (b.querySelector('.fwc-past') || {}).textContent || '' } : null;`);
+    check('2.18.5: aba Automações: "🔁 ESTA CONVERSA" antes da lista, cartão com a régua, a etapa, "Já recebeu: … (dd/mm hh:mm), …", "Próximo: …" (parado: a automação está desligada), botões e "Já passou por: … (saiu: respondeu em dd/mm)"',
+      !!blk29 && blk29.head === '🔁 ESTA CONVERSA' && blk29.before && /^Régua 6 follows/.test(blk29.name) && /^Esperando resposta — até 3 dias depois de entrar/.test(blk29.step)
+      && /^Já recebeu: .+ \(\d{2}\/\d{2} \d{2}:\d{2}\), .+ \(\d{2}\/\d{2} \d{2}:\d{2}\)$/.test(blk29.recv) && /^Próximo: .+ · parado: a automação está desligada$/.test(blk29.next || '')
+      && JSON.stringify(blk29.btns) === JSON.stringify(['Pular espera', 'Tirar da automação', 'Ver linha do tempo']) && /^Já passou por: Régua 6 follows \(saiu: respondeu em \d{2}\/\d{2}\)$/.test(blk29.past), JSON.stringify(blk29));
+    await q(`[...sh.querySelectorAll('.ftab .fwc .fwc-tl-btn')][0].click(); await wait(200); return true;`);
+    const tl29 = await q(`return { done: [...sh.querySelectorAll('.ftab .fwc .fwc-tl .fwc-ev.done .fwc-evt')].map((x) => x.textContent), fut: [...sh.querySelectorAll('.ftab .fwc .fwc-tl .fwc-ev.fut .fwc-evt')].map((x) => x.textContent), futColor: (() => { const f = sh.querySelector('.ftab .fwc .fwc-ev.fut'); return f ? getComputedStyle(f).color : ''; })() };`);
+    check('2.18.5: "Ver linha do tempo": feitos ✓ (entrou, recebeu, não respondeu…) e previstos em cinza',
+      tl29.done[0] === '✓ Entrou na automação' && tl29.done.filter((x) => /^✓ Recebeu/.test(x)).length === 2 && tl29.done.some((x) => /^✓ ❌ Não respondeu até 1 dia/.test(x)) && tl29.fut.some((x) => /^Recebe /.test(x)) && tl29.fut[tl29.fut.length - 1] === 'Termina a automação' && !!tl29.futColor, JSON.stringify(tl29));
+    await shot('esta-conversa-automacoes.png');
+    await q(`sh.querySelector('.ftab .fwc .fwc-out').click(); await wait(150); return true;`);
+    const conf29 = await q(`return { ok: !!sh.querySelector('.ftab .fwc .fwc-out-ok'), st: (fake => fake)(null) };`);
+    const stillActive = (fake.db.wa_sequence_runs.find((r) => r.id === RUN29) || {}).status;
+    await q(`sh.querySelector('.ftab .fwc .fwc-out-ok').click(); return true;`);
+    const gone29 = await waitFor(`return /Esta conversa não está em nenhuma automação\./.test((sh.querySelector('.ftab .fwc') || {}).textContent || '');`, 15000);
+    const after29 = await q(`const b = sh.querySelector('.ftab .fwc'); return { add: !!b.querySelector('.fwc-add'), past: (b.querySelector('.fwc-past') || {}).textContent || '', cseq: sh.querySelectorAll('.cseq .cseq-line').length };`);
+    const db29 = fake.db.wa_sequence_runs.find((r) => r.id === RUN29);
+    check('2.18.5: "Tirar da automação" pede confirmação; confirmado → saiu no banco e o bloco atualiza na hora ("não está em nenhuma automação" + "Adicionar à automação"; "Já passou por" com as duas)',
+      conf29.ok && stillActive === 'ativo' && gone29 && db29.status === 'saiu' && db29.outcome === 'manual' && after29.add && /tirado manualmente/.test(after29.past) && /respondeu/.test(after29.past) && after29.cseq === 0, JSON.stringify({ conf29, stillActive, after29, db29: db29 && [db29.status, db29.outcome] }));
+    // Fabiola: o percurso tem outro chat_id, mas o contact_id é o do contato dela (pelo telefone da conversa aberta)
+    await pg(`window.__fakeBridge = { ...window.__fakeBridge, activeChat: { kind: 'individual', chatId: '5521986216333@c.us' }, chatPhone: { phone: '5521986216333', name: 'Cliente Fabiola', via: 'numero' } }; return true;`);
+    const fab29 = await waitFor(`const c = sh.querySelector('.ftab .fwc .fwc-card'); return !!c && c.dataset.run === ${JSON.stringify(RUN29B)};`, 15000);
+    const fabStep = await q(`const c = sh.querySelector('.ftab .fwc .fwc-card'); return c ? c.querySelector('.fwc-step').textContent : null;`);
+    check('2.18.5: trocar de conversa atualiza o bloco na hora; percurso achado pelo contact_id (chat_id diferente) com "Esperando resposta — até 1 dia depois de entrar"',
+      fab29 && /^Esperando resposta — até 1 dia depois de entrar/.test(fabStep || ''), JSON.stringify({ fab29, fabStep }));
+    await pg(`window.__fakeBridge = { ...window.__fakeBridge, activeChat: { kind: 'individual', chatId: '5521900000099@c.us' }, chatPhone: { phone: '5521900000099', name: 'Ninguém', via: 'numero' } }; return true;`);
+    const none29 = await waitFor(`return /Esta conversa não está em nenhuma automação\./.test((sh.querySelector('.ftab .fwc') || {}).textContent || '') && !!sh.querySelector('.ftab .fwc .fwc-add') && !sh.querySelector('.ftab .fwc .fwc-past');`, 15000);
+    check('2.18.5: conversa sem automação: "Esta conversa não está em nenhuma automação" + "Adicionar à automação"', none29);
+    check('nenhum erro no console no "ESTA CONVERSA"', errors.length === 0, errors.slice(0, 8).join(' | '));
     await pg(`window.__fakeBridge = null; return true;`);
     fake.on = false;
     fake.generic = false;

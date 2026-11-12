@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.18.4** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.18.5** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -808,6 +808,28 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.18.5 — "🔁 ESTA CONVERSA": a pessoa da conversa aberta nas automações, com ações
+- **Causa** (2.18.2): o painel procurava os percursos só pelo chat_id da conversa aberta; quando o percurso estava
+  gravado com outro id da mesma pessoa (troca @lid/@c.us ou outro @lid), não aparecia nada — o ERP procura pelo
+  contato. Agora o painel procura pela **pessoa**: chat_id de qualquer id dela (o aberto, o @c.us do telefone e o
+  chat_id dos contatos dela), **contact_id** ou **telefone** (a mesma regra de identidade da 2.16.5/2.16.12; o mesmo
+  chat_id com o telefone de outra pessoa não vale), sem repetir. A mesma busca vale no aviso do topo da aba
+  Mensagens, na aba Automações, no 🔁 e no "tirar de todas" da venda.
+- **Topo da aba Automações, antes da lista geral**: bloco **"🔁 ESTA CONVERSA"**, sempre visível:
+  - em automação: um cartão por percurso ativo com o nome, a etapa em português simples ("Esperando resposta — até
+    3 dias depois de entrar"), **"Já recebeu: Follow 1 (10/11 12:28), Follow 2 (11/11 09:56)"**, **"Próximo: Follow
+    Padrão 3 — sex 13/11 às 09:56"** (ou por que está parado: automação desligada, envios pausados, atrasado, fora do
+    horário) e os botões **Pular espera**, **Tirar da automação** (pede confirmação) e **Ver linha do tempo** (feitos
+    ✓ e previstos em cinza, como no ERP);
+  - em nenhuma: "Esta conversa não está em nenhuma automação" + **Adicionar à automação**;
+  - embaixo, discreto: **"Já passou por: Régua de follow-up (saiu: respondeu em 11/11)"** (os 5 últimos).
+- O aviso do topo da aba Mensagens mostra a etapa real ("Esperando resposta — …", "Vai mandar “Follow 3”") em vez
+  de "passo: vai mexer nas etiquetas".
+- Atualiza na hora ao trocar de conversa, ao tirar/adicionar e a cada ciclo do motor (no máximo a cada 30 s).
+- Testes: `chatauto.test.cjs` (percurso com chat_id diferente: pelo telefone, pelo contact_id e pelo chat_id do
+  contato; etapa, cartão e linha do tempo) e `chrome-real.test.cjs` (o bloco, a linha do tempo, tirar com confirmação,
+  troca de conversa).
 
 ### 2.18.4 — Catálogo no topo da aba Mídias · zoom do construtor não cobre caixas · apagadas também as suas
 - **Aba Mídias**: o bloco **"Exportar catálogo do WhatsApp"** agora fica no **topo** da aba (antes ficava embaixo,

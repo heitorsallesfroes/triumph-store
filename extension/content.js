@@ -983,6 +983,22 @@
       .fw-step { display: flex; gap: 8px ; }
       .fw-n { width: 17px; height: 17px; border-radius: 50% ; background: var(--accent-soft); color: var(--accent-text); font-size: var(--fs-1); font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
       .fw-txt { flex: 1; min-width: 0; line-height: 1.4; word-break: break-word; }
+      /* 2.18.5: bloco "🔁 ESTA CONVERSA" */
+      .fwc { display: flex; flex-direction: column; gap: var(--s-2); }
+      .fwc-card { gap: 4px; border-color: var(--accent); }
+      .fwc-step { font-weight: 600; }
+      .fwc-recv, .fwc-next { font-size: var(--fs-1); line-height: 1.4; word-break: break-word; }
+      .fwc-next.held { color: #9a3412; }
+      .root.dark .fwc-next.held { color: #fdba74; }
+      .fwc-btns { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-top: 2px; }
+      .fwc-none { font-size: var(--fs-2); }
+      .fwc-add { align-self: flex-start; }
+      .fwc-past { font-size: var(--fs-1); color: var(--muted); line-height: 1.4; }
+      .fwc-tl { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-1); }
+      .fwc-ev { display: flex; justify-content: space-between; gap: var(--s-2); padding: 2px 0; border-bottom: 1px dashed var(--border); }
+      .fwc-ev.fut { color: var(--muted); }
+      .fwc-ev.late .fwc-evw { color: #b45309; }
+      .fwc-evw { white-space: nowrap; font-variant-numeric: tabular-nums; }
       .fw-arrow { text-align: center; color: var(--muted); font-size: var(--fs-2); }
       .fw-k { flex-shrink: 0; font-size: var(--fs-1); font-weight: 800; letter-spacing: .06em; color: var(--accent-text); min-width: 44px; }
       .fw-block { display: flex; flex-direction: column; gap: 8px ; padding: 8px ; border-radius: var(--r-md) ; border: 1px solid var(--border); }
@@ -8400,6 +8416,7 @@
 
   function renderEngineUi() {
     renderFootPause();
+    try { cseqCycle(); } catch { /* 2.18.5: ainda iniciando */ }
     if (fl.open && fl.view === 'list') renderFollows();
     if (dp.open && dp.view === 'list') renderDisparos();
     if (state.view === 'diag') renderDiag();
@@ -8985,6 +9002,7 @@
     if (fl.view === 'conversa') { renderChatAutomations(); return; }
 
     renderFollowsTop(ftabEl);
+    ftabEl.append(chatBlockEl()); // 2.18.5: '🔁 ESTA CONVERSA' antes da lista geral
     if (!fl.statsAt) queueMicrotask(() => loadFollowStats()); // 2.11.0: números da lista (de novo depois de salvar)
     if (fl.msg) ftabEl.append(el('div', `ed-msg${fl.msgErr ? ' err' : ''}`, fl.msg));
     const list = el('section', 'crmsec');
@@ -9356,68 +9374,154 @@
     try { await call('adoptChatId', { chatId, phone }); } catch { adopted.delete(chatId); }
   }
 
-  // painel da conversa: "Na automação X · passo: esperando resposta (faltam 1h20)"
-  const cseq = { chatId: null, runs: [], warns: [], busy: false };
+  // painel da conversa: "🔁 Na automação X · Esperando resposta — até 3 dias depois de entrar" (topo da aba Mensagens)
+  // e o bloco "🔁 ESTA CONVERSA" (topo da aba Automações e da tela do 🔁). 2.18.5: a busca é pela PESSOA (chat_id de
+  // qualquer id dela, contato ou telefone — a regra da 2.16.5/2.16.12), não só pelo chat_id aberto; mais os 5 últimos
+  // percursos encerrados e os envios de cada percurso (o mesmo que o ERP mostra na linha do tempo).
+  const cseq = { chatId: null, runs: [], ended: [], sends: [], warns: [], busy: false, loaded: false, open: null, confirm: null, at: 0 };
+  const chatPhones = new Map();
+  async function chatPhoneOf(chatId) {
+    if (!chatId) return '';
+    const m = /^(\d{8,15})@c\.us$/.exec(chatId);
+    if (m) return m[1];
+    if (chatPhones.has(chatId)) return chatPhones.get(chatId);
+    let phone = '';
+    try { const wa = await waRequest('chatPhone', { chatId }, { timeout: 4000 }); phone = String((wa && wa.phone) || '').replace(/\D/g, ''); } catch { phone = ''; }
+    if (/^\d{8,15}$/.test(phone)) chatPhones.set(chatId, phone); else phone = '';
+    return phone;
+  }
   async function loadChatSequence(chatId) {
     const box = shadow.querySelector('.cseq');
+    if (cseq.chatId !== chatId) Object.assign(cseq, { runs: [], ended: [], sends: [], warns: [], loaded: false, open: null, confirm: null });
     cseq.chatId = chatId;
     if (!box) return;
-    if (!chatId || motor.state.sequencesAvailable !== true) { box.hidden = true; cseq.runs = []; cseq.warns = []; return; }
-    let runs = [];
+    if (!chatId || motor.state.sequencesAvailable !== true) {
+      box.hidden = true;
+      Object.assign(cseq, { runs: [], ended: [], sends: [], warns: [], loaded: !!chatId, at: Date.now() });
+      renderChatBlock();
+      return;
+    }
+    const phone = await chatPhoneOf(chatId);
+    const who = { chatId, ...(phone ? { phone } : {}) };
+    let ov = null;
+    try { ov = await call('seqChatOverview', who); } catch { ov = null; }
+    if (!ov) { let runs = []; try { runs = await call('seqChatRuns', who); } catch { runs = []; } ov = { runs: Array.isArray(runs) ? runs : [], ended: [], sends: [] }; }
     let warns = [];
-    try { runs = await call('seqChatRuns', { chatId }); } catch { runs = []; }
     try { warns = await call('seqLabelWarnings', { chatId }); } catch { warns = []; } // 2.16.7
     // 2.16.8: espera já pulada (skip_wait, do banco): fila, limites e horário para a previsão
     const t0 = Date.now();
     const midnight = new Date(t0); midnight.setHours(0, 0, 0, 0);
-    for (const r of Array.isArray(runs) ? runs : []) {
+    for (const r of ov.runs) {
       if (r.skip_wait !== true) continue;
       try { r.skipInfo = await call('seqSkipInfo', { runId: r.id, automationId: r.automation_id, hourSince: new Date(t0 - 3600 * 1000).toISOString(), daySince: midnight.toISOString() }); } catch { r.skipInfo = null; }
     }
     if (cseq.chatId !== chatId) return;
-    cseq.runs = Array.isArray(runs) ? runs : [];
-    cseq.warns = Array.isArray(warns) ? warns : [];
+    Object.assign(cseq, { runs: ov.runs || [], ended: ov.ended || [], sends: ov.sends || [], warns: Array.isArray(warns) ? warns : [], loaded: true, at: Date.now() });
     renderChatSequence();
   }
+  const cseqDef = (r) => { try { return E.seqNormalize((r.automation && r.automation.sequence) || {}); } catch { return (r.automation && r.automation.sequence) || {}; } };
+  const cseqRun = (r) => ({ ...r, due_at: Date.parse(r.due_at || '') || null });
+  // parado de propósito: a automação desligada ou os envios automáticos pausados
+  const cseqHold = (r) => (r.automation && r.automation.active === false ? 'parado: a automação está desligada'
+    : motor.state.settings && motor.state.settings.paused_all ? 'parado: os envios automáticos estão pausados' : null);
+  const cseqCard = (r) => E.seqChatCard(cseqDef(r), cseqRun(r), cseq.sends.filter((s) => s.source_id === r.automation_id), Date.now(), { itemTitle, settings: motor.state.settings, hold: cseqHold(r) });
+  const cseqDm = (ms) => { const d = new Date(ms); return Number.isFinite(ms) ? `${two(d.getDate())}/${two(d.getMonth() + 1)} ${two(d.getHours())}:${two(d.getMinutes())}` : ''; };
+  const wdWhen = (ms) => (Number.isFinite(ms) ? `${new Date(ms).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '').replace(',', '')} às ${new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : '');
   function renderChatSequence() {
     const box = shadow.querySelector('.cseq');
-    if (!box) return;
-    box.textContent = '';
-    box.hidden = !cseq.runs.length && !cseq.warns.length;
-    // 2.16.7: a caixa ETIQUETA da régua não achou o contato desta conversa
-    cseq.warns.forEach((w) => {
-      const a = motor.state.automations.find((x) => x.id === w.automation_id);
-      const at = new Date(w.at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
-      box.append(el('div', 'cseq-line cseq-warn', `⚠ ${a ? a.name : 'Régua'}: etiqueta não aplicada (contato não encontrado) · ${at}`));
-    });
+    if (box) {
+      box.textContent = '';
+      box.hidden = !cseq.runs.length && !cseq.warns.length;
+      // 2.16.7: a caixa ETIQUETA da régua não achou o contato desta conversa
+      cseq.warns.forEach((w) => {
+        const a = motor.state.automations.find((x) => x.id === w.automation_id);
+        const at = new Date(w.at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+        box.append(el('div', 'cseq-line cseq-warn', `⚠ ${a ? a.name : 'Régua'}: etiqueta não aplicada (contato não encontrado) · ${at}`));
+      });
+      cseq.runs.forEach((r) => {
+        const def = cseqDef(r);
+        const line = el('div', 'cseq-line');
+        // 2.18.5: a etapa real em português simples (não "passo: vai mexer nas etiquetas")
+        line.append(el('span', 'cseq-t', `🔁 Na automação ${r.automation.name} · ${E.seqStepText(def, cseqRun(r), Date.now(), { itemTitle })}`));
+        const e = E.seqIndex(def).get(r.node);
+        const btns = el('span', 'cseq-btns');
+        btns.append(fbtn('ed-mini cseq-out', 'Tirar da automação', () => chatSeqAction(r, 'sair')));
+        const skipped = r.skip_wait === true; // 2.16.8: já clicou (vem do banco: igual em qualquer computador)
+        if (e && e.node.type === 'esperar' && !skipped) btns.append(fbtn('ed-mini cseq-skip', 'Pular espera', () => chatSeqAction(r, 'pular')));
+        btns.querySelectorAll('button').forEach((b) => { b.disabled = cseq.busy; });
+        line.append(btns);
+        box.append(line);
+        if (skipped) box.append(cseqSkippedEl(r, def, e));
+      });
+    }
+    renderChatBlock();
+  }
+  function cseqSkippedEl(r, def, e) {
+    const at = Date.parse(r.updated_at || '');
+    const d = new Date(at);
+    const hm = Number.isFinite(at) ? `${two(d.getHours())}:${two(d.getMinutes())}` : '';
+    const sameDay = Number.isFinite(at) && new Date().toDateString() === d.toDateString();
+    const when = !hm ? '' : sameDay ? ` às ${hm}` : ` em ${two(d.getDate())}/${two(d.getMonth() + 1)} às ${hm}`;
+    const sk = el('div', 'cseq-skipped');
+    sk.append(el('span', 'cseq-skip-badge', `⏩ Espera pulada${when} · na fila de envio`));
+    const info = r.skipInfo;
+    const f = info ? E.seqSkipForecast({ def, window: e && e.node.send_window, settings: motor.state.settings, now: Date.now(), position: info.position, counts: info.counts || {}, lastSentAt: info.lastSentAt, oldestHourAt: info.oldestHourAt, sentTodaySeq: info.sentTodaySeq }) : null;
+    sk.append(el('span', `cseq-eta${f && f.kind !== 'fila' ? ' held' : ''}`, f ? f.text : 'na fila (sem a previsão agora)'));
+    return sk;
+  }
+  // 2.18.5: bloco "🔁 ESTA CONVERSA" — sempre visível no topo da aba Automações (e da tela do 🔁)
+  function chatBlockEl() {
+    const sec = el('section', 'crmsec fwc');
+    sec.append(el('div', 'wt-head', '🔁 ESTA CONVERSA'));
+    if (!cseq.chatId) { sec.append(el('div', 'lt-none fwc-none', 'Abra uma conversa individual no WhatsApp para ver se ela está em alguma automação.')); return sec; }
+    if (!cseq.loaded) { sec.append(el('div', 'lt-none loading', 'Carregando…')); return sec; }
+    if (!cseq.runs.length) {
+      sec.append(el('div', 'fwc-none', 'Esta conversa não está em nenhuma automação.'));
+      const add = fbtn('ed-mini fwc-add', 'Adicionar à automação', () => openChatAutomations());
+      sec.append(add);
+    }
     cseq.runs.forEach((r) => {
-      const def = r.automation.sequence || {};
-      const run = { ...r, due_at: Date.parse(r.due_at || '') || null };
-      const line = el('div', 'cseq-line');
-      line.append(el('span', 'cseq-t', `🔁 Na automação ${r.automation.name} · passo: ${E.seqDescribe(def, run, Date.now(), { itemTitle })}`));
+      const def = cseqDef(r);
+      const card = cseqCard(r);
+      const c = el('div', 'fw-card fwc-card');
+      c.dataset.run = r.id;
+      c.append(el('div', 'fw-name fwc-name', `${r.automation.name}${r.automation.active === false ? ' (desligada)' : ''}`));
+      c.append(el('div', 'fwc-step', card.step));
+      c.append(el('div', 'fwc-recv', card.received.length ? `Já recebeu: ${card.received.map((x) => `${x.title} (${cseqDm(x.at)})`).join(', ')}` : 'Ainda não recebeu nenhuma mensagem desta automação'));
+      const nx = card.next;
+      if (nx) c.append(el('div', `fwc-next${nx.held ? ' held' : ''}`, `Próximo: ${nx.text}${nx.when != null ? ` — ${wdWhen(nx.when)}` : ''}${nx.held ? ` · ${nx.held}` : ''}`));
       const e = E.seqIndex(def).get(r.node);
-      const btns = el('span', 'cseq-btns');
-      const out = fbtn('ed-mini cseq-out', 'Tirar da automação', () => chatSeqAction(r, 'sair'));
-      btns.append(out);
-      const skipped = r.skip_wait === true; // 2.16.8: já clicou (vem do banco: igual em qualquer computador)
-      if (e && e.node.type === 'esperar' && !skipped) btns.append(fbtn('ed-mini cseq-skip', 'Pular espera', () => chatSeqAction(r, 'pular')));
+      if (r.skip_wait === true) c.append(cseqSkippedEl(r, def, e));
+      const btns = el('div', 'fwc-btns');
+      if (e && e.node.type === 'esperar' && r.skip_wait !== true) btns.append(fbtn('ed-mini fwc-skip', 'Pular espera', () => chatSeqAction(r, 'pular')));
+      if (cseq.confirm === r.id) {
+        btns.append(fbtn('ed-mini danger fwc-out-ok', 'Confirmar: tirar da automação', () => { cseq.confirm = null; chatSeqAction(r, 'sair'); }),
+          fbtn('ed-mini fwc-out-no', 'Cancelar', () => { cseq.confirm = null; renderChatBlock(); }));
+      } else btns.append(fbtn('ed-mini fwc-out', 'Tirar da automação', () => { cseq.confirm = r.id; renderChatBlock(); }));
+      btns.append(fbtn('ed-mini fwc-tl-btn', cseq.open === r.id ? 'Esconder linha do tempo' : 'Ver linha do tempo', () => { cseq.open = cseq.open === r.id ? null : r.id; renderChatBlock(); }));
       btns.querySelectorAll('button').forEach((b) => { b.disabled = cseq.busy; });
-      line.append(btns);
-      box.append(line);
-      if (skipped) {
-        const at = Date.parse(r.updated_at || '');
-        const d = new Date(at);
-        const hm = Number.isFinite(at) ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
-        const sameDay = Number.isFinite(at) && new Date().toDateString() === d.toDateString();
-        const when = !hm ? '' : sameDay ? ` às ${hm}` : ` em ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} às ${hm}`;
-        const sk = el('div', 'cseq-skipped');
-        sk.append(el('span', 'cseq-skip-badge', `⏩ Espera pulada${when} · na fila de envio`));
-        const info = r.skipInfo;
-        const f = info ? E.seqSkipForecast({ def, window: e && e.node.send_window, settings: motor.state.settings, now: Date.now(), position: info.position, counts: info.counts || {}, lastSentAt: info.lastSentAt, oldestHourAt: info.oldestHourAt, sentTodaySeq: info.sentTodaySeq }) : null;
-        sk.append(el('span', `cseq-eta${f && f.kind !== 'fila' ? ' held' : ''}`, f ? f.text : 'na fila (sem a previsão agora)'));
-        box.append(sk);
+      c.append(btns);
+      if (cseq.open === r.id) {
+        const ol = el('ol', 'fwc-tl');
+        card.timeline.forEach((ev) => {
+          const li = el('li', `fwc-ev${ev.done ? ' done' : ' fut'}${ev.late ? ' late' : ''}`);
+          li.append(el('span', 'fwc-evt', `${ev.done ? '✓ ' : ''}${ev.text}`), el('span', 'fwc-evw', ev.when != null ? (ev.done ? cseqDm(ev.when) : wdWhen(ev.when)) : ''));
+          ol.append(li);
+        });
+        c.append(ol);
       }
+      sec.append(c);
     });
+    if (cseq.ended.length) {
+      const past = cseq.ended.map((r) => { const t = Date.parse(r.ended_at || r.updated_at || ''); return `${r.automation.name} (saiu: ${E.seqOutcomeText(r.outcome)}${Number.isFinite(t) ? ` em ${two(new Date(t).getDate())}/${two(new Date(t).getMonth() + 1)}` : ''})`; });
+      sec.append(el('div', 'fwc-past', `Já passou por: ${past.join(' · ')}`));
+    }
+    return sec;
+  }
+  function renderChatBlock() {
+    if (!ftabEl) return;
+    const cur = ftabEl.querySelector('.fwc');
+    if (cur) cur.replaceWith(chatBlockEl());
   }
   async function chatSeqAction(r, action) {
     if (cseq.busy) return;
@@ -9430,6 +9534,8 @@
     cseq.busy = false;
     await loadChatSequence(cseq.chatId);
   }
+  // a cada ciclo do motor (no máximo a cada 30 s) e o "faltam…" anda sozinho
+  function cseqCycle() { if (cseq.chatId && !cseq.busy && Date.now() - cseq.at > 30 * 1000) { cseq.at = Date.now(); loadChatSequence(cseq.chatId).catch(() => {}); } }
   setInterval(() => { if (state.open && cseq.chatId && cseq.runs.length && !document.hidden) renderChatSequence(); }, 30 * 1000); // "faltam…" anda sozinho
 
   // ── 2.15.0: ver mensagens apagadas e editadas ──
@@ -11518,7 +11624,8 @@
       return;
     }
     if (!c.v25) sec.append(el('div', 'ed-note', 'Atualize o banco para usar este recurso.'));
-    sec.append(el('div', 'crm-sub', 'Esta conversa está em:'));
+    ftabEl.append(chatBlockEl()); // 2.18.5: as réguas (percursos) desta pessoa, a mesma busca da aba Automações
+    sec.append(el('div', 'crm-sub', 'Esta conversa está em (automações de etiqueta):'));
     if (!c.rows.length) sec.append(el('div', 'lt-none', 'Nenhuma automação.'));
     c.rows.forEach((r) => {
       const line = el('div', 'fw-card');
@@ -12508,7 +12615,8 @@
   async function leaveAllAutomations(chatId) {
     let n = 0;
     // sequências ativas desta conversa (as que começam pela venda continuam)
-    const runs = await call('seqChatRuns', { chatId }).catch((e) => { if (/Atualize o banco/.test(e.message)) return []; throw e; });
+    const phone = await chatPhoneOf(chatId).catch(() => ''); // 2.18.5: a mesma pessoa (outro @lid/@c.us)
+    const runs = await call('seqChatRuns', { chatId, ...(phone ? { phone } : {}) }).catch((e) => { if (/Atualize o banco/.test(e.message)) return []; throw e; });
     for (const r of runs || []) {
       const start = r.automation && r.automation.sequence && r.automation.sequence.start;
       if (start && start.type === 'venda') continue;

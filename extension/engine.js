@@ -1630,15 +1630,17 @@
   // esperas, faixa "enviar só entre" da etapa e o horário da automação; cada passo ganha "when" (data e hora prevista)
   // 2.16.0: cada passo ganha "day" (dias inteiros desde a entrada: 0 = o dia em que entrou) e as esperas "desde a
   // entrada" contam do começo (se já passou, seguem na hora)
-  function seqSimulate(def, scenario = 'nunca', { itemTitle = (x) => x || '(sem mensagem)', labelName = (x) => x || '(sem etiqueta)', startAt = null, settings = null } = {}) {
+  // 2.18.5: from = { node, tm } continua de uma caixa (o percurso de uma conversa: o que falta), sem o "Entra"
+  function seqSimulate(def, scenario = 'nunca', { itemTitle = (x) => x || '(sem mensagem)', labelName = (x) => x || '(sem etiqueta)', startAt = null, settings = null, from = null } = {}) {
     const idx = seqIndex(def);
     const out = [];
     const real = Number.isFinite(startAt);
-    let tm = real ? startAt : 0;
+    const cont = !!(real && from && Number.isFinite(from.tm));
+    let tm = cont ? from.tm : real ? startAt : 0;
     let at = 0;
-    let win = null;
+    let win = cont ? from.window || null : null;
     let replied = false;
-    let id = seqFirstOf(def && def.steps);
+    let id = cont ? from.node || null : seqFirstOf(def && def.steps);
     const lab = (n) => (n.source === 'whatsapp' ? labelName(n.wa_label_id, 'whatsapp') : labelName(n.label_id, 'crm'));
     const push = (ev) => out.push(real ? { ...ev, at: Math.round((tm - startAt) / MIN_MS), when: tm, day: Math.floor((tm - startAt) / DAY_MS) } : { ...ev, at, day: Math.floor(at / 1440) });
     const waitFor = (amount, unit, n) => {
@@ -1647,7 +1649,7 @@
       if (!real) { at += need; return; }
       tm += need * MIN_MS; // 2.14.2: tempo corrido
     };
-    push({ kind: 'inicio', text: 'Entra na automação', node: 'start' });
+    if (!cont) push({ kind: 'inicio', text: 'Entra na automação', node: 'start' });
     for (let g = 0; g < 200; g++) {
       if (!id) { push({ kind: 'fim', text: 'Fim: sai da automação', node: null }); break; }
       const e = idx.get(id);
@@ -1869,8 +1871,105 @@
     }
     if (n.type === 'pausa') { const due = Number(run.due_at) || null; return due ? `esperando (faltam ${formatLeft(Math.max(0, due - now))})` : n.mode === 'ate' ? `esperando ${untilText(n)}` : `esperando ${unitText(n.amount, n.unit)}`; } // 2.13.0
     if (n.type === 'enviar') return `vai mandar “${itemTitle(n.item_id)}”`;
-    if (n.type === 'etiqueta') return 'vai mexer nas etiquetas';
+    if (n.type === 'etiqueta') return seqStepText(def, run, now, { itemTitle }).replace(/^./, (c) => c.toLowerCase()); // 2.18.5: a etapa real, não "vai mexer nas etiquetas"
     return 'continuando';
+  }
+  // ── 2.18.5: a conversa aberta na automação, em português simples ──
+  // a etapa em que a pessoa está de verdade: pula as caixas instantâneas (etiqueta, "ir para") até a próxima que
+  // espera, manda ou termina. "Esperando resposta — até 3 dias depois de entrar (faltam 1 dia 2 h)"
+  function seqStepText(def, run, now, { itemTitle = (id) => id } = {}) {
+    if (!run) return '';
+    const idx = seqIndex(def);
+    let id = run.node || seqFirstOf(def && def.steps);
+    let first = true;
+    for (let g = 0; g < 50; g++) {
+      const e = id ? idx.get(id) : null;
+      if (!e) return 'Terminando a automação';
+      const n = e.node;
+      const due = first ? Number(run.due_at) || null : null;
+      const left = due ? ` (faltam ${formatLeft(Math.max(0, due - now))})` : '';
+      if (n.type === 'esperar') {
+        if (first && run.skip_wait === true) return 'Espera pulada: o próximo envio está na fila';
+        if (n.after_mine && !due) return 'Esperando a sua mensagem';
+        return `Esperando resposta — ${seqFromEntry(n) ? `até ${unitText(n.amount, n.unit)} depois de entrar` : `por ${unitText(n.amount, n.unit)}`}${left}`;
+      }
+      if (n.type === 'pausa') return `Esperando — ${n.mode === 'ate' ? untilText(n) : seqFromEntry(n) ? `até ${unitText(n.amount, n.unit)} depois de entrar` : unitText(n.amount, n.unit)}${left}`;
+      if (n.type === 'enviar') return `Vai mandar “${itemTitle(n.item_id)}”`;
+      if (n.type === 'fim') return 'Terminando a automação';
+      id = n.type === 'ir' ? n.to : seqNextOf(idx, id);
+      first = false;
+    }
+    return 'Continuando';
+  }
+  // o que falta para um percurso ATIVO (a pessoa nunca responde, como no ERP): eventos com "when"
+  function seqForecast(def, run, now, opts = {}) {
+    if (!run || (run.status && run.status !== 'ativo')) return [];
+    const idx = seqIndex(def);
+    const entered = Date.parse(run.created_at || '') || now;
+    const id = run.node || seqFirstOf(def && def.steps);
+    const e = id ? idx.get(id) : null;
+    if (!e) return [{ kind: 'fim', text: 'Fim: sai da automação', when: now, node: null }];
+    const n = e.node;
+    const due = Number(run.due_at) || null;
+    const pre = [];
+    let node = id;
+    let tm = now;
+    if (n.type === 'esperar' || n.type === 'pausa') {
+      if (n.type === 'esperar' && n.after_mine && !due && run.skip_wait !== true) return [];
+      const end = run.skip_wait === true ? now : due ? Math.max(now, due) : n.type === 'pausa' && n.mode === 'ate' ? now : now + Math.max(1, Number(n.amount) || 0) * (SEQ_UNIT_MIN[n.unit] || 60) * MIN_MS;
+      tm = end;
+      if (n.type === 'esperar') {
+        pre.push({ kind: 'nao', text: seqFromEntry(n) ? `❌ Não respondeu até ${unitText(n.amount, n.unit)} depois de entrar` : `❌ Não respondeu em ${unitText(n.amount, n.unit)}`, when: tm, node: n.id });
+        node = seqFirstOf(n.no);
+      } else {
+        pre.push({ kind: 'pausa', text: n.mode === 'ate' ? `Esperou ${untilText(n)}` : `Esperou ${unitText(n.amount, n.unit)}`, when: tm, node: n.id });
+        node = seqNextOf(idx, id);
+      }
+    }
+    const rest = seqSimulate(def, 'nunca', { ...opts, startAt: entered, from: { node, tm, window: n.send_window || null } });
+    return [...pre, ...rest];
+  }
+  const SEQ_OUTCOME_TEXT = {
+    respondeu: 'respondeu', nao_respondeu: 'chegou ao fim sem responder', fim: 'chegou ao fim', manual: 'tirado manualmente',
+    nao_enviar: 'etiqueta Não enviar', etiqueta_excluida: 'etiqueta excluída', id_duplicado: 'id duplicado (troca de id do WhatsApp)',
+    outra_regua: 'entrou em outra régua', reentrou: 'entrou de novo', sem_mensagem: 'mensagem não existe mais', saiu_etiqueta: 'saiu da etiqueta',
+  };
+  const seqOutcomeText = (o) => (o ? SEQ_OUTCOME_TEXT[o] || String(o) : 'saiu');
+  // o cartão da conversa: etapa, o que já recebeu, o próximo passo (ou por que está parado) e a linha do tempo
+  // (feitos ✓ + previstos). sends = wa_send_log desta automação para a pessoa (os do percurso: depois da entrada).
+  // hold = motivo de estar parado vindo do painel (automação desligada, envios pausados) ou null.
+  function seqChatCard(def, run, sends, now, { itemTitle = (id) => id, labelName, settings = null, hold = null } = {}) {
+    const t0 = Date.parse(run.created_at || '') || 0;
+    const mine = (Array.isArray(sends) ? sends : []).filter((s) => (Date.parse(s.created_at || '') || 0) >= t0 - 60000).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    const received = mine.filter((s) => s.status === 'enviado').map((s) => ({ title: itemTitle(s.item_id), at: Date.parse(s.created_at) }));
+    const done = [{ done: true, kind: 'inicio', text: 'Entrou na automação', when: t0 || null }];
+    const idx = seqIndex(def);
+    (run.branches || []).forEach((b) => {
+      const n = idx.get(b.node) && idx.get(b.node).node;
+      done.push(b.result === 'sim' ? { done: true, kind: 'respondeu', text: '✅ Respondeu', when: Number(b.at) || null }
+        : { done: true, kind: 'nao', text: n && seqFromEntry(n) ? `❌ Não respondeu até ${unitText(n.amount, n.unit)} depois de entrar` : n ? `❌ Não respondeu em ${unitText(n.amount, n.unit)}` : '❌ Não respondeu', when: Number(b.at) || null });
+    });
+    mine.forEach((s) => {
+      const t = Date.parse(s.created_at) || null;
+      if (s.status === 'enviado') done.push({ done: true, kind: 'enviar', text: `Recebeu “${itemTitle(s.item_id)}”`, when: t });
+      else if (s.status === 'pulado') done.push({ done: true, kind: 'pulado', text: `Não recebeu “${itemTitle(s.item_id)}” (pulado${s.reason ? `: ${s.reason}` : ''})`, when: t });
+      else if (s.status === 'falhou') done.push({ done: true, kind: 'erro', text: `Erro ao enviar “${itemTitle(s.item_id)}”`, when: t });
+    });
+    const active = !run.status || run.status === 'ativo';
+    if (!active) done.push({ done: true, kind: 'fim', text: `Saiu: ${seqOutcomeText(run.outcome)}`, when: Date.parse(run.ended_at || run.updated_at || '') || null });
+    done.sort((a, b) => (a.when || 0) - (b.when || 0));
+    const fut = active ? seqForecast(def, run, now, { itemTitle, labelName, settings }).map((ev) => ({ done: false, kind: ev.kind, text: ev.kind === 'fim' ? 'Termina a automação' : ev.text, when: ev.when == null ? null : ev.when, late: ev.when != null && ev.when < now - 5 * MIN_MS })) : [];
+    const nx = fut.find((x) => x.kind === 'enviar') || fut.find((x) => x.kind === 'fim') || null;
+    let next = null;
+    if (active) {
+      if (hold) next = { text: nx ? nx.text.replace(/^Recebe /, '') : 'próximo passo', when: null, held: hold };
+      else if (nx) {
+        const shifted = nx.kind === 'enviar' && run.due_at && nx.when != null && nx.when > (Number(run.due_at) || 0) + 5 * MIN_MS && fut.indexOf(nx) <= 1;
+        const overdue = !!run.due_at && Number(run.due_at) < now - 5 * MIN_MS && run.skip_wait !== true; // o prazo já passou e o motor ainda não andou
+        next = { text: nx.kind === 'fim' ? 'Termina a automação' : nx.text.replace(/^Recebe /, ''), when: nx.when, late: overdue || !!nx.late, held: overdue || nx.late ? 'atrasado: sai assim que o motor puder (WhatsApp aberto, dentro dos limites de envio)' : shifted ? 'fora do horário de envio: espera o próximo horário' : null };
+      } else if (seqIndex(def).get(run.node || '') && seqIndex(def).get(run.node).node.after_mine) next = { text: 'espera a sua mensagem', when: null, held: null };
+    }
+    return { step: active ? seqStepText(def, run, now, { itemTitle }) : `Saiu: ${seqOutcomeText(run.outcome)}`, received, next, timeline: [...done, ...fut] };
   }
   // Nome curto de cada passo (lista de automações: "quantos estão em cada passo")
   function seqNodeLabel(def, id, { itemTitle = (x) => x } = {}) {
@@ -3222,6 +3321,7 @@
     seqIndex, seqStep, seqValidate, seqFromEntry, sinceEntryText, seqEntryOrderWarnings, seqSendSteps, seqManualPlan, seqManualForecast, seqSkipForecast, seqDescribe, seqNodeLabel, seqTemplate, seqId, seqStartMatches, seqOutcome, SEQ_MAX_DEPTH,
     seqNormalize, seqInsert, seqRemove, seqExcluded, seqExitLabelOf, seqSelfRemovedStart, waStartPresence, LEFT_LABEL_REASON, createAgendaSync, // 2.18.1
     seqSimulate, simAtText, seqFromAutomation, seqAmountOf, // 2.13.0
+    seqStepText, seqForecast, seqChatCard, seqOutcomeText, // 2.18.5
     itemUsageLines, itemInUse, friendlyDeleteError, // 2.13.1
     scheduleSpec, nextSendTime, pausaUntil, scheduleDailyLimit, scheduleOutsideCommon, scheduleSentence, scheduleProblems, untilText, windowText, daysText, // 2.13.2
     weekFromJson, weekOf, weekToJson, weekSummary, scheduleWeekJson, copyToWeekdays, rowOutsideCommon, WEEK_ORDER, DAY_CAP, // 2.14.3

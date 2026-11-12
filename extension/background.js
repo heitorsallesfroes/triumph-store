@@ -107,7 +107,8 @@ const HANDLERS = {
   seqUpdateRun:   (m) => WaApi.seqUpdateRun({ id: m.id, version: m.version, patch: m.patch }),
   seqReplies:     (m) => WaApi.seqReplies({ chatIds: m.chatIds, since: m.since }),
   seqLeads:       (m) => WaApi.seqLeads({ since: m.since }),
-  seqChatRuns:    (m) => WaApi.seqChatRuns({ chatId: m.chatId }),
+  seqChatRuns:    (m) => WaApi.seqChatRuns({ chatId: m.chatId, phone: m.phone }), // 2.18.5: + phone (a mesma pessoa)
+  seqChatOverview: (m) => WaApi.seqChatOverview({ chatId: m.chatId, phone: m.phone }), // 2.18.5: bloco "ESTA CONVERSA"
   seqRunAction:   (m) => WaApi.seqRunAction({ id: m.id, action: m.action }),
   seqManualEnter: (m) => WaApi.seqManualEnter({ automationId: m.automationId, chatId: m.chatId, plan: m.plan, leaveOthers: m.leaveOthers === true, phone: m.phone }), // 2.16.0 (2.16.7: + phone)
   seqLabelWarnings: (m) => WaApi.seqLabelWarnings({ chatId: m.chatId }), // 2.16.7

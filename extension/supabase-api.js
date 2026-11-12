@@ -2922,13 +2922,62 @@
     } catch { return []; }
   }
   // painel da conversa: em que sequência ela está
-  async function seqChatRuns({ chatId }) {
+  // 2.18.5: a MESMA pessoa da conversa aberta (a regra de identidade da 2.16.5/2.16.12): os ids de conversa (o aberto,
+  // o @c.us do telefone e o chat_id dos contatos dela) e os contatos (pelo chat_id — com o telefone de outra pessoa não
+  // vale — ou pelo telefone). O percurso pode ter sido gravado com outro chat_id (troca @lid/@c.us ou outro @lid).
+  async function seqChatIdentity({ chatId, phone }) {
+    const chats = new Set([chatId]);
+    const given = typeof phone === 'string' ? phone.replace(/\D/g, '') : '';
+    const ph = phoneOfChat(chatId) || (/^\d{8,15}$/.test(given) ? given : null);
+    if (ph) chats.add(`${ph}@c.us`);
+    const contacts = new Map();
+    try {
+      if (await chatIdColumn()) (await rest(`wa_contacts?select=id,phone,chat_id&chat_id=eq.${encodeURIComponent(chatId)}&limit=5`))
+        .forEach((c) => { if (!c.phone || !ph || phoneKey(c.phone) === phoneKey(ph)) contacts.set(c.id, c); });
+    } catch { /* sem a coluna: só o telefone */ }
+    if (ph) { try { (await contactsByPhones([ph])).forEach((c) => contacts.set(c.id, c)); } catch { /* sem contato */ } }
+    contacts.forEach((c) => { if (c.chat_id && SCHED_CHAT_RE.test(c.chat_id)) chats.add(c.chat_id); });
+    return { chatIds: [...chats].slice(0, 20), contactIds: [...contacts.keys()].filter((id) => UUID_RE.test(String(id))).slice(0, 20), phone: ph };
+  }
+  const rawList = (vs) => `(${vs.map((v) => `"${String(v).replace(/"/g, '')}"`).join(',')})`;
+  // percursos desta pessoa (chat_id de qualquer id dela OU contact_id de um contato dela), sem repetir
+  async function seqRunsOfIdentity(idt, statusFilter, order, limit) {
+    const parts = [`chat_id.in.${rawList(idt.chatIds)}`];
+    if (idt.contactIds.length) parts.push(`contact_id.in.${rawList(idt.contactIds)}`);
+    const rows = await seqRest(`wa_sequence_runs?select=${SEQ_RUN_COLS}&or=${encodeURIComponent(`(${parts.join(',')})`)}&${statusFilter}&order=${order}&limit=${limit}`);
+    const seen = new Set();
+    return rows.filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+  }
+  async function seqAutosOf(runs) {
+    if (!runs.length) return new Map();
+    const autos = await autoRest(`wa_automations?select=id,name,active,sequence,test_chat_id&id=in.${inList([...new Set(runs.map((r) => r.automation_id))])}`);
+    return new Map(autos.map((a) => [a.id, a]));
+  }
+  async function seqChatRuns({ chatId, phone }) {
     if (!SCHED_CHAT_RE.test(chatId || '') || !(await automationsV212())) return [];
-    const runs = await seqRest(`wa_sequence_runs?select=${SEQ_RUN_COLS}&chat_id=eq.${encodeURIComponent(chatId)}&status=eq.ativo&order=created_at.desc&limit=10`);
-    if (!runs.length) return [];
-    const autos = await autoRest(`wa_automations?select=id,name,sequence,test_chat_id&id=in.${inList([...new Set(runs.map((r) => r.automation_id))])}`);
-    const byId = new Map(autos.map((a) => [a.id, a]));
+    const runs = await seqRunsOfIdentity(await seqChatIdentity({ chatId, phone }), 'status=eq.ativo', 'created_at.desc', 10);
+    const byId = await seqAutosOf(runs);
     return runs.filter((r) => byId.has(r.automation_id)).map((r) => ({ ...r, automation: byId.get(r.automation_id) }));
+  }
+  // 2.18.5: tudo do bloco "🔁 ESTA CONVERSA": os percursos ativos, os 5 últimos encerrados e os envios deles
+  async function seqChatOverview({ chatId, phone }) {
+    if (!SCHED_CHAT_RE.test(chatId || '') || !(await automationsV212())) return { runs: [], ended: [], sends: [], identity: null };
+    const idt = await seqChatIdentity({ chatId, phone });
+    const [active, ended] = await Promise.all([
+      seqRunsOfIdentity(idt, 'status=eq.ativo', 'created_at.desc', 10),
+      seqRunsOfIdentity(idt, 'status=neq.ativo', 'updated_at.desc', 5),
+    ]);
+    const byId = await seqAutosOf([...active, ...ended]);
+    const withA = (list) => list.filter((r) => byId.has(r.automation_id)).map((r) => ({ ...r, automation: byId.get(r.automation_id) }));
+    const runs = withA(active);
+    let sends = [];
+    if (runs.length) {
+      const since = Math.min(...runs.map((r) => Date.parse(r.created_at || '') || Date.now())) - 60000;
+      try {
+        sends = await engineRest(`wa_send_log?select=source_id,chat_id,item_id,status,reason,created_at&source=eq.follow&source_id=in.${inList([...new Set(runs.map((r) => r.automation_id))])}&chat_id=in.${inList(idt.chatIds)}&created_at=gte.${eqIso(since)}&order=created_at.asc&limit=300`);
+      } catch { sends = []; }
+    }
+    return { runs, ended: withA(ended), sends, identity: { chats: idt.chatIds.length, contacts: idt.contactIds.length } };
   }
   // 2.16.7: avisos da régua nesta conversa (últimos 7 dias): a caixa ETIQUETA não achou o contato
   const LABEL_MISS = 'etiqueta não aplicada: contato não encontrado';
@@ -4593,6 +4642,7 @@
     campaignVariantStats, fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,
+    seqChatOverview, // 2.18.5
     saveLeads, igPhraseList, logQuickSend, logManualSends, recordReplies, touchLeads, saveChatActivity,
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
