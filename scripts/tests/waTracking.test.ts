@@ -548,6 +548,62 @@ test('Vendas × Facebook: faturamento do ERP × Compras enviadas (sem teste), di
   assert.equal(waWebUrl(null, null), null);
 });
 
+// ERP 12/11: "Ritmo de hoje"
+function paceInput(): TrackInput {
+  const input = base();
+  const ad = (chat: string, at: string) => {
+    input.leads.push(lead(chat, at, { origin: 'anuncio', ad_id: 'AD9', ad_title: 'Promo' }));
+    input.attributions.push({ chat_id: chat, phone: null, contact_name: null, ad_id: 'AD9', ad_title: 'Promo', first_message_at: sp(at) });
+  };
+  ad('5511900000001@c.us', '2026-11-06T09:00:00'); // hoje
+  ad('5511900000002@c.us', '2026-11-06T14:30:00'); // hoje (último de anúncio)
+  input.leads.push(lead('5511900000003@c.us', '2026-11-06T14:50:00')); // hoje, orgânico (último lead)
+  ad('5511900000004@c.us', '2026-11-05T10:00:00'); // ontem, antes das 15:00
+  ad('5511900000005@c.us', '2026-11-05T16:00:00'); // ontem, depois das 15:00
+  ad('5511900000006@c.us', '2026-11-04T14:59:00'); // 04/11, antes
+  ad('5511900000007@c.us', '2026-11-03T15:01:00'); // 03/11, depois
+  ad('5511900000008@c.us', '2026-10-30T11:00:00'); // 7 dias atrás (a sexta passada): o último da comparação
+  return input;
+}
+test('Ritmo de hoje: hoje até agora (mesmos números da Visão geral), último lead e último de anúncio', () => {
+  const model = buildConversations(paceInput());
+  const today = periodRanges('hoje', NOW).cur;
+  const list = conversationsIn(model, today, 'todas');
+  const p = tracking.todayPace(list, model, NOW, 'todas');
+  const s = trackSummary(list);
+  assert.equal(p.leads, s.leads);
+  assert.equal(p.leadsAd, s.leadsAd);
+  assert.deepEqual([p.leads, p.leadsAd], [3, 2]);
+  assert.equal(tracking.spHm(p.lastLeadAt as number), '14:50');
+  assert.equal(tracking.spHm(p.lastAdLeadAt as number), '14:30');
+  assert.equal(p.cutoff, '15:00');
+});
+test('Ritmo de hoje: 7 dias anteriores ATÉ O MESMO HORÁRIO (SP), com dia da semana e o dia inteiro; média e status', () => {
+  const model = buildConversations(paceInput());
+  const list = conversationsIn(model, periodRanges('hoje', NOW).cur, 'todas');
+  const p = tracking.todayPace(list, model, NOW, 'todas');
+  assert.deepEqual(p.days.map((d) => [d.day, d.weekday, d.adUntil, d.adFull]), [
+    ['2026-11-05', 'qui', 1, 2], ['2026-11-04', 'qua', 1, 1], ['2026-11-03', 'ter', 0, 1], ['2026-11-02', 'seg', 0, 0],
+    ['2026-11-01', 'dom', 0, 0], ['2026-10-31', 'sáb', 0, 0], ['2026-10-30', 'sex', 1, 1],
+  ]);
+  assert.ok(Math.abs(p.avgAdUntil - 3 / 7) < 1e-9);
+  assert.equal(p.status, 'acima');
+  // mesmo trecho que a página usaria: conversationsIn + trackSummary do dia até a hora
+  const from = Date.parse('2026-11-05T00:00:00-03:00');
+  assert.equal(p.days[0].adUntil, trackSummary(conversationsIn(model, { from, to: from + 15 * 3600000 }, 'todas')).leadsAd);
+  // filtro de origem igual ao da página
+  const org = tracking.todayPace(conversationsIn(model, periodRanges('hoje', NOW).cur, 'nao_rastreada'), model, NOW, 'nao_rastreada');
+  assert.deepEqual([org.leads, org.leadsAd, org.days.every((d) => d.adUntil === 0)], [1, 0, true]);
+});
+test('Ritmo de hoje: até 20% de diferença = na média; média 0', () => {
+  assert.equal(tracking.paceStatus(12, 10).status, 'na média');
+  assert.equal(tracking.paceStatus(8, 10).status, 'na média');
+  assert.equal(tracking.paceStatus(12.5, 10).status, 'acima');
+  assert.equal(tracking.paceStatus(7.9, 10).status, 'abaixo');
+  assert.deepEqual(tracking.paceStatus(0, 0), { status: 'na média', diffPct: null });
+  assert.equal(tracking.paceStatus(1, 0).status, 'acima');
+});
+
 let ok = 0;
 for (const [name, fn] of tests) {
   try { fn(); ok++; console.log(`ok   ${name}`); } catch (e) { console.log(`FAIL ${name}\n     ${(e as Error).message.split('\n').slice(0, 8).join('\n     ')}`); process.exitCode = 1; }

@@ -675,6 +675,43 @@ export function trackingWindow(r: Range, now = Date.now()) {
   };
 }
 
+// ── ERP 12/11: "Ritmo de hoje" (só com o período Hoje) ──
+// Hoje até agora: leads novos e de anúncio (os mesmos de trackSummary: periodLead e periodLead && ad), a hora do último
+// lead e do último de anúncio (1º contato, firstAt). Os 7 dias anteriores ATÉ O MESMO HORÁRIO (fuso de São Paulo):
+// conversationsIn + trackSummary do trecho [início do dia, início do dia + o que já passou de hoje] e do dia inteiro,
+// com o mesmo modelo (buildConversations), o mesmo filtro de origem e as mesmas respostas. Média dos 7 até essa hora;
+// hoje "acima" / "na média" / "abaixo" (até 20% de diferença = na média; média 0: com lead de anúncio = acima).
+export interface PaceDay { day: string; weekday: string; adUntil: number; leadsUntil: number; adFull: number; leadsFull: number }
+export interface TodayPace {
+  leads: number; leadsAd: number; lastLeadAt: number | null; lastAdLeadAt: number | null; cutoff: string;
+  days: PaceDay[]; avgAdUntil: number; status: 'acima' | 'na média' | 'abaixo'; diffPct: number | null;
+}
+const WEEKDAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+export const weekdayOf = (day: string) => WEEKDAYS[new Date(`${day}T12:00:00Z`).getUTCDay()];
+export const spHm = (ms: number) => new Date(ms - 3 * 3600000).toISOString().slice(11, 16);
+export function paceStatus(today: number, avg: number): { status: TodayPace['status']; diffPct: number | null } {
+  if (!(avg > 0)) return { status: today > 0 ? 'acima' : 'na média', diffPct: null };
+  const d = (today - avg) / avg;
+  return { status: Math.abs(d) <= 0.2 + 1e-9 ? 'na média' : d > 0 ? 'acima' : 'abaixo', diffPct: d };
+}
+// today: a lista da página (conversationsIn do período Hoje); week: o modelo dos 7 dias anteriores + hoje
+export function todayPace(today: Conversation[], week: TrackModel, now: number, f: OriginFilter, replies?: Pick<ReplyRow, 'chat_id' | 'replied_at'>[]): TodayPace {
+  const todayDay = spDay(now);
+  const elapsed = Math.max(0, now - spStartOfDay(todayDay));
+  const sum = trackSummary(today);
+  const leads = today.filter((c) => c.periodLead);
+  const last = (l: Conversation[]) => (l.length ? Math.max(...l.map((c) => c.firstAt)) : null);
+  const days: PaceDay[] = Array.from({ length: 7 }, (_, i) => {
+    const day = addDays(todayDay, -(i + 1));
+    const from = spStartOfDay(day);
+    const until = trackSummary(conversationsIn(week, { from, to: from + elapsed }, f, replies));
+    const full = trackSummary(conversationsIn(week, { from, to: from + DAY_MS - 1 }, f, replies));
+    return { day, weekday: weekdayOf(day), adUntil: until.leadsAd, leadsUntil: until.leads, adFull: full.leadsAd, leadsFull: full.leads };
+  });
+  const avgAdUntil = days.reduce((a, d) => a + d.adUntil, 0) / days.length;
+  return { leads: sum.leads, leadsAd: sum.leadsAd, lastLeadAt: last(leads), lastAdLeadAt: last(leads.filter((c) => c.ad)), cutoff: spHm(now), days, avgAdUntil, ...paceStatus(sum.leadsAd, avgAdUntil) };
+}
+
 // ── ERP 11/11: Vendas × Facebook (só leitura; nada é enviado ao Facebook pelo ERP) ──
 // "Faturamento no ERP" = todas as vendas do período (não canceladas/reembolsadas), pela data da venda.
 // "Enviado ao Facebook" = Compras (Purchase) enviadas (status enviado, sem testes), pela data do envio.

@@ -2,15 +2,17 @@
 // origem, relatório); visão geral (ativas, rastreadas × não rastreadas, 1ª resposta, meia-lua); origem por dia;
 // funil Fez contato → Comprou; vendas; a tabela de conversas (ao vivo, 25 por página, detalhes da conversa numa
 // lateral) e os eventos enviados ao Facebook. Azul = Meta Ads, rosa = Instagram (orgânico, links rastreáveis), laranja = Não rastreada.
+// ERP 12/11: "Ritmo de hoje" (só com Hoje): leads novos e de anúncio até agora (os da visão geral), último lead e
+// último de anúncio e os 7 dias anteriores até o mesmo horário (todayPace; mesmo carregamento e mesmas regras).
 // Contas em src/lib/waTracking.ts; leitura em src/lib/waTrackingDb.ts. Só leitura.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Download, ExternalLink, Eye, MessageCircle, Search, X } from 'lucide-react';
-import { periodRanges, spDay, type PeriodPreset } from '../../lib/waPanel';
+import { addDays, periodRanges, spDay, spStartOfDay, type PeriodPreset } from '../../lib/waPanel';
 import {
   adBadgeTitle, igLabel, buildConversations, buyFunnel, conversationAd, conversationsCsv, conversationsIn, conversationTimeline, filterStage, originByDay, originMatches, pageInfo, salesByDay, salesCsv,
   searchConversations, sortConversations, trackSummary, businessHoursLabel, businessHoursOf, saleLinksText, DEFAULT_SORT, STAGE_FILTERS, STAGE_LABEL,
-  salesFbGap, recentFbGap, fbGapText, type SalesFbGap,
+  salesFbGap, recentFbGap, fbGapText, type SalesFbGap, todayPace, spHm, type TodayPace,
   type Conversation, type ConversationAd, type OriginFilter, type SalesDateMode, type SortKey, type Stage, type StageFilter, type TrackInput,
 } from '../../lib/waTracking';
 import { loadAdAttributions, loadSalesFb, loadTracking, type FbGapLoad, type TrackLoad } from '../../lib/waTrackingDb';
@@ -117,6 +119,21 @@ export default function WaTracking() {
   const fbReady = !!fbData && fbData.key === key;
   const fbGap = useMemo<SalesFbGap | null>(() => (fbReady && fbData ? salesFbGap(fbData.load.sales, fbData.load.conversions, r) : null), [fbReady, fbData, r]);
   const fbRecent = useMemo(() => (fbData ? recentFbGap(fbData.load.sales, fbData.load.conversions) : null), [fbData]);
+  // ERP 12/11: "Ritmo de hoje" (só com Hoje): os 7 dias anteriores + hoje, pelo MESMO carregamento (só leitura) e as
+  // mesmas regras (buildConversations / conversationsIn / trackSummary); hoje vem da própria lista da página
+  const isToday = preset === 'hoje';
+  const [week, setWeek] = useState<{ day: string; load: TrackLoad } | null>(null);
+  const weekDay = isToday ? r.toDay : '';
+  useEffect(() => {
+    if (!weekDay || (week && week.day === weekDay)) return undefined;
+    let alive = true;
+    const fromDay = addDays(weekDay, -7);
+    const wr = { from: spStartOfDay(fromDay), to: spStartOfDay(weekDay) + 86400000 - 1, fromDay, toDay: weekDay, days: 8 };
+    loadTracking(wr).then((load) => { if (alive) setWeek({ day: weekDay, load }); }).catch(() => { /* o card fica carregando; tenta de novo ao voltar para Hoje */ });
+    return () => { alive = false; };
+  }, [weekDay]); // eslint-disable-line react-hooks/exhaustive-deps
+  const weekModel = useMemo(() => (week && week.day === weekDay ? buildConversations(week.load.input, businessHoursOf(week.load.settings)) : null), [week, weekDay]);
+  const pace = useMemo<TodayPace | null>(() => (isToday && list && weekModel && data && week ? todayPace(list, weekModel, data.at, origin, week.load.input.replies) : null), [isToday, list, weekModel, data, week, origin]);
   const seeFbList = () => setTimeout(() => fbRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   const download = (text: string, name: string) => {
     const blob = new Blob([String.fromCharCode(0xfeff) + text], { type: 'text/csv;charset=utf-8' });
@@ -196,6 +213,8 @@ export default function WaTracking() {
           </div>
         )}
       </Card>
+
+      {isToday && <PaceCard pace={pace} />}
 
       {/* Origem das conversas */}
       <Card title="Origem das conversas" info={INFO.origin} testId="track-origin" right={originTot && (
@@ -346,6 +365,43 @@ function FbGapBlock({ gap }: { gap: SalesFbGap }) {
 
 const tooltipStyle: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border-main)', borderRadius: 10, fontSize: 12 };
 const hideZero = (v: unknown) => (Number(v) ? String(v) : '');
+
+// ERP 12/11: "Ritmo de hoje" (só com o período Hoje)
+function PaceCard({ pace }: { pace: TodayPace | null }) {
+  const ST = { acima: { t: 'acima', c: GREEN }, 'na média': { t: 'na média', c: SLATE }, abaixo: { t: 'abaixo', c: '#dc2626' } } as const;
+  const ddmm = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+  return (
+    <Card title="Ritmo de hoje" testId="track-pace" info="Leads novos de hoje até agora e os de anúncio (os mesmos números da Visão geral), comparados com os 7 dias anteriores até o mesmo horário (fuso de São Paulo). Até 20% de diferença da média = na média.">
+      {!pace ? <Skeleton h={120} /> : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start' }}>
+          <div style={{ minWidth: 180 }} data-testid="track-pace-today">
+            <div style={{ fontSize: 22, fontWeight: 800 }}>{fmtInt(pace.leads)} <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>leads novos até {pace.cutoff}</span></div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: META }}>{fmtInt(pace.leadsAd)} de anúncio</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }} data-testid="track-pace-last">
+              {pace.lastLeadAt != null ? `último às ${spHm(pace.lastLeadAt)}` : 'nenhum lead ainda'} · {pace.lastAdLeadAt != null ? `último de anúncio às ${spHm(pace.lastAdLeadAt)}` : 'nenhum de anúncio ainda'}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 13 }} data-testid="track-pace-status">
+              Média até {pace.cutoff}: <b>{pace.avgAdUntil.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</b> de anúncio · hoje está{' '}
+              <b style={{ color: ST[pace.status].c }}>{ST[pace.status].t}</b>{pace.diffPct != null ? ` (${pace.diffPct > 0 ? '+' : ''}${Math.round(pace.diffPct * 100)}%)` : ''}
+            </div>
+          </div>
+          <table style={{ fontSize: 12, borderCollapse: 'collapse', minWidth: 240 }} data-testid="track-pace-days">
+            <thead><tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}><th style={{ padding: '2px 8px' }}>Dia</th><th style={{ padding: '2px 8px', textAlign: 'right' }}>Anúncio até {pace.cutoff}</th><th style={{ padding: '2px 8px', textAlign: 'right' }}>Dia inteiro</th></tr></thead>
+            <tbody>
+              {pace.days.map((d) => (
+                <tr key={d.day} style={{ borderTop: '1px solid var(--border-main)' }}>
+                  <td style={{ padding: '2px 8px' }}>{ddmm(d.day)} {d.weekday}</td>
+                  <td style={{ padding: '2px 8px', textAlign: 'right', fontWeight: 700 }}>{fmtInt(d.adUntil)}</td>
+                  <td style={{ padding: '2px 8px', textAlign: 'right' }}>{fmtInt(d.adFull)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function Card({ title, info, right, children, testId }: { title: string; info?: string; right?: React.ReactNode; children: React.ReactNode; testId?: string }) {
   return (

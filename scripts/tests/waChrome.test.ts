@@ -304,6 +304,26 @@ async function main() {
       await shot('rastreamento-vendas-facebook.png');
       await ev(`window.scrollTo(0, 0); return true;`);
     });
+    // ERP 12/11: "Ritmo de hoje" (só com Hoje): os mesmos leads da Visão geral, 7 dias até o mesmo horário, só leitura
+    await step('Ritmo de hoje', async () => {
+      const paceOk = await waitFor(`${H} const c = document.querySelector('[data-testid="track-pace"]'); return !!c && !!c.querySelector('[data-testid="track-pace-days"]');`, 15000);
+      const pace = await ev(`${H} const c = document.querySelector('[data-testid="track-pace"]'); const t = txt(c.querySelector('[data-testid="track-pace-today"]'));
+        const sub = txt(document.querySelector('[data-testid="track-active"]')).replace('Total de conversas novas ativas' + txt(document.querySelector('[data-testid="track-active-value"]')), '');
+        return { t, sub, last: txt(c.querySelector('[data-testid="track-pace-last"]')), status: txt(c.querySelector('[data-testid="track-pace-status"]')),
+          rows: [...c.querySelectorAll('[data-testid="track-pace-days"] tbody tr')].map((tr) => txt(tr)), head: txt(c.querySelector('thead')) };`);
+      const leadsPage = (/^(\d+) leads novos no período/.exec(pace.sub) || [])[1];
+      const leadsCard = (/^(\d+) leads novos até \d{2}:\d{2}/.exec(pace.t) || [])[1];
+      check('Ritmo de hoje (só com Hoje): os leads novos de hoje = os da Visão geral, quantos de anúncio, último lead e último de anúncio; 7 dias anteriores até o mesmo horário com dia da semana e o dia inteiro; média e acima / na média / abaixo',
+        paceOk && !!leadsPage && leadsCard === leadsPage && /\d+ de anúncio/.test(pace.t) && /(último às \d{2}:\d{2}|nenhum lead ainda) · (último de anúncio às \d{2}:\d{2}|nenhum de anúncio ainda)/.test(pace.last)
+        && pace.rows.length === 7 && pace.rows.every((r) => /^\d{2}\/\d{2}(dom|seg|ter|qua|qui|sex|sáb)\d+$/.test(r.replace(/\s+/g, ''))) && /Anúncio até \d{2}:\d{2}/.test(pace.head)
+        && /Média até \d{2}:\d{2}: .* de anúncio · hoje está (acima|na média|abaixo)/.test(pace.status), JSON.stringify(pace));
+      await ev(`${H} btn('7 dias').click(); return true;`);
+      const gone = await waitFor(`${H} return !document.querySelector('[data-testid="track-pace"]');`, 8000);
+      await ev(`${H} btn('Hoje').click(); return true;`);
+      const back = await waitFor(`${H} return !!document.querySelector('[data-testid="track-pace-days"]') && !!document.querySelector('[data-testid="track-table"] tbody tr');`, 15000);
+      const ro = await ev(`return !(window.__WRITES || []).length;`);
+      check('Ritmo de hoje some com "7 dias" e volta com "Hoje"; nada gravado (só leitura)', gone && back && ro === true, JSON.stringify({ gone, back, ro }));
+    });
     await step('Conversas: aguardando 1ª resposta e detalhes', async () => {
       await ev(`${H} document.querySelector('[data-testid="track-see-awaiting"]').click(); return true;`);
       const awOk = await waitFor(`${H} return ${pager} === 'Página 1 de 1 · 3 conversas';`, 5000);
