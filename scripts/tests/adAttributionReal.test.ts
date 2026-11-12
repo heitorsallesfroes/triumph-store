@@ -61,18 +61,21 @@ for (const days of ['7', '30'] as const) {
   const sales = A.periodSales(erp.input.sales, w);
   const ig = A.igOrganicSaleIds(model, w);
   const costs = await AD.loadSaleCosts(sales.map((s) => s.id));
-  const att = A.attributeSales(byAd, sales, costs, trackStart, ig);
-  const old = A.attributeSales(byAd, sales, costs, trackStart); // como era antes (Instagram repartido)
+  const org = A.organicSaleIds(model, sales);
+  const att = A.attributeSales(byAd, sales, costs, trackStart, ig, org);
+  const old = A.attributeSales(byAd, sales, costs, trackStart); // como era antes (Instagram e orgânico repartidos)
   console.log(`\n══ ${days} dias: ${w.fromDay} a ${w.toDay} ══`);
-  console.log(`  vendas do período ${att.all.count} (${money(att.all.revenue)}) = identificadas ${att.identified.count} (${money(att.identified.revenue)}) + Instagram orgânico ${att.instagram.count} (${money(att.instagram.revenue)}) + sem origem ${att.unattributed.count} (${money(att.unattributed.revenue)})`);
+  console.log(`  vendas do período ${att.all.count} (${money(att.all.revenue)}) = identificadas ${att.identified.count} (${money(att.identified.revenue)}) + anúncio não identificado ${att.noAdId.count} (${money(att.noAdId.revenue)}) + Instagram orgânico ${att.instagram.count} (${money(att.instagram.revenue)}) + orgânico/sem conversa ${att.organic.count} (${money(att.organic.revenue)}) + sem origem ${att.unattributed.count} (${money(att.unattributed.revenue)})`);
   console.log(`  sem origem: ${att.preTrack.count} antes do rastreio (${money(att.preTrack.revenue)}, não repartidas) + ${att.distributable.count} repartíveis (${money(att.distributable.revenue)}) · conversas de anúncio ${att.totalConversations} · repartiu: ${att.distributed ? 'sim' : 'não'}`);
 
   // ── contas que precisam fechar ──
   const ids = [...byAd.values()].flatMap((a) => a.saleIds);
   assert.equal(new Set(ids).size, ids.length, 'venda contada em dois anúncios');
   assert.ok(att.identified.ids.every((id) => !att.instagram.ids.includes(id)), 'venda identificada E Instagram');
-  assert.equal(att.identified.count + att.instagram.count + att.unattributed.count, att.all.count, 'identificadas + Instagram + sem origem = todas');
-  assert.ok(near(att.identified.revenue + att.instagram.revenue + att.unattributed.revenue, att.all.revenue), 'R$: identificadas + Instagram + sem origem = todas');
+  assert.equal(att.identified.count + att.noAdId.count + att.instagram.count + att.organic.count + att.unattributed.count, att.all.count, 'as partes = todas');
+  assert.ok(near(att.identified.revenue + att.noAdId.revenue + att.instagram.revenue + att.organic.revenue + att.unattributed.revenue, att.all.revenue), 'R$: as partes = todas');
+  assert.ok(!att.shares.has(A.NO_AD_ID), 'Anúncio não identificado fora da repartição');
+  assert.ok(!att.distributable.ids.some((id) => org.has(id)), 'orgânico / sem conversa fora da repartição');
   assert.equal(att.preTrack.count + att.distributable.count, att.unattributed.count, 'sem origem = antes do rastreio + repartíveis');
   const sh = [...att.shares.values()];
   if (att.distributed) {
@@ -86,21 +89,18 @@ for (const days of ['7', '30'] as const) {
   console.log(`  ROAS geral ${trio.general == null ? '—' : trio.general.toFixed(2)} · identificado ${trio.identified == null ? '—' : trio.identified.toFixed(2)} · gasto com imposto ${money(spend)}`);
 
   // ── avisos (o que pode estar errado nos dados ou na regra) ──
-  if (att.instagram.count) warn(`${days} dias: ${att.instagram.count} venda(s) do Instagram orgânico (${money(att.instagram.revenue)}) ERAM repartidas entre os anúncios no modo Estimado (antes: ${old.distributable.count} repartíveis, agora ${att.distributable.count}).`);
+  console.log(`  repartição: antes da correção ${old.distributable.count} vendas (${money(old.distributable.revenue)}); agora ${att.distributable.count} (${money(att.distributable.revenue)})`);
   const cards = A.buildAdCards({ model, meta: meta.daily, period: [], costs, taxRate: tax, goals: A.DEFAULT_GOALS, mode: 'estimado', attribution: att }, w);
   const cardsRev = cards.reduce((x, c) => x + c.money.revenue, 0);
   const tE = A.totalsOf(model, meta.daily, costs, tax, w, { mode: 'estimado', attribution: att });
-  if (Math.abs(cardsRev - tE.revenue) > 0.05) warn(`${days} dias: no modo Estimado o "Faturamento" do topo (${money(tE.revenue)}, todas as vendas) ≠ soma dos cartões (${money(cardsRev)}); a diferença (${money(tE.revenue - cardsRev)}) = Instagram orgânico ${money(att.instagram.revenue)} + antes do rastreio ${money(att.preTrack.revenue)}${att.distributed ? '' : ` + sem origem não repartidas ${money(att.distributable.revenue)}`}.`);
-  const noId = byAd.get('sem-id');
-  const noIdShare = att.shares.get('sem-id');
-  if (noId && noId.conversations) warn(`${days} dias: ${noId.conversations} conversa(s) de anúncio SEM ad_id entram na repartição como "Anúncio não identificado"${noIdShare ? ` (${A.salesTxt(noIdShare.sales)} venda(s) estimada(s), ${money(noIdShare.revenue)})` : ''}: essa parte não aparece em nenhum anúncio da Meta.`);
+  // o topo (Estimado: todas as vendas) − a soma dos cartões = o que ficou fora da repartição
+  const out = att.instagram.revenue + att.organic.revenue + att.preTrack.revenue + (att.distributed ? 0 : att.distributable.revenue);
+  assert.ok(Math.abs(tE.revenue - cardsRev - out) <= 0.05, `topo − cartões = fora da repartição (${tE.revenue} − ${cardsRev} ≠ ${out})`);
+  console.log(`  topo (Estimado) ${money(tE.revenue)} − soma dos cartões ${money(cardsRev)} = fora da repartição ${money(out)}`);
   // venda de conversa de anúncio ANTES do 1º contato: vira "sem origem" e é repartida
   const before = model.conversations.filter((c) => c.ad && c.tracked).flatMap((c) => c.saleLinks.filter((s) => s.t >= w.from && s.t <= w.to && s.t < c.firstAt));
   if (before.length) warn(`${days} dias: ${before.length} venda(s) (${money(before.reduce((x, s) => x + s.total, 0))}) de conversas de anúncio feitas ANTES do 1º contato registrado: ficam "sem origem" e entram na repartição.`);
   // vendas de conversas orgânicas rastreadas (não Instagram) que entram como "sem origem"
-  const orgTracked = new Set(model.conversations.filter((c) => !c.ad && !c.ig && c.tracked).flatMap((c) => c.saleLinks.filter((s) => s.t >= w.from && s.t <= w.to).map((s) => s.id)));
-  const orgDist = att.distributable.ids.filter((id) => orgTracked.has(id));
-  if (orgDist.length) warn(`${days} dias: ${orgDist.length} venda(s) ligadas a conversas ORGÂNICAS rastreadas (WhatsApp sem anúncio e sem Instagram) entram na repartição como "sem origem".`);
   // venda ligada a anúncio E a Instagram (a mesma pessoa por dois caminhos): o anúncio vale primeiro
   const both = att.identified.ids.filter((id) => ig.has(id));
   if (both.length) warn(`${days} dias: ${both.length} venda(s) ligadas a anúncio E ao Instagram orgânico (contadas só no anúncio).`);
@@ -117,11 +117,13 @@ for (const days of ['7', '30'] as const) {
   console.log(`  conversas com anúncio diferente (wa_leads × wa_ad_attribution): ${mism.length}`);
 }
 
-// início do rastreio: o 1º registro pode ser uma conversa antiga achada na varredura (bem antes de o rastreio existir)
+// 12/11: início do rastreio = o 1º lead de anúncio de verdade (wa_leads com ad_id), não registros antigos da varredura
 if (trackStart != null) {
   const ads = (await AD.loadErp(A.adRanges('90'), true)).input;
-  const firstLead = ads.leads.filter((l) => l.origin === 'anuncio').map((l) => Date.parse(l.first_message_at)).filter(Number.isFinite).sort((a, b) => a - b)[0];
-  if (firstLead && firstLead - trackStart > 7 * 86400000) warn(`início do rastreio = ${P.spDay(trackStart)} (1º registro de wa_ad_attribution), mas o 1º lead de anúncio em wa_leads é de ${P.spDay(firstLead)}: as vendas sem origem entre essas datas são repartidas como se o rastreio já existisse.`);
+  const firstLead = ads.leads.filter((l) => l.origin === 'anuncio' && l.ad_id).map((l) => Date.parse(l.first_message_at)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+  if (firstLead) assert.equal(P.spDay(trackStart), P.spDay(firstLead), 'início do rastreio = 1º lead de anúncio com ad_id');
+  const oldAttr = ads.attributions.filter((a) => Date.parse(a.first_message_at || '') < trackStart).length;
+  console.log(`\nInício do rastreio = 1º lead de anúncio com ad_id (${P.spDay(trackStart)}); ${oldAttr} registro(s) antigo(s) de wa_ad_attribution antes disso não contam.`);
 }
 console.log(`\nAvisos (${warns.length}):`);
 warns.forEach((x) => console.log(`  - ${x}`));

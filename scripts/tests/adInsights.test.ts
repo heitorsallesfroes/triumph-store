@@ -10,7 +10,7 @@ import { buildConversations, type TrackInput } from '../../src/lib/waTracking.ts
 import {
   ACTION, DEFAULT_GOALS, adRanges, buildAdCards, categoryBoxes, erpByAd, funnelOf, goalsJson, hourMap, metaCheck, metaFetchWindow, moneyOf,
   moneySplit, parseGoals, replyBands, roasTier, suggestGoals, totalsOf, verdictOf, wearOf, windowOf,
-  attributeSales, dayBR, periodSales, roasTrio, salesTxt, startsBeforeTracking, adStartOf, dayFull, igOrganicSaleIds,
+  attributeSales, dayBR, periodSales, roasTrio, salesTxt, startsBeforeTracking, adStartOf, dayFull, igOrganicSaleIds, organicSaleIds, afterContact, NO_AD_ID,
   type MetaDaily, type SaleCost, type Goals,
 } from '../../src/lib/adInsights.ts';
 
@@ -355,6 +355,53 @@ test('cartão: início do anúncio (Meta) e dias rodando; sem a data da Meta, o 
   const cA = cards.find((c) => c.key === '111')!;
   const firstMeta = metaRows().filter((r) => r.ad_id === '111' && (r.spend > 0 || r.impressions > 0)).map((r) => r.date).sort()[0];
   assert.equal(cA.firstDeliveryDay, firstMeta, 'o 1º dia com entrega nos dados carregados (inclui os dias antes do período, que vêm para o desgaste)');
+});
+
+// ── 12/11 (correção da revisão): orgânico / sem conversa e "Anúncio não identificado" fora da repartição; sale_date ──
+test('estimado: Orgânico / sem conversa e Anúncio não identificado ficam FORA da repartição; só o que sobra é repartido', () => {
+  const inp = input();
+  // venda sem conversa nenhuma (telefone que não aparece em conversa)
+  inp.sales.push({ id: 'vsolta', sale_date: sp('2026-11-08T10:00:00').slice(0, 10), created_at: sp('2026-11-08T10:00:00'), total_sale_price: 300, customer_phone: '21955554444', customer_name: 'Balcão', wa_chat_id: null, origin: null, status: 'finalizado', total_cost: 100, delivery_fee: 0, delivery_cost: 0 } as never);
+  // conversa de anúncio SEM ad_id, com venda depois do 1º contato
+  inp.leads.push({ chat_id: '5521900006666@c.us', phone: '5521900006666', first_message_at: sp('2026-11-06T09:00:00'), origin: 'anuncio', ad_id: null, ad_title: null });
+  inp.sales.push({ id: 'vsemid', sale_date: sp('2026-11-07T10:00:00').slice(0, 10), created_at: sp('2026-11-07T10:00:00'), total_sale_price: 450, customer_phone: '5521900006666', customer_name: 'Sem ID', wa_chat_id: '5521900006666@c.us', origin: null, status: 'finalizado', total_cost: 150, delivery_fee: 0, delivery_cost: 0 } as never);
+  const m = buildConversations(inp);
+  const ps = periodSales(inp.sales, R.cur);
+  const erp = erpByAd(m, R.cur);
+  const org = organicSaleIds(m, ps);
+  assert.ok(org.has('vorg') && org.has('vsolta') && !org.has('vantes') && !org.has('vsemid'), JSON.stringify([...org]));
+  const a = attributeSales(erp, ps, costs(), T0, igOrganicSaleIds(m, R.cur), org);
+  assert.equal(a.all.count, 9);
+  assert.equal(a.identified.count, 5, 'identificadas: só anúncios conhecidos'); near(a.identified.revenue, 5600);
+  assert.equal(a.noAdId.count, 1); near(a.noAdId.revenue, 450);
+  assert.equal(a.organic.count, 2); near(a.organic.revenue, 1200);
+  assert.equal(a.unattributed.count, 1, 'sem origem: só a venda de conversa de anúncio antes do 1º contato'); near(a.unattributed.revenue, 700);
+  assert.equal(a.identified.count + a.noAdId.count + a.instagram.count + a.organic.count + a.unattributed.count, a.all.count);
+  assert.ok(!a.shares.has(NO_AD_ID), 'Anúncio não identificado não recebe parte');
+  assert.equal(a.totalConversations, [...erp.values()].filter((x) => x.key !== NO_AD_ID).reduce((x, y) => x + y.conversations, 0));
+  near([...a.shares.values()].reduce((x, s) => x + s.revenue, 0), 700, 'repartiu só os R$ 700');
+  const cards = buildAdCards({ model: m, meta: metaRows(), period: [], costs: costs(), taxRate: TAX, goals, mode: 'estimado', attribution: a }, R.cur);
+  const noId = cards.find((c) => c.key === NO_AD_ID)!;
+  assert.ok(noId && noId.identifiedSales === 1 && noId.estimatedSales === 0, 'o cartão continua, sem estimada');
+  assert.ok(noId.verdict.numbers.some(([k, v]) => k === 'Vendas estimadas' && /fora da repartição/.test(v)));
+  const trio = roasTrio(metaRows(), TAX, R.cur, a);
+  near(trio.identified!, 5600 / 1122, 'ROAS identificado sem o Anúncio não identificado');
+  near(trio.general!, (7200 + 300 + 450) / 1122, 'ROAS geral: todas as vendas');
+  assert.equal(trio.organic.count, 2); assert.equal(trio.noAdId.count, 1);
+});
+test('data da venda (sale_date): venda do MESMO dia do 1º contato conta como depois, mesmo com a hora do meio-dia', () => {
+  const c = { tracked: true, firstAt: Date.parse('2026-11-06T15:00:00-03:00') };
+  assert.equal(afterContact(Date.parse('2026-11-06T12:00:00-03:00'), c), true, 'sale_date = dia do contato (hora do meio-dia)');
+  assert.equal(afterContact(Date.parse('2026-11-05T12:00:00-03:00'), c), false, 'dia anterior');
+  assert.equal(afterContact(Date.parse('2026-11-07T09:00:00-03:00'), c), true);
+  // registrada no dia seguinte (created_at 07/11) com sale_date 06/11: vale o dia 06 (meio-dia) e fica ligada ao anúncio
+  const inp = input();
+  inp.leads.push({ chat_id: '5521900005555@c.us', phone: '5521900005555', first_message_at: sp('2026-11-06T15:00:00'), origin: 'anuncio', ad_id: '111', ad_title: 'Relógio A' });
+  inp.sales.push({ id: 'vdia', sale_date: '2026-11-06', created_at: sp('2026-11-07T09:30:00'), total_sale_price: 999, customer_phone: '5521900005555', customer_name: 'Dia', wa_chat_id: '5521900005555@c.us', origin: null, status: 'finalizado', total_cost: 300, delivery_fee: 0, delivery_cost: 0 } as never);
+  const m = buildConversations(inp);
+  const ps = periodSales(inp.sales, R.cur);
+  assert.equal(new Date(ps.find((s) => s.id === 'vdia')!.t).toISOString(), new Date('2026-11-06T12:00:00-03:00').toISOString(), 'conta pelo sale_date');
+  assert.ok(erpByAd(m, R.cur).get('111')!.saleIds.includes('vdia'), 'mesmo dia do 1º contato: identificada');
 });
 
 for (const [name, fn] of tests) {

@@ -21,21 +21,28 @@ Custo por conversa. Categorias e cores usam só o ROAS e o custo por venda.
 **ROAS real** = faturamento ÷ (gasto + imposto).
 
 ## Início do rastreio e vendas sem origem (10/11)
-- **Início do rastreio**: a data do 1º registro de anúncio (`wa_ad_attribution` / `wa_leads` com `origin = anuncio`).
+- **Início do rastreio** (12/11): a data do 1º lead de ANÚNCIO de verdade — `wa_leads` com `origin = anuncio` **e**
+  `ad_id`. Não usa mais `wa_ad_attribution`: a varredura acha conversas antigas com anúncio (82 registros antes de
+  06/11, o mais antigo de 19/08) e dava um início falso.
   Antes disso nenhuma venda tem anúncio. Se o período começa antes, o topo avisa ("O rastreio de anúncios começou
   em DD/MM…") com o botão **Usar desde DD/MM**. A página abre em **7 dias**, nunca antes do início do rastreio.
 - **Três números no topo**:
   - **ROAS geral da loja** = faturamento de TODAS as vendas do ERP no período ÷ (gasto + imposto);
   - **ROAS identificado** = só as vendas ligadas com certeza a um anúncio ÷ (gasto + imposto);
-  - **Vendas sem origem** = quantidade e R$ das vendas do período sem anúncio ligado e que **não** vieram do
-    Instagram orgânico; logo abaixo, a linha **"Instagram (orgânico), fora da repartição"** (12/11).
+  - **Vendas sem origem** = vendas de conversas de anúncio feitas antes do 1º contato (o que ainda é repartido);
+  - linha **"Fora da repartição"** (12/11): **Orgânico / sem conversa** (venda ligada só a conversas do WhatsApp sem
+    anúncio e sem Instagram, ou sem conversa nenhuma), **Instagram (orgânico)** e **Anúncio não identificado**
+    (conversas de anúncio sem `ad_id`: o cartão continua, com as vendas ligadas a ele, mas não recebe parte da
+    repartição, as conversas dele não contam no total e as vendas dele ficam fora do ROAS identificado).
 - **Estimado** (padrão) × **Só identificado** (botão no topo):
   - no Estimado, as vendas sem origem (a partir do início do rastreio) são repartidas entre os anúncios na
     proporção das conversas que cada anúncio gerou no período (cartão: "3 vendas identificadas + 1,8 estimada");
   - anúncio sem conversa no período não recebe nada; vendas antes do início do rastreio não são repartidas;
-  - **12/11: vendas do Instagram orgânico** (conversa que começou por um link rastreável do Instagram —
-    `ig_link_leads`, ligada por código, frase ou horário — e não veio de anúncio) têm origem e **não** são repartidas
-    entre os anúncios (`igOrganicSaleIds` + `attributeSales`). Venda ligada a anúncio E ao Instagram: vale o anúncio;
+  - **12/11: fora da repartição** — Instagram orgânico (`igOrganicSaleIds`), Orgânico / sem conversa
+    (`organicSaleIds`) e Anúncio não identificado (`NO_AD_ID`); ligada a anúncio vale primeiro;
+  - **datas** (12/11): toda conta usa o dia de `sale_date` (`saleTime`: a hora do `created_at` quando é do mesmo dia,
+    senão meio-dia); "depois do 1º contato" = no mesmo dia ou depois (`afterContact`), para a venda lançada no dia
+    seguinte com `sale_date` do dia da conversa não cair antes do contato;
   - ROAS, custo por venda, categorias e cores dos cartões seguem o modo escolhido;
   - no topo, o Estimado usa o faturamento de TODAS as vendas do período;
   - "Por quê?" mostra as vendas identificadas e a conta da estimada (conversas do anúncio ÷ total × vendas sem origem).

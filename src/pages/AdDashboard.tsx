@@ -13,7 +13,7 @@ import { useErpRefresh } from '../lib/erpRefresh';
 import { buildConversations, businessHoursOf, adsManagerUrl, type TrackModel, type TrackSaleRow } from '../lib/waTracking';
 import {
   AD_PERIODS, ATTRIB_LABEL, CATEGORY_COLOR, CATEGORY_LABEL, CATEGORY_ORDER, DEFAULT_GOALS, TIER_COLOR, TIER_LABEL,
-  adStartOf, attributeSales, dayBR, dayFull, igOrganicSaleIds, periodSales, roasTrio, salesTxt, startsBeforeTracking,
+  adStartOf, attributeSales, dayBR, dayFull, igOrganicSaleIds, organicSaleIds, periodSales, roasTrio, salesTxt, startsBeforeTracking,
   adRanges, buildAdCards, categoryBoxes, deltaOf, erpByAd, hourMap, metaCheck, moneySplit, replyBands, roasTier, suggestGoals, totalsOf,
   type AdCard, type AdPeriod, type AttribMode, type Attribution, type Category, type Goals, type MetaCreative, type RoasTrio, type SaleCost, type Window,
 } from '../lib/adInsights';
@@ -182,7 +182,8 @@ function Dashboard({ onOld }: { onOld: () => void }) {
   const att = useMemo(() => {
     if (!ready || !data) return null;
     // 12/11: as vendas do Instagram orgânico têm origem e não são de anúncio: ficam fora da repartição
-    const of = (w: Window): Attribution => attributeSales(erpByAd(data.model, w), periodSales(data.sales, w), data.costs, trackStart ?? null, igOrganicSaleIds(data.model, w));
+    // 12/11: Orgânico / sem conversa e "Anúncio não identificado" também ficam fora da repartição
+    const of = (w: Window): Attribution => { const ps = periodSales(data.sales, w); return attributeSales(erpByAd(data.model, w), ps, data.costs, trackStart ?? null, igOrganicSaleIds(data.model, w), organicSaleIds(data.model, ps)); };
     return { cur: of(data.ranges.cur), prev: of(data.ranges.prev) };
   }, [ready, data, trackStart]);
   const totals = useMemo(() => (ready && data && att ? {
@@ -389,7 +390,7 @@ function RoasRow({ trio, loading }: { trio: { cur: RoasTrio; prev: RoasTrio } | 
                 <span className="adx-big" style={{ color: iTier ? TIER_COLOR[iTier] : 'var(--text-primary)' }}>{fmtX(t.cur.identified)}</span>
                 <Delta cur={t.cur.identified} prev={t.prev.identified} />
               </div>
-              <span style={muted}>Só as vendas ligadas com certeza a um anúncio ({fmtInt(t.cur.identifiedSum.count)} · {fmtMoney(t.cur.identifiedSum.revenue)}) ÷ gasto com imposto.</span>
+              <span style={muted}>Só as vendas ligadas com certeza a um anúncio conhecido ({fmtInt(t.cur.identifiedSum.count)} · {fmtMoney(t.cur.identifiedSum.revenue)}) ÷ gasto com imposto.</span>
             </div>
             <div style={{ ...box, display: 'flex', flexDirection: 'column', gap: 4 }} data-testid="ads-sem-origem">
               <span style={eyebrow}>Vendas sem origem</span>
@@ -397,12 +398,20 @@ function RoasRow({ trio, loading }: { trio: { cur: RoasTrio; prev: RoasTrio } | 
                 <span className="adx-big" style={{ color: 'var(--text-primary)' }}>{fmtInt(t.cur.unattributed.count)}</span>
                 <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)' }}>{fmtMoney(t.cur.unattributed.revenue)}</span>
               </div>
-              <span style={muted}>Vendas do período sem anúncio ligado e que não vieram do Instagram orgânico{t.cur.preTrack.count ? ` (${fmtInt(t.cur.preTrack.count)} antes do início do rastreio, não repartidas)` : ''}; no modo Estimado são repartidas pelas conversas de cada anúncio.</span>
-              <span style={muted} data-testid="ads-ig-organico">Instagram (orgânico), fora da repartição: {fmtInt(t.cur.instagram.count)} · {fmtMoney(t.cur.instagram.revenue)}</span>
+              <span style={muted}>Vendas do período sem origem conhecida (de conversas de anúncio, mas antes do 1º contato){t.cur.preTrack.count ? ` — ${fmtInt(t.cur.preTrack.count)} antes do início do rastreio, não repartidas` : ''}; no modo Estimado são repartidas pelas conversas de cada anúncio.</span>
             </div>
           </>
         )}
       </div>
+      {/* 12/11: o que fica FORA da repartição entre os anúncios */}
+      {!loading && t && (
+        <div style={{ ...box, marginTop: 10, padding: '10px 14px', display: 'flex', flexWrap: 'wrap', gap: '6px 18px', alignItems: 'baseline' }} data-testid="ads-fora">
+          <span style={eyebrow}>Fora da repartição</span>
+          <span style={{ fontSize: 13 }} data-testid="ads-organico"><b>Orgânico / sem conversa</b>: {fmtInt(t.cur.organic.count)} · {fmtMoney(t.cur.organic.revenue)}</span>
+          <span style={{ fontSize: 13 }} data-testid="ads-ig-organico"><b>Instagram (orgânico)</b>: {fmtInt(t.cur.instagram.count)} · {fmtMoney(t.cur.instagram.revenue)}</span>
+          <span style={{ fontSize: 13 }} data-testid="ads-sem-id"><b>Anúncio não identificado</b> (conversas de anúncio sem ad_id; fora do ROAS dos anúncios): {fmtInt(t.cur.noAdId.count)} · {fmtMoney(t.cur.noAdId.revenue)}</span>
+        </div>
+      )}
     </section>
   );
 }

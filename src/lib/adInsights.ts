@@ -88,6 +88,14 @@ export interface ErpAd {
 }
 // Por anúncio, no período: conversas que COMEÇARAM pelo anúncio no período; vendas do período das conversas que vieram
 // de anúncio (começadas em qualquer data); "respondidas" = o cliente respondeu a uma mensagem nossa ou comprou.
+// 12/11: as vendas de uma conversa depois do 1º contato — as do rastreio (saleLinks) + as do MESMO dia do 1º contato que
+// o rastreio deixou de fora porque a hora do sale_date (meio-dia) ficou antes da hora da 1ª mensagem
+function convSales(model: TrackModel, c: Conversation): Conversation['saleLinks'] {
+  if (!c.tracked) return c.saleLinks;
+  const have = new Set(c.saleLinks.map((s) => s.id));
+  const extra = (model.sales || []).filter((s) => s.convKey === c.key && !have.has(s.id) && s.t < c.firstAt && spDay(s.t) === spDay(c.firstAt));
+  return extra.length ? [...c.saleLinks, ...extra] : c.saleLinks;
+}
 export function erpByAd(model: TrackModel, w: Pick<Window, 'from' | 'to'>): Map<string, ErpAd> {
   const out = new Map<string, ErpAd>();
   const get = (c: Conversation) => {
@@ -100,7 +108,7 @@ export function erpByAd(model: TrackModel, w: Pick<Window, 'from' | 'to'>): Map<
   model.conversations.forEach((c) => {
     if (!c.ad) return;
     const started = c.tracked && inWin(c.firstAt, w);
-    const sales = c.saleLinks.filter((s) => inWin(s.t, w) && (!c.tracked || s.t >= c.firstAt));
+    const sales = convSales(model, c).filter((s) => inWin(s.t, w) && afterContact(s.t, c)); // 12/11: mesmo dia do 1º contato conta
     if (!started && !sales.length) return;
     const a = get(c);
     if (started) { a.conversations++; if (c.replied || c.sales > 0) a.responded++; }
@@ -108,22 +116,29 @@ export function erpByAd(model: TrackModel, w: Pick<Window, 'from' | 'to'>): Map<
       if (a.saleIds.includes(s.id)) return;
       a.sales++; a.revenue = r2(a.revenue + s.total); a.saleIds.push(s.id);
       if (s.how.includes('compra')) a.capiPurchases++;
-      if (c.tracked) a.minutesToSale.push((s.t - c.firstAt) / 60000);
+      if (c.tracked) a.minutesToSale.push(Math.max(0, s.t - c.firstAt) / 60000);
     });
   });
   return out;
 }
 
-// ── Vendas sem origem e modo "Estimado" (10/11) ───────────────────────────
-// O rastreio conversa → anúncio só existe desde o 1º registro de wa_ad_attribution / wa_leads com anúncio, e mesmo
-// depois várias vendas não ficam ligadas. Modo "Estimado" (padrão): as vendas do período SEM anúncio ligado (feitas a
-// partir do início do rastreio) são repartidas entre os anúncios na proporção das conversas que cada um gerou no
-// período. Anúncio sem conversa não recebe nada. Vendas antes do início do rastreio não são repartidas.
-// 12/11: vendas ligadas a uma conversa do INSTAGRAM ORGÂNICO (ig_link_leads: código, frase ou horário; sem anúncio)
-// têm origem e NÃO são de anúncio: ficam fora da repartição (e fora de "sem origem").
-// Modo "Só identificado": só as vendas ligadas com certeza.
+// ── Vendas sem origem e modo "Estimado" (10/11; regras revistas em 12/11) ──
+// Modo "Estimado" (padrão): as vendas do período sem origem conhecida, feitas a partir do início do rastreio, são
+// repartidas entre os anúncios na proporção das conversas que cada um gerou no período. Ficam FORA da repartição:
+//   - antes do início do rastreio (= o 1º lead de ANÚNCIO de verdade, com ad_id — loadTrackStart);
+//   - Instagram orgânico (conversa que começou por um link rastreável do Instagram, sem anúncio);
+//   - Orgânico / sem conversa (12/11): venda ligada só a conversas do WhatsApp sem anúncio e sem Instagram, ou sem
+//     conversa nenhuma ligada;
+//   - Anúncio não identificado (conversas de anúncio sem ad_id): o cartão continua, com as vendas ligadas a ele, mas
+//     ele não recebe parte da repartição, as conversas dele não contam no total e as vendas dele ficam fora do ROAS
+//     identificado (total à parte no topo).
+// O que sobra para repartir: vendas de conversas de anúncio feitas antes do 1º contato registrado.
+// Modo "Só identificado": só as vendas ligadas com certeza a um anúncio.
+// Datas: a venda conta pelo dia de sale_date (saleTime); "depois do 1º contato" = no mesmo dia ou depois (sale_date só
+// tem o dia confiável: a hora vem do created_at quando é do mesmo dia, senão meio-dia).
 export type AttribMode = 'estimado' | 'identificado';
 export const ATTRIB_LABEL: Record<AttribMode, string> = { estimado: 'Estimado', identificado: 'Só identificado' };
+export const NO_AD_ID = 'sem-id';
 export interface PeriodSale { id: string; t: number; total: number }
 // todas as vendas do ERP no período (a carga já tira os status inválidos)
 export function periodSales(rows: Pick<TrackSaleRow, 'id' | 'sale_date' | 'created_at' | 'total_sale_price'>[], w: Pick<Window, 'from' | 'to'>): PeriodSale[] {
@@ -138,8 +153,12 @@ export function periodSales(rows: Pick<TrackSaleRow, 'id' | 'sale_date' | 'creat
 export interface SalesSum { count: number; revenue: number; productCost: number; costMissing: number; ids: string[] }
 export interface AdShare { key: string; conversations: number; share: number; sales: number; revenue: number; productCost: number; costMissing: number }
 export interface Attribution {
-  all: SalesSum; identified: SalesSum; unattributed: SalesSum;
-  instagram: SalesSum; // ligadas ao Instagram orgânico (não repartidas)
+  all: SalesSum;
+  identified: SalesSum; // ligadas com certeza a um anúncio CONHECIDO (com ad_id)
+  noAdId: SalesSum; // ligadas a conversas de anúncio sem ad_id ("Anúncio não identificado"; fora do ROAS identificado)
+  instagram: SalesSum; // Instagram orgânico (não repartidas)
+  organic: SalesSum; // Orgânico / sem conversa (não repartidas)
+  unattributed: SalesSum; // o resto: sem origem
   preTrack: SalesSum; // sem origem e antes do início do rastreio (não repartidas)
   distributable: SalesSum; // sem origem a partir do início do rastreio (repartidas, se houver conversa de anúncio)
   totalConversations: number; distributed: boolean; trackStart: number | null;
@@ -150,36 +169,55 @@ const sumOf = (list: PeriodSale[], costs: Map<string, SaleCost>): SalesSum => {
   list.forEach((s) => { const c = costs.get(s.id); if (!c || c.productCost == null) costMissing++; else productCost += c.productCost; });
   return { count: list.length, revenue: r2(list.reduce((x, s) => x + s.total, 0)), productCost: r2(productCost), costMissing, ids: list.map((s) => s.id) };
 };
-// vendas do período ligadas a conversas do Instagram orgânico (a mesma regra de erpByAd: venda depois do 1º contato)
+// a venda é "depois do 1º contato": no mesmo dia (São Paulo) ou depois
+export const afterContact = (t: number, c: Pick<Conversation, 'tracked' | 'firstAt'>) => !c.tracked || t >= c.firstAt || spDay(t) === spDay(c.firstAt);
+// vendas do período ligadas a conversas do Instagram orgânico (a mesma regra de erpByAd: depois do 1º contato)
 export function igOrganicSaleIds(model: TrackModel, w: Pick<Window, 'from' | 'to'>): Set<string> {
   const out = new Set<string>();
   model.conversations.forEach((c) => {
     if (c.ad || !c.ig) return;
-    c.saleLinks.forEach((s) => { if (inWin(s.t, w) && (!c.tracked || s.t >= c.firstAt)) out.add(s.id); });
+    convSales(model, c).forEach((s) => { if (inWin(s.t, w) && afterContact(s.t, c)) out.add(s.id); });
   });
   return out;
 }
-// trackStart: início do rastreio (ms); null = ainda sem nenhum registro de anúncio → nada é repartido
-// igOrganic: as vendas do Instagram orgânico (igOrganicSaleIds); ligada a anúncio vale primeiro
-export function attributeSales(erp: Map<string, ErpAd>, sales: PeriodSale[], costs: Map<string, SaleCost>, trackStart: number | null, igOrganic: Set<string> = new Set()): Attribution {
-  const linked = new Set<string>(); erp.forEach((a) => a.saleIds.forEach((id) => linked.add(id)));
-  const identified = sales.filter((s) => linked.has(s.id));
-  const instagram = sales.filter((s) => !linked.has(s.id) && igOrganic.has(s.id));
-  const unattributed = sales.filter((s) => !linked.has(s.id) && !igOrganic.has(s.id));
+// 12/11: vendas do período "Orgânico / sem conversa": sem nenhuma conversa ligada, ou ligadas só a conversas do
+// WhatsApp sem anúncio e sem Instagram (venda de conversa de anúncio, mesmo antes do 1º contato, não entra aqui)
+export function organicSaleIds(model: TrackModel, sales: PeriodSale[]): Set<string> {
+  // pela ligação venda → conversa do rastreio (model.sales), mesmo a venda de antes do 1º contato
+  const byKey = new Map(model.conversations.map((c) => [c.key, c]));
+  const kinds = new Map<string, Set<'ad' | 'ig' | 'org'>>();
+  const add = (id: string, c: Conversation | undefined) => { if (!c) return; const k = kinds.get(id) || new Set(); k.add(c.ad ? 'ad' : c.ig ? 'ig' : 'org'); kinds.set(id, k); };
+  (model.sales || []).forEach((s) => add(s.id, byKey.get(s.convKey)));
+  model.conversations.forEach((c) => c.saleLinks.forEach((s) => add(s.id, c)));
+  return new Set(sales.filter((s) => { const k = kinds.get(s.id); return !k || (!k.has('ad') && !k.has('ig')); }).map((s) => s.id));
+}
+// trackStart: início do rastreio (ms); null = ainda sem nenhum lead de anúncio → nada é repartido
+// igOrganic / organic: igOrganicSaleIds / organicSaleIds; ligada a anúncio vale primeiro
+export function attributeSales(erp: Map<string, ErpAd>, sales: PeriodSale[], costs: Map<string, SaleCost>, trackStart: number | null, igOrganic: Set<string> = new Set(), organic: Set<string> = new Set()): Attribution {
+  const known = new Set<string>(); const noId = new Set<string>();
+  erp.forEach((a) => a.saleIds.forEach((id) => (a.key === NO_AD_ID ? noId : known).add(id)));
+  const identified = sales.filter((s) => known.has(s.id));
+  const noAdId = sales.filter((s) => !known.has(s.id) && noId.has(s.id));
+  const linked = (s: PeriodSale) => known.has(s.id) || noId.has(s.id);
+  const instagram = sales.filter((s) => !linked(s) && igOrganic.has(s.id));
+  const org = sales.filter((s) => !linked(s) && !igOrganic.has(s.id) && organic.has(s.id));
+  const unattributed = sales.filter((s) => !linked(s) && !igOrganic.has(s.id) && !organic.has(s.id));
   const before = unattributed.filter((s) => trackStart == null || s.t < trackStart);
   const after = unattributed.filter((s) => trackStart != null && s.t >= trackStart);
   const dist = sumOf(after, costs);
-  const totalConversations = [...erp.values()].reduce((x, a) => x + a.conversations, 0);
+  // "Anúncio não identificado" não entra na repartição (nem as conversas dele no total)
+  const totalConversations = [...erp.values()].filter((a) => a.key !== NO_AD_ID).reduce((x, a) => x + a.conversations, 0);
   const distributed = totalConversations > 0 && dist.count > 0;
   const shares = new Map<string, AdShare>();
   erp.forEach((a) => {
-    if (a.conversations <= 0) return; // anúncio sem conversa no período não recebe
+    if (a.conversations <= 0 || a.key === NO_AD_ID) return; // anúncio sem conversa no período não recebe
     const share = a.conversations / totalConversations;
     const k = distributed ? share : 0;
     shares.set(a.key, { key: a.key, conversations: a.conversations, share, sales: dist.count * k, revenue: dist.revenue * k, productCost: dist.productCost * k, costMissing: dist.costMissing * k });
   });
   return {
-    all: sumOf(sales, costs), identified: sumOf(identified, costs), unattributed: sumOf(unattributed, costs), instagram: sumOf(instagram, costs), preTrack: sumOf(before, costs), distributable: dist,
+    all: sumOf(sales, costs), identified: sumOf(identified, costs), noAdId: sumOf(noAdId, costs), instagram: sumOf(instagram, costs), organic: sumOf(org, costs),
+    unattributed: sumOf(unattributed, costs), preTrack: sumOf(before, costs), distributable: dist,
     totalConversations, distributed, trackStart, shares,
   };
 }
@@ -413,11 +451,12 @@ export function buildAdCards(inp: BuildInput, w: Window): AdCard[] {
 }
 
 // "Por quê?": de onde vieram as vendas e o faturamento do anúncio
-function sourceNumbers(b: Pick<AdCard, 'mode' | 'identifiedSales' | 'identifiedRevenue' | 'estimatedSales' | 'estimatedRevenue' | 'share' | 'money'>, att: Attribution | null): [string, string][] {
+function sourceNumbers(b: Pick<AdCard, 'key' | 'mode' | 'identifiedSales' | 'identifiedRevenue' | 'estimatedSales' | 'estimatedRevenue' | 'share' | 'money'>, att: Attribution | null): [string, string][] {
   const out: [string, string][] = [['Vendas', salesTxt(b.money.sales)], ['Vendas identificadas', `${b.identifiedSales} (${brl(b.identifiedRevenue)}): ligadas com certeza a este anúncio (conversa → venda)`]];
   if (b.mode !== 'estimado' || !att) { out.push(['Vendas estimadas', 'modo "Só identificado": nenhuma']); return out; }
   const u = att.distributable;
-  if (!b.share) out.push(['Vendas estimadas', 'nenhuma: o anúncio não gerou conversa no período']);
+  if (b.key === NO_AD_ID) out.push(['Vendas estimadas', 'nenhuma: conversas de anúncio sem ad_id ficam fora da repartição (e fora do ROAS identificado)']);
+  else if (!b.share) out.push(['Vendas estimadas', 'nenhuma: o anúncio não gerou conversa no período']);
   else if (!att.distributed) out.push(['Vendas estimadas', 'nenhuma: não há vendas sem origem para repartir no período']);
   else out.push(['Vendas estimadas', `${salesTxt(b.estimatedSales)} (${brl(b.estimatedRevenue)}) = ${b.money.conversations} de ${att.totalConversations} conversas de anúncio (${pctTxt(b.share)}) × ${u.count} vendas sem origem (${brl(u.revenue)})`]);
   return out;
@@ -439,10 +478,10 @@ export function totalsOf(model: TrackModel, meta: MetaDaily[], costs: Map<string
   return { ...moneyOf(metaSpendIn(meta, w), taxRate, revenue, productCost, sales, conversations), costMissing };
 }
 // Os três números de ROAS do topo
-export interface RoasTrio { general: number | null; identified: number | null; unattributed: SalesSum; preTrack: SalesSum; all: SalesSum; identifiedSum: SalesSum; instagram: SalesSum }
+export interface RoasTrio { general: number | null; identified: number | null; unattributed: SalesSum; preTrack: SalesSum; all: SalesSum; identifiedSum: SalesSum; instagram: SalesSum; organic: SalesSum; noAdId: SalesSum }
 export function roasTrio(meta: MetaDaily[], taxRate: number, w: Window, att: Attribution): RoasTrio {
   const spend = spendReal(metaSpendIn(meta, w), taxRate);
-  return { general: div(att.all.revenue, spend), identified: div(att.identified.revenue, spend), unattributed: att.unattributed, preTrack: att.preTrack, all: att.all, identifiedSum: att.identified, instagram: att.instagram };
+  return { general: div(att.all.revenue, spend), identified: div(att.identified.revenue, spend), unattributed: att.unattributed, preTrack: att.preTrack, all: att.all, identifiedSum: att.identified, instagram: att.instagram, organic: att.organic, noAdId: att.noAdId };
 }
 export interface CategoryBox { category: Category; count: number; spendReal: number; revenue: number }
 export function categoryBoxes(cards: AdCard[]): CategoryBox[] {
@@ -486,7 +525,7 @@ export function replyBands(model: TrackModel, w: Pick<Window, 'from' | 'to'>): R
     const m = c.replyMinutes;
     const row = m == null ? rows[rows.length - 1] : rows[REPLY_BANDS.findIndex((b) => m <= b.max)];
     row.conversations++;
-    if (c.saleLinks.some((s) => s.t >= c.firstAt)) row.sold++;
+    if (c.saleLinks.some((s) => afterContact(s.t, c))) row.sold++;
   });
   return rows.map((r) => ({ ...r, rate: div(r.sold, r.conversations) }));
 }

@@ -74,7 +74,9 @@ function fixtures(now: number) {
   ];
   return {
     // rastreio de anúncios começou há 120 dias (o 7 dias padrão não é encurtado); a conversa fica fora de todos os períodos
-    db: { wa_leads: leads, wa_ad_attribution: [{ chat_id: '5521910009000@c.us', phone: '5521910009000', contact_name: null, ad_id: '120210000000999', ad_title: 'Antigo', source_app: null, source_url: null, first_message_at: at(120, 10, now) }], wa_send_log: sends, wa_replies: replies, sales, sale_items: items, wa_chat_names: [], wa_conversion_events: [], wa_chat_activity: [], wa_chat_activity_days: [], wa_items: [], wa_settings: [], system_config: [{ key: 'ad_tax_rate', value: '0.1' }] },
+    // 12/11: o início do rastreio é o 1º lead de anúncio com ad_id (wa_leads): um lead antigo (há 120 dias) põe o início
+    // antes do período, como antes fazia o registro antigo de wa_ad_attribution
+    db: { wa_leads: [...leads, { id: 'antigo', chat_id: '5521910009000@c.us', phone: '5521910009000', first_message_at: at(120, 10, now), origin: 'anuncio', ad_id: '120210000000999', ad_title: 'Antigo' }], wa_ad_attribution: [{ chat_id: '5521910009000@c.us', phone: '5521910009000', contact_name: null, ad_id: '120210000000999', ad_title: 'Antigo', source_app: null, source_url: null, first_message_at: at(120, 10, now) }], wa_send_log: sends, wa_replies: replies, sales, sale_items: items, wa_chat_names: [], wa_conversion_events: [], wa_chat_activity: [], wa_chat_activity_days: [], wa_items: [], wa_settings: [], system_config: [{ key: 'ad_tax_rate', value: '0.1' }] },
     meta: {
       daily, period: [{ ad_id: '120210000000111', reach: 20000, frequency: 1.5, impressions: 30000 }], creatives,
       // leitura antiga da função (level campaign / adset): daily_budget em reais, como a função devolve
@@ -271,8 +273,10 @@ async function main() {
     await ev(`window.__META_FAIL = false; return true;`);
 
     // ── 3 ROAS, vendas sem origem, Estimado × Só identificado, início do rastreio ──
-    // o rastreio passa a começar na 1ª conversa (há 5 dias) e entra uma venda de R$ 800 sem anúncio ligado
-    await ev(`window.__DB.wa_ad_attribution = []; window.__DB.sales.push({ id: 'vsem', sale_date: window.__DB.sales[0].sale_date, created_at: window.__DB.sales[0].created_at, total_sale_price: 800, customer_phone: '5521999990000', customer_name: 'Cliente', wa_chat_id: null, origin: null, status: 'finalizado', total_cost: 300, delivery_fee: 0, delivery_cost: 0 }); return true;`);
+    // o rastreio passa a começar na 1ª conversa (há 5 dias) e entra uma venda de R$ 800 sem anúncio ligado: da conversa
+    // do anúncio C, mas ANTES do 1º contato dela (12/11: é a "sem origem" que ainda é repartida; venda sem conversa
+    // nenhuma agora é "Orgânico / sem conversa", fora da repartição)
+    await ev(`window.__DB.wa_ad_attribution = []; window.__DB.wa_leads = window.__DB.wa_leads.filter((l) => l.id !== 'antigo'); const t2 = Date.now() - 2 * 86400000; window.__DB.sales.push({ id: 'vsem', sale_date: new Date(t2 - 3 * 3600000).toISOString().slice(0, 10), created_at: new Date(t2).toISOString(), total_sale_price: 800, customer_phone: '5521910003000', customer_name: 'Cliente', wa_chat_id: '5521910003000@c.us', origin: null, status: 'finalizado', total_cost: 300, delivery_fee: 0, delivery_cost: 0 }); return true;`);
     await ev(`${H} tid('ads-refresh').click(); return true;`);
     await waitFor(`${H} return !!tid('ads-track-warn') && $$('[data-testid="ads-card-split"]').length > 0;`, 8000);
     const est = await ev(`${H} const a = $$('[data-testid="ads-card"]').find((c) => c.dataset.ad === '120210000000111');
@@ -296,14 +300,16 @@ async function main() {
       window.__DB.ig_links = [{ id: 'l-bio', code: 'IG-BIO', slug: 'bio', channel: 'bio' }];
       window.__DB.ig_link_leads = [{ chat_id: '5521977770001@c.us', phone: '5521977770001', first_message_at: new Date(t - 2 * 86400000).toISOString(), code: 'IG-BIO', link_id: 'l-bio', match: 'frase' }];
       window.__DB.sales.push({ id: 'vig', sale_date: day, created_at: new Date(t - 3600000).toISOString(), total_sale_price: 500, customer_phone: '21977770001', customer_name: 'Cliente IG', wa_chat_id: '5521977770001@c.us', origin: null, status: 'finalizado', total_cost: 200, delivery_fee: 0, delivery_cost: 0 });
+      window.__DB.sales.push({ id: 'vbalcao', sale_date: day, created_at: new Date(t - 7200000).toISOString(), total_sale_price: 300, customer_phone: '21933334444', customer_name: 'Balcão', wa_chat_id: null, origin: null, status: 'finalizado', total_cost: 100, delivery_fee: 0, delivery_cost: 0 });
       return true;`);
     await ev(`${H} tid('ads-refresh').click(); return true;`);
-    await waitFor(`${H} return /fora da repartição: 1 ·/.test(txt(tid('ads-ig-organico')) || '');`, 10000);
+    await waitFor(`${H} return /: 1 ·/.test(txt(tid('ads-ig-organico')) || '') && /: 1 ·/.test(txt(tid('ads-organico')) || '');`, 10000);
     const igx = await ev(`${H} const a = $$('[data-testid="ads-card"]').find((c) => c.dataset.ad === '120210000000111'); const b = $$('[data-testid="ads-card"]').find((c) => c.dataset.ad === '120210000000222');
-      return { sem: txt(tid('ads-sem-origem')), ig: txt(tid('ads-ig-organico')), geral: txt($('[data-testid="ads-roas-geral"] .adx-big')), split: a ? txt($('[data-testid="ads-card-split"]', a)) : null, startA: a ? txt($('[data-testid="ads-card-start"]', a)) : null, startB: b && $('[data-testid="ads-card-start"]', b) ? txt($('[data-testid="ads-card-start"]', b)) : null };`);
+      return { sem: txt(tid('ads-sem-origem')), ig: txt(tid('ads-ig-organico')), org: txt(tid('ads-organico')), noid: txt(tid('ads-sem-id')), gasto: txt($('[data-testid="ads-kpi-gasto"] .adx-big')), geral: txt($('[data-testid="ads-roas-geral"] .adx-big')), split: a ? txt($('[data-testid="ads-card-split"]', a)) : null, startA: a ? txt($('[data-testid="ads-card-start"]', a)) : null, startB: b && $('[data-testid="ads-card-start"]', b) ? txt($('[data-testid="ads-card-start"]', b)) : null };`);
     const dA = new Date(Date.now() - 9 * 86400000 - 3 * 3600000).toISOString().slice(0, 10);
-    check('12/11: venda do Instagram orgânico (ig_link_leads) fica FORA da repartição: "sem origem" continua 1 (R$ 800), linha "Instagram (orgânico)" 1 · R$ 500, ROAS geral com todas, a estimada do A não muda',
-      /^Vendas sem origem1R\$ 800,00/.test(igx.sem) && /Instagram \(orgânico\), fora da repartição: 1 · R\$ 500,00/.test(igx.ig) && igx.geral === '6,1×' && igx.split === '3 vendas identificadas + 0,4 estimada', JSON.stringify(igx));
+    check('12/11: Instagram orgânico e Orgânico / sem conversa ficam FORA da repartição (linha "Fora da repartição"): "sem origem" continua 1 (R$ 800), Instagram 1 · R$ 500, Orgânico / sem conversa 1 · R$ 300, ROAS geral com todas, a estimada do A não muda',
+      /^Vendas sem origem1R\$ 800,00/.test(igx.sem) && /^Instagram \(orgânico\): 1 · R\$ 500,00$/.test(igx.ig) && /^Orgânico \/ sem conversa: 1 · R\$ 300,00$/.test(igx.org) && /^Anúncio não identificado .*: 0 · R\$ 0,00$/.test(igx.noid)
+      && igx.geral === `${(7200 / Number(String(igx.gasto).replace(/[^\d,]/g, '').replace(',', '.'))).toFixed(1).replace('.', ',')}×` && igx.split === '3 vendas identificadas + 0,4 estimada', JSON.stringify(igx));
     check('12/11: cartão com "Início DD/MM/AAAA · N dias rodando" (Meta) e, sem a data da Meta, "Entrega desde … · pelo menos N dias"',
       igx.startA === `Início ${dA.slice(8, 10)}/${dA.slice(5, 7)}/${dA.slice(0, 4)} · 10 dias rodando` && /^Entrega desde \d{2}\/\d{2}\/\d{4} · pelo menos \d+ dias?$/.test(igx.startB || ''), JSON.stringify(igx));
 

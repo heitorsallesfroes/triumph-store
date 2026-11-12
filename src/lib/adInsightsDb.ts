@@ -54,7 +54,10 @@ export function loadErp(r: { cur: Window; prev: Window }, fresh = false): Promis
   return cached(`erp|${w.fromDay}|${w.toDay}`, fresh, () => loadTracking(w));
 }
 
-// ── Início do rastreio conversa → anúncio: o 1º registro de wa_ad_attribution / wa_leads com anúncio (só leitura) ──
+// ── Início do rastreio conversa → anúncio (só leitura) ──
+// 12/11: o 1º lead de ANÚNCIO de verdade — wa_leads com origin = anuncio E ad_id (o rastreio grava na 1ª mensagem).
+// Não usa mais wa_ad_attribution: a varredura acha conversas antigas (até meses antes) com anúncio, que davam um
+// início falso (19/08 em vez de 06/11) e faziam repartir vendas de antes do rastreio existir.
 let trackStartCache: { at: number; value: number | null } | null = null;
 export async function loadTrackStart(fresh = false): Promise<number | null> {
   if (!fresh && trackStartCache && Date.now() - trackStartCache.at < CACHE_MS) return trackStartCache.value;
@@ -66,12 +69,8 @@ export async function loadTrackStart(fresh = false): Promise<number | null> {
       return Number.isFinite(t) ? t : null;
     } catch { return null; }
   };
-  const [attr, lead] = await Promise.all([
-    first(() => supabase.from('wa_ad_attribution').select('first_message_at').not('first_message_at', 'is', null).order('first_message_at', { ascending: true }).limit(1)),
-    first(() => supabase.from('wa_leads').select('first_message_at').eq('origin', 'anuncio').not('first_message_at', 'is', null).order('first_message_at', { ascending: true }).limit(1)),
-  ]);
-  const list = [attr, lead].filter((t): t is number => t != null);
-  const value = list.length ? Math.min(...list) : null;
+  const value = await first(() => supabase.from('wa_leads').select('first_message_at').eq('origin', 'anuncio').not('ad_id', 'is', null)
+    .not('first_message_at', 'is', null).order('first_message_at', { ascending: true }).limit(1));
   trackStartCache = { at: Date.now(), value };
   return value;
 }
