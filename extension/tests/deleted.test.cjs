@@ -24,9 +24,12 @@ const wid = (s) => ({ _serialized: s, toString: () => s });
 const CH = '5521911112222@c.us';
 const msg = (o = {}) => ({ id: { fromMe: false, _serialized: `false_${CH}_${o.key || 'A1'}`, remote: wid(o.chat || CH), id: o.key || 'A1' }, from: wid(o.chat || CH), type: 'chat', body: 'oi, quero o tênis 42', t: 1762700000, ...o });
 
-test('só guarda mensagem RECEBIDA de conversa individual (nunca as minhas, nunca grupo/status, nunca aviso do sistema)', () => {
+test('guarda as mensagens da conversa individual — do cliente E as minhas (2.18.4); nunca grupo/status nem aviso do sistema', () => {
   assert.ok(D.recordOf(msg()));
-  assert.strictEqual(D.recordOf(msg({ id: { fromMe: true, _serialized: `true_${CH}_X`, remote: wid(CH) } })), null);
+  assert.strictEqual(D.recordOf(msg()).fromMe, false);
+  const mine = D.recordOf(msg({ id: { fromMe: true, _serialized: `true_${CH}_X`, remote: wid(CH) } }));
+  assert.ok(mine && mine.fromMe === true && mine.id === `true_${CH}_X`, 'a minha também (2.18.4)');
+  assert.strictEqual(D.recordOf(msg({ id: { _serialized: `x_${CH}_Y`, remote: wid(CH) } })), null, 'sem saber de quem: não guarda');
   assert.strictEqual(D.recordOf(msg({ chat: '120363000000000000@g.us' })), null);
   assert.strictEqual(D.recordOf(msg({ chat: 'status@broadcast' })), null);
   assert.strictEqual(D.recordOf(msg({ type: 'protocol' })), null);
@@ -42,6 +45,10 @@ test('mídia: miniatura sempre; o arquivo só até 5 MB', () => {
   assert.strictEqual(D.wantsMedia(D.recordOf(msg({ type: 'video', size: 5 * 1024 * 1024 + 1 }))), false);
   assert.strictEqual(D.wantsMedia(D.recordOf(msg({ type: 'ptt', size: 20000, mimetype: 'audio/ogg; codecs=opus' }))), true);
   assert.strictEqual(D.wantsMedia(D.recordOf(msg())), false);
+  // 2.18.4: áudio/foto sem o tamanho informado também baixa (o limite de 5 MB vale ao anexar); vídeo sem tamanho não
+  assert.strictEqual(D.wantsMedia(D.recordOf(msg({ type: 'ptt', size: 0, body: '' }))), true);
+  assert.strictEqual(D.wantsMedia(D.recordOf(msg({ type: 'image', size: 0, body: '' }))), true);
+  assert.strictEqual(D.wantsMedia(D.recordOf(msg({ type: 'video', size: 0, body: '' }))), false);
 });
 test('apagada: marca a cópia e lista só as apagadas/editadas da conversa; o original continua', async () => {
   let now = Date.UTC(2026, 10, 9, 12);
@@ -136,14 +143,14 @@ test('ponte: guarda ao receber, marca ao apagar (msg_revoke) e ao editar (msg_ed
   b.emit('chat.new_message', msg({ key: 'MINHA', id: { fromMe: true, _serialized: `true_${CH}_MINHA`, remote: wid(CH) } }));
   await sleep(1700); // o arquivo do áudio é baixado logo depois
   b.emit('chat.msg_revoke', { from: wid(CH), id: wid(`false_${CH}_REV`), refId: wid(`false_${CH}_P1`), type: 'revoke' });
-  b.emit('chat.msg_revoke', { from: wid(CH), id: wid(`false_${CH}_REV2`), refId: wid(`true_${CH}_MINHA`), type: 'revoke' }); // a minha: nada
+  b.emit('chat.msg_revoke', { from: wid(CH), id: wid(`false_${CH}_REV2`), refId: wid(`true_${CH}_MINHA`), type: 'revoke' }); // 2.18.4: a minha também
   b.emit('chat.msg_edited', { chat: wid(CH), id: `false_${CH}_A1`, msg: { body: 'oi, quero o tênis 43', id: wid(`false_${CH}_A1`) } });
   await sleep(100);
   const ch = await b.ask('deletedChanges', {});
   assert.strictEqual(ch.ok, true);
-  assert.deepStrictEqual(plain(ch.data.map((x) => [x.id.split('_').pop(), x.change]).sort()), [['A1', 'editada'], ['P1', 'apagada']]);
+  assert.deepStrictEqual(plain(ch.data.map((x) => [x.id.split('_').pop(), x.change]).sort()), [['A1', 'editada'], ['MINHA', 'apagada'], ['P1', 'apagada']]);
   const list = await b.ask('deletedList', { chatId: CH });
-  assert.deepStrictEqual(plain(list.data.items.map((x) => x.id.split('_').pop()).sort()), ['A1', 'P1']);
+  assert.deepStrictEqual(plain(list.data.items.map((x) => [x.id.split('_').pop(), x.fromMe]).sort()), [['A1', false], ['MINHA', true], ['P1', false]]);
   const a = await b.ask('deletedGet', { id: `false_${CH}_P1` });
   assert.strictEqual(a.data.kind, 'audio');
   assert.strictEqual(a.data.media.byteLength, 1234);
@@ -151,7 +158,27 @@ test('ponte: guarda ao receber, marca ao apagar (msg_revoke) e ao editar (msg_ed
   const e = await b.ask('deletedGet', { id: `false_${CH}_A1` });
   assert.strictEqual(e.data.body, 'oi, quero o tênis 42');
   assert.deepStrictEqual(plain(e.data.edits.map((x) => x.body)), ['oi, quero o tênis 43']);
-  assert.strictEqual((await b.ask('deletedGet', { id: `true_${CH}_MINHA` })).ok, false);
+  const mineGet = await b.ask('deletedGet', { id: `true_${CH}_MINHA` });
+  assert.ok(mineGet.ok && mineGet.data.fromMe === true && mineGet.data.body === 'oi, quero o tênis 42', '2.18.4: a minha apagada abre o original');
+});
+test('2.18.4: as MINHAS apagadas — texto, imagem e áudio (com o arquivo), inclusive com o "from" sendo eu e a conversa no "to"', async () => {
+  const b = bridge();
+  const ME = '5521987654321@c.us';
+  const mine = (key, o = {}) => msg({ key, id: { fromMe: true, _serialized: `true_${CH}_${key}`, remote: wid(CH), id: key }, ...o });
+  b.emit('chat.new_message', mine('T1', { body: 'te mando o pix já' }));
+  b.emit('chat.new_message', mine('I1', { type: 'image', body: '/9j/4AAQSkZJRgABAQ', caption: 'foto do relógio', size: 300000, mimetype: 'image/jpeg' }));
+  b.emit('chat.new_message', mine('U1', { type: 'ptt', body: '', size: 20000, mimetype: 'audio/ogg; codecs=opus' }));
+  await sleep(1700);
+  b.emit('chat.msg_revoke', { from: wid(CH), id: wid(`true_${CH}_R1`), refId: wid(`true_${CH}_T1`), type: 'revoke' });
+  b.emit('chat.msg_revoke', { from: wid(ME), to: wid(CH), id: wid('R2'), refId: { id: 'I1', toString: () => '' }, type: 'sender_revoke' }); // só o id curto: acha pelo "to"
+  b.emit('chat.msg_revoke', { from: wid(CH), id: wid('R3'), refId: wid(`true_${CH}_U1`), type: 'revoke' });
+  await sleep(100);
+  const list = await b.ask('deletedList', { chatId: CH });
+  assert.deepStrictEqual(plain(list.data.items.map((x) => [x.id.split('_').pop(), x.kind, x.fromMe, !!x.revokedAt]).sort()), [['I1', 'imagem', true, true], ['T1', 'texto', true, true], ['U1', 'audio', true, true]]);
+  const img = await b.ask('deletedGet', { id: `true_${CH}_I1` });
+  assert.ok(img.ok && img.data.thumb && img.data.caption === 'foto do relógio' && img.data.media.byteLength === 1234);
+  const au = await b.ask('deletedGet', { id: `true_${CH}_U1` });
+  assert.ok(au.ok && au.data.kind === 'audio' && au.data.media.byteLength === 1234);
 });
 test('ponte: desligado não guarda; "Apagar tudo agora" apaga; grupo nunca', async () => {
   const b = bridge();

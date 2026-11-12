@@ -1888,31 +1888,35 @@ async function main() {
     const DCH = '5521966667777@c.us';
     const DID = `false_${DCH}_3EB0APAGADA1`;
     const EID = `false_${DCH}_3EB0EDITADA1`;
+    const MID = `true_${DCH}_3EB0MINHAIMG1`; // 2.18.4: uma foto MINHA apagada
+    const THUMB = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
     const delNowS = Math.floor(Date.now() / 1000);
     const DITEMS = [
       { id: DID, chatId: DCH, type: 'ptt', kind: 'audio', t: delNowS - 60, revokedAt: Date.now(), editedAt: null, preview: '', hasMedia: true, hasThumb: false, edits: 0 },
       { id: EID, chatId: DCH, type: 'chat', kind: 'texto', t: delNowS - 120, revokedAt: null, editedAt: Date.now(), preview: 'oi, quero o tênis 42', hasMedia: false, hasThumb: false, edits: 1 },
+      { id: MID, chatId: DCH, type: 'image', kind: 'imagem', t: delNowS - 180, fromMe: true, revokedAt: Date.now(), editedAt: null, preview: '', hasMedia: false, hasThumb: true, edits: 0 },
     ];
     await pg(`window.__delCfg = []; window.__delCleared = 0; const IT = ${JSON.stringify(DITEMS)};
       window.__fakeBridge = { activeChat: { kind: 'individual', chatId: ${JSON.stringify(DCH)} }, chatPhone: { phone: '5521966667777', name: 'Dora Apaga', via: 'numero' }, recentChats: [], labels: [], chatLabels: { labelIds: [] },
         deletedConfig: (p) => { window.__delCfg.push(p.on); return { on: p.on, available: true }; },
         deletedChanges: [],
         deletedList: (p) => ({ available: true, items: p.chatId === ${JSON.stringify(DCH)} ? IT : [] }),
-        deletedGet: (p) => p.id === ${JSON.stringify(DID)}
+        deletedGet: (p) => p.id === ${JSON.stringify(MID)} ? { ...IT[2], body: '', caption: '', mimetype: 'image/jpeg', filename: '', duration: 0, thumb: ${JSON.stringify(THUMB)}, edits: [], media: null, mime: 'image/jpeg' }
+          : p.id === ${JSON.stringify(DID)}
           ? { ...IT[0], body: '', caption: '', mimetype: 'audio/ogg; codecs=opus', filename: '', duration: 3, thumb: null, edits: [], media: new Uint8Array([79, 103, 103, 83, 0, 2]).buffer, mime: 'audio/ogg' }
           : { ...IT[1], body: 'oi, quero o tênis 42', caption: '', mimetype: '', filename: '', duration: 0, thumb: null, edits: [{ body: 'oi, quero o tênis 43', at: Date.now() }], media: null, mime: '' },
         deletedClear: () => { window.__delCleared++; return { cleared: true }; } };
       return true;`);
     await openChat('Cliente 7');
-    await pg(`document.querySelector('#main .msgs').innerHTML = '<div data-id="${DID}"><span>🚫 Esta mensagem foi apagada</span></div><div data-id="${EID}"><span>oi, quero o tênis 43</span> <span>Editada</span></div>'; return true;`);
+    await pg(`document.querySelector('#main .msgs').innerHTML = '<div data-id="${DID}"><span>🚫 Esta mensagem foi apagada</span></div><div data-id="${EID}"><span>oi, quero o tênis 43</span> <span>Editada</span></div><div data-id="${MID}"><span>🚫 Você apagou esta mensagem</span></div>'; return true;`);
     await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(200); sh.querySelector('[data-sec="mensagens"]').click(); await wait(300); return true;`);
-    const dBadgesOk = await (async () => { for (const stop = Date.now() + 20000; Date.now() < stop;) { if (await pg(`return document.querySelectorAll('#main .tsp-del-badge').length === 2;`)) return true; await sleep(300); } return false; })();
+    const dBadgesOk = await (async () => { for (const stop = Date.now() + 20000; Date.now() < stop;) { if (await pg(`return document.querySelectorAll('#main .tsp-del-badge').length === 3;`)) return true; await sleep(300); } return false; })();
     const dBadges = await pg(`return [...document.querySelectorAll('#main .tsp-del-badge')].map((b) => [b.closest('[data-id]').dataset.id.slice(-12), b.textContent]);`);
-    check('na conversa: selo "👁 Ver mensagem apagada" junto da apagada e "✏️ Ver original" junto da editada',
-      dBadgesOk && JSON.stringify(dBadges) === JSON.stringify([['3EB0APAGADA1', '👁 Ver mensagem apagada'], ['3EB0EDITADA1', '✏️ Ver original']]), JSON.stringify({ dBadgesOk, dBadges }));
+    check('na conversa: selo "👁 Ver mensagem apagada" junto da apagada (do cliente E a minha, 2.18.4) e "✏️ Ver original" junto da editada',
+      dBadgesOk && JSON.stringify(dBadges) === JSON.stringify([['3EB0APAGADA1', '👁 Ver mensagem apagada'], ['3EB0EDITADA1', '✏️ Ver original'], ['EB0MINHAIMG1', '👁 Ver mensagem apagada']]), JSON.stringify({ dBadgesOk, dBadges }));
     const dCdel = await q(`const b = sh.querySelector('.cdel'); return { hidden: b.hidden, vis: getComputedStyle(b).display, t: (b.querySelector('.cdel-t') || {}).textContent, rows: [...b.querySelectorAll('.cdel-row')].map((r) => r.textContent) };`);
-    check('painel da conversa: lista "Mensagens apagadas/editadas nesta conversa (últimos 7 dias)" com as duas',
-      !dCdel.hidden && dCdel.vis !== 'none' && dCdel.t === 'Mensagens apagadas/editadas nesta conversa (últimos 7 dias)' && dCdel.rows.length === 2 && /^👁 apagada/.test(dCdel.rows[0]) && /🎤 áudio$/.test(dCdel.rows[0]) && /^✏️ editada/.test(dCdel.rows[1]) && /oi, quero o tênis 42$/.test(dCdel.rows[1]), JSON.stringify(dCdel));
+    check('painel da conversa: lista "Mensagens apagadas/editadas nesta conversa (últimos 7 dias)" com as três (a minha: "apagada por você")',
+      !dCdel.hidden && dCdel.vis !== 'none' && dCdel.t === 'Mensagens apagadas/editadas nesta conversa (últimos 7 dias)' && dCdel.rows.length === 3 && /^👁 apagada ·/.test(dCdel.rows[0]) && /^👁 apagada por você ·/.test(dCdel.rows[2]) && /📷 imagem$/.test(dCdel.rows[2]) && /🎤 áudio$/.test(dCdel.rows[0]) && /^✏️ editada/.test(dCdel.rows[1]) && /oi, quero o tênis 42$/.test(dCdel.rows[1]), JSON.stringify(dCdel));
     const dView = (js) => pg(`const h = document.getElementById('tsp-del-view'); const v = h && h.shadowRoot; ${js}`);
     await pg(`document.querySelector('#main .tsp-del-badge').click(); await wait(500); return true;`);
     const dv1 = await dView(`if (!v) return null; const a = v.querySelector('audio'); return { head: v.querySelector('.h span').textContent, audio: !!a && a.controls && /^blob:/.test(a.src), note: [...v.querySelectorAll('.note')].map((n) => n.textContent) };`);
@@ -1926,6 +1930,12 @@ async function main() {
     check('"✏️ Ver original" (pela lista do painel): mostra o original e o texto editado; Esc fecha',
       dv2 && /^✏️ Mensagem editada pelo cliente/.test(dv2.head) && JSON.stringify(dv2.lbl) === JSON.stringify(['Original', 'Editada para']) && JSON.stringify(dv2.txt) === JSON.stringify(['oi, quero o tênis 42'])
       && JSON.stringify(dv2.ed) === JSON.stringify(['oi, quero o tênis 43']) && await pg(`return !document.getElementById('tsp-del-view');`), JSON.stringify(dv2));
+    // 2.18.4: a MINHA foto apagada abre pelo selo, com "apagada por você" e a imagem
+    await pg(`[...document.querySelectorAll('#main .tsp-del-badge')].find((b) => b.dataset.id === ${JSON.stringify(MID)}).click(); await wait(500); return true;`);
+    const dv3 = await dView(`if (!v) return null; const i = v.querySelector('img'); return { head: v.querySelector('.h span').textContent, img: !!i && /^data:image\\/jpeg;base64,/.test(i.src), note: [...v.querySelectorAll('.note')].map((n) => n.textContent) };`);
+    await dView(`v.querySelector('.x').click(); await wait(150); return true;`);
+    check('2.18.4: a minha foto apagada: selo abre "👁 Mensagem apagada por você" com a imagem (miniatura guardada)',
+      dv3 && /^👁 Mensagem apagada por você/.test(dv3.head) && dv3.img && dv3.note.some((n) => /miniatura/.test(n)) && await pg(`return !document.getElementById('tsp-del-view');`), JSON.stringify(dv3));
     // Personalizar: desligar/ligar manda a configuração para a ponte; "Apagar tudo agora" apaga e tira os selos
     await czOpen();
     const dCz = await q(`const l = [...sh.querySelectorAll('.cz-opt')].find((x) => x.textContent === 'Guardar mensagens apagadas'); return { found: !!l, checked: !!(l && l.querySelector('input').checked), btn: !!sh.querySelector('.cz .cz-delclear') };`);
@@ -1974,9 +1984,9 @@ async function main() {
       return true;`);
     await q(`if (!sh.querySelector('.root.open')) sh.querySelector('.toggle').click(); await wait(200); sh.querySelector('[data-sec="midias"]').click(); await wait(400); return true;`);
     const catBtnOk = await (async () => { for (const stop = Date.now() + 15000; Date.now() < stop;) { if (await q(`return !!sh.querySelector('.md-catx-btn');`)) return true; await sleep(300); } return false; })();
-    const catBtn = await q(`const b = sh.querySelector('.md-catx-btn'); return b ? { t: b.textContent, head: b.closest('.md-catx').querySelector('.wt-head').textContent, inMedia: !!b.closest('.mtab') } : null;`);
-    check('aba Mídias: bloco "CATÁLOGO DO WHATSAPP" com o botão "Exportar catálogo do WhatsApp"',
-      catBtnOk && catBtn && catBtn.t === 'Exportar catálogo do WhatsApp' && catBtn.head === 'CATÁLOGO DO WHATSAPP' && catBtn.inMedia, JSON.stringify(catBtn));
+    const catBtn = await q(`const b = sh.querySelector('.md-catx-btn'); return b ? { t: b.textContent, head: b.closest('.md-catx').querySelector('.wt-head').textContent, inMedia: !!b.closest('.mtab'), first: (() => { const t = b.closest('.mtab'); const secs = t ? [...t.querySelectorAll('section')] : []; const pastas = secs.find((s) => (s.querySelector('.wt-head') || {}).textContent === 'PASTAS'); return secs[0] === b.closest('.md-catx') && !!pastas && !!(b.closest('.md-catx').compareDocumentPosition(pastas) & Node.DOCUMENT_POSITION_FOLLOWING); })() } : null;`);
+    check('aba Mídias: bloco "CATÁLOGO DO WHATSAPP" com o botão "Exportar catálogo do WhatsApp" no TOPO da aba (2.18.4: antes das pastas)',
+      catBtnOk && catBtn && catBtn.t === 'Exportar catálogo do WhatsApp' && catBtn.head === 'CATÁLOGO DO WHATSAPP' && catBtn.inMedia && catBtn.first, JSON.stringify(catBtn));
     const catRun = async () => {
       await q(`sh.querySelector('.md-catx-btn').click(); return true;`);
       for (const stop = Date.now() + 30000; Date.now() < stop;) {
@@ -2276,6 +2286,20 @@ async function main() {
       && draw24.fs0 === draw24.fs9 && draw24.lastW >= 160 && draw24.lastTxt === 'Espera resposta até 65 dias depois de entrar · dia 65 desde a entrada' && draw24.lastSeen && draw24.scrolled,
       JSON.stringify({ list24, draw24 }));
     await shot('regua-10-niveis.png');
+    // 2.18.4: o zoom (− 100% + ↺) fica numa faixa própria, embaixo da área de desenho: rolando até o fim (embaixo e à
+    // esquerda, onde ele ficava por cima), nenhuma caixa (nem o FIM) fica debaixo dele; também com zoom 160%
+    const zoomCheck = async () => q(`const v = sh.querySelector('.vb'); const cv = v.querySelector('.vb-canvas'); const z = v.querySelector('.vb-zoom');
+      cv.scrollTop = cv.scrollHeight; cv.scrollLeft = 0; await wait(150);
+      const zr = z.getBoundingClientRect(); const cr = cv.getBoundingClientRect();
+      const hit = (b) => { const r = b; const x1 = Math.max(r.left, cr.left), x2 = Math.min(r.right, cr.right), y1 = Math.max(r.top, cr.top), y2 = Math.min(r.bottom, cr.bottom); return x2 > x1 && y2 > y1 && x1 < zr.right && x2 > zr.left && y1 < zr.bottom && y2 > zr.top; }; // só a parte VISÍVEL da caixa (dentro da área de desenho)
+      const boxes = [...v.querySelectorAll('.vb-box')]; const fims = [...v.querySelectorAll('.vb-box.vb-fim')];
+      return { below: zr.top >= cr.bottom - 1, covered: boxes.filter((b) => hit(b.getBoundingClientRect())).length, fims: fims.length, fimHit: fims.some((b) => hit(b.getBoundingClientRect())), zoom: (v.querySelector('.vb-zval') || {}).textContent, zh: Math.round(zr.height) };`);
+    const z24a = await zoomCheck();
+    await q(`const v = sh.querySelector('.vb'); for (let i = 0; i < 6; i++) { [...v.querySelectorAll('.vb-zoom .vb-zbtn')].find((b) => b.getAttribute('aria-label') === 'Aumentar').click(); await wait(80); } return true;`);
+    const z24b = await zoomCheck();
+    await q(`[...sh.querySelectorAll('.vb .vb-zoom .vb-zbtn')].find((b) => b.getAttribute('aria-label') === 'Tamanho normal (100%)').click(); await wait(150); return true;`);
+    check('2.18.4: o zoom fica embaixo da área de desenho e nunca cobre caixas (nem o FIM), também com 160%',
+      z24a.below && z24a.covered === 0 && z24a.fims > 0 && !z24a.fimHit && z24a.zh > 0 && z24b.zoom === '160%' && z24b.below && z24b.covered === 0 && !z24b.fimHit, JSON.stringify({ z24a, z24b }));
     const plus24 = await q(`const v = sh.querySelector('.vb'); const lanes = [...v.querySelectorAll('.vb-lane.vb-no')];
       const at = async (lane) => { lane.querySelector('.vb-plus').click(); await wait(200); const m = sh.querySelector('.vb .vb-menu .vb-mi-esperar'); const r = m ? { dis: m.disabled, title: m.title } : null; const x = sh.querySelector('.vb .vb-menu .vb-mi-x'); if (x) x.click(); await wait(150); return r; };
       const nl = lanes.length; const l9 = await at([...sh.querySelectorAll('.vb .vb-lane.vb-no')][8]); const l10 = await at([...sh.querySelectorAll('.vb .vb-lane.vb-no')][9]); return { nl, l9, l10 };`);

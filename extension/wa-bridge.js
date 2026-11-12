@@ -1774,8 +1774,8 @@
   try { if (wpp && typeof wpp.on === 'function') wpp.on('chat.new_message', onNewMessage); } catch { /* sem eventos: sem Contato automático */ }
 
   // ── 2.15.0: mensagens apagadas e editadas (cópia SÓ LOCAL: deleted-store.js, IndexedDB deste computador) ──
-  // Ao receber (chat.new_message): guarda a cópia da mensagem do cliente (conversa individual; nunca as suas, nunca
-  // grupo) e, se a mídia tem até 5 MB, o arquivo (chat.downloadMedia). chat.msg_revoke / chat.msg_edited só marcam a
+  // Ao receber/enviar (chat.new_message): guarda a cópia da mensagem (conversa individual; 2.18.4: do cliente E as
+  // suas; nunca grupo) e, se a mídia tem até 5 MB, o arquivo (chat.downloadMedia). chat.msg_revoke / chat.msg_edited só marcam a
   // cópia que já existe. Sem os eventos, sem a biblioteca ou com erro: não faz nada (sem erro).
   const Del = window.TspDeleted || null;
   const del = { on: true, store: null, changes: [] };
@@ -1810,7 +1810,9 @@
       if (!/^[0-9]+@(c\.us|lid)$/.test(chat)) return;
       const ref = keyStr(e.refId);
       const raw = String(safe(() => e.refId.id, '') || '');
-      const ids = [...new Set([ref, raw ? `false_${chat}_${raw}` : ''].filter((x) => /^false_/.test(x)))]; // só as do cliente
+      // 2.18.4: a do cliente (false_) ou a sua (true_); na sua, o "from" pode ser você e a conversa vem no "to"
+      const chats = [chat, keyStr(e.to)].filter((c) => /^[0-9]+@(c\.us|lid)$/.test(c));
+      const ids = [...new Set([ref, ...(raw ? chats.flatMap((c) => [`false_${c}_${raw}`, `true_${c}_${raw}`]) : [])].filter((x) => /^(true|false)_[0-9]+@(c\.us|lid)_/.test(x)))];
       (async () => {
         for (const id of ids) { const m = await del.store.markRevoked(id); if (m) { pushDelChange(m, 'apagada'); return; } }
       })().catch(() => {});
@@ -1820,7 +1822,7 @@
     try {
       if (!del.on || !del.store || !e) return;
       const id = typeof e.id === 'string' ? e.id : keyStr(e.id);
-      if (!/^false_[0-9]+@(c\.us|lid)_/.test(id)) return;
+      if (!/^(true|false)_[0-9]+@(c\.us|lid)_/.test(id)) return; // 2.18.4: também as suas
       const text = safe(() => e.msg.body, '') || safe(() => e.msg.caption, '') || '';
       del.store.markEdited(id, typeof text === 'string' ? text : '').then((m) => { if (m && m.editedAt) pushDelChange(m, 'editada'); }).catch(() => {});
     } catch { /* evento estranho: ignora */ }
@@ -1832,7 +1834,7 @@
       wpp.on('chat.msg_edited', onDelEdited);
     }
   } catch { /* sem eventos: não guarda nada */ }
-  const delCheckId = (id) => { if (typeof id !== 'string' || !/^false_[0-9]+@(c\.us|lid)_[A-Za-z0-9]{1,80}$/.test(id)) throw new BridgeError('invalid_request', 'Mensagem inválida', 'before-send'); return id; };
+  const delCheckId = (id) => { if (typeof id !== 'string' || !/^(true|false)_[0-9]+@(c\.us|lid)_[A-Za-z0-9]{1,80}$/.test(id)) throw new BridgeError('invalid_request', 'Mensagem inválida', 'before-send'); return id; };
   async function deletedConfig(p) { del.on = !(p && p.on === false); return { on: del.on, available: !!del.store }; }
   async function deletedList(p) {
     const chatId = p && p.chatId;

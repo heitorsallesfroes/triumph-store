@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.18.3** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.18.4** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -808,6 +808,20 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.18.4 — Catálogo no topo da aba Mídias · zoom do construtor não cobre caixas · apagadas também as suas
+- **Aba Mídias**: o bloco **"Exportar catálogo do WhatsApp"** agora fica no **topo** da aba (antes ficava embaixo,
+  depois da grade de mídias).
+- **Construtor de automação em cascata**: o controle de zoom (− 100% + ↺) saiu de cima da área de desenho e fica numa
+  faixa própria logo abaixo dela: com a régua longa (ou com zoom grande), nenhuma caixa — nem o **FIM** — fica
+  debaixo dele.
+- **Mensagens apagadas/editadas**: a cópia local passa a guardar também as **suas** mensagens (antes só as do
+  cliente: a mensagem que você apagava não ganhava o 👁). Selo **"👁 Ver mensagem apagada"** e a lista **"Mensagens
+  apagadas/editadas"** valem para texto, foto e áudio apagados pelo cliente **e por você** (na lista: "apagada por
+  você"; na janela: "Mensagem apagada por você"). Áudio/foto sem o tamanho informado também têm o arquivo guardado
+  (até 5 MB). Continua só neste computador, 7 dias, até 200 MB.
+- Testes: `deleted.test.cjs` (as suas: texto, foto e áudio) e `chrome-real.test.cjs` (catálogo no topo, zoom sem
+  cobrir caixas, a sua foto apagada).
 
 ### 2.18.3 — Links rastreáveis do Instagram sem o código visível: a FRASE liga a conversa
 - O link `/l/<apelido>` (e o "link direto do WhatsApp" wa.me, para o ManyChat) agora abre o WhatsApp só com a

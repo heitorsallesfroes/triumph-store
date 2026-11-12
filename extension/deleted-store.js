@@ -1,7 +1,7 @@
-// 2.15.0: cópia LOCAL das mensagens recebidas do cliente (conversa individual), para ver depois o que ele apagou ou
-// editou. Roda no mundo da página (world MAIN) logo antes do wa-bridge.js e publica window.TspDeleted.
+// 2.15.0: cópia LOCAL das mensagens da conversa individual, para ver depois o que foi apagado ou editado. 2.18.4: as
+// do cliente E as suas (antes eram só as recebidas: a sua mensagem apagada não tinha o 👁). Roda no mundo da página (world MAIN) logo antes do wa-bridge.js e publica window.TspDeleted.
 // Fica só neste computador (IndexedDB "tsp-deleted-msgs"); NUNCA vai para o Supabase nem para outro servidor.
-// Regras: só mensagem recebida (nunca as suas), nada de grupo; texto, miniatura e, se até 5 MB, o arquivo da mídia;
+// Regras: do cliente e suas (fromMe), nada de grupo; texto, miniatura e, se até 5 MB, o arquivo da mídia;
 // cópias com mais de 7 dias somem sozinhas; no total até 200 MB (apaga as mais antigas primeiro).
 (() => {
   if (window.TspDeleted) return;
@@ -20,7 +20,8 @@
   function recordOf(m, now = Date.now()) {
     if (!m || typeof m !== 'object') return null;
     const g = (fn, d = null) => { try { const v = fn(); return v === undefined ? d : v; } catch { return d; } };
-    if (g(() => m.id.fromMe, true) !== false) return null; // só recebidas
+    const fromMe = g(() => m.id.fromMe, null);
+    if (typeof fromMe !== 'boolean') return null; // 2.18.4: recebidas e enviadas (sem saber de quem: não guarda)
     const id = String(g(() => m.id._serialized, '') || '');
     const chatId = String(g(() => m.id.remote._serialized, '') || g(() => m.from._serialized, '') || '');
     if (!id || !CHAT_RE.test(chatId)) return null; // nada de grupo, status, canal
@@ -30,7 +31,7 @@
     const body = typeof m.body === 'string' ? m.body : '';
     const thumbRaw = MEDIA.has(type) ? (g(() => m.mediaData.preview, null) || (/^\/9j\//.test(body) ? body : null)) : null;
     const rec = {
-      id, chatId, type, kind: KINDS[type],
+      id, chatId, type, kind: KINDS[type], fromMe,
       t: Math.floor(Number(g(() => m.t, 0)) || now / 1000),
       savedAt: now,
       body: type === 'chat' || type === 'location' || type === 'vcard' ? body.slice(0, LIMITS.textMax) : '',
@@ -46,7 +47,10 @@
     if (type === 'location') rec.body = [g(() => m.lat, ''), g(() => m.lng, '')].join(',') + (g(() => m.loc, '') ? ` · ${g(() => m.loc, '')}` : '');
     return rec;
   }
-  const wantsMedia = (rec) => !!rec && MEDIA.has(rec.type) && rec.size > 0 && rec.size <= LIMITS.mediaMaxBytes;
+  // 2.18.4: foto/áudio/figurinha sem o tamanho informado (acontece com áudio gravado) também baixa; o limite de 5 MB
+  // continua valendo na hora de anexar (attachMedia). Vídeo/documento sem tamanho: não (podem ser grandes).
+  const SMALL = new Set(['image', 'ptt', 'audio', 'sticker']);
+  const wantsMedia = (rec) => !!rec && MEDIA.has(rec.type) && (rec.size > 0 ? rec.size <= LIMITS.mediaMaxBytes : SMALL.has(rec.type));
 
   // ── Armazenamento: IndexedDB (navegador) ou memória (testes) ──
   function memoryBackend() {
@@ -96,7 +100,7 @@
 
   // Resumo sem o arquivo (o que o painel lista)
   const meta = (r) => ({
-    id: r.id, chatId: r.chatId, type: r.type, kind: r.kind, t: r.t, revokedAt: r.revokedAt, editedAt: r.editedAt,
+    id: r.id, chatId: r.chatId, type: r.type, kind: r.kind, t: r.t, fromMe: r.fromMe === true, revokedAt: r.revokedAt, editedAt: r.editedAt,
     preview: (r.body || r.caption || '').slice(0, 140), hasMedia: !!r.media, hasThumb: !!r.thumb, edits: (r.edits || []).length,
   });
 
@@ -141,14 +145,14 @@
         prune(true).catch(() => {});
         return true;
       },
-      // O cliente apagou: só marca (só existe cópia de mensagem recebida)
+      // Apagada (pelo cliente ou por você): só marca
       async markRevoked(id) {
         const r = await backend.get(id);
         if (!r) return null;
         if (!r.revokedAt) { r.revokedAt = now(); await backend.put(r); }
         return meta(r);
       },
-      // O cliente editou: guarda o texto novo; o original (body/caption) continua
+      // Editada (pelo cliente ou por você): guarda o texto novo; o original (body/caption) continua
       async markEdited(id, newText) {
         const r = await backend.get(id);
         if (!r) return null;

@@ -1547,10 +1547,11 @@
       .vb .bbtn { background: var(--bg); color: var(--fg); border: 1px solid var(--border-strong); }
       .vb .bbtn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
       .vb-body { flex: 1; display: flex; min-height: 0; position: relative; }
-      .vb-canvas { flex: 1; overflow: auto; padding: var(--s-6) var(--s-6) 80px; }
+      .vb-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+      .vb-canvas { flex: 1; overflow: auto; padding: var(--s-6) var(--s-6) var(--s-6); min-height: 0; }
       .vb-inner { display: flex; flex-direction: column; align-items: center; min-width: max-content; margin: 0 auto; }
       .vb-note { max-width: 560px; margin-bottom: var(--s-3); padding: var(--s-2) var(--s-3); border-radius: var(--r-md); background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: var(--fs-2); }
-      .vb-zoom { position: absolute; left: var(--s-4); bottom: var(--s-4); display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: var(--r-lg); background: var(--bg); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(11,20,26,.10); }
+      .vb-zoom { position: static; flex: 0 0 auto; align-self: flex-start; margin: var(--s-2) var(--s-4); display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: var(--r-lg); background: var(--bg); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(11,20,26,.10); }
       .vb-zbtn { min-width: 28px; height: 28px; padding: 0 6px; border: none; border-radius: var(--r-sm); background: transparent; font-weight: 700; color: var(--fg); }
       .vb-zbtn:hover { background: var(--hover); }
       .vb-zval { min-width: 42px; text-align: center; font-size: var(--fs-2); color: var(--muted); }
@@ -3963,11 +3964,11 @@
     box.append(czGroup('Lista de conversas', 'Depois de você enviar, se a lista do WhatsApp pular para o topo, ela volta para onde você estava. Se você rolar ou clicar na lista, não mexe.', [
       czCheck('Manter a posição da lista de conversas ao enviar', p.keepListPos, (v) => set((n) => { n.keepListPos = v; })),
     ]));
-    // 2.15.0: cópia local das mensagens recebidas (para ver as apagadas/editadas)
+    // 2.15.0: cópia local das mensagens (2.18.4: do cliente e as suas), para ver as apagadas/editadas
     const delClear = el('button', 'bbtn cz-delclear', 'Apagar tudo agora');
     delClear.type = 'button';
     delClear.addEventListener('click', () => clearDeletedCopies(delClear));
-    box.append(czGroup('Mensagens apagadas e editadas', 'Guarda só neste computador (nunca no servidor) uma cópia das mensagens que o cliente manda em conversa individual: texto, miniatura e arquivos de até 5 MB. Some sozinha depois de 7 dias (no máximo 200 MB). Quando o cliente apagar ou editar, aparece "👁 Ver mensagem apagada" ou "✏️ Ver original" na conversa.', [
+    box.append(czGroup('Mensagens apagadas e editadas', 'Guarda só neste computador (nunca no servidor) uma cópia das mensagens da conversa individual (as do cliente e as suas): texto, miniatura e arquivos de até 5 MB. Some sozinha depois de 7 dias (no máximo 200 MB). Quando você ou o cliente apagar ou editar, aparece "👁 Ver mensagem apagada" ou "✏️ Ver original" na conversa.', [
       czCheck('Guardar mensagens apagadas', p.keepDeleted, (v) => set((n) => { n.keepDeleted = v; })),
       delClear,
     ]));
@@ -9465,7 +9466,8 @@
     } finally { dl.busy = false; }
   }
   setInterval(() => { delTick().catch(() => {}); }, 3000);
-  const delLabel = (m) => (m.revokedAt ? '👁 apagada' : '✏️ editada');
+  // 2.18.4: também as suas (fromMe): "apagada por você" / "editada por você"
+  const delLabel = (m) => `${m.revokedAt ? '👁 apagada' : '✏️ editada'}${m.fromMe ? ' por você' : ''}`;
   function renderDeleted() {
     const box = shadow.querySelector('.cdel');
     if (!box) return;
@@ -9558,7 +9560,8 @@
     const mk = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
     const h = mk('div', 'h');
     const when = r.t ? new Date(r.t * 1000) : null;
-    h.append(mk('span', null, `${r.revokedAt ? '👁 Mensagem apagada pelo cliente' : '✏️ Mensagem editada pelo cliente'}${when ? ` · ${schedWhen(when.toISOString())}` : ''}`));
+    const who = r.fromMe ? 'por você' : 'pelo cliente';
+    h.append(mk('span', null, `${r.revokedAt ? `👁 Mensagem apagada ${who}` : `✏️ Mensagem editada ${who}`}${when ? ` · ${schedWhen(when.toISOString())}` : ''}`));
     const x = mk('button', 'x', '✕');
     x.type = 'button';
     x.setAttribute('aria-label', 'Fechar');
@@ -9740,7 +9743,10 @@
     if (f.converted) inner.append(el('div', 'vb-note', 'Esta automação foi feita no editor antigo e foi desenhada aqui. Ao salvar, ela passa a rodar como régua do construtor visual (vale daqui pra frente a partir de quando for ligada).'));
     inner.append(vbStartBox(f), vbFlow(f, f.def.steps, 1));
     cv.append(inner);
-    body.append(cv, zoom, vbSide(f));
+    // 2.18.4: o zoom fica numa faixa própria embaixo da área de desenho (fora dela): nunca cobre caixas (ex.: o FIM)
+    const main = el('div', 'vb-main');
+    main.append(cv, zoom);
+    body.append(main, vbSide(f));
     vb.el.append(body);
     if (f.modal) vb.el.append(vbModal(f));
     if (keep) { cv.scrollTop = keep.top; cv.scrollLeft = keep.left; }
@@ -13095,6 +13101,8 @@
     if (!mtabEl) return;
     mtabEl.textContent = '';
     mtabEl.append(el('div', 'crm-intro', 'Biblioteca de mídias da loja: fotos, vídeos, áudios e PDFs em pastas. Envie na conversa aberta com um clique ou escolha daqui ao montar uma mensagem rápida ou a mensagem de um disparo (o arquivo não é subido de novo).'));
+    // 2.18.4: "Exportar catálogo" no TOPO da aba (antes ficava lá embaixo, depois da grade)
+    if (!md.sel) { mtabEl.append(renderCatalogExport()); loadCatalogInfo(); }
     if (md.error) {
       mtabEl.append(el('div', 'ed-note', md.error === DB_MISSING ? 'Atualize o banco para usar este recurso (migration 20261105090000).' : `Não consegui carregar a biblioteca: ${md.error}`));
       return;
@@ -13192,8 +13200,6 @@
     const tools = el('div', 'ed-add');
     tools.append(fbtn('bbtn', md.importing ? 'Importando…' : 'Importar mídias das mensagens rápidas', () => importMedia()));
     mtabEl.append(tools);
-    mtabEl.append(renderCatalogExport()); // 2.15.3
-    loadCatalogInfo();
     const pct = md.quota ? md.used / md.quota : 0;
     const quota = el('div', `md-quota${pct > 0.9 ? ' bad' : pct > 0.7 ? ' warn' : ''}`);
     quota.append(el('div', null, `Espaço usado no wa-media: ${formatSize(md.used)} de 1 GB (${(pct * 100).toFixed(1).replace('.', ',')}%)${pct > 0.9 ? ' — quase cheio' : pct > 0.7 ? ' — atenção' : ''}`));
