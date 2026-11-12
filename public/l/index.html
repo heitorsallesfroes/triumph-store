@@ -24,11 +24,12 @@
   <span class="logo">T</span>
   <h1>Triumph Store</h1>
   <p><span class="spin" aria-hidden="true"></span>Abrindo o WhatsApp da loja…</p>
-  <a class="btn" id="go" href="https://wa.me/5521980921808?text=Ol%C3%A1!%20Vim%20pelo%20Instagram%20%F0%9F%98%8A">Abrir o WhatsApp</a>
+  <a class="btn" id="go" href="https://wa.me/5521980921808?text=Ol%C3%A1!%20Vi%20o%20Instagram%20de%20voc%C3%AAs%20e%20quero%20saber%20mais">Abrir o WhatsApp</a>
 </main>
 <script>
 // Link rastreável do Instagram: /l/<apelido> → edge function ig-link (registra o clique, sem guardar o IP) →
-// WhatsApp da loja com a mensagem e o código ([IG-BIO]). Se a função não responder em 3 s, abre o WhatsApp sem o código.
+// WhatsApp da loja com a FRASE do link (2.18.3: sem código e sem emoji). Se a função não responder em 3 s, abre o
+// WhatsApp com a frase padrão (sem emoji: no iPhone o 😊 chegava como "�").
 // A chave anon é pública por design (a mesma de extension/config.js); a função só aceita o apelido.
 (function () {
   var SUPABASE_URL = 'https://jcnvlqfpmmejtzfhfjix.supabase.co';

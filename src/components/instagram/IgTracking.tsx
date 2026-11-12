@@ -1,13 +1,15 @@
 // Aba Instagram → Rastreio (FASE 2): links rastreáveis https://triumph-store.vercel.app/l/<apelido> que abrem o
-// WhatsApp da loja com a mensagem + o código ([IG-BIO]); resultados por link e por canal no período:
-// cliques → conversas iniciadas → vendas (do ERP, ligadas à conversa) → faturamento.
+// WhatsApp da loja com a FRASE do link (2.18.3: sem código visível; o [IG-...] antigo ainda é aceito) e o "link direto
+// do WhatsApp" (wa.me com a frase, para o ManyChat: não conta cliques, mas a frase liga a conversa); resultados por
+// link e por canal no período: cliques → conversas iniciadas (e como foram ligadas: frase / horário / código) →
+// vendas (do ERP, ligadas à conversa) → faturamento.
 // Regras: src/lib/igLinks.ts · leitura/gravação: src/lib/igLinksDb.ts (grava SÓ ig_links) · QR: src/lib/qr.ts
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, Download, ExternalLink, Pencil, Plus, QrCode, RefreshCw, X } from 'lucide-react';
 import { useErpRefresh } from '../../lib/erpRefresh';
 import {
-  CHANNELS, CHANNEL_LABEL, DEFAULT_MESSAGE, bestLinks, linkResults, prefilledText, publicUrl, slugify, suggestCode, validateDraft, waUrl,
-  type IgChannel, type IgClick, type IgLink, type LinkConversation, type LinkDraft, type LinkResult,
+  CHANNELS, CHANNEL_LABEL, MATCH_LABEL, bestLinks, hasEmoji, linkResults, prefilledText, publicUrl, slugify, suggestCode, validateDraft, waUrl,
+  type IgChannel, type LinkMatch, type IgClick, type IgLink, type LinkConversation, type LinkDraft, type LinkResult,
 } from '../../lib/igLinks';
 import { IG_MIGRATION, lastDays, loadClicks, loadLinkConversations, loadLinks, saveLink } from '../../lib/igLinksDb';
 import { loadMedia } from '../../lib/igDb';
@@ -68,10 +70,12 @@ export default function IgTracking() {
   const res = useMemo(() => (data ? linkResults(data.links, data.clicks, data.convs, r) : null), [data, r]);
   const best = useMemo(() => (res ? bestLinks(res.links) : []), [res]);
   const [copyFail, setCopyFail] = useState<string | null>(null);
-  const copy = async (l: IgLink) => {
-    const ok = await copyText(publicUrl(l.slug));
-    setCopied(ok ? l.id : null); setCopyFail(ok ? null : l.id);
-    setTimeout(() => { setCopied((c) => (c === l.id ? null : c)); setCopyFail((c) => (c === l.id ? null : c)); }, 4000);
+  // what: o link /l/ (conta cliques) ou o link direto do WhatsApp (wa.me com a frase)
+  const copy = async (l: IgLink, what: 'pub' | 'wa' = 'pub') => {
+    const key = `${l.id}:${what}`;
+    const ok = await copyText(what === 'wa' ? waUrl(prefilledText(l.message)) : publicUrl(l.slug));
+    setCopied(ok ? key : null); setCopyFail(ok ? null : key);
+    setTimeout(() => { setCopied((c) => (c === key ? null : c)); setCopyFail((c) => (c === key ? null : c)); }, 4000);
   };
   const recent = useMemo(() => (data ? [...data.clicks].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 15) : []), [data]);
   const linkById = useMemo(() => new Map((data?.links || []).map((l) => [l.id, l])), [data]);
@@ -138,28 +142,31 @@ export default function IgTracking() {
         {!data ? <p style={muted}>Carregando…</p> : !data.links.length ? <p style={muted}>Nenhum link ainda.</p> : (
           <div className="igr-scroll">
             <table className="igr-table">
-              <thead><tr><th>Link</th><th>Canal</th><th className="n">Cliques</th><th className="n">Conversas</th><th className="n">Vendas</th><th className="n">Faturamento</th><th className="n">Clique→conv.</th><th className="n">Conv.→venda</th><th /></tr></thead>
+              <thead><tr><th>Link</th><th>Canal</th><th className="n">Cliques</th><th className="n">Conversas</th><th>Ligadas por</th><th className="n">Vendas</th><th className="n">Faturamento</th><th className="n">Clique→conv.</th><th className="n">Conv.→venda</th><th /></tr></thead>
               <tbody>
                 {res && res.links.map((x) => { const l = x.link as IgLink; return (
                   <tr key={l.id} data-testid="igr-link" data-slug={l.slug} style={l.active ? undefined : { opacity: 0.55 }}>
                     <td>
                       <div style={{ fontWeight: 700 }}>{l.slug} {!l.active && <span style={{ ...muted, fontWeight: 600 }}>(desligado)</span>}</div>
-                      <div style={muted}><code>[{l.code}]</code>{l.media_caption ? ` · ${l.media_caption.slice(0, 40)}` : ''}</div>
+                      <div style={{ fontSize: 12, overflowWrap: 'anywhere' }} data-testid="igr-phrase">“{prefilledText(l.message)}”</div>
+                      {l.media_caption && <div style={muted}>{l.media_caption.slice(0, 40)}</div>}
                       <div style={{ ...muted, overflowWrap: 'anywhere' }} data-testid="igr-url">{publicUrl(l.slug)}</div>
                     </td>
                     <td><span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(192,38,211,0.12)', color: PINK, whiteSpace: 'nowrap' }}>{CHANNEL_LABEL[l.channel]}</span></td>
                     <td className="n" data-testid="igr-clicks">{fmtN(x.clicks)}</td>
                     <td className="n" data-testid="igr-convs">{fmtN(x.conversations)}</td>
+                    <td style={{ ...muted, whiteSpace: 'nowrap' }} data-testid="igr-bymatch">{(['frase', 'horario', 'codigo'] as LinkMatch[]).map((m) => <div key={m} data-match={m}>{MATCH_LABEL[m]}: <b style={{ color: 'var(--text-primary)' }}>{fmtN(x.byMatch[m])}</b></div>)}</td>
                     <td className="n">{fmtN(x.sales)}</td>
                     <td className="n" data-testid="igr-revenue">{money(x.revenue)}</td>
                     <td className="n">{fmtPct(x.clickToConv)}</td>
                     <td className="n">{fmtPct(x.convToSale)}</td>
                     <td className="n" style={{ whiteSpace: 'nowrap' }}>
-                      <button type="button" style={{ ...btn, padding: 6 }} title="Copiar link" aria-label={`Copiar link ${l.slug}`} onClick={() => copy(l)} data-testid="igr-copy"><Copy size={14} /></button>{' '}
+                      <button type="button" style={{ ...btn, padding: 6 }} title="Copiar link (conta cliques)" aria-label={`Copiar link ${l.slug}`} onClick={() => copy(l)} data-testid="igr-copy"><Copy size={14} /></button>{' '}
+                      <button type="button" style={{ ...btn, padding: '6px 8px', fontSize: 11 }} title="Copiar o link direto do WhatsApp (wa.me com a frase): para o ManyChat ou onde não puder trocar o link. Não conta cliques, mas rastreia conversa → venda pela frase." aria-label={`Copiar link direto do WhatsApp ${l.slug}`} onClick={() => copy(l, 'wa')} data-testid="igr-copy-wa">wa.me</button>{' '}
                       <button type="button" style={{ ...btn, padding: 6 }} title="QR code" aria-label={`QR code do link ${l.slug}`} onClick={() => setQr(l)} data-testid="igr-qr"><QrCode size={14} /></button>{' '}
                       <button type="button" style={{ ...btn, padding: 6 }} title="Editar" aria-label={`Editar link ${l.slug}`} onClick={() => setEdit(l)} data-testid="igr-edit"><Pencil size={14} /></button>
-                      {copied === l.id && <div style={{ ...muted, color: '#16a34a', fontWeight: 700 }} role="status" data-testid="igr-copied">Link copiado!</div>}
-                      {copyFail === l.id && <div style={{ ...muted, color: '#ef4444', fontWeight: 700 }} role="status">Não consegui copiar: selecione o link acima</div>}
+                      {copied?.startsWith(`${l.id}:`) && <div style={{ ...muted, color: '#16a34a', fontWeight: 700 }} role="status" data-testid="igr-copied">{copied.endsWith(':wa') ? 'Link direto do WhatsApp copiado!' : 'Link copiado!'}</div>}
+                      {copyFail?.startsWith(`${l.id}:`) && <div style={{ ...muted, color: '#ef4444', fontWeight: 700 }} role="status">Não consegui copiar: abra "Editar" e selecione o link</div>}
                     </td>
                   </tr>
                 ); })}
@@ -203,7 +210,7 @@ export default function IgTracking() {
 function Editor({ link, all, onClose, onSaved }: { link: IgLink | null; all: IgLink[]; onClose: () => void; onSaved: () => void }) {
   const [d, setD] = useState<LinkDraft>(() => link
     ? { slug: link.slug, channel: link.channel, code: link.code, message: link.message, media_id: link.media_id, media_permalink: link.media_permalink, media_caption: link.media_caption, note: link.note, active: link.active }
-    : { slug: '', channel: 'bio', code: '', message: DEFAULT_MESSAGE, media_id: null, media_permalink: null, media_caption: null, note: null, active: true });
+    : { slug: '', channel: 'bio', code: '', message: '', media_id: null, media_permalink: null, media_caption: null, note: null, active: true });
   const [codeTouched, setCodeTouched] = useState(!!link);
   const [errs, setErrs] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -212,7 +219,9 @@ function Editor({ link, all, onClose, onSaved }: { link: IgLink | null; all: IgL
   const set = (p: Partial<LinkDraft>) => setD((cur) => ({ ...cur, ...p }));
   useEffect(() => { loadMedia(90).then((m) => setPosts(m.items), (e) => { setPosts([]); setPostsErr(e instanceof Error ? e.message : String(e)); }); }, []);
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
-  const text = prefilledText(d.message, d.code || 'IG-...');
+  const text = d.message.trim() ? prefilledText(d.message) : '';
+  const direct = text ? waUrl(text) : '';
+  const [copiedWa, setCopiedWa] = useState('');
   const save = async () => {
     const e = validateDraft(d, all, link ? link.id : null);
     setErrs(e);
@@ -239,20 +248,31 @@ function Editor({ link, all, onClose, onSaved }: { link: IgLink | null; all: IgL
               {CHANNELS.map(([id, l]) => <option key={id} value={id}>{l}</option>)}
             </select>
           </label>
-          <label>Código (vai no fim da mensagem)
+          <label>Código interno (não vai na mensagem)
             <input style={field} value={d.code} data-testid="igr-f-code" onChange={(e) => { setCodeTouched(true); set({ code: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 23) }); }} />
           </label>
           <label>Ligado
-            <span style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}><input type="checkbox" checked={d.active} onChange={(e) => set({ active: e.target.checked })} data-testid="igr-f-active" /> link ativo (desligado leva ao WhatsApp sem o código e não conta)</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}><input type="checkbox" checked={d.active} onChange={(e) => set({ active: e.target.checked })} data-testid="igr-f-active" /> link ativo (desligado leva ao WhatsApp com a frase padrão e não conta)</span>
           </label>
         </div>
-        <label style={{ display: 'block', marginTop: 10, fontSize: 13 }}>Mensagem pré-preenchida
-          <textarea style={{ ...field, minHeight: 64, resize: 'vertical' }} value={d.message} maxLength={500} onChange={(e) => set({ message: e.target.value })} data-testid="igr-f-message" />
+        <label style={{ display: 'block', marginTop: 10, fontSize: 13 }}>Frase do link (a mensagem pré-preenchida; única entre os links ativos)
+          <textarea style={{ ...field, minHeight: 64, resize: 'vertical' }} value={d.message} maxLength={500} placeholder="ex.: Olá! Vi o reel do relógio de vocês e quero saber mais" onChange={(e) => set({ message: e.target.value })} data-testid="igr-f-message" />
+          <span style={muted}>A conversa é ligada ao link por esta frase (mesmo com pequenas edições do cliente). Escreva uma frase natural, sem código.</span>
         </label>
+        {hasEmoji(d.message) && <div role="status" style={{ ...muted, color: ORANGE, fontWeight: 700, marginTop: 4 }} data-testid="igr-f-emoji">Evite emojis: alguns celulares não mostram.</div>}
         <div style={{ ...box, boxShadow: 'none', background: 'var(--bg-inner)', marginTop: 10, padding: 12 }} data-testid="igr-f-preview">
           <div style={eyebrow}>O cliente vai mandar</div>
-          <div style={{ fontSize: 14, marginTop: 4 }}>{text}</div>
-          <a href={waUrl(text)} target="_blank" rel="noopener noreferrer" style={{ ...muted, color: ORANGE }}>testar no WhatsApp <ExternalLink size={11} /></a>
+          <div style={{ fontSize: 14, marginTop: 4 }}>{text || '(escreva a frase)'}</div>
+          {direct && <a href={direct} target="_blank" rel="noopener noreferrer" style={{ ...muted, color: ORANGE }}>testar no WhatsApp <ExternalLink size={11} /></a>}
+        </div>
+        <div style={{ ...box, boxShadow: 'none', background: 'var(--bg-inner)', marginTop: 10, padding: 12 }} data-testid="igr-f-direct">
+          <div style={eyebrow}>Link direto do WhatsApp</div>
+          <div style={{ fontSize: 12, marginTop: 4, overflowWrap: 'anywhere' }} data-testid="igr-f-direct-url">{direct || '(escreva a frase)'}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+            <button type="button" style={{ ...btn, padding: '4px 10px' }} disabled={!direct} onClick={async () => setCopiedWa((await copyText(direct)) ? 'Copiado!' : 'Não consegui copiar: selecione o link acima')} data-testid="igr-f-direct-copy"><Copy size={13} /> Copiar</button>
+            {copiedWa && <span style={{ ...muted, fontWeight: 700 }} role="status">{copiedWa}</span>}
+          </div>
+          <div style={{ ...muted, marginTop: 6 }}>Use no ManyChat ou onde não puder trocar o link: não conta cliques, mas rastreia conversa → venda pela frase.</div>
         </div>
         <div style={{ marginTop: 12 }}>
           <div style={{ fontSize: 13, marginBottom: 6 }}>Post ligado (opcional{d.channel === 'post' ? '; obrigatório para "Reel/post específico"' : ''})</div>

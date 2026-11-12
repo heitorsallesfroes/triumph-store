@@ -43,8 +43,9 @@ export interface TrackInput {
   igLeads?: TrackIgLeadRow[]; // Instagram FASE 2: conversas que começaram com um código [IG-...] (ig_link_leads)
 }
 // ig_link_leads + o link (canal e apelido) achado pelo link_id ou pelo código
-export interface TrackIgLeadRow { chat_id: string; phone: string | null; first_message_at: string; code: string; link_id?: string | null; channel?: string | null; slug?: string | null }
-export interface IgOrigin { code: string; channel: IgChannel | null; slug: string | null }
+// match (2.18.3): como a conversa foi ligada ao link ('frase' | 'horario' | 'codigo'; sem o campo = código)
+export interface TrackIgLeadRow { chat_id: string; phone: string | null; first_message_at: string; code: string; link_id?: string | null; channel?: string | null; slug?: string | null; match?: string | null }
+export interface IgOrigin { code: string; channel: IgChannel | null; slug: string | null; linkId?: string | null; match?: 'frase' | 'horario' | 'codigo' }
 
 // Origem da conversa (Instagram FASE 2): Meta Ads (anúncio, vale primeiro) → Instagram orgânico (link rastreável
 // [IG-...]) → Não rastreada
@@ -204,7 +205,7 @@ export function buildConversations(input: TrackInput, bh: BusinessHours = DEFAUL
   igLeads.forEach((l) => {
     const k = keyOf(l.chat_id); const t = ts(l.first_message_at);
     const channel = l.channel && l.channel in CHANNEL_LABEL ? (l.channel as IgChannel) : null;
-    if (k && Number.isFinite(t)) put({ key: k, chatId: l.chat_id, t, ad: false, adId: null, adTitle: null, tracked: true, ig: { code: l.code, channel, slug: l.slug || null } });
+    if (k && Number.isFinite(t)) put({ key: k, chatId: l.chat_id, t, ad: false, adId: null, adTitle: null, tracked: true, ig: { code: l.code, channel, slug: l.slug || null, linkId: l.link_id || null, match: l.match === 'frase' || l.match === 'horario' ? l.match : 'codigo' } });
   });
   // 2.12.8: lead novo achado pela atividade (a conversa começou com o cliente) que não está em wa_leads
   activity.forEach((a) => {
@@ -565,7 +566,7 @@ export function conversationTimeline(c: Conversation, input: Pick<TrackInput, 's
   const out: TimelineEvent[] = [];
   out.push({ t: c.firstAt, kind: 'contato', text: c.tracked ? 'Primeira mensagem do cliente (1º contato)' : 'Primeira atividade conhecida (início não registrado)' });
   if (c.ad) out.push({ t: c.firstAt, kind: 'anuncio', text: `Veio do anúncio${c.adTitle ? ` “${c.adTitle}”` : ' (Meta Ads)'}` });
-  else if (c.ig) out.push({ t: c.firstAt, kind: 'instagram', text: `Veio do ${igLabel(c.ig)} (código ${c.ig.code})` });
+  else if (c.ig) out.push({ t: c.firstAt, kind: 'instagram', text: `Veio do ${igLabel(c.ig)} (${c.ig.match === 'frase' ? 'reconhecido pela frase' : c.ig.match === 'horario' ? 'ligado pelo horário do clique' : `código ${c.ig.code}`})` });
   input.sends.forEach((s) => {
     const t = ts(s.created_at);
     if (s.status !== 'enviado' || !s.chat_id || !ids.has(s.chat_id) || !Number.isFinite(t)) return;

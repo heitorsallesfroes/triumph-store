@@ -56,6 +56,7 @@ const HANDLERS = {
   finishSendLog:        (m) => WaApi.finishSendLog({ id: m.id, status: m.status, reason: m.reason }),
   // 2.10.0: painel de resultados (leads, respostas, envios manuais e de mensagem rápida)
   saveLeads:            (m) => WaApi.saveLeads({ items: m.items }),
+  igPhraseList:         ()  => WaApi.igPhraseList(), // 2.18.3: frases dos links/automações do Instagram (vão para a ponte)
   logQuickSend:         (m) => WaApi.logQuickSend({ chat_id: m.chat_id, item_id: m.item_id }),
   logManualSends:       (m) => WaApi.logManualSends({ items: m.items }),
   recordReplies:        (m) => WaApi.recordReplies({ items: m.items }),

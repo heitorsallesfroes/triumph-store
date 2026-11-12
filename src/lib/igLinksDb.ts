@@ -6,9 +6,10 @@ import { fetchAllRows } from './resumoAnualCalc';
 import { loadTracking } from './waTrackingDb';
 import { buildConversations, businessHoursOf, conversationsIn } from './waTracking';
 import { addDays, spDay, spStartOfDay, DAY_MS, type Range } from './waPanel';
-import type { IgClick, IgLink, LinkConversation, LinkDraft } from './igLinks';
+import type { IgClick, IgLink, LinkConversation, LinkDraft, LinkMatch } from './igLinks';
 
 export const IG_MIGRATION = '20261113120000_ig_links.sql';
+export const IG_PHRASE_MIGRATION = '20261117120000_ig_link_phrases.sql'; // 2.18.3: frases dos links + como a conversa foi ligada
 const LINK_COLS = 'id, slug, channel, code, message, media_id, media_permalink, media_caption, note, active, created_at, updated_at';
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -48,6 +49,6 @@ export async function loadLinkConversations(r: Range): Promise<{ convs: LinkConv
   const model = buildConversations(load.input, businessHoursOf(load.settings));
   const convs = conversationsIn(model, r, 'instagram')
     .filter((c) => c.periodLead && c.ig)
-    .map((c) => ({ linkId: null, code: (c.ig as { code: string }).code, firstAt: c.firstAt, sales: c.sales, revenue: c.revenue }));
+    .map((c) => { const ig = c.ig as { code: string; linkId?: string | null; match?: LinkMatch }; return { linkId: ig.linkId || null, code: ig.code, firstAt: c.firstAt, sales: c.sales, revenue: c.revenue, match: ig.match || 'codigo' }; });
   return { convs, missing: load.missing };
 }

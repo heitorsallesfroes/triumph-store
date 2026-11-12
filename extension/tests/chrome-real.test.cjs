@@ -2094,7 +2094,7 @@ async function main() {
     await q(`const s = sh.querySelector('.ftab .fl-add-step'); s.value = 's4'; s.dispatchEvent(new Event('change', { bubbles: true })); await wait(250); return true;`);
     const opts22 = await q(`const f = sh.querySelector('.ftab'); const lv = f.querySelector('.fl-add-leave'); return { modes: [...f.querySelectorAll('.fl-add-mode input')].map((r) => [r.value, r.checked, r.parentElement.textContent.trim()]),
       leave: lv ? lv.checked : null, leaveTxt: lv ? lv.parentElement.textContent : '', intro: [...f.querySelectorAll('.crm-intro')].map((x) => x.textContent).join(' | '), when: (f.querySelector('.fl-add-when') || {}).textContent || '' };`);
-    const WHEN_RE = /^Follow 4 sai: [a-zç]{3} \d{2}\/\d{2} às \d{2}:\d{2}$/;
+    const WHEN_RE = /^Follow 4 sai: [a-zçá]{3} \d{2}\/\d{2} às \d{2}:\d{2}$/;
     check('Follow 4: "como se tivesse entrado há 5 dias", "Enviar esta etapa agora" (padrão) / "Esperar o tempo da régua", "Tirar das outras réguas?" marcado e a previsão "Follow 4 sai: …"',
       JSON.stringify(opts22.modes) === JSON.stringify([['agora', true, 'Enviar esta etapa agora'], ['marcado', false, 'Esperar o tempo da régua']]) && opts22.leave === true && /Tirar das outras réguas\?/.test(opts22.leaveTxt) && /como se tivesse entrado há 5 dias/.test(opts22.intro) && WHEN_RE.test(opts22.when), JSON.stringify(opts22));
     await shot('adicionar-follow-4.png');

@@ -1521,31 +1521,90 @@
     return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
   }
   const IG_HASH = /^[0-9a-f]{16}$/;
-  const igPhrases = { map: new Map(), at: 0 };
-  async function igPhraseCodeOf(hash) {
-    if (Date.now() - igPhrases.at > 5 * 60 * 1000) {
-      const map = new Map();
-      try { (await rest('ig_automations?select=code,wa_phrase&link_mode=eq.frase')).forEach((r) => { const h = igPhraseHash(r.wa_phrase); if (h && IG_CODE.test(r.code || '')) map.set(h, r.code); }); } catch { /* sem a tabela */ }
-      try { const c = await rest('system_config?select=value&key=eq.ig_direct_phrase'); const h = c.length ? igPhraseHash(c[0].value) : null; if (h && !map.has(h)) map.set(h, 'IG-DIRECT'); } catch { /* sem a chave */ }
-      igPhrases.map = map;
-      igPhrases.at = Date.now();
+  // 2.18.3: as frases ativas num lugar só — automações (ig_automations.wa_phrase), Direct (ig_direct_phrase) e os
+  // links rastreáveis (ig_links.message, ativos; a frase do link agora vai SEM código). Resumo da frase → { code, linkId }.
+  // A mesma lista vai para a ponte (igPhraseList), que reconhece a frase mesmo com pequenas edições.
+  const igPhrases = { map: new Map(), list: [], at: 0 };
+  async function loadIgPhrases() {
+    if (Date.now() - igPhrases.at <= 5 * 60 * 1000) return igPhrases;
+    const map = new Map();
+    const list = [];
+    const add = (phrase, code, linkId) => { const h = igPhraseHash(phrase); if (!h || !IG_CODE.test(code || '')) return; if (!map.has(h)) { map.set(h, { code, linkId: linkId || null }); list.push(String(phrase)); } };
+    try { (await rest('ig_automations?select=code,wa_phrase&link_mode=eq.frase')).forEach((r) => add(r.wa_phrase, r.code, null)); } catch { /* sem a tabela */ }
+    try { const c = await rest('system_config?select=value&key=eq.ig_direct_phrase'); if (c.length) add(c[0].value, 'IG-DIRECT', null); } catch { /* sem a chave */ }
+    try { (await rest('ig_links?select=id,code,message&active=eq.true')).forEach((r) => add(r.message, r.code, r.id)); } catch { /* sem a tabela */ }
+    igPhrases.map = map;
+    igPhrases.list = list;
+    igPhrases.at = Date.now();
+    return igPhrases;
+  }
+  async function igPhraseCodeOf(hash) { return (await loadIgPhrases()).map.get(hash) || null; }
+  async function igPhraseList() { return { list: (await loadIgPhrases()).list.slice(0, 300) }; }
+  const igMatchCol = () => probe('ig_link_leads.match', async () => {
+    try { await rest('ig_link_leads?select=match&limit=1'); return true; } catch (err) {
+      if (/^Supabase (400|404):/.test(err.message) && /match/.test(err.message)) return false;
+      throw err;
     }
-    return igPhrases.map.get(hash) || null;
+  }, 30 * 60 * 1000);
+  // 2.18.3: reserva por HORÁRIO — 1ª mensagem sem código, sem frase reconhecida e que não veio de anúncio, até 10 min
+  // depois de um clique num link: liga SÓ se houve exatamente 1 clique sem conversa nesse intervalo. Um clique "tem
+  // conversa" quando uma conversa já ligada ao mesmo link começou até 10 min depois dele (cada conversa usa um clique).
+  const IG_CLICK_WINDOW_MS = 10 * 60 * 1000;
+  const IG_CLOCK_SLACK_MS = 60 * 1000; // relógio do celular × do servidor
+  async function igByClickTime(cands, linked) {
+    if (!cands.length) return [];
+    const ts = cands.map((c) => c.t * 1000);
+    const from = Math.min(...ts) - IG_CLICK_WINDOW_MS;
+    const to = Math.max(...ts) + IG_CLOCK_SLACK_MS;
+    let clicks = [];
+    let leads = [];
+    try {
+      clicks = await rest(`ig_link_clicks?select=link_id,created_at&created_at=gte.${eqIso(from)}&created_at=lte.${eqIso(to)}&order=created_at.asc&limit=1000`);
+      leads = await rest(`ig_link_leads?select=chat_id,link_id,code,first_message_at&first_message_at=gte.${eqIso(from)}&first_message_at=lte.${eqIso(to + IG_CLICK_WINDOW_MS)}&limit=1000`);
+    } catch { return []; }
+    const codeToLink = new Map();
+    try { (await rest('ig_links?select=id,code')).forEach((l) => codeToLink.set(l.code, l.id)); } catch { /* sem a lista: só o link_id */ }
+    const linkCodes = new Map([...codeToLink].map(([c, id]) => [id, c]));
+    const cl = clicks.map((c) => ({ linkId: c.link_id, at: Date.parse(c.created_at), used: false })).filter((c) => Number.isFinite(c.at));
+    const use = (linkId, at) => { const k = cl.find((c) => !c.used && c.linkId === linkId && c.at <= at + IG_CLOCK_SLACK_MS && at - c.at <= IG_CLICK_WINDOW_MS); if (k) k.used = true; };
+    const done = new Set();
+    [...leads.map((l) => ({ chatId: l.chat_id, linkId: l.link_id || codeToLink.get(l.code) || null, at: Date.parse(l.first_message_at) })), ...linked]
+      .filter((l) => l.linkId && Number.isFinite(l.at)).sort((a, b) => a.at - b.at)
+      .forEach((l) => { if (done.has(l.chatId)) return; done.add(l.chatId); use(l.linkId, l.at); });
+    const out = [];
+    for (const it of [...cands].sort((a, b) => a.t - b.t)) {
+      if (done.has(it.chatId)) continue;
+      const at = it.t * 1000;
+      const free = cl.filter((c) => !c.used && c.at <= at + IG_CLOCK_SLACK_MS && at - c.at <= IG_CLICK_WINDOW_MS);
+      if (free.length !== 1 || !linkCodes.get(free[0].linkId)) continue;
+      free[0].used = true;
+      done.add(it.chatId);
+      out.push({ ...it, ig: linkCodes.get(free[0].linkId), linkId: free[0].linkId, match: 'horario' });
+    }
+    return out;
   }
   async function saveIgLeads(items) {
     const seen = new Set();
     const list = [];
+    const byTime = [];
     for (const it of Array.isArray(items) ? items : []) {
       if (!it || !PANEL_CHAT_RE.test(it.chatId || '') || seen.has(it.chatId)) continue;
-      let code = typeof it.ig === 'string' && IG_CODE.test(it.ig) ? it.ig : null;
-      if (!code && typeof it.igh === 'string' && IG_HASH.test(it.igh)) code = await igPhraseCodeOf(it.igh);
-      if (!code) continue;
       seen.add(it.chatId);
-      list.push({ ...it, ig: code, viaPhrase: !it.ig });
+      const code = typeof it.ig === 'string' && IG_CODE.test(it.ig) ? it.ig : null;
+      if (code) { list.push({ ...it, ig: code, linkId: await igLinkIdOf(code), match: 'codigo' }); continue; }
+      const hit = typeof it.igh === 'string' && IG_HASH.test(it.igh) ? await igPhraseCodeOf(it.igh) : null;
+      if (hit) { list.push({ ...it, ig: hit.code, linkId: hit.linkId, match: 'frase' }); continue; }
+      if (!it.ad && Number(it.t) > 0) byTime.push(it);
     }
-    if (!list.length || !(await igLeadsTable())) return 0;
-    const rows = [];
-    for (const it of list) rows.push({ chat_id: it.chatId, phone: panelPhone(it.phone), first_message_at: isoOfSec(it.t), code: it.ig, link_id: it.viaPhrase ? null : await igLinkIdOf(it.ig) });
+    if (!(list.length || byTime.length) || !(await igLeadsTable())) return 0;
+    if (byTime.length) list.push(...(await igByClickTime(byTime, list.map((x) => ({ chatId: x.chatId, linkId: x.linkId, at: x.t * 1000 })))));
+    if (!list.length) return 0;
+    const withMatch = await igMatchCol();
+    const rows = list.map((it) => ({ chat_id: it.chatId, phone: panelPhone(it.phone), first_message_at: isoOfSec(it.t), code: it.ig, link_id: it.linkId || null, ...(withMatch ? { match: it.match } : {}) }))
+      // sem a coluna match (migration 20261117120000 não aplicada) a ligação por horário não é gravada: sem o campo, o
+      // ERP a mostraria como "código"
+      .filter((row, i) => withMatch || list[i].match !== 'horario');
+    if (!rows.length) return 0;
     await rest('ig_link_leads?on_conflict=chat_id', json('POST', 'resolution=ignore-duplicates,return=minimal', rows));
     return rows.length;
   }
@@ -4534,7 +4593,7 @@
     campaignVariantStats, fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,
-    saveLeads, logQuickSend, logManualSends, recordReplies, touchLeads, saveChatActivity,
+    saveLeads, igPhraseList, logQuickSend, logManualSends, recordReplies, touchLeads, saveChatActivity,
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,

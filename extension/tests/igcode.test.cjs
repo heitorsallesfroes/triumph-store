@@ -141,7 +141,7 @@ test('saveLeads: wa_leads como antes + ig_link_leads (código e link pelo códig
   assert.deepStrictEqual([r.saved, r.ig], [4, 2]);
   assert.deepStrictEqual(T.wa_leads.map((l) => [l.chat_id, l.origin]), items.map((i) => [i.chatId, 'organico']), 'wa_leads continua igual (orgânico)');
   assert.deepStrictEqual(T.ig_link_leads.map((l) => [l.chat_id, l.code, l.link_id, l.phone]), [['5521911110001@c.us', 'IG-BIO', LINK_BIO, '5521911110001'], ['5521911110003@c.us', 'IG-NOVO', null, null]]);
-  assert.deepStrictEqual(Object.keys(T.ig_link_leads[0]).sort(), ['chat_id', 'code', 'first_message_at', 'link_id', 'phone'], 'nenhum texto gravado');
+  assert.deepStrictEqual(Object.keys(T.ig_link_leads[0]).sort(), ['chat_id', 'code', 'first_message_at', 'link_id', 'match', 'phone'], 'nenhum texto gravado (2.18.3: + como foi ligada)');
   await api.saveLeads({ items: items.slice(0, 1) });
   assert.strictEqual(T.ig_link_leads.length, 2, 'a mesma conversa não duplica');
 });

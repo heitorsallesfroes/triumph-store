@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.18.2** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.18.3** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -808,6 +808,24 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.18.3 — Links rastreáveis do Instagram sem o código visível: a FRASE liga a conversa
+- O link `/l/<apelido>` (e o "link direto do WhatsApp" wa.me, para o ManyChat) agora abre o WhatsApp só com a
+  **frase do link** (ex.: "Olá! Vi o perfil de vocês no Instagram e quero saber mais"), sem `[IG-BIO]`. O código
+  antigo **continua aceito** (vale primeiro), só não é mais gerado.
+- O painel manda para a ponte, a cada 5 min, as frases ativas num lugar só: links ativos (`ig_links.message`),
+  automações (`ig_automations.wa_phrase`) e Direct (`ig_direct_phrase`) — as **nossas** frases, nenhum texto de
+  cliente. Na **1ª mensagem de um lead novo**, a ponte compara **dentro da página** (sem acento, maiúscula, pontuação,
+  emoji nem espaço a mais; até ~15% de letras diferentes, mín. 2; texto a mais antes/depois tudo bem; empate entre
+  duas frases → nenhuma) e manda só o **resumo (hash) da frase reconhecida** — o texto nunca sai. Sem frase
+  reconhecida, o resumo da mensagem inteira, como na 2.18.2. A mesma regra do ERP (`src/lib/igLinks.ts`).
+- **Reserva por horário**: 1ª mensagem sem código e sem frase, que não veio de anúncio, até **10 min depois de um
+  clique** num link → liga ao link **só se houve exatamente 1 clique sem conversa** nesse intervalo (cada conversa já
+  ligada ao mesmo link "usa" um clique).
+- `ig_link_leads.match` guarda como foi ligada: **frase**, **horário** ou **código**. Sem a migration
+  `20261117120000_ig_link_phrases.sql`: frase e código gravam como antes (sem o campo) e a reserva por horário fica
+  desligada.
+- Testes: `iglinkphrase.test.cjs` (e `igphrase.test.cjs` / `igcode.test.cjs` continuam).
 
 ### 2.18.2 — Frase das automações do Instagram na 1ª mensagem
 - As automações do Instagram (ERP → Instagram → Automações) mandam um botão para o WhatsApp da loja com uma **frase

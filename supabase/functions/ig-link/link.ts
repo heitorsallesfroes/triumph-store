@@ -1,13 +1,14 @@
 // Edge Function "ig-link": abre um link rastreável do Instagram (https://triumph-store.vercel.app/l/<apelido>).
 // PÚBLICA (a página /l/ chama com a chave anon, sem login): procura o link ATIVO pelo apelido, registra o clique e
-// devolve o endereço do WhatsApp da loja com a mensagem pré-preenchida + o código ([IG-BIO]).
+// devolve o endereço do WhatsApp da loja com a FRASE do link (2.18.3: sem o código [IG-...]; a extensão reconhece a
+// conversa pela frase). A frase é limpa antes (sem "�", metade de emoji solta nem caractere de controle).
 // O IP NÃO é guardado: só um HMAC-SHA256 (com a chave de serviço do próprio Supabase como segredo), cortado em 32
 // caracteres. Aparelho/navegador vão resumidos ("Android" / "Instagram"). O mesmo IP no mesmo link em menos de 30 s
 // conta um clique só (o navegador do Instagram às vezes abre duas vezes).
 // Só lê ig_links e grava ig_link_clicks. A lógica fica aqui (testável no Node); index.ts só liga o Deno.
 
 export const STORE_WA = '5521980921808';
-export const DEFAULT_MESSAGE = 'Olá! Vim pelo Instagram 😊';
+export const DEFAULT_MESSAGE = 'Olá! Vi o Instagram de vocês e quero saber mais'; // sem emoji (no iPhone o 😊 chegou como "�")
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
 const DEDUP_MS = 30 * 1000;
 
@@ -20,7 +21,14 @@ export interface Deps {
   now: () => number;
 }
 
-export const prefilledText = (message: string, code: string) => `${String(message || '').trim() || DEFAULT_MESSAGE} [${code}]`;
+// a mesma limpeza do ERP (src/lib/igLinks.ts cleanMessage)
+export function prefilledText(message: string | null | undefined): string {
+  const s = String(message ?? '').normalize('NFC')
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+    .replace(/[\uFFFD\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/[ \t]+/g, ' ').trim();
+  return s || DEFAULT_MESSAGE;
+}
 export const waUrl = (text: string) => `https://wa.me/${STORE_WA}?text=${encodeURIComponent(text)}`;
 export function summarizeUa(ua: string | null | undefined): { device: string; browser: string } {
   const s = String(ua || '');
@@ -40,7 +48,7 @@ export async function open(body: unknown, headers: { get: (k: string) => string 
   try { link = await deps.findLink(slug); } catch { link = null; }
   // link que não existe / desligado: ainda leva para o WhatsApp (sem código e sem registrar)
   if (!link || !link.active) return { status: 404, json: { success: false, error: 'Link não encontrado', url: waUrl(DEFAULT_MESSAGE) } };
-  const url = waUrl(prefilledText(link.message, link.code));
+  const url = waUrl(prefilledText(link.message));
   const { device, browser } = summarizeUa(headers.get('user-agent'));
   const ip = ipOf(headers);
   let ipHash: string | null = null;

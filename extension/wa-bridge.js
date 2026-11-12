@@ -1551,7 +1551,7 @@
   const convChatId = (m) => safe(() => m.id.remote._serialized, '') || String(safe(() => m.id.remote, '') || '');
   const noEarlierOf = (chat) => safe(() => chat.msgs.msgLoadState.noEarlierMsgs, undefined);
   // 2.18.0: código de link rastreável do Instagram na 1ª mensagem do cliente ("Olá! Vim pelo Instagram 😊 [IG-BIO]").
-  // Sai SÓ o código (nunca o texto); a mensagem não é alterada. A mesma regra do ERP (src/lib/igLinks.ts codeInText).
+  // Sai SÓ o código (nunca o texto); a mensagem não é alterada. 2.18.3: o código não é mais gerado, mas ainda vale. A mesma regra do ERP (src/lib/igLinks.ts codeInText).
   const IG_CODE_RE = /\[\s*(IG-[A-Z0-9][A-Z0-9-]{0,18}[A-Z0-9])\s*\]/i;
   function igCodeOf(m) {
     const type = safe(() => m.type, '');
@@ -1571,9 +1571,58 @@
     h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
     return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
   }
+  // ── igMatch: início (2.18.3) — a MESMA regra do ERP (src/lib/igLinks.ts normPhrase/phraseDistance/matchPhrase;
+  // scripts/tests/igPhrase.test.ts confere as duas). A 1ª mensagem liga à frase de um link/automação que aparece nela
+  // sem acento, maiúscula, pontuação, emoji nem espaço a mais, com até ~15% de letras diferentes (mín. 2) e aceitando
+  // texto a mais antes/depois. Empate entre duas frases → nenhuma.
+  const IG_PHRASE_MIN = 10;
+  const igNorm = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const igTolerance = (len) => Math.max(2, Math.floor(len * 0.15));
+  function igDistance(p, t) {
+    const m = p.length; const n = t.length;
+    if (!m) return 0;
+    let prev = new Array(n + 1).fill(0);
+    for (let i = 1; i <= m; i++) {
+      const cur = new Array(n + 1);
+      cur[0] = i;
+      for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (p.charCodeAt(i - 1) === t.charCodeAt(j - 1) ? 0 : 1));
+      prev = cur;
+    }
+    let best = m;
+    for (let j = 0; j <= n; j++) if (prev[j] < best) best = prev[j];
+    return best;
+  }
+  function igMatchPhrase(text, phrases) {
+    const t = igNorm(text).slice(0, 600);
+    if (t.length < IG_PHRASE_MIN) return -1;
+    let best = -1; let bestD = Infinity; let tie = false;
+    phrases.forEach((raw, i) => {
+      const p = igNorm(raw);
+      if (p.length < IG_PHRASE_MIN) return;
+      const d = t.includes(p) ? 0 : igDistance(p, t);
+      if (d > igTolerance(p.length)) return;
+      if (d < bestD) { best = i; bestD = d; tie = false; } else if (d === bestD && igNorm(phrases[best]) !== p) tie = true;
+    });
+    return tie ? -1 : best;
+  }
+  // ── igMatch: fim ──
+  // as frases ativas (links rastreáveis, automações e Direct), mandadas pelo painel (content.js) a cada 5 min. São as
+  // NOSSAS frases (não há texto de cliente nelas).
+  const igPhraseList = [];
+  function igPhrases(p) {
+    const list = p && Array.isArray(p.list) ? p.list.filter((x) => typeof x === 'string' && x.length <= 500).slice(0, 300) : [];
+    igPhraseList.splice(0, igPhraseList.length, ...list);
+    return { count: igPhraseList.length };
+  }
+  // 2.18.3: o resumo (hash) da FRASE reconhecida (mesmo com pequenas edições/texto a mais); sem frase reconhecida, o
+  // resumo da mensagem inteira (como na 2.18.2: só bate se for igual). O texto nunca sai.
   function igPhraseOf(m) {
     const type = safe(() => m.type, '');
-    return type === 'chat' ? igPhraseHash(safe(() => m.body, '')) : null;
+    const text = type === 'chat' ? safe(() => m.body, '') : safe(() => m.caption, '');
+    if (typeof text !== 'string' || !text) return null;
+    const i = igPhraseList.length ? igMatchPhrase(text, igPhraseList) : -1;
+    if (i >= 0) return igPhraseHash(igPhraseList[i]);
+    return type === 'chat' ? igPhraseHash(text) : null;
   }
   function leadAd(m) {
     const ctx = ctxOf(m);
@@ -1990,6 +2039,7 @@
     convEvents: (payload) => convEvents(payload), // 2.10.0
     activityScan: (payload) => activityScan(payload), // 2.12.8
     deletedConfig: (payload) => deletedConfig(payload), // 2.15.0
+    igPhrases: (payload) => igPhrases(payload), // 2.18.3: frases dos links/automações do Instagram
     deletedChanges: () => del.changes.splice(0, del.changes.length),
     deletedList: (payload) => deletedList(payload),
     deletedGet: (payload) => deletedGet(payload),

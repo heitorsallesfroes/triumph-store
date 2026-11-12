@@ -129,7 +129,7 @@ test('saveLeads: resumo da frase de uma automação → ig_link_leads com o cód
   const r = await api.saveLeads({ items });
   assert.deepStrictEqual([r.saved, r.ig], [5, 3]);
   assert.deepStrictEqual(T.ig_link_leads.map((l) => [l.chat_id, l.code, l.link_id]), [['5521911110001@c.us', 'IG-A-COMENT', null], ['5521911110002@c.us', 'IG-A-COMENT', null], ['5521911110003@c.us', 'IG-DIRECT', null]]);
-  assert.deepStrictEqual(Object.keys(T.ig_link_leads[0]).sort(), ['chat_id', 'code', 'first_message_at', 'link_id', 'phone'], 'nenhum texto gravado');
+  assert.deepStrictEqual(Object.keys(T.ig_link_leads[0]).sort(), ['chat_id', 'code', 'first_message_at', 'link_id', 'match', 'phone'], 'nenhum texto gravado (2.18.3: + como foi ligada)');
 });
 test('saveLeads sem a tabela ig_automations: nada de frase, sem erro (o código [IG-...] continua)', async () => {
   const { api, T } = db({ ig_links: [] }, { missing: ['ig_automations', 'system_config'] });

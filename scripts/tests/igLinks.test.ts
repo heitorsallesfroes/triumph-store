@@ -33,14 +33,19 @@ test('apelido e código: slugify, código sugerido, normalizar', () => {
   assert.equal(normalizeCode('IG-'), null);
 });
 
-test('texto pré-preenchido com o código no fim e link wa.me da loja', () => {
-  const t = prefilledText('Olá! Vim pelo Instagram 😊', 'IG-BIO');
-  assert.equal(t, 'Olá! Vim pelo Instagram 😊 [IG-BIO]');
-  assert.equal(waUrl(t), 'https://wa.me/5521980921808?text=Ol%C3%A1!%20Vim%20pelo%20Instagram%20%F0%9F%98%8A%20%5BIG-BIO%5D');
+test('texto pré-preenchido = só a frase (2.18.3: sem código), limpa; link wa.me da loja', () => {
+  const t = prefilledText('Olá! Vi o perfil de vocês no Instagram e quero saber mais');
+  assert.equal(t, 'Olá! Vi o perfil de vocês no Instagram e quero saber mais');
+  assert.ok(!/\[IG-/.test(t));
+  assert.equal(waUrl(t), 'https://wa.me/5521980921808?text=Ol%C3%A1!%20Vi%20o%20perfil%20de%20voc%C3%AAs%20no%20Instagram%20e%20quero%20saber%20mais');
   assert.equal(publicUrl('bio'), 'https://triumph-store.vercel.app/l/bio');
-  assert.equal(prefilledText('   ', 'IG-X1'), 'Olá! Vim pelo Instagram 😊 [IG-X1]');
+  assert.equal(prefilledText('   '), 'Olá! Vi o Instagram de vocês e quero saber mais', 'vazia: a frase padrão, sem emoji');
+  // o que quebra no celular sai: "�", metade de emoji solta, caractere de controle; o emoji inteiro fica
+  assert.equal(prefilledText('Oi \uFFFD tudo\u0007 bem \uD83D'), 'Oi tudo bem');
+  assert.equal(prefilledText('Oi 😊'), 'Oi 😊');
+  assert.doesNotThrow(() => waUrl(prefilledText('a\uD83D')), 'encodeURIComponent não quebra com metade de emoji');
   // a função ig-link monta igual
-  assert.equal(fnWa(fnText('Olá! Vim pelo Instagram 😊', 'IG-BIO')), waUrl(t));
+  for (const m of ['Olá! Vi o story 😊', '  ', 'Oi \uFFFD\uD83D x']) assert.equal(fnWa(fnText(m)), waUrl(prefilledText(m)));
 });
 
 test('código achado na 1ª mensagem (com texto antes/depois, minúsculas, espaços)', () => {
@@ -55,13 +60,14 @@ const L = (id: string, slug: string, channel: IgLink['channel'], code: string): 
 const LINKS = [L('l1', 'bio', 'bio', 'IG-BIO'), L('l2', 'manychat-comentarios', 'comentarios', 'IG-COMENT'), L('l3', 'stories', 'stories', 'IG-STORIES'), L('l4', 'stories-promo', 'stories', 'IG-PROMO')];
 
 test('validação do formulário: apelido/código únicos e no formato; post obrigatório para "Reel/post"', () => {
-  const d: LinkDraft = { slug: 'bio', channel: 'bio', code: 'IG-BIO', message: 'Oi', media_id: null, media_permalink: null, media_caption: null, note: null, active: true };
+  const d: LinkDraft = { slug: 'bio', channel: 'bio', code: 'IG-BIO', message: 'Olá! Vi o perfil de vocês no Instagram e quero saber mais', media_id: null, media_permalink: null, media_caption: null, note: null, active: true };
   assert.deepEqual(validateDraft(d, LINKS, 'l1'), []);
   assert.equal(validateDraft(d, LINKS, null).length, 2);
   assert.match(validateDraft({ ...d, slug: 'Bio Nova' }, LINKS, 'l1')[0], /Apelido/);
   assert.match(validateDraft({ ...d, code: 'BIO' }, LINKS, 'l1')[0], /Código/);
   assert.match(validateDraft({ ...d, channel: 'post' }, LINKS, 'l1')[0], /escolha o post/);
-  assert.match(validateDraft({ ...d, message: ' ' }, LINKS, 'l1')[0], /mensagem/);
+  assert.match(validateDraft({ ...d, message: ' ' }, LINKS, 'l1')[0], /frase/i);
+  assert.match(validateDraft({ ...d, message: 'Oi!!' }, LINKS, 'l1')[0], /pelo menos 10 letras/);
 });
 
 test('resultados por link e por canal: cliques → conversas → vendas → R$, taxas e melhores links', () => {
@@ -124,7 +130,7 @@ test('ig-link: link ativo → wa.me com o código, clique com hash (sem o IP); 3
   const db = fakeDb([{ id: 'l1', slug: 'bio', code: 'IG-BIO', message: 'Olá! Vim pelo Instagram 😊', active: true }]);
   const r = await open({ slug: 'BIO' }, H('200.150.1.2'), db.deps);
   assert.equal(r.status, 200);
-  assert.equal(r.json.url, waUrl('Olá! Vim pelo Instagram 😊 [IG-BIO]'));
+  assert.equal(r.json.url, waUrl('Olá! Vim pelo Instagram 😊'), '2.18.3: só a frase, sem o código');
   assert.equal(db.clicks.length, 1);
   assert.deepEqual([db.clicks[0].device, db.clicks[0].browser], ['Android', 'Instagram']);
   assert.match(String(db.clicks[0].ip_hash), /^[0-9a-f]{32}$/);
@@ -149,7 +155,7 @@ test('ig-link: apelido inválido, link desligado/inexistente ou banco fora → a
   const r = await open({ slug: 'bio' }, H('1.2.3.4'), down.deps);
   assert.equal(r.status, 200);
   assert.equal(r.json.counted, false);
-  assert.match(String(r.json.url), /%5BIG-BIO%5D$/);
+  assert.ok(!/%5BIG/.test(String(r.json.url)), 'sem o código');
 });
 
 // ── 3. Rastreamento: origem Instagram ──

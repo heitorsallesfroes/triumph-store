@@ -83,11 +83,13 @@ export async function loadTracking(r: Range): Promise<TrackLoad> {
 
 // Instagram FASE 2: conversas que começaram com o código de um link rastreável (ig_link_leads, gravadas pela extensão
 // 2.18.0) + o canal e o apelido do link (pelo link_id ou pelo código). Sem a migration 20261113120000: lista vazia + aviso.
+// 2.18.3: + como foi ligada (match: frase / horário / código); sem a migration 20261117120000 a coluna não é lida.
 export const IG_MISSING = 'Instagram orgânico (migration 20261113120000_ig_links.sql + extensão 2.18.0)';
 export async function loadIgLeads(fromMs: number, toMs: number, missing: string[]): Promise<TrackIgLeadRow[]> {
   return orEmpty<TrackIgLeadRow>(IG_MISSING, missing, async () => {
+    const cols = `chat_id, phone, first_message_at, code, link_id${(await hasColumn('ig_link_leads', 'match')) ? ', match' : ''}`;
     const [rows, links] = await Promise.all([
-      fetchAllRows<TrackIgLeadRow>((f, t) => supabase.from('ig_link_leads').select('chat_id, phone, first_message_at, code, link_id')
+      fetchAllRows<TrackIgLeadRow>((f, t) => supabase.from('ig_link_leads').select(cols)
         .gte('first_message_at', iso(fromMs)).lte('first_message_at', iso(toMs)).order('id').range(f, t) as any), // eslint-disable-line @typescript-eslint/no-explicit-any
       fetchAllRows<{ id: string; code: string; slug: string; channel: string }>((f, t) => supabase.from('ig_links').select('id, code, slug, channel').order('id').range(f, t) as any), // eslint-disable-line @typescript-eslint/no-explicit-any
     ]);

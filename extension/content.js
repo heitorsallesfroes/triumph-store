@@ -14123,8 +14123,16 @@
   async function panelBatch(type, list, size) {
     for (let i = 0; i < list.length; i += size) await call(type, { items: list.slice(i, i + size) });
   }
+  // 2.18.3: as frases dos links rastreáveis/automações do Instagram vão para a ponte (a cada 5 min), que reconhece a
+  // 1ª mensagem do cliente por elas sem o texto sair da página
+  async function igPhrasesSync(now = Date.now()) {
+    if (now - (pnl.igAt || 0) < 5 * 60 * 1000) return;
+    pnl.igAt = now;
+    try { const r = await call('igPhraseList'); if (r && Array.isArray(r.list)) await waRequest('igPhrases', { list: r.list }, { timeout: 5000 }); } catch { /* sem as frases: só a frase igual (2.18.2) e o código */ }
+  }
   async function panelTick() {
     if (pnl.off) return;
+    await igPhrasesSync();
     // 2.12.8: varredura da abertura (72 h, todas as conversas individuais), uma vez por abertura. Roda por fora
     // (pode levar até ~1,5 min carregando mensagens antigas) para não segurar o motor de envios.
     if (!pnl.scanned && !pnl.scanning) {

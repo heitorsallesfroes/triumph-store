@@ -262,3 +262,51 @@ respostas, compartilhamentos, avanços/voltas/saídas e a taxa de saída quando 
   totais/semanas do histórico, seguidores ao longo do tempo).
 - `node scripts/tests/igHistoryChrome.test.ts`: Chrome real — aba Stories (inclusive "Coletar agora"), 6/12 meses,
   seguidores ao longo do tempo, sem a migration, celular, só GET na Meta, ERP sem gravar.
+
+---
+
+# FRASE DOS LINKS (extensão 2.18.3) — sem o código [IG-...] visível
+
+O código era controle interno e aparecia para o lead (e no iPhone o 😊 chegava como "�"). Agora:
+
+- **Cada link tem uma FRASE natural própria** (a mensagem pré-preenchida, sem código). Frases iniciais:
+  **bio** "Olá! Vi o perfil de vocês no Instagram e quero saber mais" · **stories** "Oi! Vi o story de vocês e fiquei
+  interessado(a)" · **manychat-comentarios** "Olá! Comentei no post de vocês e quero saber mais".
+- **Formulário** (Novo link / Editar): a frase é obrigatória (10+ letras) e **única entre os links ativos** — igual ou
+  parecida demais com a de outro link ativo não salva (link desligado não conta). Aviso **"Evite emojis: alguns
+  celulares não mostram"**. O código fica como **código interno** (só para o histórico; não vai na mensagem).
+- **Link direto do WhatsApp** (no formulário e no botão **wa.me** de cada linha): `https://wa.me/5521980921808?text=<frase>`
+  com botão copiar — "use no ManyChat ou onde não puder trocar o link: não conta cliques, mas rastreia conversa → venda
+  pela frase".
+- **Como a extensão liga a conversa ao link** (1ª mensagem do lead, o texto nunca sai da página):
+  1. **código** `[IG-...]` antigo (continua aceito, vale primeiro);
+  2. **frase**: igual ou muito parecida — sem acento, maiúscula, pontuação, emoji nem espaço a mais; até ~15% de letras
+     diferentes (mín. 2); texto a mais antes/depois tudo bem; duas frases empatadas → nenhuma. É a MESMA lista e a
+     MESMA regra das frases das automações da FASE 3 (links + automações + Direct num lugar só);
+  3. **horário** (reserva): sem código, sem frase e sem anúncio, até **10 min depois de um clique** → liga **só se
+     houve exatamente 1 clique sem conversa** no intervalo.
+  Fica guardado em `ig_link_leads.match` (`frase` / `horario` / `codigo`; linhas antigas = código).
+- **Aba Rastreio**: a frase aparece em cada link, e a coluna **Ligadas por** mostra quantas conversas de cada link
+  vieram por **frase / horário / código**.
+- **Emoji**: a codificação estava certa (o 😊 saía como `%F0%9F%98%8A`); o "�" acontece no caminho até o WhatsApp do
+  iPhone. Correção: as frases não têm mais emoji (nem a frase padrão da página `/l/` quando a função não responde) e a
+  função `ig-link` limpa a frase antes de montar o link (tira "�", metade de emoji solta e caracteres de controle). Se
+  a frase chegar com o emoji quebrado, ela ainda é reconhecida (o emoji não conta na comparação).
+- Regras: `src/lib/igLinks.ts` (`normPhrase`, `matchPhrase`, `phrasesTooSimilar`, `cleanMessage`); ponte:
+  `extension/wa-bridge.js` (bloco "igMatch"); gravação e horário: `extension/supabase-api.js` (`saveIgLeads`).
+
+## Aplicar / publicar
+1. Migration **`supabase/migrations/20261117120000_ig_link_phrases.sql`** (idempotente, não apaga nada): coluna
+   `ig_link_leads.match`, frases novas dos 3 links (só onde a mensagem ainda é a antiga "Olá! Vim pelo Instagram 😊")
+   e o padrão novo da coluna `ig_links.message`.
+2. Publicar de novo a edge function **`ig-link`** (as configurações não mudam).
+3. Extensão **2.18.3** (recarregar em `chrome://extensions`).
+
+## Testes
+- `node scripts/tests/igPhrase.test.ts`: a regra, frases parecidas demais, a ponte com o MESMO resultado (casos + 400
+  sorteados), "ligadas por", migration e página `/l/`.
+- `node scripts/tests/igLinks.test.ts` (frase sem código, limpeza, função ig-link) e
+  `node scripts/tests/igTrackingChrome.test.ts` (Chrome real: frase, aviso de emoji, link direto, "ligadas por",
+  `/l/bio` sem código).
+- `node extension/tests/iglinkphrase.test.cjs`: ponte (frase com edições/emoji quebrado/texto a mais), gravação com
+  `match`, reserva por horário, sem a migration.

@@ -6,10 +6,11 @@
 // WhatsApp (wa.me) também é SIMULADO. Nada sai do computador. Confere:
 //   - abas Visão geral / Stories / Rastreio / Direct / Automações, ?aba= no endereço (F5 volta);
 //   - Rastreio: cliques → conversas → vendas → R$ por link e por canal, taxas, melhores links, últimos cliques;
-//     criar link (apelido → código sugerido, post ligado, erros), editar, copiar, QR code (lido de volta);
-//     grava SÓ ig_links;
-//   - /l/<apelido> no celular dentro do Instagram: registra o clique e abre o WhatsApp com "[IG-BIO]"; link que não
-//     existe ou função fora do ar: abre o WhatsApp mesmo assim;
+//     criar link (apelido → código interno sugerido, FRASE própria — parecida demais com a de outro link não salva —,
+//     aviso de emoji, link direto do WhatsApp, post ligado, erros), editar, copiar (/l/ e wa.me), QR code (lido de
+//     volta), conversas ligadas por frase / horário / código; grava SÓ ig_links;
+//   - /l/<apelido> no celular dentro do Instagram: registra o clique e abre o WhatsApp com a FRASE (2.18.3: sem
+//     "[IG-BIO]"); link que não existe ou função fora do ar: abre o WhatsApp mesmo assim, com a frase padrão sem emoji;
 //   - WhatsApp → Rastreamento: "Instagram (orgânico)" separado de Meta Ads e Não rastreada;
 //   - celular sem rolagem lateral; nenhum erro no console.
 import { createRequire } from 'node:module';
@@ -45,9 +46,11 @@ const DAY = 86400000;
 const spDay = (ms: number) => new Date(ms - 3 * 3600000).toISOString().slice(0, 10);
 const at = (dayOffset: number, hour: number, now: number) => new Date(Date.parse(`${spDay(now - dayOffset * DAY)}T${String(hour).padStart(2, '0')}:00:00-03:00`)).toISOString();
 const SVG = (c: string) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="120" height="120" fill="${c}"/></svg>`)}`;
+const BIO_PHRASE = 'Olá! Vi o perfil de vocês no Instagram e quero saber mais';
 const L1 = '11111111-1111-4111-8111-000000000001'; const L2 = '11111111-1111-4111-8111-000000000002'; const L3 = '11111111-1111-4111-8111-000000000003';
 function fixtures(now: number) {
-  const link = (id: string, slug: string, channel: string, code: string) => ({ id, slug, channel, code, message: 'Olá! Vim pelo Instagram 😊', media_id: null, media_permalink: null, media_caption: null, note: null, active: true, created_at: at(40, 10, now), updated_at: at(40, 10, now) });
+  const PH: Record<string, string> = { bio: BIO_PHRASE, 'manychat-comentarios': 'Olá! Comentei no post de vocês e quero saber mais', stories: 'Oi! Vi o story de vocês e fiquei interessado(a)' };
+  const link = (id: string, slug: string, channel: string, code: string) => ({ id, slug, channel, code, message: PH[slug], media_id: null, media_permalink: null, media_caption: null, note: null, active: true, created_at: at(40, 10, now), updated_at: at(40, 10, now) });
   const links = [link(L1, 'bio', 'bio', 'IG-BIO'), link(L2, 'manychat-comentarios', 'comentarios', 'IG-COMENT'), link(L3, 'stories', 'stories', 'IG-STORIES')];
   const click = (id: string, d: number, h: number, device = 'iPhone/iPad') => ({ link_id: id, created_at: at(d, h, now), device, browser: 'Instagram', ip_hash: null });
   const clicks = [...[9, 10, 11, 12, 13].map((h) => click(L1, 0, h)), click(L3, 0, 10, 'Android'), click(L3, 0, 11, 'Android'), click(L2, 1, 15)];
@@ -57,8 +60,8 @@ function fixtures(now: number) {
     db: {
       ig_links: links, ig_link_clicks: clicks,
       ig_link_leads: [
-        { chat_id: A, phone: A.slice(0, 13), first_message_at: at(0, 10, now), code: 'IG-BIO', link_id: L1 },
-        { chat_id: B, phone: B.slice(0, 13), first_message_at: at(0, 11, now), code: 'IG-STORIES', link_id: null },
+        { chat_id: A, phone: A.slice(0, 13), first_message_at: at(0, 10, now), code: 'IG-BIO', link_id: L1, match: 'frase' },
+        { chat_id: B, phone: B.slice(0, 13), first_message_at: at(0, 11, now), code: 'IG-STORIES', link_id: null }, // linha antiga (sem match) = código
         { chat_id: C, phone: C.slice(0, 13), first_message_at: at(0, 12, now), code: 'IG-COMENT', link_id: L2 }, // veio de anúncio: vale Meta Ads
         { chat_id: E, phone: E.slice(0, 13), first_message_at: at(0, 14, now), code: 'IG-NOVO', link_id: null }, // código sem link
       ],
@@ -235,6 +238,10 @@ async function main() {
     const rows = await ev(`${H} return $$('[data-testid="igr-link"]').map((r) => [r.dataset.slug, txt($('[data-testid="igr-clicks"]', r)), txt($('[data-testid="igr-convs"]', r)), txt($('[data-testid="igr-revenue"]', r)), txt($('[data-testid="igr-url"]', r))]);`);
     check('por link: bio 5 cliques/1 conversa/R$ 1.500 · manychat 1/0 (a conversa veio de anúncio) · stories 2/1 (achado pelo código)',
       JSON.stringify(rows.map((r: string[]) => r.slice(0, 4))) === JSON.stringify([['bio', '5', '1', 'R$ 1.500,00'], ['manychat-comentarios', '1', '0', 'R$ 0,00'], ['stories', '2', '1', 'R$ 0,00']]) && rows[0][4] === 'https://triumph-store.vercel.app/l/bio', JSON.stringify(rows));
+    const bym = await ev(`${H} return $$('[data-testid="igr-link"]').map((r) => r.dataset.slug + '=' + $$('[data-testid="igr-bymatch"] [data-match]', r).map((d) => d.dataset.match + ':' + txt($('b', d))).join(','));`);
+    const phr = await ev(`${H} return txt($('[data-slug="bio"] [data-testid="igr-phrase"]'));`);
+    check('por link: frase do link na tabela (sem código) e conversas ligadas por frase / horário / código',
+      JSON.stringify(bym) === JSON.stringify(['bio=frase:1,horario:0,codigo:0', 'manychat-comentarios=frase:0,horario:0,codigo:0', 'stories=frase:0,horario:0,codigo:1']) && phr === `“${BIO_PHRASE}”` && !/\[IG-/.test(await ev(`${H} return txt(tid('igr-links'));`)), JSON.stringify({ bym, phr }));
     const extra = await ev(`${H} return { best: $$('[data-testid="igr-best-item"]').map(txt), ch: $$('[data-testid="igr-channel"]').map((r) => r.dataset.channel + ':' + $$('td', r).map(txt).join('|')), recent: $$('[data-testid="igr-recent"] tbody tr').length };`);
     check('melhores links (bio, stories), tabela por canal e últimos cliques',
       extra.best.length === 2 && /^1º bio/.test(extra.best[0]) && /^2º stories/.test(extra.best[1]) && extra.ch.length === 3 && /^bio:Bio\|5\|1\|1\|R\$\s1\.500,00\|100,0%$/.test(extra.ch[0]) && extra.recent === 8, JSON.stringify(extra));
@@ -247,6 +254,10 @@ async function main() {
     const copiedOk = await waitFor(`${H} return /Link copiado/.test(txt($('[data-slug="bio"]')));`, 4000);
     const clip = await ev(`try { return await navigator.clipboard.readText(); } catch (e) { return 'erro: ' + e.message; }`);
     check('copiar link: "Link copiado!" e o link certo na área de transferência', copiedOk && clip === 'https://triumph-store.vercel.app/l/bio', String(clip));
+    await ev(`${H} $('[data-slug="bio"] [data-testid="igr-copy-wa"]').click(); return true;`);
+    const copiedWa = await waitFor(`${H} return /Link direto do WhatsApp copiado/.test(txt($('[data-slug="bio"]')));`, 4000);
+    const clipWa = await ev(`try { return await navigator.clipboard.readText(); } catch (e) { return 'erro: ' + e.message; }`);
+    check('copiar o link direto do WhatsApp: wa.me da loja com a frase do link (sem código)', copiedWa && clipWa === `https://wa.me/5521980921808?text=${encodeURIComponent(BIO_PHRASE)}`, String(clipWa));
     await ev(`${H} $('[data-slug="bio"] [data-testid="igr-qr"]').click(); return true;`);
     await waitFor(`${H} return !!tid('igr-qr-svg');`);
     const svg = await ev(`${H} return tid('igr-qr-svg').innerHTML;`);
@@ -264,18 +275,33 @@ async function main() {
     await sleep(80);
     await ev(`${H} setVal(tid('igr-f-channel'), 'post'); return true;`);
     await sleep(80);
-    const f1 = await ev(`${H} return { slug: tid('igr-f-slug').value, code: tid('igr-f-code').value, prev: txt(tid('igr-f-preview')) };`);
+    const f0 = await ev(`${H} return { msg: tid('igr-f-message').value, prev: txt(tid('igr-f-preview')) };`);
+    // frase quase igual à do link "bio" → não salva
+    await ev(`${H} setVal(tid('igr-f-message'), 'ola vi o perfil de vcs no instagram e quero saber mais'); return true;`);
+    await sleep(80);
     await ev(`${H} tid('igr-f-save').click(); return true;`);
     await waitFor(`${H} return !!tid('igr-f-errors');`);
+    const e0 = await ev(`${H} return txt(tid('igr-f-errors'));`);
+    await ev(`${H} setVal(tid('igr-f-message'), 'Olá! Vi o reel do Ultra 9 de vocês 😍'); return true;`);
+    await sleep(80);
+    const f1 = await ev(`${H} return { slug: tid('igr-f-slug').value, code: tid('igr-f-code').value, prev: txt(tid('igr-f-preview')), emoji: tid('igr-f-emoji') ? txt(tid('igr-f-emoji')) : '', direct: txt(tid('igr-f-direct')) };`);
+    await ev(`${H} tid('igr-f-save').click(); return true;`);
+    await waitFor(`${H} return !!tid('igr-f-errors') && !/parecida/.test(txt(tid('igr-f-errors')));`);
     const e1 = await ev(`${H} return txt(tid('igr-f-errors'));`);
+    await ev(`${H} setVal(tid('igr-f-message'), 'Olá! Vi o reel do Ultra 9 de vocês e quero saber mais'); return true;`);
+    await sleep(80);
+    const noEmoji = await ev(`${H} return !tid('igr-f-emoji');`);
     await ev(`${H} $$('[data-testid="igr-f-postitem"]')[0].click(); return true;`);
     await sleep(80);
     await ev(`${H} tid('igr-f-save').click(); return true;`);
     const created = await waitFor(`${H} return !tid('igr-editor') && $$('[data-testid="igr-link"]').length === 4;`, 8000);
     const row = await ev(`return (window.__DB.ig_links || []).find((r) => r.slug === 'reel-ultra-9') || null;`);
-    check('novo link: apelido vira "reel-ultra-9", código sugerido IG-REEL-ULTRA-9, prévia "… [IG-REEL-ULTRA-9]"; "Reel/post" exige o post; salva com o post ligado',
-      f1.slug === 'reel-ultra-9' && f1.code === 'IG-REEL-ULTRA-9' && /Olá! Vim pelo Instagram 😊 \[IG-REEL-ULTRA-9\]/.test(f1.prev) && /escolha o post/.test(e1) && created && !!row && row.media_id === '180000000000001' && row.channel === 'post' && /Ultra 9/.test(row.media_caption || ''),
-      JSON.stringify({ f1, e1, row }));
+    check('novo link: começa sem frase; frase parecida demais com a do "bio" não salva; aviso de emoji; prévia e link direto do WhatsApp SEM código; código interno IG-REEL-ULTRA-9; "Reel/post" exige o post; salva com a frase e o post',
+      f0.msg === '' && /escreva a frase/.test(f0.prev) && /parecida demais com a do link "bio"/.test(e0)
+      && f1.slug === 'reel-ultra-9' && f1.code === 'IG-REEL-ULTRA-9' && /O cliente vai mandarOlá! Vi o reel do Ultra 9 de vocês 😍/.test(f1.prev) && !/\[IG-/.test(f1.prev)
+      && /Evite emojis: alguns celulares não mostram/.test(f1.emoji) && f1.direct.includes('https://wa.me/5521980921808?text=') && /Use no ManyChat ou onde não puder trocar o link: não conta cliques, mas rastreia conversa → venda pela frase/.test(f1.direct)
+      && /escolha o post/.test(e1) && noEmoji && created && !!row && row.message === 'Olá! Vi o reel do Ultra 9 de vocês e quero saber mais' && row.media_id === '180000000000001' && row.channel === 'post' && /Ultra 9/.test(row.media_caption || ''),
+      JSON.stringify({ f0, e0, f1, e1, noEmoji, row }));
     await ev(`${H} tid('igr-new').click(); return true;`);
     await waitFor(`${H} return !!tid('igr-editor');`);
     await ev(`${H} setVal(tid('igr-f-slug'), 'bio'); return true;`);
@@ -290,14 +316,14 @@ async function main() {
     // ── editar ──
     await ev(`${H} $('[data-slug="stories"] [data-testid="igr-edit"]').click(); return true;`);
     await waitFor(`${H} return !!tid('igr-editor') && tid('igr-f-slug').value === 'stories';`);
-    await ev(`${H} setVal(tid('igr-f-message'), 'Oi! Vi seu stories 😍'); return true;`);
+    await ev(`${H} setVal(tid('igr-f-message'), 'Oi! Vi os destaques de vocês e quero um orçamento'); return true;`);
     await sleep(80);
     await ev(`${H} tid('igr-f-save').click(); return true;`);
     await waitFor(`${H} return !tid('igr-editor');`, 8000);
     const st = await ev(`return window.__DB.ig_links.find((r) => r.slug === 'stories');`);
     const writes = await ev(`return window.__WRITES.map((w) => w.table + ':' + w.op);`);
     check('editar salva a mensagem; a tela grava SÓ em ig_links (1 novo + 1 edição; nada apagado)',
-      st.message === 'Oi! Vi seu stories 😍' && st.code === 'IG-STORIES' && JSON.stringify(writes) === JSON.stringify(['ig_links:insert', 'ig_links:update']), JSON.stringify({ msg: st.message, writes }));
+      st.message === 'Oi! Vi os destaques de vocês e quero um orçamento' && st.code === 'IG-STORIES' && JSON.stringify(writes) === JSON.stringify(['ig_links:insert', 'ig_links:update']), JSON.stringify({ msg: st.message, writes }));
 
     // ── F5 na aba ──
     await go('/?pagina=instagram&aba=rastreio', `return !!document.querySelector('[data-testid="ig-tracking"]');`);
@@ -317,8 +343,8 @@ async function main() {
     const toWa = await waitFor(`return location.href.startsWith('https://wa.me/');`, 8000);
     const final = await ev(`return location.href;`);
     const text = decodeURIComponent((/[?&]text=([^&]*)/.exec(final) || [])[1] || '');
-    check('/l/bio no celular (Instagram): registra o clique (iPhone/iPad · Instagram, sem IP) e abre o WhatsApp da loja com "[IG-BIO]"',
-      toWa && final.startsWith('https://wa.me/5521980921808?text=') && text === 'Olá! Vim pelo Instagram 😊 [IG-BIO]' && nodeClicks.length === 1 && nodeClicks[0].link_id === L1 && nodeClicks[0].device === 'iPhone/iPad' && nodeClicks[0].browser === 'Instagram' && !('ip' in nodeClicks[0]),
+    check('/l/bio no celular (Instagram): registra o clique (iPhone/iPad · Instagram, sem IP) e abre o WhatsApp da loja com a FRASE do link (sem "[IG-BIO]")',
+      toWa && final.startsWith('https://wa.me/5521980921808?text=') && text === BIO_PHRASE && nodeClicks.length === 1 && nodeClicks[0].link_id === L1 && nodeClicks[0].device === 'iPhone/iPad' && nodeClicks[0].browser === 'Instagram' && !('ip' in nodeClicks[0]),
       JSON.stringify({ final, text, nodeClicks }));
     await s('Page.navigate', { url: `${ORIGIN}/l/nao-existe` });
     await waitFor(`return location.href.startsWith('https://wa.me/');`, 8000);
@@ -329,8 +355,8 @@ async function main() {
     await waitFor(`return location.href.startsWith('https://wa.me/');`, 8000);
     const down = decodeURIComponent((/[?&]text=([^&]*)/.exec(await ev(`return location.href;`)) || [])[1] || '');
     fnDown = false;
-    check('link que não existe / função fora do ar: abre o WhatsApp mesmo assim (sem código), em até 3 s, sem contar clique',
-      nf === 'Olá! Vim pelo Instagram 😊' && down === 'Olá! Vim pelo Instagram 😊' && Date.now() - t0 < 6000 && nodeClicks.length === 1, JSON.stringify({ nf, down }));
+    check('link que não existe / função fora do ar: abre o WhatsApp mesmo assim (frase padrão sem código e sem emoji), em até 3 s, sem contar clique',
+      nf === 'Olá! Vi o Instagram de vocês e quero saber mais' && down === 'Olá! Vi o Instagram de vocês e quero saber mais' && Date.now() - t0 < 6000 && nodeClicks.length === 1, JSON.stringify({ nf, down }));
     const lpage = await new Promise<string>((r) => http.get(`${ORIGIN}/l/bio`, (res) => { let b = ''; res.on('data', (d) => { b += d; }); res.on('end', () => r(b)); }));
     check('a página /l/ é pequena, sem o app do ERP, noindex e com o botão "Abrir o WhatsApp"', lpage.length < 8000 && /noindex/.test(lpage) && /Abrir o WhatsApp/.test(lpage) && !/app\.js/.test(lpage), String(lpage.length));
     await s('Emulation.setUserAgentOverride', { userAgent: '' });
