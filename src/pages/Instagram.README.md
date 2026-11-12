@@ -171,6 +171,9 @@ conversas no WhatsApp → vendas → R$.
    ManyChat) e depois **`20261115130000_ig_token_cron.sql`** (renovação diária; precisa da `ig-manage` publicada).
 2. Edge functions, as duas com **Verify JWT desligado** (a pasta `_shared` vai junto):
    `supabase functions deploy ig-manage --no-verify-jwt` e `supabase functions deploy ig-webhook --no-verify-jwt`.
+   **Pelo painel do Supabase** (editor web, que não aceita a pasta `_shared`): para publicar pelo painel, use os
+   arquivos de `supabase/functions-dashboard/<nome>/` (já com os de `_shared` dentro; gerados por
+   `node scripts/bundle-functions.mjs`; veja o README dessa pasta).
 3. Segredos: **`IG_APP_ID`**, **`IG_APP_SECRET`** (do **produto Instagram** do app — não são os do app do Facebook) e
    **`IG_WEBHOOK_VERIFY_TOKEN`** (uma senha que você inventa). Opcional: `IG_ERP_URL`.
 4. Extensão 2.18.2 (recarregar em `chrome://extensions`).
