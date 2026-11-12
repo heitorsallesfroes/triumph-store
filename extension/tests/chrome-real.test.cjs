@@ -2597,6 +2597,87 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console na 2.17.0/2.17.1', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 29. 2.18.7: categorias de mensagens rápidas se recolhem sozinhas. O relógio da extensão é adiantado (só no mundo
+    // dos content scripts: Date.now + deslocamento) para não esperar 5 min de verdade; o "tique" roda a cada 10 s.
+    const CA = { id: 'c-fech', name: 'Fechamento de compra', position: 0 };
+    const CB = { id: 'c-pos', name: 'Pós-Venda', position: 1 };
+    const mkIt = (id, cat, title) => ({ id, category_id: cat, title, type: 'texto', body: title, file_url: null, file_name: null, file_size: null, usage_count: 0, position: 0, created_at: '2026-11-12T10:00:00Z', parts: [] });
+    await inExt(`new Promise((r) => chrome.storage.local.set({ collapsed: {}, panelPrefs: null, library: ${JSON.stringify({ categories: [CA, CB], items: [mkIt('i-fech', 'c-fech', 'Pix do pedido'), mkIt('i-pos', 'c-pos', 'Como chegou?')], savedAt: '2026-11-12T10:00:00Z' })} }, () => r(true)))`);
+    fake.on = true;
+    fake.generic = true;
+    fake.db.wa_categories = [CA, CB].map((c) => ({ ...c, created_at: '2026-11-12T10:00:00Z' }));
+    fake.db.wa_items = [mkIt('i-fech', 'c-fech', 'Pix do pedido'), mkIt('i-pos', 'c-pos', 'Como chegou?')].map(({ parts, ...x }) => ({ ...x, updated_at: '2026-11-12T10:00:00Z' }));
+    fake.db.wa_item_parts = [];
+    await s('Page.reload', { ignoreCache: true });
+    await sleep(1500);
+    await pg(`window.__fakeBridge = { status: { ready: true, version: 'teste' }, activeChat: { kind: 'individual', chatId: '5521900000001@c.us' } }; return true;`);
+    let ready29 = false;
+    for (const stop = Date.now() + 20000; Date.now() < stop && !ready29;) {
+      ready29 = await evalPage(`(() => { const sh = document.getElementById('tsp-wa-host')?.shadowRoot; const t = sh && sh.querySelector('.toggle'); if (t && !sh.querySelector('.root.open')) t.click(); return !!(sh && sh.querySelectorAll('section.cat[data-cat="c-fech"], section.cat[data-cat="c-pos"]').length === 2); })()`);
+      if (!ready29) await sleep(300);
+    }
+    await mouse('mouseMoved', 2, 2, { buttons: 0, button: 'none' }); // o mouse fora do painel (passar o mouse conta como uso)
+    await inExt(`(() => { if (!globalThis.__realNow) { globalThis.__realNow = Date.now; globalThis.__shift = 0; Date.now = () => globalThis.__realNow() + globalThis.__shift; } return true; })()`);
+    // muda o relógio e, no MESMO passo (sem tique no meio), abre de novo / usa as categorias: ops = [['open' | 'use', id]]
+    const at = (min, ops = []) => inExt(`(() => { globalThis.__shift = ${min} * 60000; const sh = document.getElementById('tsp-wa-host').shadowRoot;
+      for (const [op, id] of ${JSON.stringify(ops)}) { const sec = sh.querySelector('section.cat[data-cat="' + id + '"]');
+        if (op === 'open') { const h = sec.querySelector('.cat-head'); if (!sec.classList.contains('collapsed')) h.click(); h.click(); }
+        else sec.querySelector('.cat-inner').dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 10 })); }
+      return true; })()`);
+    const catSt = () => q(`return Object.fromEntries([...sh.querySelectorAll('section.cat')].map((c) => [c.dataset.cat, c.classList.contains('collapsed') ? 'fechada' : 'aberta']));`);
+    const saved29s = () => inExt(`new Promise((r) => chrome.storage.local.get(['collapsed'], (x) => r(x.collapsed || {})))`);
+    const setSearch = (v) => q(`const i = sh.querySelector('.search input'); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input', { bubbles: true })); await wait(300); return true;`);
+    // a) Personalizar: "Recolher categorias sozinhas" com as 4 opções; padrão 5 min
+    await czOpen();
+    const cz29 = await q(`return [...sh.querySelectorAll('[data-cz-catauto]')].map((b) => [b.textContent, b.getAttribute('aria-pressed')]);`);
+    await czClose();
+    check('2.18.7: Personalizar → "Recolher categorias sozinhas": depois de 5 min (padrão) / 2 min / 10 min / nunca',
+      ready29 && JSON.stringify(cz29) === JSON.stringify([['depois de 5 min (padrão)', 'true'], ['2 min', 'false'], ['10 min', 'false'], ['nunca', 'false']]), JSON.stringify({ ready29, cz29 }));
+    // b) as duas abertas agora; 6 min depois só a "Pós-Venda" foi usada (rolar dentro dela): a outra se recolhe sozinha
+    await at(0, [['open', 'c-fech'], ['open', 'c-pos']]);
+    await at(6, [['use', 'c-pos']]);
+    const anim29 = await waitFor(`return !!sh.querySelector('section.cat[data-cat="c-fech"].cat-autoclose.collapsed');`, 14000);
+    await sleep(700);
+    const st29a = await catSt();
+    const saved29 = await saved29s();
+    const aria29 = await q(`return sh.querySelector('section.cat[data-cat="c-fech"] .cat-head').getAttribute('aria-expanded');`);
+    check('2.18.7: sem uso há 5 min a categoria se recolhe sozinha (com a animação suave); a usada (rolou dentro dela) continua aberta; fica lembrado',
+      anim29 && st29a['c-fech'] === 'fechada' && st29a['c-pos'] === 'aberta' && saved29['c-fech'] === true && !saved29['c-pos'] && aria29 === 'false', JSON.stringify({ anim29, st29a, saved29, aria29 }));
+    // c) usar reinicia a conta: abre às +6, usada às +10; às +14 (4 min sem uso) as duas continuam abertas
+    await at(6, [['open', 'c-fech']]);
+    await at(10, [['use', 'c-fech'], ['use', 'c-pos']]);
+    await at(14);
+    await sleep(11500);
+    const st29c = await catSt();
+    check('2.18.7: usar a categoria (rolar/clicar dentro dela) reinicia os 5 min', st29c['c-fech'] === 'aberta' && st29c['c-pos'] === 'aberta', JSON.stringify(st29c));
+    // d) com texto na busca não recolhe (às +30, as duas sem uso há mais de 5 min)
+    await setSearch('o');
+    await at(30);
+    await sleep(11500);
+    const saved29d = await saved29s();
+    check('2.18.7: com texto na busca não recolhe nada', !saved29d['c-fech'] && !saved29d['c-pos'], JSON.stringify(saved29d));
+    await at(30, [['use', 'c-fech'], ['use', 'c-pos']]);
+    await setSearch('');
+    // e) trocar de conversa: recolhe a aberta há mais de 5 min (mesmo usada agora) e deixa a aberta há menos
+    await at(40, [['open', 'c-fech']]);
+    await at(46, [['use', 'c-fech'], ['open', 'c-pos']]);
+    await pg(`window.__fakeBridge.activeChat = { kind: 'individual', chatId: '5521900000007@c.us' }; const r = document.querySelector('[data-name="Cliente 7"]'); r.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); return true;`);
+    const chat29 = await waitFor(`return !!sh.querySelector('section.cat[data-cat="c-fech"].collapsed');`, 8000);
+    const st29e = await catSt();
+    check('2.18.7: ao trocar de conversa recolhe a aberta há mais de 5 min; a aberta há menos continua', chat29 && st29e['c-fech'] === 'fechada' && st29e['c-pos'] === 'aberta', JSON.stringify({ chat29, st29e }));
+    // f) "nunca": nada se recolhe (às +120)
+    await czOpen(); await q(`sh.querySelector('[data-cz-catauto="0"]').click(); await wait(200); return true;`); await czClose();
+    await at(46, [['open', 'c-fech']]);
+    await at(120);
+    await sleep(11500);
+    const st29f = await catSt();
+    const pref29 = await inExt(`new Promise((r) => chrome.storage.local.get(['panelPrefs'], (x) => r(x.panelPrefs && x.panelPrefs.catAutoCollapse)))`);
+    check('2.18.7: "nunca": nenhuma categoria se recolhe sozinha (e a escolha fica guardada)', st29f['c-fech'] === 'aberta' && st29f['c-pos'] === 'aberta' && pref29 === 0, JSON.stringify({ st29f, pref29 }));
+    await inExt(`(() => { if (globalThis.__realNow) { Date.now = globalThis.__realNow; delete globalThis.__realNow; } return true; })()`);
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console na 2.18.7', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {

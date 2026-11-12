@@ -632,6 +632,9 @@
       .cat.collapsed .cat-body { grid-template-rows: 0fr; }
       .cat-inner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 4px ; padding: 0 8px 8px ; }
       .cat.collapsed .cat-inner { padding-bottom: 0 ; }
+      /* 2.18.7: recolher sozinha, mais devagar e sumindo aos poucos */
+      .cat.cat-autoclose .cat-body { transition-duration: .45s; }
+      .cat.cat-autoclose .cat-inner { opacity: 0; transition: opacity .3s ease; }
 
       /* Cartões */
       .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md) ; transition: border-color .15s, box-shadow .15s; }
@@ -3139,6 +3142,7 @@
   }
 
   function closeConversationScreens({ keep = null, stay = false } = {}) {
+    try { catAutoCollapse('chat'); } catch { /* 2.18.7: ainda iniciando */ }
     let leave = false;
     if (keep !== 'cv' && (cv.form || cv.view !== 'list')) {
       if (state.section === 'conversoes') leave = true;
@@ -3988,6 +3992,22 @@
       czCheck('Guardar mensagens apagadas', p.keepDeleted, (v) => set((n) => { n.keepDeleted = v; })),
       delClear,
     ]));
+    // 2.18.7: categorias das Mensagens que se recolhem sozinhas
+    const ag = el('div', 'cz-grp');
+    ag.append(el('div', 'cz-t', 'Recolher categorias sozinhas'));
+    const aseg = el('div', 'cz-seg');
+    aseg.setAttribute('role', 'group');
+    aseg.setAttribute('aria-label', 'Recolher categorias sozinhas');
+    [[5, 'depois de 5 min (padrão)'], [2, '2 min'], [10, '10 min'], [0, 'nunca']].forEach(([v, t]) => {
+      const b = el('button', p.catAutoCollapse === v ? 'on' : '', t);
+      b.type = 'button';
+      b.dataset.czCatauto = String(v);
+      b.setAttribute('aria-pressed', String(p.catAutoCollapse === v));
+      b.addEventListener('click', () => set((n) => { n.catAutoCollapse = v; }));
+      aseg.append(b);
+    });
+    ag.append(aseg, el('div', 'cz-note', 'Cada categoria aberta das Mensagens se recolhe depois desse tempo sem uso (clicar, enviar, rolar ou passar o mouse nela). Ao trocar de conversa, recolhe as abertas há mais tempo. Com texto na busca, não recolhe.'));
+    box.append(ag);
     const dg = el('div', 'cz-grp');
     dg.append(el('div', 'cz-t', 'Densidade'));
     const seg = el('div', 'cz-seg');
@@ -4390,10 +4410,12 @@
     head.append(el('span', 'name', cat.name), el('span', 'count', String(catItems.length)));
     head.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
     head.addEventListener('click', () => {
+      section.classList.remove('cat-autoclose');
       const collapsed = section.classList.toggle('collapsed');
       head.setAttribute('aria-expanded', String(!collapsed));
       state.collapsed[cat.id] = collapsed;
       storageSet({ collapsed: state.collapsed });
+      catMark(cat.id, !collapsed); // 2.18.7: abriu agora (conta os 5 min do zero)
     });
 
     const top = el('div', 'cat-top');
@@ -4875,6 +4897,7 @@
   }
 
   function registerUse(item) {
+    catTouch(item.category_id); // 2.18.7: usar uma mensagem da categoria reinicia a conta para recolher
     item.usage_count += 1;
     state.lastUsed = item.title;
     storageSet({ lastUsed: state.lastUsed });
@@ -5900,6 +5923,66 @@
       toast(`Não consegui salvar a nova ordem: ${e.message}`, 'error', 6000);
     }
   }
+
+  // ── 2.18.7: categorias de mensagens rápidas se recolhem sozinhas ──
+  // Cada categoria aberta se recolhe depois de X min sem uso (Personalizar → "Recolher categorias sozinhas": 5 min
+  // padrão / 2 / 10 / nunca). Uso = clicar, enviar, rolar ou passar o mouse dentro dela (e usar uma mensagem dela).
+  // Ao trocar de conversa, recolhe as abertas há mais de X min. Com texto na busca ou filtro ativo, não recolhe.
+  // Os horários ficam só na memória (ao recarregar, as abertas contam a partir de agora). Regra: engine.catsToCollapse.
+  const catAct = { openAt: {}, lastUse: {}, moveAt: 0 };
+  const catSearching = () => state.search.trim() !== '' || state.filter !== 'tudo';
+  function catMark(id, open) {
+    if (!id) return;
+    if (open) { const now = Date.now(); catAct.openAt[id] = now; catAct.lastUse[id] = now; }
+    else { delete catAct.openAt[id]; delete catAct.lastUse[id]; }
+  }
+  function catTouch(id) {
+    if (!id || state.collapsed[id]) return;
+    const now = Date.now();
+    if (!catAct.openAt[id]) catAct.openAt[id] = now;
+    catAct.lastUse[id] = now;
+  }
+  const catSection = (id) => [...listEl.querySelectorAll('section.cat')].find((s) => s.dataset.cat === id) || null;
+  function catOpenList() {
+    const now = Date.now();
+    const act = shadow.activeElement;
+    return state.categories.filter((c) => !state.collapsed[c.id]).map((c) => {
+      if (!catAct.openAt[c.id]) catAct.openAt[c.id] = now; // aberta desde antes (ou desde o carregamento)
+      if (!catAct.lastUse[c.id]) catAct.lastUse[c.id] = now;
+      const sec = catSection(c.id);
+      const busy = !!sec && (sec.matches(':hover') || (!!act && sec.contains(act)) || !!(catMenu && catMenu.id === c.id) || !!(emptyAsk && emptyAsk.id === c.id));
+      return { id: c.id, openAt: catAct.openAt[c.id], lastUse: catAct.lastUse[c.id], busy };
+    });
+  }
+  function catAutoCollapse(reason) {
+    if (!state.categories.length) return;
+    const ids = E2P.catsToCollapse({ open: catOpenList(), now: Date.now(), minutes: pz.prefs.catAutoCollapse, reason, searching: catSearching() });
+    if (!ids.length) return;
+    ids.forEach((id) => {
+      state.collapsed[id] = true;
+      catMark(id, false);
+      const sec = catSection(id);
+      if (sec) {
+        sec.classList.add('cat-autoclose', 'collapsed'); // animação suave (só a altura e a opacidade)
+        const head = sec.querySelector('.cat-head');
+        if (head) head.setAttribute('aria-expanded', 'false');
+        setTimeout(() => sec.classList.remove('cat-autoclose'), 600);
+      }
+    });
+    storageSet({ collapsed: state.collapsed });
+  }
+  ['click', 'wheel', 'keydown', 'focusin', 'pointerdown'].forEach((type) => listEl.addEventListener(type, (e) => {
+    const sec = e.target && e.target.closest ? e.target.closest('section.cat') : null;
+    if (sec) catTouch(sec.dataset.cat);
+  }, { passive: true }));
+  listEl.addEventListener('pointermove', (e) => {
+    const now = Date.now();
+    if (now - catAct.moveAt < 1000) return;
+    catAct.moveAt = now;
+    const sec = e.target && e.target.closest ? e.target.closest('section.cat') : null;
+    if (sec) catTouch(sec.dataset.cat);
+  }, { passive: true });
+  setInterval(() => { try { catAutoCollapse('idle'); } catch { /* lista sendo redesenhada */ } }, 10000);
 
   // Lista de mensagens: arrastar categoria (pelo cabeçalho) ou mensagem (pela linha)
   listEl.addEventListener('pointerdown', (e) => {

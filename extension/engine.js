@@ -455,6 +455,19 @@
   const PANEL_BLOCKS = ['conv', 'etiquetas', 'nome', 'busca'];
   const PANEL_CONV_BTNS = ['venda', 'compra', 'automacao', 'proxima']; // 2.10.3: + Próxima conversa
   const PANEL_HDR_BTNS = ['venda', 'compra', 'agendar', 'etiqueta']; // 2.12.1: atalhos no cabeçalho da conversa
+  // 2.18.7: categorias de mensagens rápidas que se recolhem sozinhas. Opções (minutos): 5 (padrão), 2, 10, 0 = nunca.
+  //   open: [{ id, openAt, lastUse, busy }] (as abertas; busy = o mouse ou o foco está dentro dela agora)
+  //   reason 'idle': sem uso há `minutes` (clicar, enviar, rolar ou passar o mouse dentro dela reinicia a conta)
+  //   reason 'chat': ao trocar de conversa, as abertas há mais de `minutes` (as abertas há menos continuam)
+  //   searching (texto na busca ou filtro ativo): não recolhe nada
+  const CAT_AUTO_MIN = [5, 2, 10, 0];
+  function catsToCollapse({ open, now, minutes, reason = 'idle', searching = false }) {
+    const m = Number(minutes);
+    if (!CAT_AUTO_MIN.includes(m) || m <= 0 || searching) return [];
+    const lim = m * 60000;
+    return (open || []).filter((c) => c && !c.busy && Number.isFinite(reason === 'chat' ? c.openAt : c.lastUse)
+      && now - (reason === 'chat' ? c.openAt : c.lastUse) >= lim).map((c) => c.id);
+  }
   function defaultPanelPrefs() {
     return {
       tabs: { midias: true, etiquetas: true, vendas: true, conversoes: true, quadro: false, agendados: false, disparos: false, follows: false },
@@ -465,6 +478,7 @@
       density: 'confortavel',
       keepListPos: true, // 2.10.3: manter a posição da lista de conversas ao enviar
       keepDeleted: true, // 2.15.0: guardar (só neste computador) as mensagens recebidas para ver as apagadas/editadas
+      catAutoCollapse: 5, // 2.18.7: recolher sozinhas as categorias de mensagens rápidas sem uso (minutos; 0 = nunca)
       collapsed: { conv: false, etiquetas: false, nome: false, busca: false },
       topH: null,
     };
@@ -484,6 +498,7 @@
       density: r.density === 'compacta' ? 'compacta' : 'confortavel',
       keepListPos: typeof r.keepListPos === 'boolean' ? r.keepListPos : d.keepListPos,
       keepDeleted: typeof r.keepDeleted === 'boolean' ? r.keepDeleted : d.keepDeleted,
+      catAutoCollapse: CAT_AUTO_MIN.includes(r.catAutoCollapse) ? r.catAutoCollapse : d.catAutoCollapse,
       collapsed: bools(r.collapsed, PANEL_BLOCKS, d.collapsed),
       topH: r.topH != null && Number.isFinite(h) ? Math.round(Math.min(2000, Math.max(48, h))) : null,
     };
@@ -3312,7 +3327,7 @@
     activationSentence, // 2.12.6
     activityOfEvent, mergeActivity, activityBuffer, spDayOfSec, // 2.12.8
     withRetry, errorReason, createNameLearner, PANEL_HDR_BTNS, // 2.12.1
-    defaultPanelPrefs, normPanelPrefs, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, previewSendPlan, sendLabelsApply,
+    defaultPanelPrefs, normPanelPrefs, catsToCollapse, CAT_AUTO_MIN, clampTopH, listShouldRestore, listRestoreTarget, LIST_KEEP_MS, previewSendPlan, sendLabelsApply,
     normBrPhone, matchSalesForPurchase, salePhoneOf, PANEL_TABS, PANEL_FILTERS, PANEL_BLOCKS, PANEL_CONV_BTNS,
     TRIGGER_TYPES, FUTURE_TRIGGERS, evaluateAutomation, automationSummary, automationNeedsChat, automationKeywords,
     automationEntry, leaveKey, isWaTrigger, WA_LABEL_ACTIONS,

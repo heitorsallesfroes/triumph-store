@@ -86,6 +86,40 @@ test('lista: volta para onde estava + 1 linha (as mesmas conversas continuam na 
   assert.strictEqual(E.listRestoreTarget({ saved: 1072, rowH: 72, scrollHeight: 5000, clientHeight: 600, shift: false }), 1072);
 });
 
+// 2.18.7: categorias de mensagens rápidas que se recolhem sozinhas
+test('2.18.7: "Recolher categorias sozinhas": padrão 5 min; só 5 / 2 / 10 / nunca (0); lixo vira o padrão', () => {
+  assert.strictEqual(E.defaultPanelPrefs().catAutoCollapse, 5);
+  [5, 2, 10, 0].forEach((v) => assert.strictEqual(E.normPanelPrefs({ catAutoCollapse: v }).catAutoCollapse, v));
+  [3, '5', null, -1, 'nunca', undefined].forEach((v) => assert.strictEqual(E.normPanelPrefs({ catAutoCollapse: v }).catAutoCollapse, 5, String(v)));
+  assert.strictEqual(E.normPanelPrefs({ density: 'compacta' }).catAutoCollapse, 5, 'prefs antigas (sem a opção) ganham o padrão');
+});
+test('2.18.7: sem uso há 5 min recolhe; usada há menos continua; mouse/foco dentro (busy) não recolhe', () => {
+  const now = 1e9, MIN = 60000;
+  const open = [
+    { id: 'a', openAt: now - 20 * MIN, lastUse: now - 5 * MIN, busy: false }, // exatamente 5 min sem uso
+    { id: 'b', openAt: now - 20 * MIN, lastUse: now - 4 * MIN, busy: false }, // usada há 4 min
+    { id: 'c', openAt: now - 20 * MIN, lastUse: now - 30 * MIN, busy: true }, // o mouse está nela agora
+  ];
+  assert.deepStrictEqual(plain(E.catsToCollapse({ open, now, minutes: 5 })), ['a']);
+  assert.deepStrictEqual(plain(E.catsToCollapse({ open, now, minutes: 2 })), ['a', 'b']);
+  assert.deepStrictEqual(plain(E.catsToCollapse({ open, now, minutes: 10 })), []);
+  assert.deepStrictEqual(plain(E.catsToCollapse({ open, now, minutes: 0 })), [], 'nunca');
+  assert.deepStrictEqual(plain(E.catsToCollapse({ open, now, minutes: 7 })), [], 'opção inválida não recolhe');
+});
+test('2.18.7: com texto na busca ou filtro ativo não recolhe nada', () => {
+  const now = 1e9;
+  assert.deepStrictEqual(plain(E.catsToCollapse({ open: [{ id: 'a', openAt: 0, lastUse: 0 }], now, minutes: 5, searching: true })), []);
+});
+test('2.18.7: ao trocar de conversa, recolhe as abertas há mais de 5 min (mesmo usadas agora); as abertas há menos continuam', () => {
+  const now = 1e9, MIN = 60000;
+  const open = [
+    { id: 'velha', openAt: now - 6 * MIN, lastUse: now - 10000 },
+    { id: 'nova', openAt: now - 3 * MIN, lastUse: now - 3 * MIN },
+  ];
+  assert.deepStrictEqual(plain(E.catsToCollapse({ open, now, minutes: 5, reason: 'chat' })), ['velha']);
+  assert.deepStrictEqual(plain(E.catsToCollapse({ open, now, minutes: 5, reason: 'idle' })), [], 'sem trocar de conversa, a velha usada agora fica aberta');
+});
+
 let ok = 0;
 for (const [name, fn] of tests) {
   try { fn(); ok++; console.log(`ok   ${name}`); } catch (e) { console.log(`FAIL ${name}\n     ${e.message}`); process.exitCode = 1; }

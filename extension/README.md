@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.18.6** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.18.7** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,19 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.18.7 — categorias de mensagens rápidas se recolhem sozinhas
+- Na aba **Mensagens**, cada categoria aberta se recolhe sozinha depois de **5 min sem uso** (sem clicar, enviar,
+  rolar ou passar o mouse dentro dela). Usar uma mensagem dela conta como uso e reinicia os 5 min.
+- **Ao trocar de conversa**, recolhe as categorias abertas há mais de 5 min (as abertas há menos continuam).
+- **Personalizar → "Recolher categorias sozinhas"**: depois de 5 min (padrão) / 2 min / 10 min / nunca (fica neste
+  computador, em `panelPrefs.catAutoCollapse`).
+- Com **texto na busca** (ou um filtro ativo) nada se recolhe. A categoria recolhida sozinha fica lembrada como se você
+  tivesse fechado; os horários de uso ficam só na memória (ao recarregar, as abertas contam a partir de agora).
+- Animação suave ao recolher (altura e opacidade); nada mais muda na aba.
+- Regra em `engine.js` (`catsToCollapse`). Testes: `prefs.test.cjs` (opções, 5 min sem uso, uso reinicia, mouse/foco
+  dentro, busca, troca de conversa) e o Chrome real (relógio da extensão adiantado: recolhe com a animação, a usada
+  fica, busca não recolhe, troca de conversa, "nunca").
 
 ### 2.18.6 — sem "modo teste": o sistema fica sempre no modo real
 - **Automações, réguas e disparos**: saíram "Testar comigo", "Ligar em teste", "Ligar para todos" (sair do teste), a
