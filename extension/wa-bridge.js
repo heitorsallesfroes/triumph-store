@@ -648,7 +648,9 @@
       }
       // 2.16.13: por qual caminho o produto saiu (nativo / link-grande / link)
       // 2.16.14: + o registro do envio do produto (trace) para o log da extensão
-      return r && typeof r.tspVia === 'string' ? { sent: true, via: r.tspVia, ...(r.tspTrace ? { trace: r.tspTrace } : {}) } : { sent: true };
+      // 2.18.9: + o id da parte especial enviada (o painel acompanha os tracinhos por 2 minutos)
+      const msgId = r && typeof r.tspMsgId === 'string' ? { msgId: r.tspMsgId } : {};
+      return r && typeof r.tspVia === 'string' ? { sent: true, via: r.tspVia, ...(r.tspTrace ? { trace: r.tspTrace } : {}), ...msgId } : { sent: true, ...msgId };
     } finally {
       jobs.delete(requestId);
     }
@@ -700,7 +702,18 @@
 
   function richInfo() {
     if (!isReady() || !Rich) return { ready: isReady(), types: null };
-    return { ready: true, types: Rich.availability(wpp) };
+    // 2.18.9: + o meu número (a prévia do Catálogo mostra o link wa.me/c/<número>)
+    const me = String(safe(() => wpp.conn.getMyUserId().user, '') || '');
+    return { ready: true, types: Rich.availability(wpp), ...(/^\d{8,15}$/.test(me) ? { me } : {}) };
+  }
+
+  // 2.18.9: tracinhos de uma parte especial enviada (só leitura; nunca reenvia)
+  function richAck(payload) {
+    const p = payload || {};
+    if (!isReady() || !Rich || typeof Rich.ackStatus !== 'function') return { found: false };
+    if (typeof p.chatId !== 'string' || !/^[^@\s]+@(c\.us|lid)$/.test(p.chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida', 'before-send');
+    if (typeof p.msgId !== 'string' || !p.msgId || p.msgId.length > 200) throw new BridgeError('invalid_request', 'Pedido inválido', 'before-send');
+    return Rich.ackStatus(wpp, p.chatId, p.msgId);
   }
 
   // Produtos do MEU catálogo (só leitura; foto, nome, preço). Sem catálogo / conta comum: lista vazia com motivo.
@@ -1987,7 +2000,9 @@
       }
       // 2.16.13: por qual caminho o produto saiu (nativo / link-grande / link)
       // 2.16.14: + o registro do envio do produto (trace) para o log da extensão
-      return r && typeof r.tspVia === 'string' ? { sent: true, via: r.tspVia, ...(r.tspTrace ? { trace: r.tspTrace } : {}) } : { sent: true };
+      // 2.18.9: + o id da parte especial enviada (o painel acompanha os tracinhos por 2 minutos)
+      const msgId = r && typeof r.tspMsgId === 'string' ? { msgId: r.tspMsgId } : {};
+      return r && typeof r.tspVia === 'string' ? { sent: true, via: r.tspVia, ...(r.tspTrace ? { trace: r.tspTrace } : {}), ...msgId } : { sent: true, ...msgId };
     } finally {
       jobs.delete(requestId);
     }
@@ -2032,6 +2047,7 @@
     labelAllChats: (payload) => labelAllChats(payload), // 2.12.5
     sendRich: (payload, requestId) => sendRich(requestId, payload),
     richInfo: () => richInfo(),
+    richAck: (payload) => richAck(payload), // 2.18.9
     catalogProducts: () => catalogProducts(),
     productDiag: (payload) => productDiag(payload), // 2.16.14
     radarChats: (payload) => radarChats(payload), // 2.17.0

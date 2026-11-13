@@ -144,6 +144,14 @@
 
   const productLink = (productId, phone) => `https://wa.me/p/${productId}/${digits(phone)}`;
   const mapsUrl = (lat, lng) => `https://maps.google.com/?q=${lat},${lng}`;
+  // 2.18.9: o Catálogo vai como o WhatsApp manda à mão: TEXTO com o link wa.me/c/<meu número> e a prévia do link
+  const CATALOG_TEXT = 'Acesse este link para ver nosso catálogo no WhatsApp:';
+  const catalogLink = (phone) => `https://wa.me/c/${digits(phone)}`;
+  // legenda da parte antes do link (linha de cima); sem legenda, a frase do WhatsApp e o link na mesma linha
+  const catalogBody = (caption, phone) => {
+    const c = typeof caption === 'string' ? caption.trim() : '';
+    return c ? `${c}\n${catalogLink(phone)}` : `${CATALOG_TEXT} ${catalogLink(phone)}`;
+  };
 
   // Produto como vem da WA-JS (getProducts/getProductById ou modelo do CatalogStore) → { id, name, price, image_url }
   function pick(o, keys) {
@@ -231,7 +239,7 @@
     return {
       localizacao: hasFn(chat, 'sendLocationMessage'),
       contato: hasFn(chat, 'sendVCardContactMessage'),
-      catalogo: hasFn(chat, 'sendCatalogMessage') && biz !== false,
+      catalogo: hasFn(chat, 'sendTextMessage') && biz !== false, // 2.18.9: texto com o link wa.me/c/…
       produto: hasFn(chat, 'sendRawMessage') && hasFn(wpp && wpp.catalog, 'getProducts') && biz !== false,
       pix: hasFn(chat, 'sendPixKeyMessage') && biz !== false,
       business: biz,
@@ -417,7 +425,45 @@
     return out;
   }
 
-  async function prepareSend(wpp, chatId, { kind, data, text }, opts) {
+  // 2.18.9: id da mensagem enviada (para acompanhar os tracinhos depois). A WA-JS devolve { id } na maioria dos envios;
+  // no Produto (e se faltar), a 1ª mensagem NOVA nossa que apareceu na conversa.
+  const msgIdOf = (m) => { try { const id = m && m.id; return id ? String(id._serialized || id) : null; } catch { return null; } };
+  function tracked(wpp, chatId, fn) {
+    return async () => {
+      const chat = chatOf(wpp, chatId);
+      const before = chat ? mineIds(chat) : null;
+      const r = await fn();
+      let id = r && typeof r === 'object' && typeof r.id === 'string' && r.id ? r.id : null;
+      if (!id && chat && before) id = msgIdOf(newMine(chat, before)[0]);
+      const base = r && typeof r === 'object' && typeof r.tspVia === 'string' ? r : {};
+      return id ? { ...base, tspMsgId: id.slice(0, 200) } : base;
+    };
+  }
+  // 2.18.9: tracinhos da parte especial: ack (0 relógio, 1 um tracinho, 2 entregue, 3 lida) e se outras mensagens
+  // NOSSAS da mesma conversa (de 10 min antes em diante) chegaram (ack >= 2). Só leitura.
+  function ackStatus(wpp, chatId, msgId) {
+    const chat = chatOf(wpp, chatId);
+    let list = [];
+    try { list = chat ? chat.msgs.getModelsArray() : []; } catch { list = []; }
+    const m = list.find((x) => msgIdOf(x) === msgId);
+    if (!m) return { found: false };
+    const t = Number(m.t) || 0;
+    const ack = Number(m.ack);
+    const others = list.filter((x) => { try { return x && x.id && x.id.fromMe && msgIdOf(x) !== msgId && (Number(x.t) || 0) >= t - 600; } catch { return false; } });
+    return { found: true, ack: Number.isFinite(ack) ? ack : null, others: others.length, othersDelivered: others.some((x) => Number(x.ack) >= 2) };
+  }
+  // depois dos 2 minutos: 'warn' = continua em 1 tracinho (ou no relógio) enquanto as outras mensagens chegaram
+  function ackVerdict(st) {
+    if (!st || !st.found || st.ack == null) return 'unknown';
+    if (st.ack >= 2) return 'ok';
+    if (st.ack >= 0 && st.ack <= 1 && st.othersDelivered) return 'warn';
+    return 'unknown';
+  }
+
+  async function prepareSend(wpp, chatId, part, opts) {
+    return tracked(wpp, chatId, await prepareRaw(wpp, chatId, part, opts));
+  }
+  async function prepareRaw(wpp, chatId, { kind, data, text }, opts) {
     if (!isRich(kind)) throw preErr('invalid_kind', 'Tipo de parte inválido');
     let d;
     try { d = normalize(kind, data); } catch (e) { throw preErr('invalid_data', `${LABEL[kind]}: ${e.message}`); }
@@ -442,9 +488,12 @@
     }
     const me = myUser(wpp);
     if (kind === 'catalogo') {
-      if (!hasFn(wpp.chat, 'sendCatalogMessage')) throw preErr('rich_unavailable', 'Catálogo: esta versão da WA-JS não envia catálogo');
+      // 2.18.9: sendCatalogMessage ficava em 1 tracinho e não chegava; agora é o mesmo formato do envio à mão:
+      // texto (legenda ou a frase do WhatsApp) + https://wa.me/c/<meu número>, com a prévia do link da WA-JS
+      if (!hasFn(wpp.chat, 'sendTextMessage')) throw preErr('rich_unavailable', 'Catálogo: esta versão da WA-JS não envia texto');
       if (av.business === false) throw preErr('catalog_unavailable', 'Catálogo só existe em conta WhatsApp Business');
-      return () => wpp.chat.sendCatalogMessage(chatId, me.wid, { ...o, title: 'Catálogo no WhatsApp', description: 'Veja os nossos produtos', ...(caption ? { textMessage: caption } : {}) });
+      const body = catalogBody(caption, me.user);
+      return () => wpp.chat.sendTextMessage(chatId, body, { ...o, linkPreview: true });
     }
     // produto (2.16.13): 1) envio NATIVO do catálogo; 2) reserva automática: o link do produto com a prévia montada
     // aqui (título = nome, descrição = "R$ 629,00 · de R$ 709,00", foto grande pelo upload do WhatsApp; sem ela, a
@@ -500,7 +549,7 @@
   root.TspRich = Object.freeze({
     TYPES, LABEL, EMOJI, COLOR, PIX_KEY_TYPES,
     isRich, allowsText, empty, normalize, summary, mirrorText, fmtPhone, pixTypeLabel, normPhone,
-    parseMapsLink, placeNameFromLink, isShortMapsLink, productLink, mapsUrl, normalizeProduct, priceLabel, saleAmountOf, productDescription, productOffer, productReadInfo,
+    parseMapsLink, placeNameFromLink, isShortMapsLink, productLink, mapsUrl, CATALOG_TEXT, catalogLink, catalogBody, ackStatus, ackVerdict, normalizeProduct, priceLabel, saleAmountOf, productDescription, productOffer, productReadInfo,
     availability, prepareSend, productDiag,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : self);

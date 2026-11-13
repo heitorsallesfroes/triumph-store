@@ -2485,12 +2485,13 @@
   // Pessoal", com confirmação; o resultado de cada tentativa vai para o texto e para o log da extensão.
   const normTxt = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   const isTestChatName = (name) => normTxt(name) === 'meu numero pessoal';
-  function productDiagText(info, test, log) {
+  function productDiagText(info, test, log, ackLog = []) {
     const L = [`Diagnóstico do Produto - Triumph Store Mensagens ${chrome.runtime.getManifest().version} (${new Date().toLocaleString('pt-BR')})`];
     const j = (v) => { try { return JSON.stringify(v, null, 2); } catch { return String(v); } };
     if (info) L.push('', '== Leitura do produto ==', j(info));
     if (test) L.push('', '== Teste de envio em Meu Numero Pessoal ==', j(test));
     if (log && log.length) L.push('', `== Log dos últimos envios de Produto (${log.length}) ==`, ...log.slice(-10).map((t) => j(t)));
+    if (ackLog && ackLog.length) L.push('', `== Partes especiais que ficaram em 1 tracinho (${ackLog.length}) ==`, ...ackLog.slice(-10).map((t) => j(t))); // 2.18.9
     return L.join('\n');
   }
   async function openProductDiag() {
@@ -2520,7 +2521,7 @@
     let info = null;
     let test = null;
     let armed = false;
-    const refresh = async () => { out.value = productDiagText(info, test, await productLog()); };
+    const refresh = async () => { out.value = productDiagText(info, test, await productLog(), await richAckLog()); };
     const close = () => bg.remove();
     closeBtn.addEventListener('click', close);
     bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
@@ -4656,6 +4657,7 @@
     const parts = textPartsOf(item);
     const textIdx = new Set(parts.map(({ i }) => i));
     const usesName = parts.some(({ p }) => globalThis.TspEngine.hasNameVar(p.body));
+    if (!state.waMe && all.some((p) => p.type === 'catalogo')) refreshWaRich(rerender); // 2.18.9: o meu número para o link wa.me/c/ da prévia
     if (usesName && !detected) {
       const nameIn = el('input', 'ed-title pv-name');
       nameIn.type = 'text';
@@ -4708,7 +4710,8 @@
         note.append(undo);
         box.append(note);
       }
-      if (Rich.isRich(p.type)) box.append(richPreviewEl(p));
+      const catCard = p.type === 'catalogo' ? richPreviewEl(p) : null; // 2.18.9: vai depois do texto
+      if (Rich.isRich(p.type) && !catCard) box.append(richPreviewEl(p));
       else if (album) box.append(pvAlbumEl(p, i, st, off, rerender));
       else if (p.type === 'documento' && p.file_name) {
         const doc = el('div', 'pv-doc');
@@ -4733,6 +4736,7 @@
         bubble.addEventListener('input', () => { st.texts[i] = bubbleText(bubble, st.name || detected); });
         box.append(bubble);
       }
+      if (catCard) box.append(catCard);
       slot.append(box);
     });
     const notes = [];
@@ -5347,9 +5351,12 @@
         body.append(a);
       }
     } else if (p.type === 'catalogo') {
+      // 2.18.9: mensagem de TEXTO (legenda ou a frase do WhatsApp) + o link do catálogo com a prévia do link
       card.append(ico);
+      if (!(typeof p.body === 'string' && p.body.trim())) line('rp-s rp-ctext', Rich.CATALOG_TEXT);
+      line('rp-link', state.waMe ? Rich.catalogLink(state.waMe) : 'https://wa.me/c/<seu número>');
       line('rp-t', 'Catálogo no WhatsApp');
-      line('rp-s', 'Veja os nossos produtos (cartão do seu catálogo)');
+      if (!compact) line('rp-s', 'mensagem de texto com o link e a prévia do link, como no envio à mão');
     } else if (p.type === 'contato') {
       card.append(ico);
       line('rp-t', d.name || 'Contato');
@@ -5421,6 +5428,42 @@
       });
     } catch { /* extensão recarregada */ }
   }
+  // 2.18.9: depois de enviar uma parte especial, acompanha os tracinhos por 2 minutos. Se continuar em 1 tracinho
+  // enquanto as outras mensagens nossas da conversa chegam (2 tracinhos), grava no log de envio (só neste computador,
+  // sem conversa, número ou texto) e mostra um aviso discreto. Nunca reenvia sozinho.
+  const RICH_ACK_MS = 120000;
+  const RICH_ACK_STEP_MS = 15000;
+  const RICH_ACK_LOG_KEY = 'richSendLog';
+  const RICH_NOT_ARRIVED = { catalogo: 'O catálogo', produto: 'O produto', contato: 'O contato', localizacao: 'A localização', pix: 'A chave Pix' };
+  const richAckWarnText = (kind) => `${RICH_NOT_ARRIVED[kind] || 'A mensagem'} pode não ter chegado ao cliente. Confira a conversa.`;
+  function logRichAck(entry) {
+    try {
+      chrome.storage.local.get([RICH_ACK_LOG_KEY], (r) => {
+        const list = Array.isArray(r && r[RICH_ACK_LOG_KEY]) ? r[RICH_ACK_LOG_KEY] : [];
+        list.push(entry);
+        storageSet({ [RICH_ACK_LOG_KEY]: list.slice(-30) });
+      });
+    } catch { /* extensão recarregada */ }
+  }
+  const richAckLog = () => new Promise((resolve) => { try { chrome.storage.local.get([RICH_ACK_LOG_KEY], (r) => resolve(Array.isArray(r && r[RICH_ACK_LOG_KEY]) ? r[RICH_ACK_LOG_KEY] : [])); } catch { resolve([]); } });
+  function watchRichAck(kind, chatId, res, { totalMs = RICH_ACK_MS, stepMs = RICH_ACK_STEP_MS } = {}) {
+    const msgId = res && typeof res.msgId === 'string' ? res.msgId : '';
+    if (!msgId || !Rich.isRich(kind)) return null;
+    return (async () => {
+      const start = Date.now();
+      let st = null;
+      while (Date.now() - start < totalMs) {
+        await sleep(Math.max(0, Math.min(stepMs, totalMs - (Date.now() - start))));
+        try { st = await waRequest('richAck', { chatId, msgId }, { timeout: 5000 }); } catch { /* tenta de novo */ }
+        if (Rich.ackVerdict(st) === 'ok') return 'ok';
+      }
+      const verdict = Rich.ackVerdict(st);
+      if (verdict !== 'warn') return verdict;
+      logRichAck({ at: new Date().toISOString(), kind, via: (res && res.via) || null, ack: st.ack, others: st.others, warn: richAckWarnText(kind) });
+      toast(richAckWarnText(kind), 'warn', 12000);
+      return 'warn';
+    })().catch(() => 'unknown');
+  }
   const productLog = () => new Promise((resolve) => { try { chrome.storage.local.get([PRODUCT_LOG_KEY], (r) => resolve(Array.isArray(r && r[PRODUCT_LOG_KEY]) ? r[PRODUCT_LOG_KEY] : [])); } catch { resolve([]); } });
   const partAsItem = (p, i) => ({ id: p.id || `parte${i}`, file_url: p.file_url, file_name: p.file_name });
 
@@ -5441,8 +5484,9 @@
     if (Rich.isRich(part.type)) {
       const text = Rich.allowsText(part.type) && part.body ? fillVars(part.body, firstName).slice(0, SEQ_TEXT_MAX) : '';
       const rich = { kind: part.type, data: part.data || {}, text };
-      if (newChat) { const cr = await campaignSend(rich); if (part.type === 'produto') logProductTrace(cr); return; }
+      if (newChat) { const cr = await campaignSend(rich); if (part.type === 'produto') logProductTrace(cr); watchRichAck(part.type, chatId, cr); return; }
       const res = await waRequest('sendRich', { chatId, ...rich, typingMs: typingMs || 0 }, { id: reqId, timeout: (typingMs || 0) + 60000 });
+      watchRichAck(part.type, chatId, res); // 2.18.9: confere os tracinhos por 2 minutos (não espera, não reenvia)
       // 2.16.13: qual caminho o produto usou (para conferir na conversa)
       if (part.type === 'produto' && res && res.via && PRODUCT_VIA[res.via]) lastProductVia = res.via;
       if (part.type === 'produto') logProductTrace(res); // 2.16.14
@@ -6166,9 +6210,10 @@
   function refreshWaRich(rerender) {
     waRequest('richInfo', {}, { timeout: 2000 }).then((r) => {
       if (!r || !r.types) return;
-      const before = JSON.stringify(state.waRich || null);
+      const before = JSON.stringify([state.waRich || null, state.waMe || null]);
       state.waRich = r.types;
-      if (JSON.stringify(r.types) !== before && rerender) rerender();
+      if (typeof r.me === 'string' && /^\d{8,15}$/.test(r.me)) state.waMe = r.me; // 2.18.9: link wa.me/c/ da prévia
+      if (JSON.stringify([r.types, state.waMe || null]) !== before && rerender) rerender();
     }).catch(() => {});
   }
   function addAlbumFiles(p, list, ctx, i) {
@@ -6412,9 +6457,9 @@
       wrap.append(...richTextField(p, i, 'Texto junto (opcional; vai na mesma mensagem, antes do link do produto)'));
       wrap.append(el('div', 'ed-varhint', 'Vai o link do produto (wa.me/p/…) com a prévia: foto, nome e preço. A WA-JS 4.7.2 não tem envio direto do cartão de produto.'));
     } else if (p.type === 'catalogo') {
-      wrap.append(richPreviewEl({ type: 'catalogo', data: d }));
-      wrap.append(...richTextField(p, i, 'Texto junto (opcional)'));
-      wrap.append(el('div', 'ed-varhint', 'Envia o cartão do catálogo inteiro do seu WhatsApp Business.'));
+      wrap.append(richPreviewEl({ type: 'catalogo', data: d, body: p.body }));
+      wrap.append(...richTextField(p, i, 'Texto junto (opcional; vai antes do link, na mesma mensagem)'));
+      wrap.append(el('div', 'ed-varhint', `Vai uma mensagem de texto com o link do seu catálogo (wa.me/c/…) e a prévia do link, igual ao WhatsApp. Sem texto: "${Rich.CATALOG_TEXT}"`));
     } else if (p.type === 'contato') {
       const name = richField('Nome', d.name, (v) => { d.name = v; }, { placeholder: 'Nome do contato', maxLength: 60, aria: `Nome do contato (parte ${n})` });
       const phone = richField('Telefone', d.phone, (v) => { d.phone = v; }, { placeholder: '(11) 99999-9999', maxLength: 25, aria: `Telefone do contato (parte ${n})`, inputMode: 'tel' });

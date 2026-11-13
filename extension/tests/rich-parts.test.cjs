@@ -161,8 +161,10 @@ function previewFn() {
   assert.ok(start > 0 && end > start, 'richPreviewEl não encontrado');
   const document = { createElement: (t) => new FakeEl(t) };
   const el = (tag, cls, text) => { const e = new FakeEl(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-  return new Function('Rich', 'el', 'document', `${code.slice(start, end)}\nreturn richPreviewEl;`)(R, el, document);
+  const state = previewState;
+  return new Function('Rich', 'el', 'document', 'state', `${code.slice(start, end)}\nreturn richPreviewEl;`)(R, el, document, state);
 }
+const previewState = {};
 const preview = previewFn();
 test('prévia: localização (nome, endereço, link do mapa)', () => {
   const c = preview({ type: 'localizacao', data: R.normalize('localizacao', SAMPLES.localizacao.data) });
@@ -182,7 +184,17 @@ test('prévia: produto com foto usa a imagem', () => {
   assert.strictEqual(c.find('rp-thumb').findTag('img').src, 'https://mmg.whatsapp.net/a.jpg');
 });
 test('prévia: catálogo, contato e Pix', () => {
-  assert.match(preview({ type: 'catalogo', data: {} }).textContent, /Catálogo no WhatsApp/);
+  // 2.18.9: catálogo = texto + link wa.me/c/<meu número> com a prévia do link
+  previewState.waMe = undefined;
+  const c0 = preview({ type: 'catalogo', data: {} }).textContent;
+  assert.match(c0, /Acesse este link para ver nosso catálogo no WhatsApp:/);
+  assert.match(c0, /https:\/\/wa\.me\/c\/<seu número>/);
+  assert.match(c0, /Catálogo no WhatsApp/);
+  assert.ok(!/Veja os nossos produtos|cartão do seu catálogo/.test(c0));
+  previewState.waMe = '5511912345678';
+  const c1 = preview({ type: 'catalogo', data: {}, body: 'Nosso catálogo' }).textContent;
+  assert.match(c1, /https:\/\/wa\.me\/c\/5511912345678/);
+  assert.ok(!/Acesse este link/.test(c1), 'com legenda, a frase padrão não aparece');
   const ct = preview({ type: 'contato', data: R.normalize('contato', SAMPLES.contato.data) });
   assert.match(ct.textContent, /Fernanda/);
   assert.match(ct.textContent, /\(11\) 98888-7777/);
@@ -198,6 +210,11 @@ function bridge({ business = true, pixThrows = false } = {}) {
   const replies = [];
   let listener = null;
   const product = { id: '7012345678901234', name: 'Camiseta (atual)', priceAmount1000: 64900, currency: 'BRL' }; // sem foto
+  // 2.18.9: as mensagens da conversa (para o id da parte enviada e os tracinhos); a WA-JS devolve { id } nos envios
+  const msgs = [];
+  const chatModel = { msgs: { getModelsArray: () => msgs } };
+  let nid = 0;
+  const ret = () => ({ id: `msg-${++nid}`, ack: 0 });
   const wpp = {
     isReady: true,
     on: () => {},
@@ -212,12 +229,14 @@ function bridge({ business = true, pixThrows = false } = {}) {
       list: async () => [{ id: { _serialized: CHAT } }],
       markIsComposing: async () => sent.push(['digitando']),
       markIsPaused: async () => {},
-      sendLocationMessage: async (...a) => sent.push(['sendLocationMessage', ...a]),
-      sendVCardContactMessage: async (...a) => sent.push(['sendVCardContactMessage', ...a]),
-      sendPixKeyMessage: async (...a) => { if (pixThrows) throw new Error('falhou'); sent.push(['sendPixKeyMessage', ...a]); },
+      get: (id) => (id === CHAT ? chatModel : null),
+      sendLocationMessage: async (...a) => { sent.push(['sendLocationMessage', ...a]); return ret(); },
+      sendVCardContactMessage: async (...a) => { sent.push(['sendVCardContactMessage', ...a]); return ret(); },
+      sendPixKeyMessage: async (...a) => { if (pixThrows) throw new Error('falhou'); sent.push(['sendPixKeyMessage', ...a]); return ret(); },
       sendCatalogMessage: async (...a) => sent.push(['sendCatalogMessage', ...a]),
-      sendRawMessage: async (...a) => sent.push(['sendRawMessage', ...a]),
-      sendTextMessage: async (...a) => sent.push(['sendTextMessage', ...a]),
+      // o link do Produto não devolve id: a mensagem aparece na conversa
+      sendRawMessage: async (...a) => { sent.push(['sendRawMessage', ...a]); msgs.push({ id: { fromMe: true, _serialized: `raw-${msgs.length + 1}` }, body: a[1].body, t: 1, ack: 1 }); },
+      sendTextMessage: async (...a) => { sent.push(['sendTextMessage', ...a]); return ret(); },
     },
   };
   const win = {
@@ -239,7 +258,7 @@ function bridge({ business = true, pixThrows = false } = {}) {
     const wait = () => { const r = replies.find((x) => x.id === id); if (r) resolve(r); else if (Date.now() > until) resolve({ ok: false, error: { message: 'sem resposta da ponte' } }); else setTimeout(wait, 5); };
     wait();
   });
-  return { request, sent };
+  return { request, sent, msgs };
 }
 test('envio: localização (nome e endereço no cartão) com "digitando"', async () => {
   const b = bridge();
@@ -277,14 +296,64 @@ test('envio: Pix recusado pelo WhatsApp → erro claro (pix_failed)', async () =
   assert.strictEqual(r.error.code, 'pix_failed');
   assert.match(r.error.message, /Chave Pix/);
 });
-test('envio: catálogo com texto junto', async () => {
+test('envio: catálogo com texto junto → TEXTO com o link wa.me/c/<meu número> e a prévia do link (sem sendCatalogMessage)', async () => {
   const b = bridge();
   const r = await b.request('sendRich', { chatId: CHAT, kind: 'catalogo', data: {}, text: 'Nosso catálogo' });
-  assert.ok(r.ok);
-  const [, chat, owner, opts] = b.sent[0];
+  assert.ok(r.ok, JSON.stringify(r.error));
+  assert.strictEqual(b.sent.length, 1);
+  const [name, chat, body, opts] = b.sent[0];
+  assert.strictEqual(name, 'sendTextMessage');
   assert.strictEqual(chat, CHAT);
-  assert.strictEqual(owner._serialized, '5511912345678@c.us');
-  assert.strictEqual(opts.textMessage, 'Nosso catálogo');
+  assert.strictEqual(body, 'Nosso catálogo\nhttps://wa.me/c/5511912345678');
+  assert.strictEqual(opts.linkPreview, true);
+  assert.strictEqual(opts.createChat, false);
+  assert.ok(!b.sent.some((s) => s[0] === 'sendCatalogMessage'));
+  assert.strictEqual(r.data.msgId, 'msg-1', 'devolve o id da mensagem para acompanhar os tracinhos');
+});
+test('envio: catálogo sem texto → a frase do WhatsApp antes do link, na mesma mensagem', async () => {
+  const b = bridge();
+  const r = await b.request('sendRich', { chatId: CHAT, kind: 'catalogo', data: {} });
+  assert.ok(r.ok, JSON.stringify(r.error));
+  assert.strictEqual(b.sent[0][0], 'sendTextMessage');
+  assert.strictEqual(b.sent[0][2], 'Acesse este link para ver nosso catálogo no WhatsApp: https://wa.me/c/5511912345678');
+  const c = await b.request('campaignSend', { campaign: true, chatId: CHAT, kind: 'catalogo', data: {} });
+  assert.ok(c.ok, JSON.stringify(c.error));
+  assert.strictEqual(b.sent[1][0], 'sendTextMessage');
+  assert.strictEqual(b.sent[1][3].createChat, true);
+  assert.strictEqual(b.sent[1][3].linkPreview, true);
+});
+test('catálogo: disponível com sendTextMessage mesmo sem sendCatalogMessage; conta comum não', () => {
+  const chat = { sendTextMessage() {}, sendLocationMessage() {} };
+  assert.strictEqual(R.availability({ chat, profile: { isBusiness: () => true } }).catalogo, true);
+  assert.strictEqual(R.availability({ chat, profile: { isBusiness: () => false } }).catalogo, false);
+  assert.strictEqual(R.catalogBody('  ', '55 11 91234-5678'), 'Acesse este link para ver nosso catálogo no WhatsApp: https://wa.me/c/5511912345678');
+});
+test('tracinhos (2.18.9): richAck lê o ack da parte e das outras mensagens nossas; veredito só avisa com as outras entregues', async () => {
+  const b = bridge();
+  b.msgs.push(
+    { id: { fromMe: true, _serialized: 'cat-1' }, t: 1000, ack: 1 },
+    { id: { fromMe: true, _serialized: 'txt-1' }, t: 1010, ack: 2 },
+    { id: { fromMe: false, _serialized: 'cli-1' }, t: 1020, ack: 0 },
+  );
+  const r = await b.request('richAck', { chatId: CHAT, msgId: 'cat-1' });
+  assert.ok(r.ok, JSON.stringify(r.error));
+  assert.deepStrictEqual(plain(r.data), { found: true, ack: 1, others: 1, othersDelivered: true });
+  assert.strictEqual(R.ackVerdict(r.data), 'warn');
+  assert.strictEqual(R.ackVerdict({ ...r.data, othersDelivered: false }), 'unknown', 'sem as outras chegando (cliente sem internet?) não avisa');
+  assert.strictEqual(R.ackVerdict({ ...r.data, ack: 2 }), 'ok');
+  assert.strictEqual(R.ackVerdict({ found: false }), 'unknown');
+  assert.deepStrictEqual(plain((await b.request('richAck', { chatId: CHAT, msgId: 'nao-existe' })).data), { found: false });
+  const bad = await b.request('richAck', { chatId: 'grupo@g.us', msgId: 'cat-1' });
+  assert.strictEqual(bad.ok, false);
+});
+test('envio: produto e localização também devolvem o id (Produto: a 1ª mensagem nova nossa na conversa)', async () => {
+  const b = bridge();
+  const l = await b.request('sendRich', { chatId: CHAT, kind: 'localizacao', data: SAMPLES.localizacao.data });
+  assert.strictEqual(l.data.msgId, 'msg-1');
+  const p = await b.request('sendRich', { chatId: CHAT, kind: 'produto', data: SAMPLES.produto.data });
+  assert.ok(p.ok, JSON.stringify(p.error));
+  assert.strictEqual(typeof p.data.via, 'string');
+  assert.strictEqual(p.data.msgId, 'raw-1');
 });
 test('envio: produto sem foto → link wa.me/p com prévia (nome e preço atuais), sem miniatura', async () => {
   const b = bridge();
@@ -322,6 +391,7 @@ test('catálogo: lista os produtos (oculto fica de fora) e contatos só com núm
   assert.deepStrictEqual(plain(k.data), [{ name: 'Fernanda Souza', phone: '5511977776666' }]);
   const info = await b.request('richInfo', {});
   assert.deepStrictEqual(plain(info.data.types), { localizacao: true, contato: true, catalogo: true, produto: true, pix: true, business: true });
+  assert.strictEqual(info.data.me, '5511912345678'); // 2.18.9: para a prévia do link wa.me/c/
 });
 
 (async () => {

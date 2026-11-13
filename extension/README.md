@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.18.8** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.18.9** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,29 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.18.9 — Catálogo vai como link wa.me/c/ (chega ao cliente) · aviso quando uma parte especial fica em 1 tracinho
+- **Parte 📒 Catálogo**: o cartão de `sendCatalogMessage` (título/descrição/texto personalizados) aparecia enviado
+  mas ficava em **1 tracinho** e não chegava ao cliente (12/11 e 13/11). Agora vai **no mesmo formato do envio à mão
+  do WhatsApp**: uma mensagem de **texto** com o link **`https://wa.me/c/<número da conta>`** e a **prévia do link**
+  (`linkPreview` da WA-JS). O texto da parte (legenda) vai **antes do link, na mesma mensagem**; sem legenda vai
+  **"Acesse este link para ver nosso catálogo no WhatsApp: https://wa.me/c/…"**. `sendCatalogMessage` não é mais usado.
+  Vale também no disparo para conversa nova.
+- **Tracinhos das partes especiais** (catálogo, produto, contato, localização, Pix): depois do envio o painel
+  acompanha o ack por **2 minutos** (a cada 15 s, só leitura: pedido `richAck` da ponte). Se continuar em **1
+  tracinho** (ou no relógio) enquanto as **outras mensagens suas da conversa chegam** (2 tracinhos), grava no log de
+  envio desta extensão (`richSendLog` no `chrome.storage.local`, últimos 30, sem conversa, número ou texto; aparece
+  no **Diagnóstico do Produto**, Mais → Manutenção) e mostra um aviso discreto: **"O catálogo pode não ter chegado ao
+  cliente. Confira a conversa."** (ou "O produto…", "A localização…", "O contato…", "A chave Pix…"). **Nunca reenvia
+  sozinho.** Entregue antes dos 2 minutos = nada aparece; se as outras mensagens também não chegam (cliente sem
+  internet), não avisa.
+- A ponte devolve o **id da mensagem** da parte especial enviada (`msgId`) e o **seu número** no `richInfo` (`me`).
+- **Prévia** (Personalizar e automações / editor): o Catálogo mostra o novo formato — a frase do WhatsApp (sem
+  legenda) ou o seu texto antes, o link `wa.me/c/<seu número>` e a prévia "Catálogo no WhatsApp".
+- Sem mudança no vendor WA-JS, no motor de envio ou nas outras partes.
+- Testes: `rich-parts.test.cjs` (envio do catálogo como texto + link com prévia, com e sem legenda, disparo, id da
+  mensagem, `richAck`), `richack.test.cjs` (novo: acompanhamento de 2 minutos, aviso, log, sem reenvio) e o Chrome de
+  verdade (prévia do catálogo e o acompanhamento depois do envio).
 
 ### 2.18.8 — follow manual por categoria + ERP Resultados: tipo de cada automação, cards e projeção
 - **Aba Mensagens → "···" da categoria → "Mensagens desta categoria são follow-up"**: toda mensagem rápida dessa
@@ -2119,7 +2142,7 @@ claro/escuro, com esqueleto ao carregar.
     com o cartão de prévia (foto, nome e preço atuais do catálogo), montado do mesmo jeito
     que a própria WA-JS faz no `sendCatalogMessage`. Produto sem foto vai sem miniatura.
     Texto opcional na mesma mensagem.
-  - **📒 Catálogo**: cartão do catálogo inteiro (`sendCatalogMessage`), com texto opcional.
+  - **📒 Catálogo**: cartão do catálogo inteiro (`sendCatalogMessage`), com texto opcional. (2.18.9: virou texto com o link `wa.me/c/<número>` e a prévia do link.)
   - **👤 Contato**: nome e telefone, ou escolha de um contato salvo no WhatsApp (busca por
     nome ou número; só contatos com número). Envio com `sendVCardContactMessage`.
   - **💠 Chave Pix**: tipo (CPF, CNPJ, telefone, e-mail, aleatória), chave e nome do

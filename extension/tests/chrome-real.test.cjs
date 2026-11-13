@@ -2731,6 +2731,49 @@ async function main() {
     fake.on = false;
     fake.generic = false;
     check('nenhum erro no console na 2.18.8', errors.length === 0, errors.slice(0, 8).join(' | '));
+
+    // 31. 2.18.9: parte "Catálogo" agora é TEXTO com o link wa.me/c/<meu número> e a prévia do link (como o envio à mão).
+    // A prévia (Personalizar) mostra a frase do WhatsApp, o link com o meu número e "Catálogo no WhatsApp"; ao enviar,
+    // a ponte recebe o catálogo e o painel passa a acompanhar os tracinhos (richAck, só leitura).
+    const ITEM_C = { id: 'i-teste-cat', category_id: 'c-teste', title: 'Nosso catálogo', type: 'texto', body: '', file_url: null, file_name: null, file_size: null, usage_count: 0, position: 0, created_at: '2026-11-13T10:00:00Z',
+      parts: [{ id: 'pc1', item_id: 'i-teste-cat', position: 0, type: 'catalogo', body: '', data: {}, file_url: null, file_name: null, file_size: null, wait_seconds: 0, typing_seconds: 0 }] };
+    await inExt(`new Promise((r) => chrome.storage.local.set({ collapsed: {}, library: ${JSON.stringify({ categories: [{ id: 'c-teste', name: 'Testes', position: 0 }], items: [ITEM_C], savedAt: '2026-11-13T10:00:00Z' })} }, () => r(true)))`);
+    fake.on = true;
+    fake.generic = true;
+    fake.db.wa_categories = [{ id: 'c-teste', name: 'Testes', position: 0, created_at: '2026-11-13T10:00:00Z' }];
+    fake.db.wa_items = [(({ parts, ...x }) => ({ ...x, updated_at: '2026-11-13T10:00:00Z' }))(ITEM_C)];
+    fake.db.wa_item_parts = ITEM_C.parts.map((x) => ({ ...x }));
+    // uma gravação qualquer (desligar de novo o follow da categoria do teste 30) limpa o cache de leitura de 45 s do service worker
+    await inExt(`new Promise((r) => chrome.runtime.sendMessage({ type: 'setCategoryFollow', id: ${JSON.stringify(C30.id)}, on: false }, () => r(true)))`);
+    await s('Page.reload', { ignoreCache: true });
+    await sleep(1500);
+    await pg(`window.__rich = []; window.__acks = []; window.__fakeBridge = { status: { ready: true, version: 'teste' }, activeChat: { kind: 'individual', chatId: '5521900000001@c.us' },
+      chatPhone: { phone: '5521900000001', name: 'Meu Numero Pessoal', via: 'numero' }, verifyChatPhone: { active: true, match: true },
+      richInfo: { ready: true, me: '5521912345678', types: { produto: true, catalogo: true, localizacao: true, contato: true, pix: true, business: true } },
+      sendRich: (p) => { window.__rich.push(p); return { sent: true, msgId: 'cat-msg-1' }; },
+      richAck: (p) => { window.__acks.push(p); return { found: true, ack: 2, others: 1, othersDelivered: true }; } }; return true;`);
+    let card31 = false;
+    for (const stop = Date.now() + 20000; Date.now() < stop && !card31;) {
+      card31 = await evalPage(`(() => { const sh = document.getElementById('tsp-wa-host')?.shadowRoot; const t = sh && sh.querySelector('.toggle'); if (t && !sh.querySelector('.root.open')) t.click(); return !!(sh && sh.querySelector('.card[data-id="i-teste-cat"]')); })()`).catch(() => false);
+      if (!card31) await sleep(300);
+    }
+    // a categoria pode se recolher sozinha (2.18.7): abre antes
+    await q(`const sec = sh.querySelector('section.cat[data-cat="c-teste"]'); if (sec && sec.classList.contains('collapsed')) { sec.querySelector('.cat-head').click(); await wait(300); } const c = sh.querySelector('.card[data-id="i-teste-cat"]'); if (!c.querySelector('.pv-send')) { c.querySelector('.info .t').click(); await wait(400); } c.scrollIntoView({ block: 'center' }); return true;`);
+    // a prévia pede richInfo ao abrir o editor; aqui confere o cartão do Personalizar (o número vem da ponte quando já lido)
+    const pv31 = await waitFor(`const sec = sh.querySelector('section.cat[data-cat="c-teste"]'); if (sec && sec.classList.contains('collapsed')) { sec.querySelector('.cat-head').click(); await wait(300); } const c = sh.querySelector('.card[data-id="i-teste-cat"] .rp-catalogo'); return !!c && /Acesse este link para ver nosso catálogo no WhatsApp:/.test(c.textContent) && /https:\\/\\/wa\\.me\\/c\\/5521912345678/.test(c.textContent) && /Catálogo no WhatsApp/.test(c.textContent) && !/Veja os nossos produtos/.test(c.textContent);`, 10000);
+    const pvText31 = await q(`const c = sh.querySelector('.card[data-id="i-teste-cat"] .rp-catalogo'); return c ? c.textContent : null;`).catch(() => null);
+    check('2.18.9: prévia do Catálogo = frase do WhatsApp + link wa.me/c/<meu número> + "Catálogo no WhatsApp" (sem o cartão antigo)', card31 && pv31, JSON.stringify({ card31, pvText31 }));
+    await shot('catalogo-link-previa.png');
+    await q(`sh.querySelector('.card[data-id="i-teste-cat"] .pv-send').click(); return true;`);
+    const sent31 = await (async () => { for (const stop = Date.now() + 10000; Date.now() < stop;) { const r = await pg(`return window.__rich.length ? window.__rich[0] : null;`); if (r) return r; await sleep(200); } return null; })();
+    let ack31 = null;
+    for (const stop = Date.now() + 25000; Date.now() < stop && !ack31;) { ack31 = await pg(`return window.__acks.length ? window.__acks[0] : null;`); if (!ack31) await sleep(500); }
+    const toast31 = await q(`return (sh.querySelector('.toast.show') || {}).textContent || '';`);
+    check('2.18.9: enviar o Catálogo → a ponte recebe kind "catalogo"; depois o painel confere os tracinhos (richAck com o id), entregue = sem aviso',
+      !!sent31 && sent31.kind === 'catalogo' && !!ack31 && ack31.msgId === 'cat-msg-1' && ack31.chatId === '5521900000001@c.us' && !/pode não ter chegado/.test(toast31), JSON.stringify({ sent31: sent31 && sent31.kind, ack31, toast31 }));
+    fake.on = false;
+    fake.generic = false;
+    check('nenhum erro no console na 2.18.9', errors.length === 0, errors.slice(0, 8).join(' | '));
     if (results.some((x) => !x)) process.exitCode = 1;
     console.log(`\n${results.filter(Boolean).length}/${results.length} verificações passaram (Chrome: ${chrome})`);
   } catch (e) {
