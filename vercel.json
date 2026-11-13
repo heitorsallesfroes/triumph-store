@@ -1,5 +1,8 @@
 {
   "rewrites": [
     { "source": "/l/:slug", "destination": "/l/index.html" }
-  ]
+  ],
+  "functions": {
+    "api/nfe.js": { "maxDuration": 60 }
+  }
 }

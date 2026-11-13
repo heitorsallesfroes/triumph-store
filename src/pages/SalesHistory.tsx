@@ -4,6 +4,7 @@ import { fetchAllRows, chunk } from '../lib/resumoAnualCalc';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
 import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers, Link, Pencil } from 'lucide-react';
 import Receipt from '../components/Receipt';
+import NfeModal from '../components/NfeModal';
 import Sales from './Sales';
 import { generateShippingLabel } from '../lib/superfrete';
 import { calculateCardFee } from '../lib/cardFees';
@@ -135,6 +136,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
   const [receiptChoiceSale, setReceiptChoiceSale] = useState<Sale | null>(null);
   const [receiptHideDelivery, setReceiptHideDelivery] = useState(false);
   const [giftSale, setGiftSale] = useState<Sale | null>(null);
+  const [nfeSale, setNfeSale] = useState<Sale | null>(null); // NF-e própria (SEFAZ direto)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<SaleStatus>('finalizado');
   const [bulkUpdating, setBulkUpdating] = useState(false);
@@ -1361,6 +1363,13 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
                       </div>
                     </div>
                     <div className="flex gap-2">
+                      <button
+                        onClick={() => setNfeSale(sale)}
+                        className="bg-gray-700 hover:bg-gray-600 border border-yellow-600/60 px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
+                        title="NF-e própria direto na SEFAZ (fase de teste: homologação)"
+                      >
+                        <FileText size={16} />Nota fiscal
+                      </button>
                       {!sale.nfe_status ? (
                         <button
                           onClick={() => handleGenerateNFe(sale)}
@@ -1504,6 +1513,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
         </div>
       )}
       {whatsappSale && <WhatsAppModal sale={whatsappSale} onClose={() => setWhatsappSale(null)} />}
+      {nfeSale && <NfeModal sale={nfeSale} onClose={() => setNfeSale(null)} />}
     </div>
   );
 }

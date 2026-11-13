@@ -25,6 +25,7 @@ import {
   Instagram,
   LogOut,
   RefreshCw,
+  FileText,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
@@ -76,6 +77,7 @@ const menuGroups = [
       { id: 'resumo-vendas', label: 'Resumo de Vendas', icon: DollarSign },
       { id: 'resumo',        label: 'Relatório Mensal', icon: BarChart3  },
       { id: 'resumo-anual',  label: 'Resumo Anual',     icon: Calendar   },
+      { id: 'notas-fiscais', label: 'Notas fiscais',    icon: FileText   },
       { id: 'settings',      label: 'Configurações',    icon: Settings   },
     ],
   },
