@@ -5,6 +5,8 @@ import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
 import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers, Link, Pencil } from 'lucide-react';
 import Receipt from '../components/Receipt';
 import NfeModal from '../components/NfeModal';
+import { nfeGet } from '../lib/nfeApi';
+import { selosPorVenda, Selo } from '../lib/nfeRegras';
 import Sales from './Sales';
 import { generateShippingLabel } from '../lib/superfrete';
 import { calculateCardFee } from '../lib/cardFees';
@@ -153,8 +155,15 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [focusNotice, setFocusNotice] = useState('');
 
+  // selo da NF-e própria em cada venda ("NF-e nº 12 autorizada", "teste", "cancelada"…); sem a rota, fica sem selo
+  const [selosNfe, setSelosNfe] = useState<Record<string, Selo>>({});
+  const loadSelosNfe = useCallback(() => {
+    nfeGet({ op: 'selos' }).then((j) => { if (Array.isArray(j?.notas)) setSelosNfe(selosPorVenda(j.notas)); }).catch(() => {});
+  }, []);
+  useEffect(() => { loadSelosNfe(); }, [loadSelosNfe]);
+
   useEffect(() => { loadSales(); }, []);
-  useErpRefresh(() => loadSales()); // "Atualizar" do topo (os filtros continuam)
+  useErpRefresh(() => { loadSales(); loadSelosNfe(); }); // "Atualizar" do topo (os filtros continuam)
   useEffect(() => { setVisibleCount(PAGE_SIZE); setSelectedIds(new Set()); }, [filteredSales]);
 
   // Venda do link: na lista filtrada → mostra, rola e realça. Fora (filtro de data, paginação) → busca pelo id e
@@ -1360,6 +1369,14 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
                         {sale.nfe_status === 'emitida' && (
                           <p className="text-xs text-green-500">✅ NF-e emitida</p>
                         )}
+                        {selosNfe[sale.id] && (
+                          <span title="NF-e própria (direto na SEFAZ)" className={`inline-block mt-0.5 text-[11px] font-semibold rounded px-1.5 py-0.5 border ${{
+                            verde: 'bg-green-500/15 text-green-300 border-green-500/40',
+                            amarelo: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/40',
+                            vermelho: 'bg-red-500/15 text-red-300 border-red-500/40',
+                            cinza: 'bg-gray-500/20 text-gray-300 border-gray-500/40',
+                          }[selosNfe[sale.id].cor]}`}>{selosNfe[sale.id].texto}</span>
+                        )}
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1513,7 +1530,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
         </div>
       )}
       {whatsappSale && <WhatsAppModal sale={whatsappSale} onClose={() => setWhatsappSale(null)} />}
-      {nfeSale && <NfeModal sale={nfeSale} onClose={() => setNfeSale(null)} />}
+      {nfeSale && <NfeModal sale={nfeSale} onClose={() => { setNfeSale(null); loadSelosNfe(); }} />}
     </div>
   );
 }

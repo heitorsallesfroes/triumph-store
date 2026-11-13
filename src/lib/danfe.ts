@@ -57,11 +57,14 @@ async function carregarLogo(): Promise<{ data: string; w: number; h: number } | 
   } catch { return null; }
 }
 
-export async function gerarDanfe(xml: string, { cancelada = false } = {}): Promise<JsPDF> {
+// juntarEm: um PDF já aberto (vários DANFEs num arquivo só): este DANFE começa numa folha nova dele
+export async function gerarDanfe(xml: string, { cancelada = false, juntarEm }: { cancelada?: boolean; juntarEm?: JsPDF } = {}): Promise<JsPDF> {
   const { jsPDF } = await import('jspdf');
   const n = lerNota(xml);
   const logo = await carregarLogo();
-  const pdf: any = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pdf: any = juntarEm || new jsPDF({ unit: 'mm', format: 'a4' });
+  const base = juntarEm ? pdf.getNumberOfPages() : 0; // folhas dos DANFEs anteriores
+  if (juntarEm) pdf.addPage();
   const W = 210, H = 297, M = 7, L = W - 2 * M;
   pdf.setLineWidth(0.2);
   const caixa = (x: number, y: number, w: number, h: number, rot: string, val: unknown, { tam = 8, neg = false, alinhar = 'left' as 'left' | 'right' | 'center' } = {}) => {
@@ -194,11 +197,11 @@ export async function gerarDanfe(xml: string, { cancelada = false } = {}): Promi
 
   // folha x/y em todas as páginas
   for (let p = 1; p <= folhas; p++) {
-    pdf.setPage(p); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5);
+    pdf.setPage(base + p); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5);
     if (p === 1) pdf.text(`FOLHA ${p}/${folhas}`, M + 98, folhaY, { align: 'center' });
     else pdf.text(`NF-e Nº ${nnf(n.numero)} SÉRIE ${String(n.serie).padStart(3, '0')} - FOLHA ${p}/${folhas}`, M, M + 1);
   }
-  pdf.setPage(folhas);
+  pdf.setPage(base + folhas);
   if (homolog) tarja('SEM VALOR FISCAL - HOMOLOGAÇÃO');
   if (cancelada) tarja('NF-e CANCELADA');
   return pdf as JsPDF;

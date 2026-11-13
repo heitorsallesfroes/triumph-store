@@ -1,7 +1,8 @@
 # Nota fiscal própria (NF-e) — passo a passo
 
-Fase 1: **só teste (homologação)**. A nota vai para a SEFAZ (SVRS, que atende o RJ), mas **não tem valor fiscal**.
-Produção só depois que você conferir o DANFE de teste.
+Fase 1: **teste (homologação)**. A nota vai para a SEFAZ (SVRS, que atende o RJ), mas **não tem valor fiscal**.
+Fase 2: **cancelamento** e **notas reais (produção)**, que só saem com a chave "Liberar notas reais" ligada
+(passos 6 a 9).
 
 ---
 
@@ -44,21 +45,26 @@ Produção só depois que você conferir o DANFE de teste.
    e já preenche pulseira (**9113.90.00**) e fone (**8518.30.00**). Os outros ficam vazios.
 5. Em **Acessórios / Brindes**, confira a coluna NCM e preencha (botão de editar) o que aparecer "sem NCM".
    Brinde sem NCM trava a nota.
+6. **Fase 2:** faça o mesmo com `supabase/migrations/20261122120000_nfe_producao.sql`. Ela cria a chave
+   "Liberar notas reais" (desligada). Sem ela tudo continua só em teste; o cancelamento funciona sem ela.
 
 ## 4. Testar
 
-1. No ERP, menu **Gestão → Notas fiscais**:
+1. No ERP, menu **Gestão → Notas fiscais** (abra o bloco **Configurações**, no topo):
    - **Certificado digital** tem que aparecer "Válido até …".
    - Clique **Testar conexão com a SEFAZ**: o certo é **107 — Serviço em operação** em homologação (e em produção; esse teste não emite nada).
    - Confira os dados em **Emitente e numeração** (clique Editar para mudar).
 2. **Histórico de Vendas** → numa venda, botão **Nota fiscal**:
    - Confira cliente (CPF, endereço, CEP — a cidade e o código IBGE vêm do CEP) e itens (nome, NCM, qtd, valor).
-   - O NCM do produto vem de **Produtos**; o do brinde vem de **Acessórios / Brindes**. Se faltar, o modal diz qual item está sem e não emite.
+   - O NCM do produto vem de **Produtos**. Os brindes das vendas, na prática, são produtos lançados a R$ 0,00
+     (ex.: "Fone Bluetooth i12", pulseiras): o NCM vem do cadastro do produto e, se faltar, vai pelo nome
+     (pulseira **9113.90.00**, fone **8518.30.00**). Brinde sem SKU sai com código legível (ex.: `FONE-I12`).
+     Se ainda faltar NCM, o modal diz qual item está sem e não emite. A lista de produtos sem NCM aparece em Notas fiscais.
    - Cliente de **fora do RJ**: aparece um aviso amarelo ("a nota sai com CFOP 6102, operação interestadual").
      Confira a UF e o endereço e marque **Conferi**; só então o botão de emitir libera.
-   - Em teste, o nome do cliente e do 1º item aparecem com o texto da SEFAZ ("…HOMOLOGACAO - SEM VALOR FISCAL"). É obrigatório.
+   - Em teste, o sistema troca o nome do cliente e do 1º item pelo texto da SEFAZ ("…HOMOLOGACAO - SEM VALOR FISCAL"). É obrigatório.
    - Clique **Emitir teste (homologação)**.
-3. Resultado:
+3. Resultado (em **Notas desta venda**, no próprio modal):
    - **Autorizada** → botões **Baixar DANFE (PDF)** e **Baixar XML**.
    - **Rejeitada** → aparece o código e o motivo. O número volta. Corrija e emita de novo.
    - **Pendente** (SEFAZ não respondeu) → clique **Consultar SEFAZ** antes de tentar outra vez.
@@ -75,6 +81,49 @@ Produção só depois que você conferir o DANFE de teste.
 
 Compare o XML baixado com o XML de uma nota real do Tiny (CFOP, CSOSN, IPI, PIS/COFINS, `indPres`, `natOp`, `infCpl`).
 
+## 6. Cancelar uma nota (primeiro teste: a nota de teste nº 1)
+
+1. Abra a nota: **Histórico de Vendas → Nota fiscal** (em "Notas desta venda") ou **Notas fiscais** → aba
+   **Autorizadas** → filtro **Testes** → menu **…** da nota → **Cancelar**.
+2. Escreva a justificativa (mínimo **15 letras**, ex.: "Venda desfeita a pedido do cliente"), clique **Cancelar nota** e
+   depois **Confirmar**.
+3. O cancelamento vai para o ambiente da própria nota (teste ou real). O certo é a nota virar **⛔ Cancelada**.
+4. Depois disso continuam os botões **Baixar DANFE** (com a tarja "NF-e CANCELADA") e **Baixar XML**, mais
+   **Baixar XML do cancelamento** (o `procEventoNFe`).
+5. Prazo: **até 24 h depois da autorização**. Passou disso, o botão mostra "passou do prazo de 24 h" e o servidor
+   também recusa.
+
+## 7. Liberar as notas reais (produção)
+
+1. Aplique a migration do passo 3.6.
+2. **Notas fiscais → Configurações → Emitente e numeração** → chave **Liberar notas reais (produção)**.
+3. Confira o **próximo número de produção** da série 2 (começa em 1; dá para mudar antes de ligar) e clique
+   **Confirmar e liberar**. O servidor só aceita nota real com essa chave ligada **no banco**, não importa o que a
+   tela mande. Para voltar a só teste, desligue a chave.
+4. No modal da venda passa a aparecer o botão **Autorizar na SEFAZ** (nota real, com o nome real do cliente e dos
+   produtos) e, pequeno embaixo, **Emitir só um teste (homologação)**. Antes de autorizar aparece uma confirmação com
+   cliente, CPF e total.
+5. Venda que já tem nota pelo **Tiny**: aparece "Esta venda já tem nota emitida pelo Tiny" e a nota real só sai depois
+   de marcar a confirmação.
+6. Comece com **uma nota real de valor baixo**. Se algo sair errado, cancele em até 24 h.
+
+## 8. Lista de notas (Gestão → Notas fiscais)
+
+- Abas **Todas · Pendentes · Autorizadas · Rejeitadas · Canceladas** (com contador), **Notas reais / Testes / Todas**
+  (padrão: notas reais; nota de teste tem o selo **TESTE**) e período pela **data de emissão** (padrão: este mês).
+- Busca por cliente, CPF/CNPJ, número da nota ou chave. Clique em **Nº, Data, Cliente ou Valor** para ordenar.
+- Menu **…** de cada nota: Baixar DANFE, Baixar XML, Consultar SEFAZ (pendente), Cancelar (até 24 h), Ver motivo
+  (rejeitada), Abrir venda.
+- Marque as caixinhas para **Imprimir DANFEs** (um PDF só) ou **Baixar XMLs (.zip)**.
+- Rodapé: quantidade e valor das notas filtradas (canceladas e rejeitadas não entram no valor). Páginas de 100.
+- Os filtros ficam no endereço: o F5 não perde.
+- No Histórico de Vendas, cada venda mostra um selo com a nota própria (ex.: "NF-e nº 12 autorizada", "teste", "cancelada").
+
+## 9. XMLs para o contador
+
+**Notas fiscais** → escolha o mês no topo → **Baixar XMLs do mês (.zip)**. Vão só as notas **reais** autorizadas e
+canceladas do mês (pela data de autorização), e as canceladas vão junto com o XML do cancelamento.
+
 ## Problemas comuns
 
 | Aparece | O que fazer |
@@ -87,6 +136,10 @@ Compare o XML baixado com o XML de uma nota real do Tiny (CFOP, CSOSN, IPI, PIS/
 | Brinde "sem NCM" mesmo cadastrado | faltou aplicar `20261121120000_acessorios_ncm.sql` (passo 3.4) |
 | Botão de emitir cinza com aviso amarelo | cliente de fora do RJ: marque **Conferi** depois de conferir |
 | "unable to get local issuer certificate" | o servidor da SEFAZ usa a cadeia ICP-Brasil. Ela já vai no projeto (`api/_lib/icp-brasil.pem`) — faça o Redeploy. Se a SEFAZ trocar de AC, veja "Cadeia ICP-Brasil" abaixo |
+| "notas reais (produção) não liberadas" | ligue a chave do passo 7 (e aplique a migration do passo 3.6) |
+| "SEFAZ não cancelou (501)" / "passou do prazo de 24 h" | o prazo de cancelamento acabou; fale com o contador (nota de devolução) |
+| "SEFAZ não cancelou (573)" | a nota já tinha um cancelamento registrado: use **Consultar SEFAZ** |
+| "Esta venda já tem nota emitida pelo Tiny" | confira no Tiny; se for mesmo para emitir outra, marque a confirmação no modal |
 | Rejeição 972 (responsável técnico) | preencha nome, e-mail e telefone do responsável técnico em Notas fiscais → Editar |
 | Rejeição 1115 / 225 | o sistema já tenta de novo com o grupo IBS/CBS em teste; se continuar, mande o motivo completo |
 

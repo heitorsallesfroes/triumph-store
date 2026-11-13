@@ -3,10 +3,15 @@
 // Segredos só em variáveis de ambiente da Vercel: NFE_CERT_B64, NFE_CERT_SENHA, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 //   GET  ?op=painel                → config, certificado e lista de notas
 //   GET  ?op=venda&id=<venda>      → notas da venda
-//   GET  ?op=xml&id=<nota>         → XML (nfeProc se autorizada)
+//   GET  ?op=xml&id=<nota>[&tipo=cancelamento] → XML (nfeProc se autorizada) ou o procEventoNFe do cancelamento
 //   GET  ?op=sefaz                 → status do serviço (homologação e produção)
-//   POST { op:'emitir', ... }      → emite (FASE 1: só homologação)
+//   GET  ?op=lista&amb=1|2|todas&de=<ISO>&ate=<ISO> → notas do período (tela Notas fiscais), sem XML
+//   GET  ?op=selos                 → situação da nota de cada venda (selo do Histórico de Vendas)
+//   GET  ?op=xmls_mes&mes=AAAA-MM&offset=N → XMLs de produção do mês (contador), em partes de 50
+//   POST { op:'emitir', ... }      → emite (produção só com nfe_config.producao_liberada = true no banco)
 //   POST { op:'consultar', id }    → consulta uma nota pendente
+//   POST { op:'cancelar', id, justificativa } → cancela (evento 110111, até 24 h)
+//   POST { op:'producao', ligar, confirmar, proximo_producao } → liga/desliga as notas reais
 //   POST { op:'config', ... }      → salva dados do emitente e da numeração
 import { criarDb } from './_lib/db.js';
 import * as FIS from './_lib/fiscal.js';
@@ -49,8 +54,11 @@ export function criarHandler(deps = {}) {
     try {
       if (req.method === 'GET') {
         if (q.op === 'venda') return res.status(200).json(await FIS.notasDaVenda(ctx, q.id));
-        if (q.op === 'xml') return res.status(200).json(await FIS.xml(ctx, q.id));
+        if (q.op === 'xml') return res.status(200).json(await FIS.xml(ctx, q.id, q.tipo));
         if (q.op === 'sefaz') return res.status(200).json(await FIS.statusSefaz(ctx));
+        if (q.op === 'lista') return res.status(200).json(await FIS.lista(ctx, q));
+        if (q.op === 'selos') return res.status(200).json(await FIS.selos(ctx));
+        if (q.op === 'xmls_mes') return res.status(200).json(await FIS.xmlsDoMes(ctx, q.mes, q.offset));
         return res.status(200).json(await FIS.painel(ctx));
       }
       if (req.method !== 'POST') return res.status(405).json({ error: 'método não permitido' });
@@ -58,6 +66,8 @@ export function criarHandler(deps = {}) {
       if (b.op === 'emitir') return res.status(200).json(await FIS.emitir(ctx, b));
       if (b.op === 'consultar') return res.status(200).json(await FIS.consultar(ctx, b.id));
       if (b.op === 'config') return res.status(200).json(await FIS.salvarConfig(ctx, b));
+      if (b.op === 'cancelar') return res.status(200).json(await FIS.cancelar(ctx, b.id, b.justificativa));
+      if (b.op === 'producao') return res.status(200).json(await FIS.liberarProducao(ctx, b));
       return res.status(400).json({ error: 'op inválida' });
     } catch (e) {
       const m = String(e && e.message || e);

@@ -7,7 +7,10 @@
 // 7) fluxo de emissão com banco e SEFAZ falsos: autorizada, rejeitada devolve o número, sem resposta = pendente,
 //    1115 em homologação reenvia com IBS/CBS, venda repetida bloqueada, consulta fecha o nfeProc; 8) rota sem login = 401;
 // 9) TLS com a SVRS: cadeia ICP-Brasil (Raiz v10 → AC SERPRO SSLv1) como ca, sem desligar a verificação;
-// 10) brinde puxa o NCM do cadastro de Acessórios (migration accessories.ncm); 11) cliente fora do RJ exige "Conferi".
+// 10) brinde puxa o NCM do cadastro de Acessórios (migration accessories.ncm); 11) cliente fora do RJ exige "Conferi";
+// 12) fase 2: evento de cancelamento no schema oficial (envEventoCancNFe/procEventoCancNFe v1.00) e assinado,
+//     cancelamento com SEFAZ simulada (135 cancela; 501 e sem resposta mantêm autorizada), prazo de 24 h,
+//     trava de produção lida NO BANCO, venda com nota do Tiny, XMLs do mês, lista e selos; brinde com cProd legível.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -245,27 +248,30 @@ await t('mapa de web services: RJ → SVRS (produção e homologação)', () => 
 // ── fluxo com banco e SEFAZ falsos ──
 // filtros do PostgREST que o fiscal.js usa: campo=eq.x e campo=in.(a,b)
 function bancoFalso() {
-  const st: any = { config: { id: 1, ambiente: 2, serie: 2, proximo_producao: 1, proximo_homolog: 1, emitente: EMIT, natop: 'Venda de mercadorias de terceiros para consumidor final', ibpt_fed: 21.08, ibpt_est: 22, tpag: '90', info: N.FRASE_SIMPLES }, notas: [] as any[], rpcs: [] as string[] };
+  const st: any = { vendas: [] as any[], queries: [] as string[], config: { id: 1, ambiente: 2, serie: 2, proximo_producao: 1, proximo_homolog: 1, emitente: EMIT, natop: 'Venda de mercadorias de terceiros para consumidor final', ibpt_fed: 21.08, ibpt_est: 22, tpag: '90', info: N.FRASE_SIMPLES }, notas: [] as any[], rpcs: [] as string[] };
   const casa = (n: any, q: string) => q.split('&').every((p) => {
     const [k, v = ''] = p.split('=');
     if (v.startsWith('eq.')) return String(n[k]) === v.slice(3);
     if (v.startsWith('in.(')) return v.slice(4, -1).split(',').includes(String(n[k]));
+    if (v.startsWith('gte.')) return String(n[k] ?? '') >= decodeURIComponent(v.slice(4));
+    if (v.startsWith('lt.')) return String(n[k] ?? '') < decodeURIComponent(v.slice(3));
     return true;
   });
   return {
     st,
-    select: async (tab: string, q: string) => (tab === 'nfe_config' ? [st.config] : st.notas.filter((n: any) => casa(n, q))),
+    select: async (tab: string, q: string) => { st.queries.push(`${tab}?${q}`); return tab === 'nfe_config' ? [st.config] : tab === 'sales' ? st.vendas.filter((n: any) => casa(n, q)) : st.notas.filter((n: any) => casa(n, q)); },
     insert: async (_tab: string, row: any) => {
       const ativa = (n: any) => ['emitindo', 'pendente', 'autorizada'].includes(n.status);
       if (row.venda_id && st.notas.some((n: any) => n.venda_id === row.venda_id && n.ambiente === row.ambiente && ativa(n))) { const e: any = new Error('duplicate key'); e.code = '23505'; throw e; }
-      const n = { id: `aaaaaaa${st.notas.length}-0000-4000-8000-000000000000`, ...row };
+      const n = { id: `aaaaaaa${st.notas.length}-0000-4000-8000-000000000000`, criado_em: new Date().toISOString(), ...row };
       st.notas.push(n); return n;
     },
     patch: async (tab: string, f: string, d: any) => { if (tab === 'nfe_config') { Object.assign(st.config, d); return; } Object.assign(st.notas.find((n: any) => `id=eq.${n.id}` === f), d); },
     rpc: async (fn: string, a: any) => {
       st.rpcs.push(fn);
-      if (fn === 'nfe_reservar') return st.config.proximo_homolog++;
-      if (fn === 'nfe_devolver') { if (st.config.proximo_homolog === a.p_numero + 1) { st.config.proximo_homolog = a.p_numero; return true; } return false; }
+      const campo = a?.p_ambiente === 1 ? 'proximo_producao' : 'proximo_homolog';
+      if (fn === 'nfe_reservar') return st.config[campo]++;
+      if (fn === 'nfe_devolver') { if (st.config[campo] === a.p_numero + 1) { st.config[campo] = a.p_numero; return true; } return false; }
       return null;
     },
   };
@@ -354,13 +360,13 @@ await t('emitir: 1115 em homologação reenvia com o grupo IBS/CBS (mesma chave)
   assert.equal(chaveDo(envios[0]), chaveDo(envios[1]));
 });
 
-await t('emitir: trava de NCM antes de gastar número; produção bloqueada nesta fase; CNPJ tem que ser o do certificado', async () => {
+await t('emitir: trava de NCM antes de gastar número; produção bloqueada sem a chave no banco; CNPJ tem que ser o do certificado', async () => {
   const db = bancoFalso();
   const semNcm: any = await F.emitir(contexto(db, async () => { throw new Error('não devia enviar'); }), pedido({ itens: [...ITENS, { nome: 'Carregador magnético', ncm: '', qtd: 1, valor: 20 }] }));
   assert.match(semNcm.erro, /produto sem NCM: Carregador magnético/);
   assert.deepEqual(semNcm.sem_ncm, ['Carregador magnético']);
   assert.deepEqual(db.st.rpcs, [], 'nenhum número reservado');
-  assert.match((await F.emitir(contexto(db, async () => ''), pedido({ ambiente: 1 })) as any).erro, /produção ainda não liberada/);
+  assert.match((await F.emitir(contexto(db, async () => ''), pedido({ ambiente: 1 })) as any).erro, /notas reais \(produção\) não liberadas/);
   const outro = N.lerCertificado(certificadoFalso('11222333000181').b64, 'senha-teste');
   assert.match((await F.emitir({ db, cert: () => outro }, pedido()) as any).erro, /não é o mesmo do certificado/);
   assert.deepEqual(db.st.rpcs, []);
@@ -382,6 +388,170 @@ await t('rota /api/nfe: sem login = 401; com JWT válido no Supabase Auth respon
   assert.equal((await chamar({ authorization: 'Bearer xxx.yyy.zzz' })).code, 401);
   const ok = await chamar({ authorization: 'Bearer aaa.bbb.ccc' });
   assert.equal(ok.code, 200); assert.equal(ok.body.cert.cnpj, '49923481000104'); assert.deepEqual(ok.body.ambientes, [2]);
+});
+
+// ── FASE 2: cancelamento (evento 110111), trava de produção, Tiny, contador ──
+const retEvento = (chave: string, cStat: string, motivo: string, amb = 2) => resposta(`<retEnvEvento xmlns="${N.NS}" versao="1.00"><idLote>1</idLote><tpAmb>${amb}</tpAmb><verAplic>SVRS202611</verAplic><cOrgao>33</cOrgao><cStat>128</cStat><xMotivo>Lote de Evento Processado</xMotivo><retEvento versao="1.00"><infEvento><tpAmb>${amb}</tpAmb><verAplic>SVRS202611</verAplic><cOrgao>33</cOrgao><cStat>${cStat}</cStat><xMotivo>${motivo}</xMotivo><chNFe>${chave}</chNFe><tpEvento>110111</tpEvento><xEvento>Cancelamento registrado</xEvento><nSeqEvento>1</nSeqEvento><dhRegEvento>2026-11-13T13:00:00-03:00</dhRegEvento>${cStat === '135' ? '<nProt>333260000000456</nProt>' : ''}</infEvento></retEvento></retEnvEvento>`);
+// emite (SEFAZ falsa autoriza) e devolve a nota guardada no banco falso
+async function notaAutorizada(db: any, o: Record<string, unknown> = {}) {
+  const r: any = await F.emitir(contexto(db, async ({ env }) => retEnvi(env, '100', 'Autorizado o uso da NF-e')), pedido(o));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  return db.st.notas.find((n: any) => n.id === r.id);
+}
+const JUST = 'Venda desfeita a pedido do cliente';
+const depoisDe = (n: any, ms: number) => () => new Date(new Date(n.autorizada_em).getTime() + ms);
+
+await t('evento de cancelamento: schema oficial (envEventoCancNFe v1.00) e assinatura conferida pelo .NET', () => {
+  const chave = N.montarXml(notaBase(), EMIT).chave;
+  const { id, evento } = N.eventoCancelamento({ chave, protocolo: '333260000000123', justificativa: '  Venda   desfeita & cliente <desistiu> ', ambiente: 2, cnpj: EMIT.cnpj, uf: 'RJ', data: new Date('2026-11-13T15:30:00Z') }, cert);
+  assert.equal(id, `ID110111${chave}01`);
+  assert.equal(pega(evento, 'cOrgao'), '33'); assert.equal(pega(evento, 'tpAmb'), '2'); assert.equal(pega(evento, 'tpEvento'), '110111');
+  assert.equal(pega(evento, 'dhEvento'), '2026-11-13T12:30:00-03:00');
+  assert.equal(pega(evento, 'xJust'), 'Venda desfeita &amp; cliente &lt;desistiu&gt;');
+  assert.ok(N.verificarAssinatura(evento, 'infEvento').ok, 'assinatura do infEvento');
+  assert.throws(() => N.eventoCancelamento({ chave, protocolo: '333260000000123', justificativa: 'curta demais', ambiente: 2, cnpj: EMIT.cnpj }, cert), /15 letras/);
+  if (!temPS) { console.log('  (PowerShell não encontrado: validação de schema pulada)'); return; }
+  const env = `<?xml version="1.0" encoding="UTF-8"?><envEvento xmlns="${N.NS}" versao="1.00"><idLote>1</idLote>${evento}</envEvento>`;
+  const proc = N.fecharProcEvento(evento, N.bloco(retEvento(chave, '135', 'Evento registrado e vinculado a NF-e'), 'retEvento'));
+  const s1 = validar('envEventoCancNFe_v1.00.xsd', { envEvento: env }, true);
+  assert.ok(s1.every((l) => l.startsWith('OK') || l.startsWith('ASSINATURA OK')), s1.join('\n'));
+  const s2 = validar('procEventoCancNFe_v1.00.xsd', { procEvento: proc });
+  assert.ok(s2.every((l) => l.startsWith('OK')), s2.join('\n'));
+});
+
+await t('cancelar: SEFAZ simulada registra (135) → nota cancelada, procEventoNFe guardado, DANFE/XML continuam e XML do cancelamento sai', async () => {
+  const db = bancoFalso();
+  const n = await notaAutorizada(db);
+  let chamada: any = null;
+  const ctx = { ...contexto(db, async (a: any) => { chamada = a; return retEvento(n.chave, '135', 'Evento registrado e vinculado a NF-e'); }), agora: depoisDe(n, 3600e3) };
+  assert.match((await F.cancelar(ctx, n.id, 'curta') as any).erro, /15 letras/);
+  assert.equal(chamada, null, 'justificativa curta nem vai para a SEFAZ');
+  const r: any = await F.cancelar(ctx, n.id, JUST);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.match(chamada.url, /^https:\/\/nfe-homologacao\.svrs\.rs\.gov\.br\/ws\/recepcaoevento\/recepcaoevento4\.asmx$/);
+  assert.equal(chamada.metodo, 'nfeRecepcaoEvento');
+  assert.match(chamada.env, new RegExp(`<chNFe>${n.chave}</chNFe>`));
+  assert.match(chamada.env, /<nProt>333260000000123<\/nProt>/);
+  assert.equal(n.status, 'cancelada');
+  assert.ok(n.dados.cancelamento.xml.startsWith(`<?xml version="1.0" encoding="UTF-8"?><procEventoNFe xmlns="${N.NS}" versao="1.00"><evento`));
+  assert.equal(n.dados.cancelamento.protocolo, '333260000000456');
+  assert.equal(n.dados.cancelamento.justificativa, JUST);
+  assert.ok(n.dados.dest, 'os dados da nota continuam');
+  const x: any = await F.xml(ctx, n.id);
+  assert.ok(x.xml.includes('<nfeProc'), 'XML da nota continua'); assert.equal(x.status, 'cancelada'); assert.equal(x.tem_cancelamento, true);
+  const xc: any = await F.xml(ctx, n.id, 'cancelamento');
+  assert.ok(xc.xml.includes('<procEventoNFe'));
+  assert.match((await F.cancelar(ctx, n.id, JUST) as any).erro, /já está cancelada/);
+  // depois de cancelada, a venda pode ter outra nota
+  const outra: any = await F.emitir(contexto(db, async ({ env }) => retEnvi(env, '100', 'Autorizado')), pedido());
+  assert.equal(outra.ok, true, JSON.stringify(outra));
+});
+
+await t('cancelar: SEFAZ recusa (501) ou não responde → a nota continua autorizada', async () => {
+  const db = bancoFalso();
+  const n = await notaAutorizada(db);
+  const rec: any = await F.cancelar({ ...contexto(db, async () => retEvento(n.chave, '501', 'Rejeicao: Prazo de cancelamento superior ao previsto na Legislacao')), agora: depoisDe(n, 60e3) }, n.id, JUST);
+  assert.match(rec.erro, /SEFAZ não cancelou \(501\)/); assert.match(rec.dica, /prazo/);
+  assert.equal(n.status, 'autorizada'); assert.equal(n.dados.cancelamento, undefined);
+  const caiu: any = await F.cancelar({ ...contexto(db, async () => { throw new Error('ECONNRESET'); }), agora: depoisDe(n, 60e3) }, n.id, JUST);
+  assert.match(caiu.erro, /não respondeu .*continua autorizada/);
+  assert.equal(n.status, 'autorizada');
+});
+
+await t('prazo de 24 h: 23h59 cancela; 24h01 bloqueia sem chamar a SEFAZ; só nota autorizada', async () => {
+  const db = bancoFalso();
+  const n = await notaAutorizada(db);
+  let chamou = 0;
+  const transp = async () => { chamou++; return retEvento(n.chave, '135', 'Evento registrado'); };
+  const tarde: any = await F.cancelar({ ...contexto(db, transp), agora: depoisDe(n, 24 * 3600e3 + 60e3) }, n.id, JUST);
+  assert.equal(tarde.prazo_vencido, true); assert.match(tarde.erro, /passou do prazo de 24 h/); assert.equal(chamou, 0);
+  assert.equal(F.prazoCancelamento(n, new Date(new Date(n.autorizada_em).getTime() + 24 * 3600e3)).pode, false);
+  const p = F.prazoCancelamento(n, new Date(new Date(n.autorizada_em).getTime() + 23 * 3600e3 + 59 * 60e3));
+  assert.equal(p.pode, true); assert.equal(p.restanteMs, 60e3);
+  assert.equal(F.prazoCancelamento({ status: 'pendente', autorizada_em: n.autorizada_em }).pode, false);
+  assert.equal(F.prazoCancelamento({ status: 'autorizada', autorizada_em: null }).pode, false);
+  const ok: any = await F.cancelar({ ...contexto(db, transp), agora: depoisDe(n, 23 * 3600e3 + 59 * 60e3) }, n.id, JUST);
+  assert.equal(ok.ok, true); assert.equal(chamou, 1);
+});
+
+await t('trava de produção: o servidor lê a chave NO BANCO; ligada emite na produção com nome real e numeração de produção', async () => {
+  const db = bancoFalso();
+  const transp = async ({ env, url }: any) => { assert.match(url, /^https:\/\/nfe\.svrs\.rs\.gov\.br\//); return retEnvi(env, '100', 'Autorizado o uso da NF-e'); };
+  // sem a coluna (migration não aplicada) e com a chave desligada: bloqueia, mesmo que a tela mande ambiente 1
+  for (const cfg of [{}, { producao_liberada: false }, { producao_liberada: 'true' }]) {
+    Object.assign(db.st.config, cfg);
+    const r: any = await F.emitir(contexto(db, async () => { throw new Error('não devia enviar'); }), pedido({ ambiente: 1, producao_liberada: true }));
+    assert.equal(r.producao_bloqueada, true, JSON.stringify(cfg));
+  }
+  assert.deepEqual(db.st.rpcs, [], 'nenhum número de produção gasto');
+  // ligar: sem a migration avisa; sem confirmar não liga; número não volta para trás
+  const semColuna = bancoFalso(); delete semColuna.st.config.producao_liberada;
+  assert.match((await F.liberarProducao({ db: semColuna, cert: () => cert }, { ligar: true, confirmar: true }) as any).erro, /20261122120000_nfe_producao\.sql/);
+  db.st.config.producao_liberada = false;
+  assert.match((await F.liberarProducao({ db, cert: () => cert }, { ligar: true, proximo_producao: 1 }) as any).erro, /confirme/);
+  assert.equal(db.st.config.producao_liberada, false);
+  const lig: any = await F.liberarProducao({ db, cert: () => cert }, { ligar: true, confirmar: true, proximo_producao: '12' });
+  assert.equal(lig.ok, true); assert.equal(db.st.config.producao_liberada, true); assert.equal(db.st.config.proximo_producao, 12);
+  assert.deepEqual((await F.painel({ db, cert: () => cert }) as any).ambientes, [1, 2]);
+  const r: any = await F.emitir(contexto(db, transp), pedido({ ambiente: 1 }));
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.numero, 12); assert.equal(r.ambiente, 1);
+  const xml = db.st.notas.find((n: any) => n.id === r.id).xml;
+  assert.equal(pega(xml, 'tpAmb'), '1');
+  assert.equal(pega(xml.slice(xml.indexOf('<dest>')), 'xNome'), 'Cliente de Teste', 'produção vai com o nome real');
+  assert.ok(!xml.includes('HOMOLOGACAO'));
+  assert.equal(db.st.config.proximo_homolog, 1, 'numeração de teste não mexe');
+  assert.match((await F.liberarProducao({ db, cert: () => cert }, { ligar: true, confirmar: true, proximo_producao: 5 }) as any).erro, /maior que 12/);
+  // cancelamento usa o ambiente da própria nota (produção)
+  const n = db.st.notas.find((x: any) => x.id === r.id);
+  let url = '';
+  const c: any = await F.cancelar({ ...contexto(db, async (a: any) => { url = a.url; return retEvento(n.chave, '135', 'Evento registrado', 1); }), agora: depoisDe(n, 1000) }, n.id, JUST);
+  assert.equal(c.ok, true); assert.match(url, /^https:\/\/nfe\.svrs\.rs\.gov\.br\/ws\/recepcaoevento/);
+  // desligar: volta a bloquear
+  await F.liberarProducao({ db, cert: () => cert }, { ligar: false });
+  assert.equal((await F.emitir(contexto(db, transp), pedido({ ambiente: 1 })) as any).producao_bloqueada, true);
+});
+
+await t('venda com nota do Tiny: produção exige confirmar; teste não', async () => {
+  const db = bancoFalso();
+  db.st.config.producao_liberada = true;
+  db.st.vendas.push({ id: VENDA, nfe_status: 'emitida', nfe_chave: '33261149923481000104550010000001231000001234' });
+  const transp = async ({ env }: any) => retEnvi(env, '100', 'Autorizado');
+  const r: any = await F.emitir(contexto(db, transp), pedido({ ambiente: 1 }));
+  assert.equal(r.tiny, true); assert.match(r.erro, /já tem nota emitida pelo Tiny/);
+  assert.deepEqual(db.st.rpcs, []);
+  assert.equal((await F.emitir(contexto(db, transp), pedido({ ambiente: 2 })) as any).ok, true);
+  assert.equal((await F.emitir(contexto(db, transp), pedido({ ambiente: 1, confirmar_tiny: true })) as any).ok, true);
+  assert.equal(F.temNotaTiny({ nfe_status: null, nfe_chave: '', nfe_url: null, nfe_id: null }), false);
+});
+
+await t('contador: XMLs do mês só de produção (autorizadas e canceladas), pela data de autorização no horário do RJ, em partes', async () => {
+  const db = bancoFalso();
+  assert.match((await F.xmlsDoMes({ db }, '2026-13') as any).erro, /mês inválido/);
+  const r: any = await F.xmlsDoMes({ db }, '2026-11', 50);
+  const q = db.st.queries.at(-1);
+  assert.match(q, /ambiente=eq\.1&status=in\.\(autorizada,cancelada\)/);
+  assert.match(q, /autorizada_em=gte\.2026-11-01T03:00:00\.000Z&autorizada_em=lt\.2026-12-01T03:00:00\.000Z/);
+  assert.match(q, /xml_canc:dados->cancelamento->>xml/);
+  assert.match(q, /limit=51&offset=50/);
+  assert.equal(r.proximo, 100); assert.equal(r.mais, false);
+  assert.match((await F.xmlsDoMes({ db }, '2026-12') as any).mes, /2026-12/);
+  assert.match(db.st.queries.at(-1), /lt\.2027-01-01T03:00:00\.000Z/);
+});
+
+await t('lista da tela: filtro de ambiente e período por data de emissão, sem XML; data inválida recusa', async () => {
+  const db = bancoFalso();
+  await notaAutorizada(db);
+  const r: any = await F.lista({ db }, { amb: '2', de: '2000-01-01T03:00:00Z', ate: '2999-01-01T03:00:00Z' });
+  assert.equal(r.notas.length, 1); assert.equal(r.truncado, false);
+  const q = db.st.queries.at(-1);
+  assert.match(q, /ambiente=eq\.2/); assert.match(q, /criado_em=gte\./); assert.match(q, /criado_em=lt\./);
+  assert.match(q, /uf:dados->dest->>uf,doc:dados->dest->>doc/);
+  assert.doesNotMatch(q.split('&')[0], /(^|,)xml(,|$)/, 'lista não traz XML');
+  await F.lista({ db }, { amb: 'todas' });
+  assert.doesNotMatch(db.st.queries.at(-1), /ambiente=eq/);
+  assert.match((await F.lista({ db }, { de: '2026-11-01; drop table' }) as any).erro, /data inicial inválida/);
+  const s: any = await F.selos({ db });
+  assert.equal(s.notas.length, 1);
 });
 
 // ── TLS com a SVRS: cadeia ICP-Brasil (sem desligar a verificação) ──
@@ -424,6 +594,30 @@ await t('brinde: NCM vem do acessório; sem NCM (ou brinde digitado à mão) con
   assert.deepEqual(N.itensSemNcm(itens), ['Película']); // a mesma trava no servidor
   assert.ok(N.conferir({ dest: DEST_RJ, itens: [...ITENS, { codigo: 'BRINDE1', nome: 'Película', ncm: '', qtd: 1, valor: 0 }] })
     .some((x: string) => /produto sem NCM: Película .*Acessórios/.test(x)));
+});
+await t('brinde (produto a R$ 0,00 em sale_items): NCM pelo nome se faltar no cadastro e cProd legível', () => {
+  assert.equal(R.ncmPeloNome('Kit de Pulseiras'), '91139000');
+  assert.equal(R.ncmPeloNome('Pulseira Trail Loop Cinza c/ Verde 45/49mm'), '91139000');
+  assert.equal(R.ncmPeloNome('Fone Bluetooth i12'), '85183000');
+  assert.equal(R.ncmPeloNome('Caixa de Som Gold 8W'), '', 'outros ficam vazios (e a nota trava dizendo qual)');
+  assert.equal(R.ncmPeloNome('Microfone de lapela'), '', 'só a palavra "fone"');
+  assert.equal(R.codigoLegivel('Fone Bluetooth', 'i12'), 'FONE-I12');
+  assert.equal(R.codigoLegivel('Kit de', 'Pulseiras'), 'KIT-PULSEIRAS');
+  assert.equal(R.codigoLegivel('Pulseira Aço Milanese Rose Gold 22mm'), 'PULSEIRA-ACO-MILANESE-ROSE-GOLD-22MM');
+  assert.equal(R.codigoLegivel(''), 'BRINDE');
+  assert.ok(R.codigoLegivel('x'.repeat(100)).length <= 60, 'cProd tem no máximo 60');
+  // o cProd legível passa no XML montado (a montagem não muda)
+  const x = N.montarXml(notaBase({ itens: [...ITENS, { codigo: R.codigoLegivel('Fone Bluetooth', 'i12'), nome: 'Fone Bluetooth i12', ncm: R.ncmPeloNome('Fone Bluetooth i12'), qtd: 1, valor: 0, brinde: true }] }), EMIT).xml;
+  assert.ok(x.includes('<cProd>FONE-I12</cProd>')); assert.ok(x.includes('<NCM>85183000</NCM>'));
+});
+await t('tela e servidor concordam: prazo de 24 h e nota do Tiny', () => {
+  const aut = '2026-11-13T15:00:00.000Z';
+  for (const ms of [0, 60e3, 23 * 3600e3 + 59 * 60e3, 24 * 3600e3, 24 * 3600e3 + 1]) {
+    const agora = new Date(Date.parse(aut) + ms);
+    assert.deepEqual(R.prazoCancelamento({ status: 'autorizada', autorizada_em: aut }, agora), F.prazoCancelamento({ status: 'autorizada', autorizada_em: aut }, agora), String(ms));
+  }
+  for (const v of [{ nfe_status: 'emitida' }, { nfe_chave: '1' }, { nfe_url: 'x' }, { nfe_id: 5 }, {}, null]) assert.equal(R.temNotaTiny(v), F.temNotaTiny(v));
+  assert.equal(R.restanteTexto(5 * 3600e3 + 7 * 60e3), '5 h 7 min');
 });
 await t('migration accessories.ncm: coluna nova e preenchimento só de pulseira e fone', () => {
   const sql = readFileSync(path.join(RAIZ, 'supabase', 'migrations', '20261121120000_acessorios_ncm.sql'), 'utf8');

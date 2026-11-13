@@ -359,6 +359,37 @@ export async function consultar(chave, uf, amb, cert, opts) {
   return { cStat: pega(ret, 'cStat'), motivo: pega(ret, 'xMotivo'), protNFe: prot, protCStat: prot ? pega(prot, 'cStat') : null, protocolo: prot ? pega(prot, 'nProt') : null };
 }
 
+// ── cancelamento (evento 110111, docs/emissor-nfe-guia.md) ──
+// até 24 h depois da autorização; justificativa de 15 a 255 letras; vai para o ambiente da própria nota.
+export const justificativaLimpa = (j) => String(j ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+// monta e assina o evento (separado do envio para conferir o XML nos testes)
+export function eventoCancelamento({ chave, protocolo, justificativa, ambiente, cnpj, uf = 'RJ', data = new Date(), seq = 1 }, cert) {
+  const amb = Number(ambiente) === 1 ? 1 : 2;
+  const just = justificativaLimpa(justificativa);
+  if (just.length < 15) throw new Error('a justificativa precisa de pelo menos 15 letras');
+  if (!/^\d{44}$/.test(String(chave || ''))) throw new Error('nota sem chave de acesso');
+  if (!/^\d{15}$/.test(String(protocolo || ''))) throw new Error('nota sem protocolo de autorização');
+  const n = String(seq).padStart(2, '0');
+  const id = `ID110111${chave}${n}`;
+  const inf = `<infEvento Id="${id}"><cOrgao>${UF_COD[String(uf).toUpperCase()]}</cOrgao><tpAmb>${amb}</tpAmb><CNPJ>${dig(cnpj)}</CNPJ><chNFe>${chave}</chNFe><dhEvento>${dhLocal(data, FUSO_UF[String(uf).toUpperCase()] ?? -3)}</dhEvento><tpEvento>110111</tpEvento><nSeqEvento>${Number(seq)}</nSeqEvento><verEvento>1.00</verEvento><detEvento versao="1.00"><descEvento>Cancelamento</descEvento><nProt>${protocolo}</nProt><xJust>${txt(just, 255)}</xJust></detEvento></infEvento>`;
+  return { id, evento: assinar(`<evento xmlns="${NS}" versao="1.00">${inf}</evento>`, 'infEvento', id, cert) };
+}
+export const fecharProcEvento = (evento, retEvento) => `<?xml version="1.0" encoding="UTF-8"?><procEventoNFe xmlns="${NS}" versao="1.00">${evento}${String(retEvento).replace(/^<(\w+:)?retEvento[^>]*>/, '<retEvento versao="1.00">').replace(/<\/(\w+:)?retEvento>$/, '</retEvento>')}</procEventoNFe>`;
+export async function cancelar(dados, cert, opts = {}) {
+  const uf = String(dados.uf || 'RJ').toUpperCase();
+  const amb = Number(dados.ambiente) === 1 ? 1 : 2;
+  const { evento } = eventoCancelamento({ ...dados, uf }, cert);
+  const r = await soap('evento', uf, amb, `<envEvento xmlns="${NS}" versao="1.00"><idLote>${String(Date.now()).slice(-15)}</idLote>${evento}</envEvento>`, cert, opts);
+  const ret = bloco(r, 'retEvento');
+  const cStat = ret ? pega(ret, 'cStat') : pega(r, 'cStat');
+  // 135 = evento registrado e vinculado; 155 = cancelamento homologado fora de prazo
+  const cancelada = ['135', '155'].includes(String(cStat));
+  return {
+    cancelada, cStat, motivo: ret ? pega(ret, 'xMotivo') : pega(r, 'xMotivo'), protocolo: ret ? pega(ret, 'nProt') : null,
+    registrado: ret ? pega(ret, 'dhRegEvento') : null, evento, xml: cancelada ? fecharProcEvento(evento, ret) : null,
+  };
+}
+
 // textos em português para as rejeições mais comuns (o motivo da SEFAZ vem junto, sempre)
 export const DICAS_REJEICAO = {
   204: 'Já existe uma nota com esse número na SEFAZ. Clique em "Consultar SEFAZ".',
@@ -373,4 +404,6 @@ export const DICAS_REJEICAO = {
   778: 'NCM inválido ou inexistente em algum item.',
   972: 'A SEFAZ pede os dados do responsável técnico (preencha em Notas fiscais › Configuração).',
   1115: 'A SEFAZ exigiu o grupo IBS/CBS (reforma tributária).',
+  501: 'Passou do prazo de cancelamento (24 h depois da autorização).',
+  573: 'Essa nota já tem um cancelamento registrado. Clique em "Consultar SEFAZ".',
 };

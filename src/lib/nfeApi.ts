@@ -1,7 +1,7 @@
 // 🧾 NF-e própria: chamadas à rota /api/nfe (função da Vercel) com o login do ERP, CEP → código IBGE (ViaCEP)
 // e o rascunho da nota a partir da venda do Histórico (cliente + itens com o NCM do cadastro de Produtos).
 import { supabase } from './supabase';
-import { ncmDoBrinde } from './nfeRegras';
+import { ncmDoBrinde, ncmPeloNome, codigoLegivel } from './nfeRegras';
 
 export interface NfeDest {
   doc: string; nome: string; email: string; fone: string; cep: string; endereco: string; numero: string;
@@ -12,6 +12,7 @@ export interface NfeNota {
   id: string; venda_id?: string | null; ambiente: number; serie: number; numero: number; chave: string | null;
   status: 'emitindo' | 'pendente' | 'autorizada' | 'rejeitada' | 'cancelada'; cstat: string | null; motivo: string | null;
   protocolo: string | null; cliente?: string | null; valor: number | null; criado_em: string; autorizada_em: string | null;
+  cancelada_em?: string | null; uf?: string | null; doc?: string | null;
 }
 export interface NfeCert { ok: boolean; cnpj?: string; nome?: string; validade?: string; dias?: number; erro?: string | null }
 
@@ -79,19 +80,29 @@ export async function rascunhoDaVenda(venda: Venda): Promise<{ dest: NfeDest; it
   for (const it of (itens || []) as any[]) {
     const p = Array.isArray(it.products) ? it.products[0] : it.products;
     const valor = r2(Number(it.unit_price) || 0);
+    const brinde = valor === 0;
+    const nome = p ? `${p.model || ''} ${p.color || ''}`.trim() : 'Produto';
+    // brinde (produto a R$ 0,00, ex.: "Fone Bluetooth i12"): sem SKU, o código sai legível ("FONE-I12");
+    // sem NCM no cadastro, vai pelo nome (pulseira 91139000, fone 85183000)
+    const codigo = p?.sku ? String(p.sku) : brinde ? codigoLegivel(p?.model || nome, p?.color) : String(it.product_id || '').replace(/-/g, '').slice(0, 8);
     linhas.push({
-      produto_id: it.product_id, codigo: String(p?.sku || String(it.product_id || '').replace(/-/g, '').slice(0, 8)).toUpperCase(),
-      nome: p ? `${p.model || ''} ${p.color || ''}`.trim() : 'Produto', ncm: dig(p?.ncm), qtd: Number(it.quantity) || 1, valor, brinde: valor === 0,
+      produto_id: it.product_id, codigo: codigo.toUpperCase(),
+      nome, ncm: dig(p?.ncm) || (brinde ? ncmPeloNome(nome) : ''), qtd: Number(it.quantity) || 1, valor, brinde,
     });
   }
   const manuais = Array.isArray(venda.manual_items) ? venda.manual_items : [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  manuais.forEach((m: any, k: number) => linhas.push({ codigo: `MAN${k + 1}`, nome: String(m.name || 'Item').trim(), ncm: dig(m.ncm), qtd: Number(m.quantity) || 1, valor: r2(Number(m.price) || 0), brinde: !(Number(m.price) > 0) }));
+  manuais.forEach((m: any, k: number) => {
+    const nome = String(m.name || 'Item').trim();
+    const brinde = !(Number(m.price) > 0);
+    linhas.push({ codigo: brinde ? codigoLegivel(nome) : `MAN${k + 1}`, nome, ncm: dig(m.ncm) || (brinde ? ncmPeloNome(nome) : ''), qtd: Number(m.quantity) || 1, valor: r2(Number(m.price) || 0), brinde });
+  });
   // brindes (acessórios da venda) entram com valor 0,00, como no Tiny; o NCM vem do cadastro de Acessórios
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (acess || []).forEach((a: any, k: number) => {
     const ac = Array.isArray(a.accessories) ? a.accessories[0] : a.accessories;
-    linhas.push({ codigo: `BRINDE${k + 1}`, nome: String(a.custom_name || ac?.name || 'Brinde').trim(), ncm: ncmDoBrinde(a), qtd: Number(a.quantity) || 1, valor: 0, brinde: true });
+    const nome = String(a.custom_name || ac?.name || 'Brinde').trim();
+    linhas.push({ codigo: codigoLegivel(nome) || `BRINDE${k + 1}`, nome, ncm: ncmDoBrinde(a) || ncmPeloNome(nome), qtd: Number(a.quantity) || 1, valor: 0, brinde: true });
   });
   linhas.sort((a, b) => Number(!!a.brinde) - Number(!!b.brinde)); // itens pagos primeiro
   const bruto = r2(linhas.reduce((s, i) => s + numBR(i.qtd) * numBR(i.valor), 0));
@@ -125,4 +136,80 @@ export async function baixarDanfe(notaId: string) {
   const { gerarDanfe } = await import('./danfe');
   const pdf = await gerarDanfe(j.xml, { cancelada: j.status === 'cancelada' });
   pdf.save(`DANFE-${String(j.numero).padStart(9, '0')}-serie${j.serie}${j.ambiente === 2 ? '-HOMOLOGACAO' : ''}.pdf`);
+}
+// XML do cancelamento (procEventoNFe)
+export async function baixarXmlCancelamento(notaId: string) {
+  const j = await nfeGet({ op: 'xml', id: notaId, tipo: 'cancelamento' });
+  if (j.erro || !j.xml) throw new Error(j.erro || 'XML do cancelamento não encontrado');
+  baixarArquivo(`${j.chave || `nfe-${j.numero}`}-cancelamento.xml`, new Blob([j.xml], { type: 'application/xml' }));
+}
+// cancela na SEFAZ (evento 110111): só autorizada, até 24 h, justificativa de 15 a 255 letras
+export async function cancelarNota(notaId: string, justificativa: string) {
+  return nfePost({ op: 'cancelar', id: notaId, justificativa });
+}
+
+// ── vários arquivos de uma vez ──
+type Arquivo = { nome: string; texto: string };
+async function baixarZip(arquivos: Arquivo[], nome: string) {
+  const { default: JSZip } = await import('jszip');
+  const zip = new JSZip();
+  for (const a of arquivos) zip.file(a.nome, a.texto);
+  baixarArquivo(nome, await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }));
+}
+const nomeXml = (n: { chave?: string | null; numero: number; serie: number }) => n.chave || `nfe-${n.serie}-${n.numero}`;
+// contador: XMLs de produção do mês (autorizadas e canceladas, com o XML do cancelamento), buscados em partes
+export async function baixarXmlsDoMes(mes: string, progresso?: (n: number) => void): Promise<number> {
+  const arqs: Arquivo[] = [];
+  let offset = 0, notas = 0;
+  for (let volta = 0; volta < 200; volta++) {
+    const j = await nfeGet({ op: 'xmls_mes', mes, offset: String(offset) });
+    if (j.erro) throw new Error(j.erro);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const n of j.notas as any[]) {
+      notas++;
+      if (n.xml) arqs.push({ nome: `${nomeXml(n)}-nfe.xml`, texto: n.xml });
+      if (n.xml_canc) arqs.push({ nome: `${nomeXml(n)}-cancelamento.xml`, texto: n.xml_canc });
+    }
+    progresso?.(notas);
+    if (!j.mais) break;
+    offset = j.proximo;
+  }
+  if (!notas) throw new Error('nenhuma nota real autorizada ou cancelada nesse mês');
+  await baixarZip(arqs, `NFe-${mes}-producao.zip`);
+  return notas;
+}
+// XMLs das notas escolhidas na lista (com o do cancelamento, se tiver)
+export async function baixarXmlsZip(ids: string[], nome: string, progresso?: (n: number) => void): Promise<number> {
+  const arqs: Arquivo[] = [];
+  let k = 0;
+  for (const id of ids) {
+    const j = await nfeGet({ op: 'xml', id });
+    if (j.xml) arqs.push({ nome: `${nomeXml(j)}${j.status === 'autorizada' || j.status === 'cancelada' ? '-nfe' : '-assinado'}${j.ambiente === 2 ? '-teste' : ''}.xml`, texto: j.xml });
+    if (j.tem_cancelamento) {
+      const c = await nfeGet({ op: 'xml', id, tipo: 'cancelamento' });
+      if (c.xml) arqs.push({ nome: `${nomeXml(j)}-cancelamento${j.ambiente === 2 ? '-teste' : ''}.xml`, texto: c.xml });
+    }
+    progresso?.(++k);
+  }
+  if (!arqs.length) throw new Error('nenhum XML para baixar');
+  await baixarZip(arqs, nome);
+  return arqs.length;
+}
+// um PDF só com os DANFEs das notas escolhidas (só autorizadas e canceladas têm DANFE)
+export async function imprimirDanfes(ids: string[], progresso?: (n: number) => void): Promise<{ feitas: number; puladas: number }> {
+  const { gerarDanfe } = await import('./danfe');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let pdf: any = null;
+  let feitas = 0, puladas = 0, k = 0;
+  for (const id of ids) {
+    const j = await nfeGet({ op: 'xml', id });
+    if (j.xml && (j.status === 'autorizada' || j.status === 'cancelada')) {
+      pdf = await gerarDanfe(j.xml, { cancelada: j.status === 'cancelada', juntarEm: pdf || undefined });
+      feitas++;
+    } else puladas++;
+    progresso?.(++k);
+  }
+  if (!pdf) throw new Error('nenhuma das notas escolhidas tem DANFE (só autorizadas e canceladas)');
+  pdf.save(`DANFEs-${feitas}-notas.pdf`);
+  return { feitas, puladas };
 }
