@@ -7,6 +7,7 @@ import {
   NfeDest, NfeItem, NfeNota, NfeCert, HOMOLOG_DEST, HOMOLOG_ITEM,
   nfeGet, nfePost, cepComIbge, rascunhoDaVenda, baixarDanfe, baixarXml, numBR,
 } from '../lib/nfeApi';
+import { AVISO_FORA_RJ, foraDoRj, itensSemNcm, podeEmitirUf } from '../lib/nfeRegras';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Venda = Record<string, any>;
@@ -38,6 +39,7 @@ export default function NfeModal({ sale, onClose }: Props) {
   const [res, setRes] = useState<Resultado | null>(null);
   const [baixando, setBaixando] = useState('');
   const [erroBaixar, setErroBaixar] = useState('');
+  const [conferiuUf, setConferiuUf] = useState(false);
 
   useEffect(() => {
     let vivo = true;
@@ -64,6 +66,9 @@ export default function NfeModal({ sale, onClose }: Props) {
   }, [sale]);
 
   const setD = (k: keyof NfeDest, v: string) => setDest((d) => (d ? { ...d, [k]: v } : d));
+  // trocou a UF (digitando ou pelo CEP): precisa conferir de novo
+  const ufAtual = dest?.uf || '';
+  useEffect(() => { setConferiuUf(false); }, [ufAtual]);
   const setI = (k: number, campo: keyof NfeItem, v: string) => setItens((l) => l.map((x, j) => (j === k ? { ...x, [campo]: v } : x)));
   const buscarCep = async (cep: string) => {
     if (dig(cep).length !== 8) return;
@@ -79,13 +84,13 @@ export default function NfeModal({ sale, onClose }: Props) {
     const desc = r2(numBR(desconto)), fr = r2(numBR(frete));
     return { prod, desc, fr, nota: r2(prod - desc + fr) };
   }, [itens, desconto, frete]);
-  const semNcm = itens.map((i, k) => ({ i, k })).filter(({ i }) => !/^\d{8}$/.test(dig(i.ncm)))
-    .map(({ i, k }) => i.nome || `item ${k + 1}`);
+  const semNcm = itensSemNcm(itens);
+  const ufLiberada = podeEmitirUf(dest?.uf, conferiuUf);
   const travado = !!(existente && ['autorizada', 'pendente', 'emitindo'].includes(existente.status)) || res?.tipo === 'autorizada' || res?.tipo === 'pendente';
 
   const emitir = async () => {
-    if (!dest) return;
-    if (semNcm.length) { setRes({ tipo: 'erro', msg: `Produto sem NCM: ${semNcm.join(', ')}. Cadastre o NCM em Produtos (ou digite aqui) antes de emitir.`, semNcm }); return; }
+    if (!dest || !ufLiberada) return;
+    if (semNcm.length) { setRes({ tipo: 'erro', msg: `Item sem NCM: ${semNcm.join(', ')}. Cadastre o NCM em Produtos ou Acessórios (ou digite aqui) antes de emitir.`, semNcm }); return; }
     setEnviando(true); setRes(null);
     try {
       const j = await nfePost({
@@ -203,11 +208,19 @@ export default function NfeModal({ sale, onClose }: Props) {
                   </div>
                 </div>
                 {!/^\d{7}$/.test(dest.cod_municipio) && <p className="text-xs text-red-400 mt-1">Digite o CEP para achar a cidade e o código IBGE.</p>}
-                {dest.uf && dest.uf !== 'RJ' && <p className="text-xs text-blue-300 mt-1">Cliente fora do RJ: a nota sai com CFOP 6102 (operação interestadual).</p>}
+                {foraDoRj(dest.uf) && (
+                  <div className="mt-2 rounded-lg border border-yellow-500/60 bg-yellow-500/15 px-3 py-2 text-sm text-yellow-200" role="alert">
+                    <p className="flex items-center gap-2"><AlertTriangle size={15} className="shrink-0" />{AVISO_FORA_RJ}</p>
+                    <label className="flex items-center gap-2 mt-2 text-yellow-100 cursor-pointer select-none">
+                      <input type="checkbox" checked={conferiuUf} onChange={(e) => setConferiuUf(e.target.checked)} className="accent-yellow-500 h-4 w-4" />
+                      Conferi
+                    </label>
+                  </div>
+                )}
               </section>
 
               <section>
-                <h3 className="text-sm font-bold text-orange-400 mb-2">Itens <span className="text-gray-500 font-normal text-xs">brinde entra com valor 0,00 · o NCM vem do cadastro de Produtos</span></h3>
+                <h3 className="text-sm font-bold text-orange-400 mb-2">Itens <span className="text-gray-500 font-normal text-xs">brinde entra com valor 0,00 · o NCM vem do cadastro de Produtos (brinde: de Acessórios)</span></h3>
                 <div className="space-y-2">
                   {itens.map((i, k) => {
                     const ncmOk = /^\d{8}$/.test(dig(i.ncm));
@@ -292,7 +305,8 @@ export default function NfeModal({ sale, onClose }: Props) {
         <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-700 sticky bottom-0 bg-gray-800">
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700">Fechar</button>
           {!travado && (
-            <button type="button" disabled={enviando || carregando || !dest || (cert ? !cert.ok : false)} onClick={emitir}
+            <button type="button" disabled={enviando || carregando || !dest || !ufLiberada || (cert ? !cert.ok : false)} onClick={emitir}
+              title={ufLiberada ? undefined : 'Marque "Conferi" no aviso de cliente fora do RJ'}
               className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-5 py-2 rounded-lg font-semibold flex items-center gap-2">
               {enviando ? <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />Enviando para a SEFAZ…</> : <>🧪 Emitir teste (homologação)</>}
             </button>

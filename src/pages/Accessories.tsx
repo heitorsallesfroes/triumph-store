@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { supabase, Accessory } from '../lib/supabase';
 import { Plus, Pencil, Trash2, X } from 'lucide-react';
 
+const soDigitos = (v: unknown) => String(v ?? '').replace(/D/g, '');
+const ncmFmt = (v: unknown) => { const d = soDigitos(v); return d.length === 8 ? `${d.slice(0, 4)}.${d.slice(4, 6)}.${d.slice(6)}` : d; };
+
 export default function Accessories() {
   const [accessories, setAccessories] = useState<Accessory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -10,6 +13,7 @@ export default function Accessories() {
   const [formData, setFormData] = useState({
     name: '',
     cost: '',
+    ncm: '',
   });
 
   useEffect(() => {
@@ -36,25 +40,24 @@ export default function Accessories() {
     e.preventDefault();
 
     try {
+      const ncm = soDigitos(formData.ncm);
+      if (ncm && ncm.length !== 8) { alert('O NCM tem 8 números (ex: 9113.90.00). Deixe vazio se não souber.'); return; }
       const accessoryData = {
         name: formData.name,
         cost: parseFloat(formData.cost),
+        ncm: ncm || null,
       };
 
-      if (editingAccessory) {
-        const { error } = await supabase
-          .from('accessories')
-          .update(accessoryData)
-          .eq('id', editingAccessory.id);
-
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from('accessories')
-          .insert([accessoryData]);
-
-        if (error) throw error;
+      const salvar = (dados: Partial<typeof accessoryData>) => (editingAccessory
+        ? supabase.from('accessories').update(dados).eq('id', editingAccessory.id)
+        : supabase.from('accessories').insert([dados]));
+      let { error } = await salvar(accessoryData);
+      // migration accessories.ncm ainda não aplicada: salva o resto e avisa que o NCM não foi gravado
+      if (error && /ncm/i.test(error.message || '')) {
+        ({ error } = await salvar({ name: accessoryData.name, cost: accessoryData.cost }));
+        if (!error && ncm) alert('Salvo, mas sem o NCM: falta aplicar a migration 20261121120000_acessorios_ncm.sql no Supabase.');
       }
+      if (error) throw error;
 
       resetForm();
       loadAccessories();
@@ -69,6 +72,7 @@ export default function Accessories() {
     setFormData({
       name: accessory.name,
       cost: accessory.cost.toString(),
+      ncm: ncmFmt(accessory.ncm),
     });
     setShowForm(true);
   };
@@ -94,6 +98,7 @@ export default function Accessories() {
     setFormData({
       name: '',
       cost: '',
+      ncm: '',
     });
     setEditingAccessory(null);
     setShowForm(false);
@@ -167,6 +172,22 @@ export default function Accessories() {
                 />
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  NCM (para a nota fiscal)
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={10}
+                  value={formData.ncm}
+                  onChange={(e) => setFormData({ ...formData, ncm: e.target.value })}
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
+                  placeholder="ex: 9113.90.00 (pulseira), 8518.30.00 (fone)"
+                />
+                <p className="text-xs text-gray-500 mt-1">8 números. Sem NCM o brinde trava a emissão da NF-e.</p>
+              </div>
+
               <div className="flex gap-4 pt-4">
                 <button
                   type="submit"
@@ -198,6 +219,9 @@ export default function Accessories() {
                 Custo
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                NCM
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                 Ações
               </th>
             </tr>
@@ -205,7 +229,7 @@ export default function Accessories() {
           <tbody className="divide-y divide-gray-700">
             {accessories.length === 0 ? (
               <tr>
-                <td colSpan={3} className="px-6 py-8 text-center text-gray-400">
+                <td colSpan={4} className="px-6 py-8 text-center text-gray-400">
                   Nenhum acessório ainda. Clique em "Adicionar Acessório" para começar.
                 </td>
               </tr>
@@ -214,6 +238,11 @@ export default function Accessories() {
                 <tr key={accessory.id} className="hover:bg-gray-700/50">
                   <td className="px-6 py-4 text-white">{accessory.name}</td>
                   <td className="px-6 py-4 text-gray-300">R$ {accessory.cost.toFixed(2)}</td>
+                  <td className="px-6 py-4">
+                    {soDigitos(accessory.ncm).length === 8
+                      ? <span className="text-gray-300 font-mono">{ncmFmt(accessory.ncm)}</span>
+                      : <span className="text-red-400 text-sm">sem NCM</span>}
+                  </td>
                   <td className="px-6 py-4">
                     <div className="flex gap-2">
                       <button

@@ -40,6 +40,10 @@ Produção só depois que você conferir o DANFE de teste.
 1. Supabase → **SQL Editor** → **New query**.
 2. Copie todo o conteúdo de `supabase/migrations/20261120120000_nfe_emissor.sql`, cole e clique **Run**.
 3. Isso cria `nfe_config` (já com os dados da LOJA TRIUMPH LTDA, série 2) e `nfe_notas`, mais as funções de número.
+4. Faça o mesmo com `supabase/migrations/20261121120000_acessorios_ncm.sql`: cria a coluna **NCM** nos acessórios/brindes
+   e já preenche pulseira (**9113.90.00**) e fone (**8518.30.00**). Os outros ficam vazios.
+5. Em **Acessórios / Brindes**, confira a coluna NCM e preencha (botão de editar) o que aparecer "sem NCM".
+   Brinde sem NCM trava a nota.
 
 ## 4. Testar
 
@@ -49,6 +53,9 @@ Produção só depois que você conferir o DANFE de teste.
    - Confira os dados em **Emitente e numeração** (clique Editar para mudar).
 2. **Histórico de Vendas** → numa venda, botão **Nota fiscal**:
    - Confira cliente (CPF, endereço, CEP — a cidade e o código IBGE vêm do CEP) e itens (nome, NCM, qtd, valor).
+   - O NCM do produto vem de **Produtos**; o do brinde vem de **Acessórios / Brindes**. Se faltar, o modal diz qual item está sem e não emite.
+   - Cliente de **fora do RJ**: aparece um aviso amarelo ("a nota sai com CFOP 6102, operação interestadual").
+     Confira a UF e o endereço e marque **Conferi**; só então o botão de emitir libera.
    - Em teste, o nome do cliente e do 1º item aparecem com o texto da SEFAZ ("…HOMOLOGACAO - SEM VALOR FISCAL"). É obrigatório.
    - Clique **Emitir teste (homologação)**.
 3. Resultado:
@@ -76,6 +83,21 @@ Compare o XML baixado com o XML de uma nota real do Tiny (CFOP, CSOSN, IPI, PIS/
 | "não consegui abrir o certificado" | senha errada, ou o base64 não foi copiado inteiro (gere de novo pelo passo 1) |
 | "faça login no ERP" (401) | a sessão expirou: saia e entre de novo |
 | "Aplique no Supabase a migration…" | faltou o passo 3 |
-| "produto sem NCM: …" | cadastre o NCM do produto em **Produtos** (ou digite no modal) |
+| "produto sem NCM: …" / "Item sem NCM: …" | cadastre o NCM em **Produtos** (produto) ou **Acessórios / Brindes** (brinde), ou digite no modal |
+| Brinde "sem NCM" mesmo cadastrado | faltou aplicar `20261121120000_acessorios_ncm.sql` (passo 3.4) |
+| Botão de emitir cinza com aviso amarelo | cliente de fora do RJ: marque **Conferi** depois de conferir |
+| "unable to get local issuer certificate" | o servidor da SEFAZ usa a cadeia ICP-Brasil. Ela já vai no projeto (`api/_lib/icp-brasil.pem`) — faça o Redeploy. Se a SEFAZ trocar de AC, veja "Cadeia ICP-Brasil" abaixo |
 | Rejeição 972 (responsável técnico) | preencha nome, e-mail e telefone do responsável técnico em Notas fiscais → Editar |
 | Rejeição 1115 / 225 | o sistema já tenta de novo com o grupo IBS/CBS em teste; se continuar, mande o motivo completo |
+
+## Cadeia ICP-Brasil (TLS com a SEFAZ)
+
+Os servidores da SVRS (`nfe-homologacao.svrs.rs.gov.br` e `nfe.svrs.rs.gov.br`) usam certificado da ICP-Brasil:
+`*.svrs.rs.gov.br` ← **AC SERPRO SSLv1** ← **AC Raiz Brasileira v10**. Essas ACs não vêm no Node, então o
+`api/_lib/icp-brasil.pem` traz o pacote oficial do ITI (raízes v5 a v12 e as intermediárias) e entra como `ca`
+junto com as raízes padrão. A verificação do servidor **continua ligada** (nada de `rejectUnauthorized: false`).
+
+Para atualizar (se um dia a SEFAZ trocar de AC): baixe o pacote em
+<https://acraiz.icpbrasil.gov.br/credenciadas/CertificadosAC-ICP-Brasil/ACcompactado.zip>, junte todos os
+certificados em PEM no `api/_lib/icp-brasil.pem` (o teste `node scripts/tests/nfe.test.ts` confere que a Raiz v10
+e a AC SERPRO SSLv1 estão lá) e faça o Redeploy.

@@ -1,6 +1,7 @@
 // 🧾 NF-e própria: chamadas à rota /api/nfe (função da Vercel) com o login do ERP, CEP → código IBGE (ViaCEP)
 // e o rascunho da nota a partir da venda do Histórico (cliente + itens com o NCM do cadastro de Produtos).
 import { supabase } from './supabase';
+import { ncmDoBrinde } from './nfeRegras';
 
 export interface NfeDest {
   doc: string; nome: string; email: string; fone: string; cep: string; endereco: string; numero: string;
@@ -65,10 +66,14 @@ export async function cepComIbge(cep: string): Promise<{ endereco: string; bairr
 type Venda = Record<string, any>;
 // monta o rascunho da nota com o que está na venda (os itens vêm do banco; o NCM do cadastro de Produtos)
 export async function rascunhoDaVenda(venda: Venda): Promise<{ dest: NfeDest; itens: NfeItem[]; desconto: number; frete: number; total: number }> {
-  const [{ data: itens }, { data: acess }] = await Promise.all([
+  const [{ data: itens }, brindes] = await Promise.all([
     supabase.from('sale_items').select('product_id, quantity, unit_price, products(id, model, color, sku, ncm)').eq('sale_id', venda.id),
-    supabase.from('sale_accessories').select('quantity, custom_name, accessories(name)').eq('sale_id', venda.id),
+    supabase.from('sale_accessories').select('quantity, custom_name, accessories(name, ncm)').eq('sale_id', venda.id),
   ]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let acess: any[] | null = brindes.data;
+  // antes da migration accessories.ncm a coluna não existe: busca sem ela (o brinde fica sem NCM e a nota trava)
+  if (brindes.error) acess = (await supabase.from('sale_accessories').select('quantity, custom_name, accessories(name)').eq('sale_id', venda.id)).data;
   const linhas: NfeItem[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   for (const it of (itens || []) as any[]) {
@@ -82,11 +87,11 @@ export async function rascunhoDaVenda(venda: Venda): Promise<{ dest: NfeDest; it
   const manuais = Array.isArray(venda.manual_items) ? venda.manual_items : [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   manuais.forEach((m: any, k: number) => linhas.push({ codigo: `MAN${k + 1}`, nome: String(m.name || 'Item').trim(), ncm: dig(m.ncm), qtd: Number(m.quantity) || 1, valor: r2(Number(m.price) || 0), brinde: !(Number(m.price) > 0) }));
-  // brindes (acessórios da venda) entram com valor 0,00, como no Tiny
+  // brindes (acessórios da venda) entram com valor 0,00, como no Tiny; o NCM vem do cadastro de Acessórios
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (acess || []).forEach((a: any, k: number) => {
     const ac = Array.isArray(a.accessories) ? a.accessories[0] : a.accessories;
-    linhas.push({ codigo: `BRINDE${k + 1}`, nome: String(a.custom_name || ac?.name || 'Brinde').trim(), ncm: '', qtd: Number(a.quantity) || 1, valor: 0, brinde: true });
+    linhas.push({ codigo: `BRINDE${k + 1}`, nome: String(a.custom_name || ac?.name || 'Brinde').trim(), ncm: ncmDoBrinde(a), qtd: Number(a.quantity) || 1, valor: 0, brinde: true });
   });
   linhas.sort((a, b) => Number(!!a.brinde) - Number(!!b.brinde)); // itens pagos primeiro
   const bruto = r2(linhas.reduce((s, i) => s + numBR(i.qtd) * numBR(i.valor), 0));

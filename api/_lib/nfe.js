@@ -7,6 +7,8 @@
 // Arquivos em api/_lib não viram função na Vercel (começam com "_").
 import crypto from 'node:crypto';
 import https from 'node:https';
+import tls from 'node:tls';
+import fs from 'node:fs';
 import forge from 'node-forge';
 
 export const NS = 'http://www.portalfiscal.inf.br/nfe';
@@ -176,7 +178,7 @@ export function conferir(nota) {
     if (!(Number(i.valor) >= 0)) e.push(`valor do item ${k + 1} (${i.nome || ''})`);
   });
   const semNcm = itensSemNcm(itens);
-  if (semNcm.length) e.push(`produto sem NCM: ${semNcm.join(', ')} (cadastre o NCM em Produtos)`);
+  if (semNcm.length) e.push(`produto sem NCM: ${semNcm.join(', ')} (cadastre o NCM em Produtos ou, se for brinde, em Acessórios)`);
   return e;
 }
 
@@ -277,6 +279,17 @@ export function preparar(nota, emit, cert) {
 }
 export const fecharProc = (assinado, prot) => `<?xml version="1.0" encoding="UTF-8"?><nfeProc xmlns="${NS}" versao="4.00">${assinado}${String(prot).replace(/^<(\w+:)?protNFe[^>]*>/, '<protNFe versao="4.00">').replace(/<\/(\w+:)?protNFe>$/, '</protNFe>')}</nfeProc>`;
 
+// ── cadeia ICP-Brasil para o TLS com a SEFAZ ──
+// Os servidores da SVRS usam certificado da ICP-Brasil (*.svrs.rs.gov.br ← AC SERPRO SSLv1 ← AC Raiz Brasileira v10),
+// que não vem no Node. Em vez de desligar a verificação, as ACs oficiais do ITI (api/_lib/icp-brasil.pem) entram
+// como "ca" junto com as raízes padrão do Node. A verificação do servidor continua LIGADA.
+export const lerCadeiaIcp = (pem) => String(pem || '').match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) || [];
+let caSefaz = null;
+export function caParaSefaz() {
+  if (!caSefaz) caSefaz = [...tls.rootCertificates, ...lerCadeiaIcp(fs.readFileSync(new URL('./icp-brasil.pem', import.meta.url), 'utf8'))];
+  return caSefaz;
+}
+
 // ── SOAP 1.2 com o certificado (TLS mútuo) ──
 export const envelope = (wsdl, corpo) => `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="${WSDL}${wsdl}">${corpo}</nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 export function soap(servico, uf, amb, corpo, cert, { timeout = 25000, transporte } = {}) {
@@ -286,7 +299,7 @@ export function soap(servico, uf, amb, corpo, cert, { timeout = 25000, transport
   const u = new URL(url);
   return new Promise((ok, falha) => {
     const req = https.request({
-      hostname: u.hostname, path: u.pathname, method: 'POST', key: cert.keyPem, cert: cert.certPem + (cert.cadeia || ''), timeout,
+      hostname: u.hostname, path: u.pathname, method: 'POST', key: cert.keyPem, cert: cert.certPem + (cert.cadeia || ''), ca: caParaSefaz(), timeout,
       headers: { 'Content-Type': `application/soap+xml; charset=utf-8; action="${WSDL}${wsdl}/${metodo}"`, 'Content-Length': Buffer.byteLength(env) },
     }, (res) => {
       let b = ''; res.setEncoding('utf8');

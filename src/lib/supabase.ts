@@ -22,6 +22,7 @@ export interface Accessory {
   id: string;
   name: string;
   cost: number;
+  ncm?: string | null; // NCM do brinde na NF-e própria (8 números)
   created_at: string;
 }
 

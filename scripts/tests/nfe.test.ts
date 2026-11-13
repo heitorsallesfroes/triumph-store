@@ -5,7 +5,9 @@
 // 4) trava de NCM (não emite e diz qual produto); 5) assinatura: conferida aqui E pelo SignedXml do .NET;
 // 6) schemas oficiais NF-e 4.00 (PL_010 v1.30, scripts/tests/fixtures/nfe-xsd) via PowerShell/.NET;
 // 7) fluxo de emissão com banco e SEFAZ falsos: autorizada, rejeitada devolve o número, sem resposta = pendente,
-//    1115 em homologação reenvia com IBS/CBS, venda repetida bloqueada, consulta fecha o nfeProc; 8) rota sem login = 401.
+//    1115 em homologação reenvia com IBS/CBS, venda repetida bloqueada, consulta fecha o nfeProc; 8) rota sem login = 401;
+// 9) TLS com a SVRS: cadeia ICP-Brasil (Raiz v10 → AC SERPRO SSLv1) como ca, sem desligar a verificação;
+// 10) brinde puxa o NCM do cadastro de Acessórios (migration accessories.ncm); 11) cliente fora do RJ exige "Conferi".
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -13,10 +15,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import forge from 'node-forge';
+import tls from 'node:tls';
+import { X509Certificate } from 'node:crypto';
 import * as N from '../../api/_lib/nfe.js';
 import * as F from '../../api/_lib/fiscal.js';
 import { criarHandler } from '../../api/nfe.js';
 import { code128c } from '../../src/lib/danfe.ts';
+import * as R from '../../src/lib/nfeRegras.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const XSD = path.join(AQUI, 'fixtures', 'nfe-xsd');
@@ -377,6 +382,66 @@ await t('rota /api/nfe: sem login = 401; com JWT válido no Supabase Auth respon
   assert.equal((await chamar({ authorization: 'Bearer xxx.yyy.zzz' })).code, 401);
   const ok = await chamar({ authorization: 'Bearer aaa.bbb.ccc' });
   assert.equal(ok.code, 200); assert.equal(ok.body.cert.cnpj, '49923481000104'); assert.deepEqual(ok.body.ambientes, [2]);
+});
+
+// ── TLS com a SVRS: cadeia ICP-Brasil (sem desligar a verificação) ──
+const RAIZ = path.join(AQUI, '..', '..');
+await t('cadeia ICP-Brasil: pacote do ITI com a Raiz v10 e a AC SERPRO SSLv1 (quem assina *.svrs.rs.gov.br)', () => {
+  const pem = readFileSync(path.join(RAIZ, 'api', '_lib', 'icp-brasil.pem'), 'utf8');
+  const certs = N.lerCadeiaIcp(pem).map((b: string) => new X509Certificate(b));
+  assert.ok(certs.length > 100, `só ${certs.length} certificados`);
+  assert.ok(certs.every((c) => c.ca), 'todos têm que ser de AC');
+  const cn = (c: X509Certificate) => (c.subject.match(/CN=([^\n]+)/) || [])[1];
+  const raiz = certs.find((c) => cn(c) === 'Autoridade Certificadora Raiz Brasileira v10');
+  const serpro = certs.find((c) => cn(c) === 'Autoridade Certificadora do SERPRO SSLv1');
+  assert.ok(raiz && serpro, 'falta a Raiz v10 ou a AC SERPRO SSLv1');
+  assert.ok(raiz.verify(raiz.publicKey), 'Raiz v10 é autoassinada');
+  assert.ok(serpro.checkIssued(raiz) && serpro.verify(raiz.publicKey), 'AC SERPRO SSLv1 assinada pela Raiz v10');
+  // o "ca" do TLS = raízes padrão do Node + ICP-Brasil (não substitui as do Node)
+  const ca = N.caParaSefaz();
+  assert.equal(ca.length, tls.rootCertificates.length + certs.length);
+  assert.ok(tls.rootCertificates.every((r) => ca.includes(r)));
+});
+await t('TLS: soap passa o ca da ICP-Brasil, verificação nunca desligada, .pem vai junto na Vercel', () => {
+  const fonte = readFileSync(path.join(RAIZ, 'api', '_lib', 'nfe.js'), 'utf8');
+  assert.match(fonte, /https\.request\(\{[^}]*ca: caParaSefaz\(\)/);
+  for (const f of ['api/_lib/nfe.js', 'api/_lib/fiscal.js', 'api/nfe.js']) {
+    const s = readFileSync(path.join(RAIZ, f), 'utf8');
+    assert.doesNotMatch(s, /rejectUnauthorized|NODE_TLS_REJECT_UNAUTHORIZED/, f);
+  }
+  const vercel = JSON.parse(readFileSync(path.join(RAIZ, 'vercel.json'), 'utf8'));
+  assert.equal(vercel.functions['api/nfe.js'].includeFiles, 'api/_lib/icp-brasil.pem');
+});
+
+// ── brindes com NCM do cadastro de Acessórios ──
+await t('brinde: NCM vem do acessório; sem NCM (ou brinde digitado à mão) continua travando e diz qual', () => {
+  assert.equal(R.ncmDoBrinde({ quantity: 1, accessories: { name: 'Pulseira de silicone', ncm: '9113.90.00' } }), '91139000');
+  assert.equal(R.ncmDoBrinde({ quantity: 1, accessories: [{ name: 'Fone', ncm: '85183000' }] }), '85183000');
+  assert.equal(R.ncmDoBrinde({ quantity: 1, accessories: { name: 'Película' } }), ''); // antes da migration / sem NCM
+  assert.equal(R.ncmDoBrinde({ quantity: 1, custom_name: 'Brinde avulso', accessories: null }), '');
+  const itens = [{ nome: 'Relógio', ncm: '91021900' }, { nome: 'Pulseira', ncm: '91139000' }, { nome: 'Película', ncm: '' }];
+  assert.deepEqual(R.itensSemNcm(itens), ['Película']);
+  assert.deepEqual(N.itensSemNcm(itens), ['Película']); // a mesma trava no servidor
+  assert.ok(N.conferir({ dest: DEST_RJ, itens: [...ITENS, { codigo: 'BRINDE1', nome: 'Película', ncm: '', qtd: 1, valor: 0 }] })
+    .some((x: string) => /produto sem NCM: Película .*Acessórios/.test(x)));
+});
+await t('migration accessories.ncm: coluna nova e preenchimento só de pulseira e fone', () => {
+  const sql = readFileSync(path.join(RAIZ, 'supabase', 'migrations', '20261121120000_acessorios_ncm.sql'), 'utf8');
+  assert.match(sql, /alter table accessories add column if not exists ncm text;/);
+  assert.match(sql, /set ncm = '91139000' where coalesce\(ncm, ''\) = '' and name ilike '%pulseira%'/);
+  assert.match(sql, /set ncm = '85183000' where coalesce\(ncm, ''\) = '' and name ilike '%fone%'/);
+  assert.equal((sql.match(/^update /gm) || []).length, 2, 'só pulseira e fone');
+  assert.doesNotMatch(sql, /\b(drop|delete|truncate)\b/i);
+});
+
+// ── cliente fora do RJ ──
+await t('fora do RJ: aviso amarelo e o botão só libera com "Conferi"; RJ não pede nada', () => {
+  assert.equal(R.AVISO_FORA_RJ, 'Cliente de fora do RJ: a nota sai com CFOP 6102 (operação interestadual). Confira antes de emitir.');
+  assert.equal(R.foraDoRj('RJ'), false); assert.equal(R.foraDoRj('rj'), false); assert.equal(R.foraDoRj(''), false);
+  assert.equal(R.foraDoRj('SP'), true);
+  assert.equal(R.podeEmitirUf('RJ', false), true);
+  assert.equal(R.podeEmitirUf('SP', false), false);
+  assert.equal(R.podeEmitirUf('SP', true), true);
 });
 
 await t('nenhum segredo no repositório: .env.example só com os nomes', () => {
