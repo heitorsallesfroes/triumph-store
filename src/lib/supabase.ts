@@ -14,6 +14,14 @@ export interface Product {
   price: number;
   current_stock: number;
   minimum_stock: number;
+  category?: string | null;
+  sku?: string | null;
+  ncm?: string | null;
+  // migration 20261123120000_produtos_cadastro.sql (antes dela não vêm: ativo, origem 0, "Pc", "SEM GTIN")
+  ativo?: boolean | null;
+  origem?: number | null;
+  unidade?: string | null;
+  gtin?: string | null;
   created_at: string;
   updated_at: string;
 }

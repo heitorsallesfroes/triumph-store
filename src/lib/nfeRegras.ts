@@ -13,6 +13,14 @@ export const ncmDoBrinde = (saleAccessory: any): string => {
 export const itensSemNcm = (itens: { nome?: string; ncm?: unknown }[]): string[] =>
   itens.map((i, k) => ({ i, k })).filter(({ i }) => !/^\d{8}$/.test(dig(i.ncm))).map(({ i, k }) => i.nome || `item ${k + 1}`);
 
+// origem, unidade e GTIN do cadastro de Produtos (padrão 0, "Pc" e "SEM GTIN" quando não tem ou antes da migration)
+export function dadosFiscais(p: { origem?: unknown; unidade?: unknown; gtin?: unknown } | null | undefined): { orig: number; unidade: string; gtin: string } {
+  const o = parseInt(String(p?.origem ?? ''), 10);
+  const un = String(p?.unidade ?? '').trim().slice(0, 6);
+  const g = String(p?.gtin ?? '').trim();
+  return { orig: o >= 0 && o <= 8 ? o : 0, unidade: un || 'Pc', gtin: g || 'SEM GTIN' };
+}
+
 // cliente fora do RJ: a nota sai com CFOP 6102 (interestadual) e o botão só libera depois de marcar "Conferi"
 export const AVISO_FORA_RJ = 'Cliente de fora do RJ: a nota sai com CFOP 6102 (operação interestadual). Confira antes de emitir.';
 export const foraDoRj = (uf: unknown) => { const u = String(uf ?? '').trim().toUpperCase(); return u !== '' && u !== 'RJ'; };

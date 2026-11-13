@@ -120,6 +120,26 @@ await t('gabarito do Tiny no XML (ide, itens, impostos, transp, pag, infCpl)', (
   assert.equal(Number(vt[3]), N.r2(m.tFed + m.tEst));
 });
 
+await t('origem, unidade e GTIN do cadastro de Produtos: usa quando tem, padrão 0 / Pc / SEM GTIN', () => {
+  const itens = [{ ...ITENS[0], gtin: '7891000315507', orig: 2, unidade: 'Un' }, { ...ITENS[1], gtin: '7891000315508' }, ITENS[2]];
+  const { xml } = N.montarXml(notaBase({ ambiente: 1, itens }), EMIT);
+  assert.deepEqual(todos(xml, 'cEAN'), ['7891000315507', 'SEM GTIN', 'SEM GTIN'], 'dígito verificador errado vira SEM GTIN');
+  assert.deepEqual(todos(xml, 'cEANTrib'), ['7891000315507', 'SEM GTIN', 'SEM GTIN']);
+  assert.deepEqual(todos(xml, 'uCom'), ['Un', 'Pc', 'Pc']);
+  assert.deepEqual(todos(xml, 'orig'), ['2', '0', '0']);
+  for (const [g, ok] of [['7891000315507', true], ['96385074', true], ['012345678905', true], ['17891000315504', true], ['7891000315508', false], ['123', false], ['SEM GTIN', false], ['', false], [null, false]] as [unknown, boolean][]) {
+    assert.equal(N.gtinNota(g), ok ? g : 'SEM GTIN', String(g));
+  }
+  // o pedido da tela (limparPedido) passa o GTIN, a origem e a unidade; sem eles fica o padrão
+  const p = F.limparPedido({ itens: [{ nome: 'A', qtd: 1, valor: 10, gtin: '7891000315507', orig: '2', unidade: 'Un' }, { nome: 'B', qtd: 1, valor: 5 }] });
+  assert.deepEqual(p.itens.map((i: any) => [i.gtin, i.orig, i.unidade]), [['7891000315507', 2, 'Un'], ['SEM GTIN', 0, 'Pc']]);
+  // rascunho da nota (src/lib/nfeRegras.ts): do produto, ou o padrão antes da migration
+  assert.deepEqual(R.dadosFiscais({ origem: 1, unidade: 'Un', gtin: '7891000315507' }), { orig: 1, unidade: 'Un', gtin: '7891000315507' });
+  assert.deepEqual(R.dadosFiscais({ origem: null, unidade: '', gtin: '' }), { orig: 0, unidade: 'Pc', gtin: 'SEM GTIN' });
+  assert.deepEqual(R.dadosFiscais(undefined), { orig: 0, unidade: 'Pc', gtin: 'SEM GTIN' });
+  assert.deepEqual(R.dadosFiscais({ origem: 9 }), { orig: 0, unidade: 'Pc', gtin: 'SEM GTIN' }, 'origem fora de 0–8 vira 0');
+});
+
 await t('brinde entra com valor 0,00', () => {
   const { xml } = N.montarXml(notaBase(), EMIT);
   const det3 = xml.slice(xml.indexOf('<det nItem="3">'), xml.indexOf('</det>', xml.indexOf('<det nItem="3">')));
@@ -192,7 +212,9 @@ const amostras = () => {
   const ibs = N.preparar(notaBase({ ibscbs: true }), EMIT, cert);
   const cnpjDest = N.preparar(notaBase({ ambiente: 1, dest: { ...DEST_RJ, doc: '11.222.333/0001-81' }, pagamento: { tPag: '99' } }), EMIT, cert);
   const umItem = N.preparar(notaBase({ ambiente: 1, itens: [ITENS[0]], desconto: 0 }), EMIT, cert);
-  return { prod, homolog, fora, ibs, cnpjDest, umItem };
+  // dados fiscais do cadastro de Produtos: GTIN de verdade, origem 2 e unidade "Un"
+  const gtin = N.preparar(notaBase({ ambiente: 1, itens: [{ ...ITENS[0], gtin: '7891000315507', orig: 2, unidade: 'Un' }, ITENS[2]], desconto: 0 }), EMIT, cert);
+  return { prod, homolog, fora, ibs, cnpjDest, umItem, gtin };
 };
 
 await t('schemas oficiais NF-e 4.00 (PL_010 v1.30) + assinatura conferida pelo .NET (SignedXml)', () => {

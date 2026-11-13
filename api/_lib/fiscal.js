@@ -163,7 +163,7 @@ export function limparPedido(b) {
     itens: (Array.isArray(b.itens) ? b.itens : []).slice(0, 100).map((i) => ({
       produto_id: i.produto_id ? s(i.produto_id, 40) : null,
       codigo: s(i.codigo, 60), nome: s(i.nome, 120), ncm: dig(i.ncm), cest: dig(i.cest),
-      unidade: s(i.unidade || 'Pc', 6) || 'Pc', orig: Math.max(0, Math.min(8, parseInt(i.orig, 10) || 0)), csosn: '102',
+      unidade: s(i.unidade || 'Pc', 6) || 'Pc', gtin: NFE.gtinNota(i.gtin), orig: Math.max(0, Math.min(8, parseInt(i.orig, 10) || 0)), csosn: '102',
       qtd: num(i.qtd), valor: r2(num(i.valor)), brinde: !!i.brinde,
     })).filter((i) => i.qtd > 0),
     desconto: Math.max(0, r2(num(b.desconto))),

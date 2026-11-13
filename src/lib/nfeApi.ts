@@ -1,13 +1,13 @@
 // 🧾 NF-e própria: chamadas à rota /api/nfe (função da Vercel) com o login do ERP, CEP → código IBGE (ViaCEP)
 // e o rascunho da nota a partir da venda do Histórico (cliente + itens com o NCM do cadastro de Produtos).
 import { supabase } from './supabase';
-import { ncmDoBrinde, ncmPeloNome, codigoLegivel } from './nfeRegras';
+import { ncmDoBrinde, ncmPeloNome, codigoLegivel, dadosFiscais } from './nfeRegras';
 
 export interface NfeDest {
   doc: string; nome: string; email: string; fone: string; cep: string; endereco: string; numero: string;
   complemento: string; bairro: string; municipio: string; uf: string; cod_municipio: string;
 }
-export interface NfeItem { produto_id?: string | null; codigo: string; nome: string; ncm: string; qtd: number | string; valor: number | string; unidade?: string; brinde?: boolean }
+export interface NfeItem { produto_id?: string | null; codigo: string; nome: string; ncm: string; qtd: number | string; valor: number | string; unidade?: string; orig?: number; gtin?: string; brinde?: boolean }
 export interface NfeNota {
   id: string; venda_id?: string | null; ambiente: number; serie: number; numero: number; chave: string | null;
   status: 'emitindo' | 'pendente' | 'autorizada' | 'rejeitada' | 'cancelada'; cstat: string | null; motivo: string | null;
@@ -67,10 +67,14 @@ export async function cepComIbge(cep: string): Promise<{ endereco: string; bairr
 type Venda = Record<string, any>;
 // monta o rascunho da nota com o que está na venda (os itens vêm do banco; o NCM do cadastro de Produtos)
 export async function rascunhoDaVenda(venda: Venda): Promise<{ dest: NfeDest; itens: NfeItem[]; desconto: number; frete: number; total: number }> {
-  const [{ data: itens }, brindes] = await Promise.all([
-    supabase.from('sale_items').select('product_id, quantity, unit_price, products(id, model, color, sku, ncm)').eq('sale_id', venda.id),
+  const [itensRes, brindes] = await Promise.all([
+    supabase.from('sale_items').select('product_id, quantity, unit_price, products(id, model, color, sku, ncm, origem, unidade, gtin)').eq('sale_id', venda.id),
     supabase.from('sale_accessories').select('quantity, custom_name, accessories(name, ncm)').eq('sale_id', venda.id),
   ]);
+  // antes da migration de produtos (origem, unidade, gtin) as colunas não existem: busca sem elas (0, "Pc", "SEM GTIN")
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let itens: any[] | null = itensRes.data;
+  if (itensRes.error) itens = (await supabase.from('sale_items').select('product_id, quantity, unit_price, products(id, model, color, sku, ncm)').eq('sale_id', venda.id)).data;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let acess: any[] | null = brindes.data;
   // antes da migration accessories.ncm a coluna não existe: busca sem ela (o brinde fica sem NCM e a nota trava)
@@ -88,6 +92,7 @@ export async function rascunhoDaVenda(venda: Venda): Promise<{ dest: NfeDest; it
     linhas.push({
       produto_id: it.product_id, codigo: codigo.toUpperCase(),
       nome, ncm: dig(p?.ncm) || (brinde ? ncmPeloNome(nome) : ''), qtd: Number(it.quantity) || 1, valor, brinde,
+      ...dadosFiscais(p),
     });
   }
   const manuais = Array.isArray(venda.manual_items) ? venda.manual_items : [];

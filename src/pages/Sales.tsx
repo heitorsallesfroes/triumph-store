@@ -87,6 +87,8 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
 
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+  // produto desativado (Produtos › Desativar) some da busca da Nova Venda; a lista completa continua para estoque e edição
+  const productsAtivos = products.filter((p) => p.ativo !== false);
   const [accessories, setAccessories] = useState<Accessory[]>([]);
   const [motoboys, setMotoboys] = useState<Motoboy[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -1047,14 +1049,14 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
           />
         </div>
       <QuickAdd
-  products={products}
+  products={productsAtivos}
   accessories={accessories}
   onAddProduct={addProductFromSearch}
   onAddAccessory={addAccessoryFromSearch}
   onAddManualItem={addManualItem}
 />
         <UnifiedSearch
-          products={products}
+          products={productsAtivos}
           accessories={accessories}
           onAddProduct={addProductFromSearch}
           onAddAccessory={addAccessoryFromSearch}

@@ -156,6 +156,14 @@ export function cnpjValido(c) {
   return dv(12) === Number(c[12]) && dv(13) === Number(c[13]);
 }
 // itens sem NCM: devolve os nomes dos produtos (a nota não sai enquanto houver algum)
+// GTIN/EAN do cadastro de Produtos (cEAN/cEANTrib): 8, 12, 13 ou 14 números com o dígito verificador certo; senão "SEM GTIN"
+export function gtinNota(g) {
+  const s = String(g ?? '').trim();
+  if (!/^(\d{8}|\d{12,14})$/.test(s)) return 'SEM GTIN';
+  const d = s.split('').map(Number), dv = d.pop();
+  const soma = d.reverse().reduce((a, x, i) => a + x * (i % 2 === 0 ? 3 : 1), 0);
+  return (10 - (soma % 10)) % 10 === dv ? s : 'SEM GTIN';
+}
 export const itensSemNcm = (itens) => (itens || []).filter((i) => !/^\d{8}$/.test(dig(i.ncm))).map((i) => String(i.nome || i.codigo || 'item sem nome').trim());
 export function conferir(nota) {
   const e = [];
@@ -243,7 +251,8 @@ export function montarXml(nota, emit) {
   const det = itens.map((i, k) => {
     const nome = amb === 2 && k === 0 ? HOMOLOG_ITEM : txt(i.nome, 120);
     const un = txt(i.unidade || 'Pc', 6);
-    const prod = `<prod><cProd>${txt(i.codigo || String(k + 1), 60)}</cProd><cEAN>SEM GTIN</cEAN><xProd>${nome}</xProd><NCM>${dig(i.ncm)}</NCM>${dig(i.cest).length === 7 ? tag('CEST', dig(i.cest)) : ''}<CFOP>${i.cfop || cfopPadrao}</CFOP><uCom>${un}</uCom><qCom>${i.qtd.toFixed(4)}</qCom><vUnCom>${i.valor.toFixed(10)}</vUnCom><vProd>${d2(i.vProd)}</vProd><cEANTrib>SEM GTIN</cEANTrib><uTrib>${un}</uTrib><qTrib>${i.qtd.toFixed(4)}</qTrib><vUnTrib>${i.valor.toFixed(10)}</vUnTrib>${i.vFrete > 0 ? tag('vFrete', d2(i.vFrete)) : ''}${i.vDesc > 0 ? tag('vDesc', d2(i.vDesc)) : ''}<indTot>1</indTot></prod>`;
+    const gtin = gtinNota(i.gtin);
+    const prod = `<prod><cProd>${txt(i.codigo || String(k + 1), 60)}</cProd><cEAN>${gtin}</cEAN><xProd>${nome}</xProd><NCM>${dig(i.ncm)}</NCM>${dig(i.cest).length === 7 ? tag('CEST', dig(i.cest)) : ''}<CFOP>${i.cfop || cfopPadrao}</CFOP><uCom>${un}</uCom><qCom>${i.qtd.toFixed(4)}</qCom><vUnCom>${i.valor.toFixed(10)}</vUnCom><vProd>${d2(i.vProd)}</vProd><cEANTrib>${gtin}</cEANTrib><uTrib>${un}</uTrib><qTrib>${i.qtd.toFixed(4)}</qTrib><vUnTrib>${i.valor.toFixed(10)}</vUnTrib>${i.vFrete > 0 ? tag('vFrete', d2(i.vFrete)) : ''}${i.vDesc > 0 ? tag('vDesc', d2(i.vDesc)) : ''}<indTot>1</indTot></prod>`;
     const imp = `<imposto><vTotTrib>${d2(i.vTotTrib)}</vTotTrib><ICMS><ICMSSN102><orig>${Number(i.orig) || 0}</orig><CSOSN>${i.csosn || '102'}</CSOSN></ICMSSN102></ICMS><IPI><cEnq>999</cEnq><IPINT><CST>53</CST></IPINT></IPI><PIS><PISNT><CST>08</CST></PISNT></PIS><COFINS><COFINSNT><CST>08</CST></COFINSNT></COFINS>${nota.ibscbs ? ibscbsItem(i) : ''}</imposto>`;
     return `<det nItem="${k + 1}">${prod}${imp}</det>`;
   }).join('');
