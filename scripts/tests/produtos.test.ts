@@ -22,6 +22,17 @@ t('categoria: smartwatch/pulseira/fone; "acessorio" antigo pelo nome; sem catego
   assert.equal(P.rotuloCategoria('acessorio'), 'Outros acessórios');
 });
 
+t('banco: category só smartwatch ou acessorio (cadastro e lote)', () => {
+  assert.equal(P.categoriaBanco('smartwatch'), 'smartwatch');
+  for (const c of ['pulseira', 'fone', 'acessorio', '', null, undefined]) assert.equal(P.categoriaBanco(c), 'acessorio', String(c));
+  const f = { ...P.FORM_VAZIO, model: 'Pulseira Milanese', color: 'Rose' };
+  for (const [c, esp] of [['smartwatch', 'smartwatch'], ['pulseira', 'acessorio'], ['fone', 'acessorio'], ['acessorio', 'acessorio']] as const) {
+    assert.equal(P.paraBanco({ ...f, category: c }).base.category, esp, c);
+  }
+  // e a tela continua classificando pelo nome depois de gravar
+  assert.equal(P.categoriaDe({ category: P.paraBanco({ ...f, category: 'pulseira' }).base.category, model: f.model, color: f.color }), 'pulseira');
+});
+
 t('margem sobre o preço, com cor: ≥ 50% verde, 30–50% amarela, < 30% vermelha', () => {
   assert.deepEqual(P.margem(100, 300), { valor: 200, pct: 66.7, cor: 'verde' });
   assert.equal(P.margem(100, 200).cor, 'verde', '50% exato é verde');
@@ -118,7 +129,10 @@ t('duplicar: copia tudo menos SKU, cor e estoque', () => {
 
 t('edição em lote: só o que muda; preço por valor ou %; confirmação com a quantidade', () => {
   const l = [prod({ id: 'a', price: 100, category: 'acessorio', model: 'Pulseira X', ncm: '91139000' }), prod({ id: 'b', price: 199.9 }), prod({ id: 'c', price: 0, ativo: false })];
-  assert.deepEqual(P.alteracoesLote(l, { tipo: 'categoria', categoria: 'pulseira' }), [{ id: 'a', dados: { category: 'pulseira' } }, { id: 'b', dados: { category: 'pulseira' } }, { id: 'c', dados: { category: 'pulseira' } }]);
+  // pulseira/fone/outros gravam 'acessorio' (o banco só conhece smartwatch/acessorio)
+  assert.deepEqual(P.alteracoesLote(l, { tipo: 'categoria', categoria: 'pulseira' }), [{ id: 'b', dados: { category: 'acessorio' } }, { id: 'c', dados: { category: 'acessorio' } }]);
+  assert.deepEqual(P.alteracoesLote(l, { tipo: 'categoria', categoria: 'fone' }), P.alteracoesLote(l, { tipo: 'categoria', categoria: 'acessorio' }));
+  assert.ok(P.alteracoesLote([prod({ id: 'z', category: 'pulseira' })], { tipo: 'categoria', categoria: 'pulseira' }).every((m) => m.dados.category === 'acessorio'), 'pulseira gravada por engano volta para acessorio');
   assert.deepEqual(P.alteracoesLote(l, { tipo: 'categoria', categoria: 'smartwatch' }).map((m) => m.id), ['a']);
   assert.deepEqual(P.alteracoesLote(l, { tipo: 'ncm', ncm: '91139000' }).map((m) => m.id), ['b', 'c']);
   assert.deepEqual(P.alteracoesLote(l, { tipo: 'preco', modo: 'pct', valor: 10 }), [{ id: 'a', dados: { price: 110 } }, { id: 'b', dados: { price: 219.89 } }]);

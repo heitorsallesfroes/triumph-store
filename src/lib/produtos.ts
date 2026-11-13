@@ -5,7 +5,10 @@
 // Antes da migration 20261123120000_produtos_cadastro.sql as colunas ativo/origem/unidade/gtin não existem:
 // tudo aqui trata a falta delas como "ativo", origem 0, unidade "Pc" e "SEM GTIN".
 
+// Categoria = classificação da TELA. No banco, products.category é só 'smartwatch' ou 'acessorio' (Controle de
+// Estoque, Nova Venda e a extensão só conhecem esses dois); pulseira/fone saem do nome. Gravar sempre via categoriaBanco.
 export type Categoria = 'smartwatch' | 'pulseira' | 'fone' | 'acessorio';
+export type CategoriaBanco = 'smartwatch' | 'acessorio';
 export type FiltroCat = 'todos' | Categoria;
 export type Situacao = 'todos' | 'sem-ncm' | 'sem-estoque' | 'estoque-baixo' | 'inativos';
 export type Ordem = 'nome' | 'preco' | 'margem' | 'estoque';
@@ -38,7 +41,8 @@ const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n
 export const r2 = (v: number) => Math.round(v * 100) / 100;
 
 // ── categoria, situação ──
-// "acessorio" antigo (importado do Tiny) vira Pulseiras/Fones pelo nome; sem categoria = outros acessórios
+// "acessorio" vira Pulseiras/Fones pelo nome; sem categoria = outros acessórios
+// ('pulseira'/'fone' gravados por engano antes da migration 20261124120000 ainda são lidos como tal)
 export function categoriaDe(p: Pick<Produto, 'category' | 'model' | 'color'>): Categoria {
   const c = String(p.category || '').toLowerCase();
   if (c === 'smartwatch' || c === 'pulseira' || c === 'fone') return c;
@@ -47,6 +51,8 @@ export function categoriaDe(p: Pick<Produto, 'category' | 'model' | 'color'>): C
   if (/\bfones?\b/i.test(nome)) return 'fone';
   return 'acessorio';
 }
+// o que vai para products.category: só 'smartwatch' ou 'acessorio'
+export const categoriaBanco = (c: Categoria | string | null | undefined): CategoriaBanco => (c === 'smartwatch' ? 'smartwatch' : 'acessorio');
 export const rotuloCategoria = (c: Categoria) => CATEGORIAS.find((x) => x[0] === c)?.[1] || c;
 export const ativo = (p: Pick<Produto, 'ativo'>) => p.ativo !== false;
 export const ncmOk = (ncm: unknown) => /^\d{8}$/.test(dig(ncm));
@@ -156,7 +162,7 @@ export function validar(f: Form, outros: Produto[] = [], idAtual?: string | null
 export function paraBanco(f: Form) {
   return {
     base: {
-      model: f.model.trim(), color: f.color.trim(), category: f.category, supplier: f.supplier.trim(), sku: f.sku.trim() || null,
+      model: f.model.trim(), color: f.color.trim(), category: categoriaBanco(f.category), supplier: f.supplier.trim(), sku: f.sku.trim() || null,
       ncm: dig(f.ncm) || null, cost: r2(numBR(f.cost) || 0), price: r2(numBR(f.price) || 0),
     },
     fiscal: { origem: Number(f.origem) || 0, unidade: f.unidade.trim() || UNIDADE_PADRAO, gtin: gtinLimpo(f.gtin) },
@@ -185,7 +191,7 @@ export function loteValido(l: Lote): string | null {
 export function alteracoesLote(lista: Produto[], l: Lote): { id: string; dados: Record<string, unknown> }[] {
   const out: { id: string; dados: Record<string, unknown> }[] = [];
   for (const p of lista) {
-    if (l.tipo === 'categoria' && p.category !== l.categoria) out.push({ id: p.id, dados: { category: l.categoria } });
+    if (l.tipo === 'categoria' && p.category !== categoriaBanco(l.categoria)) out.push({ id: p.id, dados: { category: categoriaBanco(l.categoria) } });
     if (l.tipo === 'ncm' && dig(p.ncm) !== dig(l.ncm)) out.push({ id: p.id, dados: { ncm: dig(l.ncm) } });
     if (l.tipo === 'preco') { const n = precoNovo(p.price, l.modo, l.valor); if (n !== r2(num(p.price))) out.push({ id: p.id, dados: { price: n } }); }
     if (l.tipo === 'ativo' && ativo(p) !== l.ativo) out.push({ id: p.id, dados: { ativo: l.ativo } });
