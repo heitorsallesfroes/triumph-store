@@ -68,12 +68,18 @@ numa chamada viraria buraco no gráfico, não um valor baixo. Para conferir com 
    gráfico, filtro, selo e CSV), separada de **Meta Ads** e **Não rastreada**. Anúncio vale primeiro.
 
 ## Aba Rastreio
-- Período 7 / 14 / 30 / 90 dias: **Cliques → Conversas iniciadas → Vendas → Faturamento**, Clique→conversa,
-  Conversa→venda, **Melhores links** (mais faturamento; empate: mais conversas, mais cliques), **Por canal** e
-  **Últimos cliques**. Vendas = as do ERP ligadas à conversa (💰, 📈 ou telefone), depois do 1º contato.
+- **Links diretos (padrão)**: cada link mostra para copiar `https://wa.me/5521980921808?text=<frase do link>` (sem
+  intermediário) e o **QR Code** desse endereço. A conversa é ligada ao link pela frase (igual às automações). O
+  `/l/<apelido>` fica só no **Avançado: link com contagem de cliques** (recolhido).
+- Cards: **Conversas · Vendas · Faturamento · Conversa→venda**. Por link: os mesmos, mais **Cliques** e
+  **Clique→conv.** só se o `/l/` foi usado no período (senão "—" e "link direto não conta cliques").
+  **Melhores links** (mais faturamento; empate: mais conversas), **Por canal** e **Últimos cliques** (do `/l/`).
+  Vendas = as do ERP ligadas à conversa (💰, 📈 ou telefone), depois do 1º contato.
+- Frase: sem emoji (não salva) e diferente das dos outros links ativos e das automações com frase (aviso enquanto
+  digita; não salva). Precisa caber no QR Code (o link direto inteiro até 180 bytes).
 - **Novo link / Editar**: apelido (vira o link), canal (Bio, Comentários/ManyChat, Stories, Reel/post específico,
   Destaques, Outro), post ligado (da lista de posts da Visão geral; obrigatório em "Reel/post"), mensagem e código
-  (sugerido pelo apelido). Prévia do que o cliente manda. **Copiar link** e **QR code** (PNG/SVG, gerado no
+  (sugerido pelo apelido). Prévia do que o cliente manda. **Copiar** (link direto) e **QR Code** (PNG/SVG, gerado no
   navegador, `src/lib/qr.ts`). Não apaga: "Desligar" (ativo).
 - Grava SÓ em `ig_links`. Regras em `src/lib/igLinks.ts`.
 

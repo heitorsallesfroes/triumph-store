@@ -1,4 +1,6 @@
-// Instagram FASE 2 — links rastreáveis (https://triumph-store.vercel.app/l/<apelido>). Regras puras (sem React nem
+// Instagram FASE 2 — links do Rastreio. Padrão: o link DIRETO do WhatsApp (wa.me com a frase própria do link, sem
+// intermediário; a conversa é ligada pela frase). Opcional: https://triumph-store.vercel.app/l/<apelido> (conta cliques).
+// Frase: sem emoji e diferente das dos outros links ativos e das automações. Regras puras (sem React nem
 // Supabase), conferidas em scripts/tests/igLinks.test.ts:
 //   apelido e código válidos, texto pré-preenchido, link do WhatsApp, código antigo achado na mensagem (a mesma regra
 //   da extensão 2.18.0), a FRASE de cada link (2.18.3: única, reconhecida mesmo com pequenas edições — a MESMA regra
@@ -65,6 +67,11 @@ export function cleanMessage(message: string | null | undefined): string {
 export const prefilledText = (message: string) => cleanMessage(message);
 export const waUrl = (text: string, phone = STORE_WA) => `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
 export const publicUrl = (slug: string) => `${SITE_URL}/l/${slug}`;
+// o link DIRETO do WhatsApp de um link (wa.me com a frase própria, sem o /l/ no meio): o padrão da aba Rastreio
+export const directUrl = (l: Pick<IgLink, 'message'>) => waUrl(prefilledText(l.message));
+// o QR Code (src/lib/qr.ts: até a versão 9, nível M = 180 bytes) precisa caber o link direto inteiro
+export const QR_MAX_BYTES = 180;
+export const directFitsQr = (l: Pick<IgLink, 'message'>) => new TextEncoder().encode(directUrl(l)).length <= QR_MAX_BYTES;
 
 // Código [IG-...] dentro da 1ª mensagem do cliente (a MESMA regra da extensão: wa-bridge.js igCodeOf). O texto
 // pode vir com outras coisas antes/depois; vale o primeiro código.
@@ -121,7 +128,19 @@ export const hasEmoji = (s: string) => /\p{Extended_Pictographic}/u.test(String(
 
 // ── validação do formulário ──
 export interface LinkDraft { slug: string; channel: IgChannel; code: string; message: string; media_id: string | null; media_permalink: string | null; media_caption: string | null; note: string | null; active: boolean }
-export function validateDraft(d: LinkDraft, others: (Pick<IgLink, 'id' | 'slug' | 'code'> & Partial<Pick<IgLink, 'message' | 'active'>>)[], selfId: string | null = null): string[] {
+// frases das automações (aba Automações, só leitura): as do modo "frase" mandam um wa.me com a frase própria
+export interface AutoPhrase { id: string; name: string; link_mode: string; wa_phrase: string | null }
+type OtherLink = Pick<IgLink, 'id' | 'slug' | 'code'> & Partial<Pick<IgLink, 'message' | 'active'>>;
+// a frase repete (igual ou parecida demais) a de outro link ATIVO ou a de uma automação com frase? → o aviso, ou null
+export function phraseClash(message: string, others: OtherLink[], autos: AutoPhrase[] = [], selfId: string | null = null): string | null {
+  if (normPhrase(message).length < PHRASE_MIN) return null;
+  const link = others.find((o) => o.id !== selfId && o.active !== false && o.message && phrasesTooSimilar(message, o.message));
+  if (link) return `A frase está igual ou parecida demais com a do link "${link.slug}". Cada link precisa de uma frase própria.`;
+  const auto = autos.find((a) => a.link_mode !== 'link' && a.wa_phrase && phrasesTooSimilar(message, a.wa_phrase));
+  if (auto) return `A frase está igual ou parecida demais com a da automação "${auto.name}". Cada link precisa de uma frase própria.`;
+  return null;
+}
+export function validateDraft(d: LinkDraft, others: OtherLink[], selfId: string | null = null, autos: AutoPhrase[] = []): string[] {
   const errs: string[] = [];
   const rest = others.filter((o) => o.id !== selfId);
   if (!SLUG_RE.test(d.slug)) errs.push('Apelido: de 2 a 40 letras minúsculas, números ou "-" (sem acento nem espaço).');
@@ -131,11 +150,13 @@ export function validateDraft(d: LinkDraft, others: (Pick<IgLink, 'id' | 'slug' 
   if (!isChannel(d.channel)) errs.push('Escolha o canal.');
   if (!d.message.trim()) errs.push('Escreva a frase (a mensagem pré-preenchida).');
   else if (d.message.length > 500) errs.push('Frase: no máximo 500 caracteres.');
-  else if (normPhrase(d.message).length < PHRASE_MIN) errs.push(`Frase: escreva pelo menos ${PHRASE_MIN} letras (sem contar pontuação e emoji).`);
+  else if (hasEmoji(d.message)) errs.push('Frase: tire os emojis (no iPhone o emoji chega quebrado e a conversa pode não ser reconhecida).');
+  else if (normPhrase(d.message).length < PHRASE_MIN) errs.push(`Frase: escreva pelo menos ${PHRASE_MIN} letras (sem contar pontuação).`);
   else if (d.active) {
-    const clash = rest.find((o) => o.active !== false && o.message && phrasesTooSimilar(d.message, o.message));
-    if (clash) errs.push(`A frase está igual ou parecida demais com a do link "${clash.slug}". Cada link ativo precisa de uma frase própria.`);
+    const clash = phraseClash(d.message, rest, autos);
+    if (clash) errs.push(clash);
   }
+  if (d.message.trim() && !directFitsQr(d)) errs.push('Frase longa demais para o QR Code do link direto: encurte a frase.');
   if (d.channel === 'post' && !d.media_id) errs.push('Para "Reel/post específico", escolha o post.');
   return errs;
 }

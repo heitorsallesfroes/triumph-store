@@ -2,6 +2,7 @@
 //   node scripts/tests/igPhrase.test.ts
 // - a regra (src/lib/igLinks.ts): normalização, frase com pequenas edições/texto a mais, empate, frase curta
 // - frases parecidas demais (validação do formulário) e as 3 frases iniciais
+// - link direto (padrão): frase sem emoji, diferente das das automações, wa.me que cabe no QR Code
 // - a ponte da extensão (extension/wa-bridge.js, bloco "igMatch") dá o MESMO resultado que o ERP (casos + sorteio)
 // - resultados por link: conversas ligadas por frase / horário / código
 // - migration 20261117120000 (idempotente, não apaga) e a página /l/ (sem código nem emoji na frase padrão)
@@ -9,9 +10,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {
-  DEFAULT_MESSAGE, PHRASE_MIN, hasEmoji, linkResults, matchOf, matchPhrase, normPhrase, phraseDistance, phrasesTooSimilar, validateDraft,
-  type IgLink, type LinkConversation, type LinkDraft,
+  DEFAULT_MESSAGE, PHRASE_MIN, directFitsQr, directUrl, hasEmoji, linkResults, matchOf, matchPhrase, normPhrase, phraseClash, phraseDistance, phrasesTooSimilar, validateDraft,
+  type AutoPhrase, type IgLink, type LinkConversation, type LinkDraft,
 } from '../../src/lib/igLinks.ts';
+import { qrEncode } from '../../src/lib/qr.ts';
 
 const tests: [string, () => void][] = [];
 const test = (n: string, f: () => void) => tests.push([n, f]);
@@ -61,6 +63,22 @@ test('formulário: frase única entre os links ATIVOS (link desligado não conta
   assert.deepEqual(validateDraft({ ...d, active: false }, LINKS), [], 'link desligado pode repetir');
   assert.deepEqual(validateDraft({ ...d, message: 'Olá! Vi o reel de vocês e quero saber mais' }, LINKS), [], 'igual à de um link desligado: pode');
   assert.deepEqual(validateDraft({ ...d, slug: 'bio', code: 'IG-BIO', message: BIO }, LINKS, 'l1'), [], 'o próprio link não conta');
+});
+
+test('link direto (padrão): frase sem emoji, diferente das das automações; wa.me da loja e cabe no QR Code', () => {
+  const d: LinkDraft = { slug: 'nova', channel: 'outro', code: 'IG-NOVA', message: 'Olá! Vi o reel novo de vocês e quero um orçamento', media_id: null, media_permalink: null, media_caption: null, note: null, active: true };
+  const AUTOS: AutoPhrase[] = [{ id: 'a1', name: 'Promoção', link_mode: 'frase', wa_phrase: AUTO }, { id: 'a2', name: 'Com link', link_mode: 'link', wa_phrase: 'Olá! Quero o cupom de desconto do sorteio' }];
+  assert.deepEqual(validateDraft(d, LINKS, null, AUTOS), []);
+  assert.match(validateDraft({ ...d, message: 'Olá! Vi o reel novo de vocês 😍 e quero um orçamento' }, LINKS, null, AUTOS).join(' '), /tire os emojis/i, 'emoji não salva');
+  assert.match(validateDraft({ ...d, message: 'ola vi o comentario no instagram e quero saber da promocao' }, LINKS, null, AUTOS).join(' '), /parecida demais com a da automação "Promoção"/);
+  assert.match(phraseClash('ola vi o comentario no instagram e quero saber da promocao', LINKS, AUTOS) || '', /automação "Promoção"/, 'o aviso enquanto digita');
+  assert.match(phraseClash(BIO, LINKS, AUTOS) || '', /link "bio"/);
+  assert.equal(phraseClash(BIO, LINKS, AUTOS, 'l1'), null, 'o próprio link não conta');
+  assert.deepEqual(validateDraft({ ...d, message: 'Olá! Quero o cupom de desconto do sorteio' }, LINKS, null, AUTOS), [], 'automação com link /l/ não tem frase própria');
+  assert.equal(directUrl({ message: BIO }), `https://wa.me/5521980921808?text=${encodeURIComponent(BIO)}`);
+  assert.ok(directFitsQr({ message: BIO }) && directFitsQr({ message: STORIES }) && directFitsQr({ message: COMENT }));
+  assert.equal(qrEncode(directUrl({ message: BIO })).version <= 9, true);
+  assert.match(validateDraft({ ...d, message: `Olá! ${'Quero saber mais do relógio. '.repeat(6)}` }, LINKS, null, AUTOS).join(' '), /longa demais para o QR Code/);
 });
 
 // ── a ponte da extensão: o bloco "igMatch" de wa-bridge.js dá o MESMO resultado ──

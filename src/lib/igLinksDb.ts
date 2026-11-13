@@ -1,4 +1,4 @@
-// Leitura e gravação da aba Instagram → Rastreio. Grava SÓ em ig_links (criar/editar link; nunca apaga: "Desligar").
+// Leitura e gravação da aba Instagram → Rastreio. Grava SÓ em ig_links (criar/editar link; nunca apaga: "Desligar"); ig_automations só é lida (as frases).
 // Cliques (ig_link_clicks) e conversas (ig_link_leads) só leitura. As vendas vêm do mesmo Rastreamento da página
 // WhatsApp (src/lib/waTrackingDb.ts → src/lib/waTracking.ts). Sem a migration 20261113120000: "missing" = true.
 import { supabase } from './supabase';
@@ -6,7 +6,7 @@ import { fetchAllRows } from './resumoAnualCalc';
 import { loadTracking } from './waTrackingDb';
 import { buildConversations, businessHoursOf, conversationsIn } from './waTracking';
 import { addDays, spDay, spStartOfDay, DAY_MS, type Range } from './waPanel';
-import type { IgClick, IgLink, LinkConversation, LinkDraft, LinkMatch } from './igLinks';
+import type { AutoPhrase, IgClick, IgLink, LinkConversation, LinkDraft, LinkMatch } from './igLinks';
 
 export const IG_MIGRATION = '20261113120000_ig_links.sql';
 export const IG_PHRASE_MIGRATION = '20261117120000_ig_link_phrases.sql'; // 2.18.3: frases dos links + como a conversa foi ligada
@@ -51,4 +51,14 @@ export async function loadLinkConversations(r: Range): Promise<{ convs: LinkConv
     .filter((c) => c.periodLead && c.ig)
     .map((c) => { const ig = c.ig as { code: string; linkId?: string | null; match?: LinkMatch }; return { linkId: ig.linkId || null, code: ig.code, firstAt: c.firstAt, sales: c.sales, revenue: c.revenue, match: ig.match || 'codigo' }; });
   return { convs, missing: load.missing };
+}
+
+// frases das automações (só leitura; aba Automações), para a frase de um link não repetir a de uma automação.
+// Sem a tabela ig_automations: lista vazia.
+export async function loadAutoPhrases(): Promise<AutoPhrase[]> {
+  try {
+    const { data, error } = await supabase.from('ig_automations').select('id, name, link_mode, wa_phrase');
+    if (error) return [];
+    return (data as unknown as AutoPhrase[]) || [];
+  } catch { return []; }
 }
