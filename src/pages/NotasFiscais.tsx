@@ -5,7 +5,8 @@
 // No topo, recolhível, "Configurações": certificado, conexão com a SEFAZ, emitente e numeração (com a chave
 // "Liberar notas reais"). Também: aviso de produtos sem NCM e "Baixar XMLs do mês (.zip)" para o contador.
 // Só leitura do banco, fora as ações que já existiam (consultar, cancelar, salvar a configuração).
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   FileText, RefreshCw, Wifi, Settings, ShieldCheck, ShieldAlert, ChevronDown, ChevronRight, MoreHorizontal,
   Search, Printer, Archive, AlertTriangle, ArrowUp, ArrowDown, ExternalLink,
@@ -15,7 +16,7 @@ import {
 } from '../lib/nfeApi';
 import { prazoCancelamento } from '../lib/nfeRegras';
 import {
-  ABAS, AMBS, PERIODOS, Filtros, NotaLista, Ordem, aplicar, hrefComFiltros, hrefSemFiltros, intervalo, lerFiltros, trocarOrdem, hojeRJ,
+  ABAS, AMBS, PERIODOS, Filtros, NotaLista, Ordem, aplicar, hrefComFiltros, hrefSemFiltros, intervalo, lerFiltros, trocarOrdem, hojeRJ, posicaoMenu,
 } from '../lib/nfeLista';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/resumoAnualCalc';
@@ -46,6 +47,43 @@ const SELO: Record<string, string> = {
 };
 const TXT_SELO: Record<string, string> = { autorizada: 'Autorizada', pendente: 'Pendente', emitindo: 'Enviando', rejeitada: 'Rejeitada', cancelada: 'Cancelada' };
 const mesAtual = () => hojeRJ().slice(0, 7);
+
+// menu "…" por cima de tudo (portal no body, position fixed pela posição do botão): não fica cortado pela caixa da
+// lista; vira para cima quando não cabe embaixo; fecha ao clicar fora, rolar a página, mudar o tamanho ou apertar Esc
+function MenuFlutuante({ ancora, onFechar, children }: { ancora: HTMLElement; onFechar: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setPos(posicaoMenu(ancora.getBoundingClientRect(), { w: el.offsetWidth, h: el.offsetHeight }, { w: window.innerWidth, h: window.innerHeight }));
+  }, [ancora]);
+  useEffect(() => {
+    const fora = (e: PointerEvent) => {
+      const alvo = e.target as Node;
+      if (ref.current?.contains(alvo) || ancora.contains(alvo)) return; // o próprio botão abre/fecha sozinho
+      onFechar();
+    };
+    const tecla = (e: KeyboardEvent) => { if (e.key === 'Escape') { onFechar(); ancora.focus(); } };
+    document.addEventListener('pointerdown', fora, true);
+    window.addEventListener('keydown', tecla);
+    window.addEventListener('scroll', onFechar, true);
+    window.addEventListener('resize', onFechar);
+    return () => {
+      document.removeEventListener('pointerdown', fora, true);
+      window.removeEventListener('keydown', tecla);
+      window.removeEventListener('scroll', onFechar, true);
+      window.removeEventListener('resize', onFechar);
+    };
+  }, [ancora, onFechar]);
+  return createPortal(
+    <div ref={ref} role="menu" style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? 'visible' : 'hidden' }}
+      className="z-[1000] w-56 rounded-lg border border-gray-600 bg-gray-800 shadow-xl py-1 text-left">
+      {children}
+    </div>,
+    document.body,
+  );
+}
 const ambDoServidor = (a: Filtros['amb']) => (a === 'reais' ? '1' : a === 'testes' ? '2' : 'todas');
 
 export default function NotasFiscais() {
@@ -73,7 +111,8 @@ export default function NotasFiscais() {
   const [carregandoLista, setCarregandoLista] = useState(true);
   const [erroLista, setErroLista] = useState('');
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [menu, setMenu] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ id: string; botao: HTMLElement } | null>(null);
+  const fecharMenu = useCallback(() => setMenu(null), []);
   const [aberta, setAberta] = useState<{ id: string; tipo: 'cancelar' | 'motivo' } | null>(null);
   const [lote, setLote] = useState('');
 
@@ -90,12 +129,6 @@ export default function NotasFiscais() {
   useEffect(() => { const t = setTimeout(() => setFiltros((f) => (f.busca === buscaTxt ? f : { ...f, busca: buscaTxt, pagina: 1 })), 250); return () => clearTimeout(t); }, [buscaTxt]);
   // seleção e menus valem só para o que está na tela
   useEffect(() => { setSel(new Set()); setAberta(null); }, [filtros.aba, filtros.amb, filtros.periodo, filtros.de, filtros.ate, filtros.busca]);
-  useEffect(() => {
-    if (!menu) return;
-    const fechar = () => setMenu(null);
-    window.addEventListener('click', fechar);
-    return () => window.removeEventListener('click', fechar);
-  }, [menu]);
 
   const carregarConfig = useCallback(async () => {
     setErro('');
@@ -370,17 +403,18 @@ export default function NotasFiscais() {
 
       {/* ── produtos sem NCM ── */}
       {semNcm.length > 0 && (
-        <section className="rounded-xl border border-yellow-500/50 bg-yellow-500/10 px-5 py-3 text-sm text-yellow-200">
+        // fundo âmbar claro com texto âmbar escuro nos dois temas (as classes amber-* não são trocadas pelo tema claro)
+        <section className="rounded-xl border border-amber-400 bg-amber-100 px-5 py-3 text-sm text-amber-950">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <p className="flex items-center gap-2"><AlertTriangle size={15} className="shrink-0" /><span><b>{semNcm.length} produto{semNcm.length > 1 ? 's' : ''} sem NCM</b>: a nota trava quando um deles entra (brinde sem cadastro vai pelo nome: pulseira e fone).</span></p>
+            <p className="flex items-center gap-2"><AlertTriangle size={15} className="shrink-0 text-amber-700" /><span><b>{semNcm.length} produto{semNcm.length > 1 ? 's' : ''} sem NCM</b>: a nota trava quando um deles entra (brinde sem cadastro vai pelo nome: pulseira e fone).</span></p>
             <div className="flex gap-2">
-              <button type="button" onClick={() => setVerNcm((v) => !v)} className="text-xs underline hover:text-yellow-100">{verNcm ? 'esconder lista' : 'ver lista'}</button>
-              <a href="?pagina=produtos" className="text-xs bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1.5 rounded-lg inline-flex items-center gap-1"><ExternalLink size={12} />Abrir Produtos</a>
+              <button type="button" onClick={() => setVerNcm((v) => !v)} className="text-xs font-semibold text-amber-900 underline hover:text-amber-950">{verNcm ? 'esconder lista' : 'ver lista'}</button>
+              <a href="?pagina=produtos" className="text-xs font-semibold bg-amber-800 hover:bg-amber-900 text-amber-50 px-3 py-1.5 rounded-lg inline-flex items-center gap-1"><ExternalLink size={12} />Abrir Produtos</a>
             </div>
           </div>
           {verNcm && (
-            <ul className="mt-2 max-h-56 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-x-6 text-xs text-yellow-100/90">
-              {semNcm.map((p) => <li key={p.id} className="py-0.5">{`${p.model || ''} ${p.color || ''}`.trim() || '(sem nome)'}{p.sku ? <span className="text-yellow-100/60"> · {p.sku}</span> : ''}</li>)}
+            <ul className="mt-2 max-h-56 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-x-6 text-xs text-amber-950">
+              {semNcm.map((p) => <li key={p.id} className="py-0.5">{`${p.model || ''} ${p.color || ''}`.trim() || '(sem nome)'}{p.sku ? <span className="text-amber-800"> · {p.sku}</span> : ''}</li>)}
             </ul>
           )}
         </section>
@@ -468,12 +502,12 @@ export default function NotasFiscais() {
                     <td className="py-2 pr-3">{n.uf || '—'}</td>
                     <td className={`py-2 pr-3 text-right whitespace-nowrap ${['cancelada', 'rejeitada'].includes(n.status) ? 'text-gray-500 line-through' : ''}`}>{brl(n.valor)}</td>
                     <td className="py-2 pr-3"><span className={`inline-block text-xs font-semibold border rounded px-2 py-0.5 ${SELO[n.status] || SELO.cancelada}`}>{TXT_SELO[n.status] || n.status}</span></td>
-                    <td className="py-2 pr-4 text-right relative">
-                      <button type="button" aria-haspopup="menu" aria-expanded={menu === n.id} aria-label={`Ações da nota ${n.numero}`} onClick={(e) => { e.stopPropagation(); setMenu(menu === n.id ? null : n.id); }} className="p-1.5 rounded hover:bg-gray-700">
+                    <td className="py-2 pr-4 text-right">
+                      <button type="button" aria-haspopup="menu" aria-expanded={menu?.id === n.id} aria-label={`Ações da nota ${n.numero}`} onClick={(e) => { const b = e.currentTarget; setMenu((m) => (m?.id === n.id ? null : { id: n.id, botao: b })); }} className="p-1.5 rounded hover:bg-gray-700">
                         {ocupado.endsWith(n.id) || ocupado === n.id ? <RefreshCw size={16} className="animate-spin" /> : <MoreHorizontal size={16} />}
                       </button>
-                      {menu === n.id && (
-                        <div role="menu" className="absolute right-4 top-9 z-20 w-56 rounded-lg border border-gray-600 bg-gray-800 shadow-xl py-1 text-left" onClick={(e) => e.stopPropagation()}>
+                      {menu?.id === n.id && (
+                        <MenuFlutuante ancora={menu.botao} onFechar={fecharMenu}>
                           {['autorizada', 'cancelada'].includes(n.status) && itemMenu('Baixar DANFE', () => baixar(n, 'pdf'))}
                           {['autorizada', 'cancelada'].includes(n.status) && itemMenu('Baixar XML', () => baixar(n, 'xml'))}
                           {n.status === 'cancelada' && itemMenu('Baixar XML do cancelamento', () => baixar(n, 'canc'))}
@@ -485,7 +519,7 @@ export default function NotasFiscais() {
                           {n.venda_id
                             ? <a role="menuitem" href={`?pagina=historico&venda=${n.venda_id}`} className="block px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700">Abrir venda</a>
                             : <span className="block px-3 py-1.5 text-xs text-gray-500">Sem venda ligada</span>}
-                        </div>
+                        </MenuFlutuante>
                       )}
                     </td>
                   </tr>,

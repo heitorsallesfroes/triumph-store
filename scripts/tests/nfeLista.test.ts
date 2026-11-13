@@ -103,6 +103,20 @@ t('filtros no endereço: só o que muda do padrão, com prefixo nf_; F5 lê de v
   assert.deepEqual(L.lerFiltros('?nf_aba=xpto&nf_amb=1&nf_periodo=ano&nf_de=ontem&nf_pag=-4&nf_dir=x'), L.PADRAO);
 });
 
+t('menu "…" flutuante: embaixo do botão alinhado à direita; vira para cima sem espaço; nunca sai da tela', () => {
+  const tela = { w: 1280, h: 800 }, menu = { w: 224, h: 200 };
+  const botao = (top: number, right = 1200) => ({ top, bottom: top + 30, left: right - 30, right });
+  assert.deepEqual(L.posicaoMenu(botao(100), menu, tela), { top: 134, left: 976, up: false });
+  const baixo = L.posicaoMenu(botao(700), menu, tela);
+  assert.equal(baixo.up, true); assert.equal(baixo.top, 700 - 4 - 200);
+  assert.equal(L.posicaoMenu(botao(558), menu, tela).up, false, 'cabe certinho embaixo (558+30+4+200 = 800-8)');
+  assert.equal(L.posicaoMenu(botao(559), menu, tela).up, true);
+  assert.equal(L.posicaoMenu(botao(100, 100), menu, tela).left, 8, 'botão perto da borda esquerda: não sai da tela');
+  // tela baixa demais para o menu: fica do lado com mais espaço e preso dentro da tela
+  const apertado = L.posicaoMenu(botao(20), { w: 224, h: 300 }, { w: 400, h: 200 });
+  assert.equal(apertado.up, false); assert.equal(apertado.top, 8);
+});
+
 t('selo do Histórico: real antes de teste; rejeitada só se não houver outra', () => {
   assert.equal(R.seloDaVenda([]), null);
   assert.deepEqual(R.seloDaVenda([{ ambiente: 1, numero: 12, status: 'autorizada' }]), { texto: 'NF-e nº 12 autorizada', cor: 'verde', teste: false });

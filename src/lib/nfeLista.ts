@@ -124,3 +124,16 @@ export function hrefSemFiltros(href: string): string {
   for (const [, p] of CHAVES) url.searchParams.delete(p);
   return url.pathname + url.search + url.hash;
 }
+
+// ── menu "…" flutuante (position fixed, por cima de tudo) ──
+// abre embaixo do botão, alinhado à direita dele; vira para cima quando não cabe embaixo; nunca sai da tela
+export interface Caixa { top: number; bottom: number; left: number; right: number }
+export function posicaoMenu(botao: Caixa, menu: { w: number; h: number }, tela: { w: number; h: number }, gap = 4, margem = 8) {
+  const limita = (v: number, min: number, max: number) => Math.min(Math.max(v, min), Math.max(min, max));
+  const espacoBaixo = tela.h - margem - (botao.bottom + gap);
+  const espacoCima = botao.top - gap - margem;
+  const up = menu.h > espacoBaixo && espacoCima > espacoBaixo;
+  const top = limita(up ? botao.top - gap - menu.h : botao.bottom + gap, margem, tela.h - margem - menu.h);
+  const left = limita(botao.right - menu.w, margem, tela.w - margem - menu.w);
+  return { top, left, up };
+}
