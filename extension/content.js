@@ -12308,13 +12308,15 @@
       }
       const motoboy = f.delivery_type === 'motoboy';
       const g2 = el('div', 'vd-grid2');
-      const cep = inputField(`CEP${f.delivery_type === 'loja_fisica' ? ' (opcional)' : ''}${f.cepLoading ? ' · buscando…' : ''}`, f.zip_code, (v, i) => {
+      // 2.19.2: aceita colar "24.030-330"/com espaços (o limite de 9 cortava antes da limpeza); mostra 00000-000, grava só os números
+      const cepShow = (d) => (d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d);
+      const cep = inputField(`CEP${f.delivery_type === 'loja_fisica' ? ' (opcional)' : ''}${f.cepLoading ? ' · buscando…' : ''}`, cepShow(String(f.zip_code || '').replace(/\D/g, '').slice(0, 8)), (v, i) => {
         const clean = v.replace(/\D/g, '').slice(0, 8);
-        if (i.value !== clean) i.value = clean;
+        if (i.value !== cepShow(clean)) i.value = cepShow(clean);
         f.zip_code = clean;
         f.cepError = '';
         if (clean.length === 8) lookupSaleCep(clean);
-      }, { max: 9, aria: 'CEP' });
+      }, { max: 30, aria: 'CEP' });
       if (f.cepError) cep.append(el('div', 'ed-msg err', f.cepError));
       g2.append(cep, inputField('Estado (UF)', f.state, (v, i) => { f.state = v.toUpperCase().slice(0, 2); if (i.value !== f.state) i.value = f.state; }, { max: 2, aria: 'Estado (UF)' }));
       body.append(g2);

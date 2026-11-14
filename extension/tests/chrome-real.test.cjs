@@ -1155,7 +1155,7 @@ async function main() {
     const client = await q(`const f = sh.querySelector('.vd-form'); const v = (a) => (f.querySelector('[aria-label="' + a + '"]') || {}).value;
       return { name: v('Nome do cliente'), cpf: v('CPF do cliente'), cep: v('CEP'), uf: v('Estado (UF)'), rua: v('Rua'), num: v('Número'), comp: v('Complemento'), city: v('Cidade'), bairro: v('Bairro') };`);
     check('💰 "Colar formulário" preenche como o ERP e o CEP completa rua, UF, cidade e bairro (ViaCEP pelo background); Correios começa em R$ 13,11',
-      cepDone && correios === '13.11' && JSON.stringify(client) === JSON.stringify({ name: 'Maria Souza', cpf: '529.982.247-25', cep: '24220000', uf: 'RJ', rua: 'Rua Gavião Peixoto', num: '120', comp: 'Ap 302', city: 'Niterói', bairro: 'Icaraí' })
+      cepDone && correios === '13.11' && JSON.stringify(client) === JSON.stringify({ name: 'Maria Souza', cpf: '529.982.247-25', cep: '24220-000', uf: 'RJ', rua: 'Rua Gavião Peixoto', num: '120', comp: 'Ap 302', city: 'Niterói', bairro: 'Icaraí' })
       && fake.cep.length === 1 && fake.cep[0] === '/ws/24220000/json/', JSON.stringify({ cepDone, correios, client, cep: fake.cep }));
     const fin = await q(`const f = sh.querySelector('.vd-form'); return { vals: [...f.querySelectorAll('.vd-fin-v')].map((x) => x.textContent), det: f.querySelector('.vd-fin-det').textContent };`);
     check('💰 Resumo financeiro igual ao do ERP (total, taxa, recebido, lucro e os custos)',

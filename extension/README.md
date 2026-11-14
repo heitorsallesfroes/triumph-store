@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.19.1** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.19.2** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,10 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.19.2 — CEP aceita colar com ponto, traço ou espaços
+- **CEP da aba Vendas**: colar "24.030-330", "24030-330", "24030330" ou com espaços funciona (antes o limite de 9
+  caracteres cortava o texto colado antes de tirar ponto e traço). O campo mostra **00000-000**; grava só os números.
 
 ### 2.19.1 — "Esperar resposta": a resposta do cliente conta mesmo com mensagem sua depois
 - **Esperar resposta** (todas as automações e a Régua, nos caminhos ✅ Se responder / ❌ Se não responder): conta como

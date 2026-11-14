@@ -12,6 +12,7 @@ import {
   nfeGet, nfePost, cepComIbge, rascunhoDaVenda, baixarDanfe, baixarXml, baixarXmlCancelamento, numBR,
 } from '../lib/nfeApi';
 import { AVISO_FORA_RJ, foraDoRj, itensSemNcm, podeEmitirUf, temNotaTiny } from '../lib/nfeRegras';
+import { cleanCep, formatCep } from '../lib/cep';
 import NfeCancelar from './NfeCancelar';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -248,8 +249,8 @@ export default function NfeModal({ sale, onClose }: Props) {
                   </div>
                   <div className="col-span-6 md:col-span-3">
                     <label className={lbl}>CEP {buscandoCep && <span className="text-orange-400">buscando…</span>}</label>
-                    <input className={inp} value={dest.cep} inputMode="numeric" placeholder="00000-000"
-                      onChange={(e) => { setD('cep', e.target.value); if (dig(e.target.value).length === 8) buscarCep(e.target.value); }} />
+                    <input className={inp} value={formatCep(dest.cep)} inputMode="numeric" placeholder="00000-000"
+                      onChange={(e) => { const c = cleanCep(e.target.value); setD('cep', c); if (c.length === 8) buscarCep(c); }} />
                   </div>
                   <div className="col-span-12 md:col-span-6">
                     <label className={lbl}>Rua</label>

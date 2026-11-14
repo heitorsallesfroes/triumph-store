@@ -8,6 +8,7 @@ import QuickAdd from '../components/QuickAdd';
 import AutocompleteInput from '../components/AutocompleteInput';
 import { validateAddressForDeliveryType } from '../lib/addressValidation';
 import { fetchAddressByCep } from '../lib/viaCep';
+import { cleanCep as onlyCepDigits, formatCep } from '../lib/cep';
 import { formatCpf, cleanCpf, validateCpf } from '../lib/cpfValidation';
 import { getTodayInBrazil } from '../lib/dateUtils';
 import { useErpDirty, useErpRefresh } from '../lib/erpRefresh';
@@ -864,7 +865,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
   };
 
   const handleCepChange = async (cep: string) => {
-    const cleanCep = cep.replace(/\D/g, '');
+    const cleanCep = onlyCepDigits(cep); // só os números, os 8 primeiros (colar "24.030-330" funciona)
     setFormData(prev => ({ ...prev, zip_code: cleanCep }));
     setCepError('');
 
@@ -1340,8 +1341,8 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       <input
                         type="text"
                         placeholder="CEP"
-                        maxLength={8}
-                        value={formData.zip_code}
+                        inputMode="numeric"
+                        value={formatCep(formData.zip_code)}
                         onChange={(e) => handleCepChange(e.target.value)}
                         className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                       />
@@ -1446,8 +1447,8 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
                       <input
                         type="text"
                         placeholder="CEP (opcional)"
-                        maxLength={8}
-                        value={formData.zip_code}
+                        inputMode="numeric"
+                        value={formatCep(formData.zip_code)}
                         onChange={(e) => handleCepChange(e.target.value)}
                         className="w-full bg-gray-700 rounded-lg px-4 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none"
                       />

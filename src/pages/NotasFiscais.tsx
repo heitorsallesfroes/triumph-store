@@ -21,6 +21,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/resumoAnualCalc';
 import { useErpRefresh } from '../lib/erpRefresh';
+import { cleanCep, formatCep } from '../lib/cep';
 import NfeCancelar from '../components/NfeCancelar';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -363,7 +364,9 @@ export default function NotasFiscais() {
                     {CAMPOS.map(([k, rot, w]) => (
                       <div key={k} className={`col-span-12 ${w}`}>
                         <label className={lbl}>{rot}</label>
-                        <input className={inp} value={editando.emitente?.[k] ?? ''} onChange={(e) => setE(k, e.target.value)} />
+                        {k === 'cep'
+                          ? <input className={inp} inputMode="numeric" placeholder="00000-000" value={formatCep(editando.emitente?.[k] ?? '')} onChange={(e) => setE(k, cleanCep(e.target.value))} />
+                          : <input className={inp} value={editando.emitente?.[k] ?? ''} onChange={(e) => setE(k, e.target.value)} />}
                       </div>
                     ))}
                   </div>

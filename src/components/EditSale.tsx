@@ -3,6 +3,7 @@ import { supabase, Supplier, Motoboy } from '../lib/supabase';
 import { byAddedOrder, insertSaleItems } from '../lib/saleItemsOrder';
 import { X, Save, Trash2, Plus, Package } from 'lucide-react';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
+import { cleanCep, formatCep } from '../lib/cep';
 
 interface EditSaleProps {
   saleId: string;
@@ -803,8 +804,8 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">CEP</label>
-                  <input type="text" value={editData.zip_code}
-                    onChange={e => setEditData({ ...editData, zip_code: e.target.value })}
+                  <input type="text" inputMode="numeric" value={formatCep(editData.zip_code)}
+                    onChange={e => setEditData({ ...editData, zip_code: cleanCep(e.target.value) })}
                     placeholder="Ex: 24020-125"
                     className="w-full bg-gray-800 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm" />
                 </div>
