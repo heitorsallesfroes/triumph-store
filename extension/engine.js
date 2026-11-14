@@ -892,8 +892,12 @@
       runKey = labelKey;
     } else if (a.trigger_type === 'respondeu') {
       if (!last) return { action: 'skip', reason: 'conversa sem mensagens carregadas', chatId };
-      if (last.fromMe) return { action: 'none', reason: 'ainda não respondeu', chatId };
-      if (manual && Number(last.t) * 1000 < enteredAt) return { action: 'none', reason: 'ainda não respondeu', chatId };
+      // 2.19.1: respondeu = mensagem do cliente depois de entrar na etiqueta, mesmo que VOCÊ tenha mandado algo depois
+      // (antes: só se a ÚLTIMA mensagem da conversa fosse dele)
+      const inMs = Number(chat.lastIn) * 1000 || 0;
+      const after = Number.isFinite(enteredAt) && inMs > 0 && inMs >= enteredAt;
+      if (last.fromMe && !after) return { action: 'none', reason: 'ainda não respondeu', chatId };
+      if (!after && manual && Number(last.t) * 1000 < enteredAt) return { action: 'none', reason: 'ainda não respondeu', chatId };
       runKey = labelKey;
     } else if (saleTrigger) {
       // 2.11.0: "X dias depois da venda" (tempo corrido desde o registro); sem espera = na hora
@@ -1023,9 +1027,17 @@
   const seqNextOf = (idx, id) => { const e = idx.get(id); const n = e && e.list[e.i + 1]; return n ? n.id : null; };
   const seqFirstOf = (list) => (list && list[0] ? list[0].id : null);
   const seqOutcome = (branches) => { const b = (branches || [])[branches.length - 1]; return b ? (b.result === 'sim' ? 'respondeu' : 'nao_respondeu') : 'fim'; };
-  // Respondeu = mensagem do cliente depois do último envio nosso desta sequência (ou do começo da espera)
+  // Respondeu = QUALQUER mensagem do cliente depois de ref (o começo da espera ou o último envio da automação, o que
+  // for maior), mesmo que depois disso VOCÊ tenha mandado mensagem. 2.19.1: antes valia só a ÚLTIMA mensagem da
+  // conversa (chat.last) e a 1ª resposta por envio (wa_replies): cliente respondeu e você mandou um áudio logo depois
+  // = o percurso ficava esperando. Fontes: chat.lastIn (última mensagem carregada DO CLIENTE, ponte; sem reação,
+  // notificação, chamada nem apagada), chat.last e replies (horários em ms: wa_replies + wa_chat_activity
+  // .last_customer_at dos dois ids da pessoa, @lid e @c.us, e o lastIn do outro id).
+  const seqReplyRef = (waitStart, lastSent) => Math.max(Number(waitStart) || 0, Number(lastSent) || 0);
   function seqReplied(ref, chat, replies) {
-    if (chat && chat.last && !chat.last.fromMe && Number(chat.last.t) * 1000 > ref) return true;
+    if (chat && Number(chat.lastIn) * 1000 > ref) return true;
+    // ponte antiga (sem lastIn): a última mensagem; com lastIn, chat.last pode ser reação/aviso do cliente e não conta
+    if (chat && chat.lastIn === undefined && chat.last && !chat.last.fromMe && Number(chat.last.t) * 1000 > ref) return true;
     return (replies || []).some((t) => Number(t) > ref);
   }
   // Decide o que fazer agora com UMA conversa na sequência. Não envia nem grava nada.
@@ -1083,9 +1095,11 @@
       if (n.type === 'esperar') {
         // chegou agora na espera: grava o começo (a decisão vem no próximo ciclo)
         if (run.node !== id || !waitStart) return { status: 'progress', node: id, waitStart: now, ops, branches };
-        if (!chat || !chat.loaded) return { status: 'wait', node: id, ops, branches, reason: 'conversa não carregada' };
-        const ref = lastSent && lastSent <= waitStart ? lastSent : waitStart;
-        if (!skip && seqReplied(ref, chat, replies)) {
+        // 2.19.1: a resposta conta antes de olhar se a conversa está carregada (a do banco/do outro id vale sozinha)
+        const ref = seqReplyRef(waitStart, lastSent);
+        const replied = !skip && seqReplied(ref, chat && chat.loaded ? chat : null, replies);
+        if (!replied && (!chat || !chat.loaded)) return { status: 'wait', node: id, ops, branches, reason: 'conversa não carregada' };
+        if (replied) {
           branches.push({ node: id, result: 'sim', at: now });
           win = n.send_window || null;
           id = seqFirstOf(n.yes);
@@ -2830,6 +2844,18 @@
     const LABEL_MISS = 'etiqueta não aplicada: contato não encontrado';
     async function seqRunPhone(run) {
       if (run.contact && run.contact.phone) return run.contact.phone;
+      return seqWaPhone(run);
+    }
+    // 2.19.1: o telefone da CONVERSA segundo o próprio WhatsApp (nunca o do contato do CRM, que pode estar ligado a
+    // outra pessoa): é ele que diz qual @c.us é a mesma pessoa do @lid. Uma vez por conversa (só memória).
+    const waPhoneCache = new Map();
+    async function seqWaPhone(run) {
+      if (waPhoneCache.has(run.chat_id)) return waPhoneCache.get(run.chat_id);
+      const got = await seqWaPhoneRaw(run);
+      if (got && run.chat_id) { if (waPhoneCache.size > 5000) waPhoneCache.clear(); waPhoneCache.set(run.chat_id, got); }
+      return got;
+    }
+    async function seqWaPhoneRaw(run) {
       const m = /^(\d{8,15})@c\.us$/.exec(run.chat_id || '');
       if (m) return m[1];
       if (!/@lid$/.test(run.chat_id || '') || !deps.wa || typeof deps.wa.chatPhone !== 'function') return null;
@@ -2896,17 +2922,43 @@
       try { runs = await api('seqRuns', { automationIds: seqs.map((a) => a.id) }); } catch { runs = null; }
       if (!Array.isArray(runs) || !runs.length) return;
       const byId = new Map(seqs.map((a) => [a.id, a]));
+      // 2.19.1: a mesma pessoa com dois ids (@lid e @c.us do telefone): a resposta em qualquer um conta. O telefone é
+      // o do WhatsApp para a conversa do percurso (o do contato do CRM pode ser de outra pessoa: contaria a resposta dela)
+      const aliasOf = new Map();
+      for (const r of runs) {
+        const ph = digitsOf(await seqWaPhone(r));
+        const okPh = /^\d{8,15}$/.test(ph) ? ph : null;
+        aliasOf.set(r.id, { phone: okPh, ids: [...new Set([r.chat_id, okPh ? `${okPh}@c.us` : null].filter(Boolean))] });
+      }
       const chatIds = [...new Set(runs.map((r) => r.chat_id))];
+      const askIds = [...new Set([...aliasOf.values()].flatMap((x) => x.ids))];
       const chats = {};
-      for (let i = 0; i < chatIds.length; i += 500) {
+      for (let i = 0; i < askIds.length; i += 500) {
         let r = null;
-        try { r = await deps.wa.chatsInfo({ chatIds: chatIds.slice(i, i + 500), keywords: [] }); } catch { r = null; }
+        try { r = await deps.wa.chatsInfo({ chatIds: askIds.slice(i, i + 500), keywords: [] }); } catch { r = null; }
         Object.assign(chats, (r && r.chats) || {});
       }
       await loadWaNoSend();
       const starts = runs.map((r) => msOf(r.wait_started_at) || msOf(r.last_sent_at)).filter(Boolean);
       let replies = {};
-      if (starts.length) { try { replies = await api('seqReplies', { chatIds, since: new Date(Math.min(...starts) - 60 * 1000).toISOString() }) || {}; } catch { replies = {}; } }
+      let custAt = { chats: {}, phones: {} };
+      if (starts.length) {
+        const since = new Date(Math.min(...starts) - 60 * 1000).toISOString();
+        const phones = [...new Set([...aliasOf.values()].map((x) => x.phone).filter(Boolean))];
+        try { replies = await api('seqReplies', { chatIds: askIds, since }) || {}; } catch { replies = {}; }
+        try { const c = await api('seqCustomerAt', { chatIds: askIds, phones, since }); if (c && c.chats && c.phones) custAt = c; } catch { /* sem a tabela: só as outras fontes */ }
+      }
+      const evidenceOf = (r) => {
+        const al = aliasOf.get(r.id) || { ids: [r.chat_id], phone: null };
+        const out = [];
+        al.ids.forEach((id) => {
+          out.push(...(replies[id] || []), ...(custAt.chats[id] || []));
+          const c = chats[id];
+          if (id !== r.chat_id && c && c.loaded && Number(c.lastIn)) out.push(Number(c.lastIn) * 1000);
+        });
+        if (al.phone) out.push(...(custAt.phones[al.phone] || []));
+        return out;
+      };
       const t = now();
       // 2.18.1: quem está em cada etiqueta de início (uma leitura por etiqueta por ciclo; falhou = null = "não sei")
       const holders = new Map();
@@ -2945,7 +2997,7 @@
           }
           if (pres === 'present') waLeftReads.delete(r.id);
         }
-        const res = seqStep({ def: a.sequence, run: seqRunState(r), chat: chats[r.chat_id] || null, replies: replies[r.chat_id] || [], now: t, settings: st.settings });
+        const res = seqStep({ def: a.sequence, run: seqRunState(r), chat: chats[r.chat_id] || null, replies: evidenceOf(r), now: t, settings: st.settings });
         if (res.status === 'wait') {
           const due = res.dueAt || null;
           if ((due || null) !== (msOf(r.due_at) || null) && Math.abs((due || 0) - (msOf(r.due_at) || 0)) > 60 * 1000) await seqPatch(r, { due_at: due });

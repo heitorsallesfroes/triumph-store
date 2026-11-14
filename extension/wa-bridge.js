@@ -1045,9 +1045,10 @@
       const last = lastLoadedMessage(chat);
       const ads = kws.length ? adTextsOf(chat) : '';
       // 2.2.0: horário da última mensagem carregada do CLIENTE (só o horário, nunca o texto)
+      // 2.19.1: só mensagem de verdade (reação, notificação, chamada, apagada e aviso do sistema não contam)
       let lastIn = 0;
       (safe(() => chat.msgs.getModelsArray(), null) || []).forEach((m) => {
-        if (safe(() => m.id.fromMe, true)) return;
+        if (safe(() => m.id.fromMe, true) || !realMsg(m)) return;
         const t = Number(safe(() => m.t, 0)) || 0;
         if (t > lastIn) lastIn = t;
       });

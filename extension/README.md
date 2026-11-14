@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.19.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.19.1** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,22 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.19.1 — "Esperar resposta": a resposta do cliente conta mesmo com mensagem sua depois
+- **Esperar resposta** (todas as automações e a Régua, nos caminhos ✅ Se responder / ❌ Se não responder): conta como
+  resposta **qualquer mensagem do cliente** depois do começo da espera (ou do último envio da automação, o que for
+  mais tarde), **mesmo que você tenha mandado mensagem depois** (áudio, mensagem rápida…). Antes só valia se a
+  **última** mensagem da conversa fosse dele. Não contam: mensagens suas, de grupo, de status, reações, avisos do
+  sistema, chamadas e mensagens apagadas.
+- O mesmo vale para o gatilho **"O cliente respondeu"** (ex.: "Respondeu → tirar da régua"): conta a resposta depois
+  de entrar na etiqueta, mesmo com mensagem sua depois.
+- **A mesma pessoa com dois ids** (@lid e @c.us): a resposta em qualquer um conta. O @c.us vem do **telefone que o
+  próprio WhatsApp dá para a conversa**, nunca do telefone do contato do CRM (que pode estar ligado a outra pessoa:
+  aí a resposta dela contaria no percurso errado).
+- **Extensão fechada na hora da resposta**: ao reabrir, a resposta antiga conta (respostas gravadas e a última
+  mensagem do cliente gravada pela varredura da abertura), mesmo antes da conversa carregar.
+- Teste novo: `tests/replyafter.test.cjs` (os dois casos relatados: resposta seguida de mensagem sua; resposta sem
+  mensagem sua depois, só @lid).
 
 ### 2.19.0 — Compra para o Facebook em destaque depois da venda + lembrete · ordem dos itens da venda
 - **"VENDA REGISTRADA" (aba Vendas)**: a pergunta pequena virou um **card grande no topo do painel** (fundo azul do

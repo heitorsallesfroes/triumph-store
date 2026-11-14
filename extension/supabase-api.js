@@ -2963,6 +2963,37 @@
     } catch { return {}; }
     return out;
   }
+  // 2.19.1: última mensagem do CLIENTE de cada conversa (wa_chat_activity.last_customer_at, 2.12.8) desde "since",
+  // pelos ids de conversa e pelos telefones (a mesma pessoa no @lid e no @c.us). Gravada também pela varredura da
+  // abertura (72 h): a resposta que chegou com a extensão fechada conta ao reabrir. Só leitura; sem a tabela: nada.
+  // → { chats: { chatId: [ms] }, phones: { telefone: [ms] } }
+  async function seqCustomerAt({ chatIds, phones, since }) {
+    const out = { chats: {}, phones: {} };
+    const ids = (Array.isArray(chatIds) ? chatIds : []).filter((c) => SCHED_CHAT_RE.test(c || '')).slice(0, 1000);
+    const tels = [...new Set((Array.isArray(phones) ? phones : []).map((x) => String(x || '').replace(/\D/g, '')).filter((x) => /^\d{8,15}$/.test(x)))].slice(0, 1000);
+    const t = Date.parse(since || '');
+    if ((!ids.length && !tels.length) || !Number.isFinite(t)) return out;
+    if (!(await activityTables())) return out;
+    const sinceIso = encodeURIComponent(new Date(t).toISOString());
+    const add = (r) => {
+      const at = Date.parse(r.last_customer_at || '');
+      if (!Number.isFinite(at)) return;
+      if (ids.includes(r.chat_id)) (out.chats[r.chat_id] = out.chats[r.chat_id] || []).push(at);
+      const ph = String(r.phone || '').replace(/\D/g, '');
+      if (ph && tels.includes(ph)) (out.phones[ph] = out.phones[ph] || []).push(at);
+      const m = /^(\d{8,15})@c\.us$/.exec(r.chat_id || '');
+      if (m && tels.includes(m[1])) (out.phones[m[1]] = out.phones[m[1]] || []).push(at);
+    };
+    try {
+      for (let i = 0; i < ids.length; i += 100) {
+        (await rest(`wa_chat_activity?select=chat_id,phone,last_customer_at&chat_id=in.${inList(ids.slice(i, i + 100))}&last_customer_at=gte.${sinceIso}&limit=1000`)).forEach(add);
+      }
+      for (let i = 0; i < tels.length; i += 100) {
+        (await rest(`wa_chat_activity?select=chat_id,phone,last_customer_at&phone=in.${inList(tels.slice(i, i + 100))}&last_customer_at=gte.${sinceIso}&limit=1000`)).forEach(add);
+      }
+    } catch { return { chats: {}, phones: {} }; }
+    return out;
+  }
   // leads novos (wa_leads, 2.10.0) desde "since" (a ativação)
   async function seqLeads({ since }) {
     const t = Date.parse(since || '');
@@ -4697,7 +4728,7 @@
     sendContactEvent, metaContactConfig, setMetaContactConfig, chatContactInfo, getAdAttribution, saveAdAttributions,
     saleFirstName, erpCatalog, createSaleFromChat, lookupCep, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
-    seqRuns, seqCreateRuns, seqManualEnter, seqUpdateRun, seqReplies, seqLeads, seqChatRuns, seqLabelWarnings, adoptChatId, seqSkipInfo, seqRunAction, seqStats, automationSentToday,
+    seqRuns, seqCreateRuns, seqManualEnter, seqUpdateRun, seqReplies, seqCustomerAt, seqLeads, seqChatRuns, seqLabelWarnings, adoptChatId, seqSkipInfo, seqRunAction, seqStats, automationSentToday,
     automationUnreserve, applySendLabels, getContactName,
     campaignVariantStats, fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,
