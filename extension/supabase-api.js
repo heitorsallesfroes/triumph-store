@@ -3829,7 +3829,17 @@
     const created = await rest('sales', json('POST', 'return=representation', row));
     const saleId = created[0].id;
     try {
-      if (saleItems.length) await rest('sale_items', json('POST', 'return=minimal', saleItems.map((x) => ({ sale_id: saleId, ...x }))));
+      // position = ordem em que o item foi adicionado (o ERP mostra o smartwatch primeiro e, no mesmo grupo,
+      // essa ordem). Sem a migration sale_items_position a coluna não existe: grava sem ela.
+      if (saleItems.length) {
+        const rows = saleItems.map((x) => ({ sale_id: saleId, ...x }));
+        try {
+          await rest('sale_items', json('POST', 'return=minimal', rows.map((x, i) => ({ ...x, position: i }))));
+        } catch (err) {
+          if (!/position/i.test(String(err && err.message))) throw err;
+          await rest('sale_items', json('POST', 'return=minimal', rows));
+        }
+      }
       if (saleAccessories.length) await rest('sale_accessories', json('POST', 'return=minimal', saleAccessories.map((x) => ({ sale_id: saleId, ...x }))));
     } catch (err) {
       // Sem itens a venda ficaria errada no ERP: desfaz (o estoque ainda não foi mexido)

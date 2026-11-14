@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { orderSaleItems } from '../lib/saleItemsOrder';
 import { Package, Truck, CheckCircle, CheckSquare, Calendar, Bike, CreditCard, X } from 'lucide-react';
 import { getTodayInBrazil, formatDateDisplay } from '../lib/dateUtils';
 import { useErpRefresh } from '../lib/erpRefresh';
@@ -58,7 +59,7 @@ export default function Logistics() {
       const todayStartUTC = `${today}T03:00:00.000Z`;
       const [y, m, d] = today.split('-').map(Number);
       const tomorrowStartUTC = `${new Date(Date.UTC(y, m - 1, d + 1)).toISOString().split('T')[0]}T03:00:00.000Z`;
-      const fields = '*, sale_items(quantity, product_id, products(model, color, category)), motoboys(name)';
+      const fields = '*, sale_items(*, products(model, color, category)), motoboys(name)';
 
       const [pendingRes, finalizadoRes] = await Promise.all([
         // Pendentes: todos os não-finalizados, qualquer data
@@ -93,7 +94,7 @@ export default function Logistics() {
         updated_at: sale.updated_at,
         finalized_at: sale.finalized_at,
         motoboy_id: sale.motoboy_id,
-        products: (sale.sale_items || [])
+        products: orderSaleItems(sale.sale_items)
           .filter((item: any) => item.products?.category === 'smartwatch')
           .map((item: any) => ({ model: item.products.model, color: item.products.color })),
         motoboy: sale.motoboys ? { name: sale.motoboys.name } : undefined,

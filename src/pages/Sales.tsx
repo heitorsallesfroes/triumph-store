@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState, useRef } from 'react';
 import { supabase, Product, Accessory, Motoboy, Supplier } from '../lib/supabase';
+import { byAddedOrder, insertSaleItems } from '../lib/saleItemsOrder';
 import { Trash2, ShoppingCart, TrendingUp, Loader2 } from 'lucide-react';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
 import UnifiedSearch from '../components/UnifiedSearch';
@@ -290,7 +291,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         }]);
       }
 
-      const editableProducts: SaleProduct[] = (itemsRes.data || []).map((item: any) => ({
+      const editableProducts: SaleProduct[] = byAddedOrder(itemsRes.data || []).map((item: any) => ({
         product_id: item.product_id,
         product:    item.product,
         quantity:   item.quantity,
@@ -670,7 +671,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         // Reconstruir sale_items
         await supabase.from('sale_items').delete().eq('sale_id', editSaleId);
         if (saleProducts.length > 0) {
-          const { error: itemsErr } = await supabase.from('sale_items').insert(
+          const { error: itemsErr } = await insertSaleItems(supabase,
             saleProducts.map(sp => ({
               sale_id: editSaleId, product_id: sp.product_id,
               quantity: sp.quantity, unit_price: sp.unit_price,
@@ -784,7 +785,7 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
         ...(isMultiSupplier ? { supplier_id: perProductSupplierIds[sp.product_id] || null } : {}),
       }));
 
-      const { error: itemsError } = await supabase.from('sale_items').insert(saleItemsData);
+      const { error: itemsError } = await insertSaleItems(supabase, saleItemsData);
 
       if (itemsError) throw itemsError;
 

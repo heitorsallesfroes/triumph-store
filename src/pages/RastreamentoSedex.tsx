@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
+import { orderSaleItems } from '../lib/saleItemsOrder';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/resumoAnualCalc';
 
@@ -89,9 +90,9 @@ function inferStatus(description: string): TrackingStatus {
   return 'em_transito';
 }
 
-function buildProductLabel(items: Array<{ quantity: number; products: { model: string; color: string } | null }>): string {
+function buildProductLabel(items: Array<{ quantity: number; products: { model: string; color: string; category?: string } | null }>): string {
   if (!items || items.length === 0) return '';
-  const sorted = [...items].sort((a, b) => (b.quantity || 1) - (a.quantity || 1));
+  const sorted = orderSaleItems(items);
   const first = sorted[0];
   const name = [first.products?.model, first.products?.color].filter(Boolean).join(' ');
   if (!name) return '';
@@ -270,7 +271,7 @@ export default function RastreamentoSedex() {
     const fiveDaysAgo = new Date();
     fiveDaysAgo.setDate(fiveDaysAgo.getDate() - DELIVERED_HIDE_DAYS);
 
-    const fields = 'id, customer_name, address_street, address_number, address_complement, neighborhood, city, state, tracking_code, shipping_label_url, shipping_status, delivered_at, sale_date, sale_items(quantity, products(model, color))';
+    const fields = 'id, customer_name, address_street, address_number, address_complement, neighborhood, city, state, tracking_code, shipping_label_url, shipping_status, delivered_at, sale_date, sale_items(*, products(model, color, category))';
 
     const [activeRes, deliveredRes] = await Promise.all([
       allRows<any>((f, t) => supabase.from('sales').select(fields)

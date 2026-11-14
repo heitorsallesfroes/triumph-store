@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import { orderSaleItems } from '../lib/saleItemsOrder';
 import { fetchAllRows, chunk } from '../lib/resumoAnualCalc';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
 import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, Truck, Bike, ShoppingCart, TrendingUp, DollarSign, MessageCircle, X, Copy, Check, Trash2, Zap, Banknote, Layers, Link, Pencil } from 'lucide-react';
@@ -266,12 +267,13 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
     if (rawSales.length === 0) return [];
     const saleIds = rawSales.map((s: any) => s.id);
 
-    const itemsData = await fetchItemsBySaleIds(saleIds, 'sale_id, product_id, quantity');
+    const itemsData = await fetchItemsBySaleIds(saleIds, '*');
 
     const productIds = [...new Set((itemsData || []).map((i: any) => i.product_id).filter(Boolean))];
-    const productsData = await fetchProductsByIds(productIds, 'id, model, color');
+    const productsData = await fetchProductsByIds(productIds, 'id, model, color, category');
 
     const productMap = new Map((productsData || []).map((p: any) => [p.id, p]));
+    const categoryById = new Map<string, string>((productsData || []).map((p: any) => [p.id, p.category]));
     const itemsBySale = new Map<string, any[]>();
     for (const item of (itemsData || [])) {
       const arr = itemsBySale.get(item.sale_id) || [];
@@ -280,7 +282,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
     }
 
     return rawSales.map((sale: any) => {
-      const items = [...(itemsBySale.get(sale.id) || [])].sort((a: any, b: any) => b.quantity - a.quantity);
+      const items = orderSaleItems(itemsBySale.get(sale.id) || [], categoryById);
       let main_product = '';
       let additional_items = 0;
       if (items.length > 0) {
@@ -363,7 +365,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
       motoboysMap = new Map((motoboysData || []).map((m: any) => [m.id, m.name]));
 
       if (saleIds.length > 0) {
-        itemsData = await fetchItemsBySaleIds(saleIds, 'sale_id, product_id, quantity');
+        itemsData = await fetchItemsBySaleIds(saleIds, '*');
 
         const productIds = [...new Set(itemsData.map((i: any) => i.product_id).filter(Boolean))];
         if (productIds.length > 0) {
@@ -372,6 +374,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
       }
 
       const productMap = new Map(productsData.map((p: any) => [p.id, p]));
+      const categoryById = new Map<string, string>(productsData.map((p: any) => [p.id, p.category]));
       const itemsBySale = new Map<string, any[]>();
       for (const item of itemsData) {
         const arr = itemsBySale.get(item.sale_id) || [];
@@ -390,7 +393,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
       }
 
       let salesWithProducts: Sale[] = rawSales.map((sale: any) => {
-        const items = [...(itemsBySale.get(sale.id) || [])].sort((a: any, b: any) => b.quantity - a.quantity);
+        const items = orderSaleItems(itemsBySale.get(sale.id) || [], categoryById);
         let main_product = '';
         let additional_items = 0;
         if (items.length > 0) {
@@ -528,11 +531,11 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
     setGeneratingLabel(sale.id);
     try {
       const [{ data: saleItems }, { data: accessories }] = await Promise.all([
-        supabase.from('sale_items').select('quantity, unit_price, products(model, color)').eq('sale_id', sale.id),
+        supabase.from('sale_items').select('*, products(model, color, category)').eq('sale_id', sale.id),
         supabase.from('sale_accessories').select('quantity, cost, accessory_id, custom_name, accessories(name)').eq('sale_id', sale.id),
       ]);
 
-      const items: { name: string; quantity: number; price: number }[] = (saleItems || []).map((item: any) => ({
+      const items: { name: string; quantity: number; price: number }[] = orderSaleItems(saleItems).map((item: any) => ({
         name: item.products ? `${item.products.model} ${item.products.color}` : 'Produto',
         quantity: item.quantity,
         price: item.unit_price,
@@ -1593,9 +1596,8 @@ function WhatsAppModal({ sale, onClose }: { sale: any; onClose: () => void }) {
 
       const { data: saleItems } = await supabase
         .from('sale_items')
-        .select('product_id, quantity')
-        .eq('sale_id', sale.id)
-        .order('quantity', { ascending: false });
+        .select('*')
+        .eq('sale_id', sale.id);
 
       if (saleItems && saleItems.length > 0) {
         const productIds = saleItems.map((i: any) => i.product_id);
@@ -1604,7 +1606,8 @@ function WhatsAppModal({ sale, onClose }: { sale: any; onClose: () => void }) {
           .select('id, model, color, category')
           .in('id', productIds);
 
-        saleItems.forEach((item: any, idx: number) => {
+        const catById = new Map<string, string>((products || []).map((x: any) => [x.id, x.category]));
+        orderSaleItems(saleItems, catById).forEach((item: any, idx: number) => {
           const p = products?.find((x: any) => x.id === item.product_id);
           if (p) {
             const name = item.quantity > 1 ? `${p.model} ${p.color} (x${item.quantity})` : `${p.model} ${p.color}`;

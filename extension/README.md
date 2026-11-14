@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.18.9** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.19.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,36 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.19.0 — Compra para o Facebook em destaque depois da venda + lembrete · ordem dos itens da venda
+- **"VENDA REGISTRADA" (aba Vendas)**: a pergunta pequena virou um **card grande no topo do painel** (fundo azul do
+  Facebook, ícone, valor em letra grande): **"Enviar esta venda para o Facebook?"**, botão **"Enviar agora (R$ X)"** e
+  o link **"Agora não"**. Depois de enviar: confirmação verde **"Compra enviada ao Facebook ✓"**.
+- **Lembrete**: com "Agora não", fechando o painel ou trocando de conversa sem enviar (ou se o envio falhou), a venda
+  fica guardada como **compra não enviada** — **selo vermelho na aba Vendas** ("1 compra não enviada"; no "Mais"
+  também, quando a aba Vendas está lá dentro). Abrindo de novo **aquela conversa**, o card volta no topo da aba Vendas
+  (antes confere se a venda já tem compra enviada). Na aba Vendas de outra conversa aparece "🔔 N compras não enviadas
+  em outras conversas" com atalho para abrir cada uma. O lembrete some quando **enviar** ou em **"Não enviar esta
+  venda"**. Fica neste computador (`chrome.storage.local`, chave `saleFbPending`: id da venda, conversa, valor, nome e
+  telefone para o mesmo envio).
+- **O envio não mudou**: mesma função `meta-purchase-event` (via `sendPurchaseEvent`), mesmo valor, mesma trava do
+  telefone, mesma ligação à venda (`sale_id`) e a mesma deduplicação. Mais → "Ao salvar venda" continua valendo.
+- **Ordem dos itens**: a venda pela extensão grava `sale_items.position` (0, 1, 2… na ordem em que os itens foram
+  adicionados). Sem a migration `20261125120000_sale_items_position.sql` a coluna não existe e grava como antes.
+  O ERP mostra o **smartwatch primeiro**, brindes de R$ 0,00 por último e, no mesmo grupo, a ordem de adição.
+- Sem mudança no vendor WA-JS nem no motor de envio.
+- Testes: `salefb.test.cjs` (card, selo, lembrete: perguntando guarda, "Agora não" mantém, enviado/"Não enviar" tira),
+  `sale.test.cjs` (position na ordem de adição; sem a coluna grava sem ela) e o Chrome de verdade (card no topo, selo
+  "1 compra não enviada" que some ao enviar). ERP: `scripts/tests/saleItemsOrder.test.ts`.
+
+### ERP (14/11) — Itens da venda: smartwatch primeiro em todas as telas
+- Histórico de Vendas (item embaixo do cliente e "+N itens"), Recibo, Resumo WhatsApp, Nota fiscal (rascunho da NF-e),
+  etiqueta de envio, Logística, Rastreamento Sedex e lista de vendas usam a mesma ordem (`src/lib/saleItemsOrder.ts`):
+  smartwatch (`products.category = 'smartwatch'`) primeiro, depois os outros itens pagos, brindes de R$ 0,00 por último;
+  dentro do grupo, `position` → `created_at` → ordem recebida.
+- Nova venda e Editar venda gravam `position` na ordem de adição (e carregam os itens nessa ordem). Sem a migration
+  (`supabase/migrations/20261125120000_sale_items_position.sql`, adiciona `position` e `created_at`) grava sem a
+  coluna; as leituras usam `*` e funcionam com ou sem ela.
 
 ### 2.18.9 — Catálogo vai como link wa.me/c/ (chega ao cliente) · aviso quando uma parte especial fica em 1 tracinho
 - **Parte 📒 Catálogo**: o cartão de `sendCatalogMessage` (título/descrição/texto personalizados) aparecia enviado

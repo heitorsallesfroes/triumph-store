@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, Supplier, Motoboy } from '../lib/supabase';
+import { byAddedOrder, insertSaleItems } from '../lib/saleItemsOrder';
 import { X, Save, Trash2, Plus, Package } from 'lucide-react';
 import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
 
@@ -126,7 +127,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
       const [saleRes, itemsRes, accessoriesRes, suppliersRes, motoboysRes, productsRes] = await Promise.all([
         supabase.from('sales').select('*').eq('id', saleId).single(),
         supabase.from('sale_items')
-          .select('product_id, quantity, unit_price, product:products(id, model, color, cost, current_stock)')
+          .select('*, product:products(id, model, color, cost, current_stock)')
           .eq('sale_id', saleId),
         supabase.from('sale_accessories').select('*, accessory:accessories(cost)').eq('sale_id', saleId),
         supabase.from('suppliers').select('*').order('name'),
@@ -143,7 +144,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
       setAllProducts(productsRes.data || []);
       setAccessories(accessoriesRes.data || []);
 
-      const editableItems: EditableSaleItem[] = (itemsRes.data || []).map((item: any) => ({
+      const editableItems: EditableSaleItem[] = byAddedOrder(itemsRes.data || []).map((item: any) => ({
         product_id:    item.product_id,
         quantity:      item.quantity,
         unit_price:    item.unit_price || 0,
@@ -323,7 +324,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
       // ── 2. Rebuild sale_items ──────────────────────────────────────────────
       await supabase.from('sale_items').delete().eq('sale_id', saleId);
       if (items.length > 0) {
-        const { error: insertError } = await supabase.from('sale_items').insert(
+        const { error: insertError } = await insertSaleItems(supabase,
           items.map(item => ({
             sale_id:    saleId,
             product_id: item.product_id,

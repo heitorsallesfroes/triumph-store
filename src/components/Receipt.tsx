@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { orderSaleItems } from '../lib/saleItemsOrder';
 import { X, Printer } from 'lucide-react';
 import { formatAddressForDisplay } from '../lib/addressValidation';
 import { getConfigString } from '../lib/systemConfig';
@@ -74,12 +75,12 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
       if (se) throw new Error(`Erro ao carregar venda: ${se.message}`);
       if (!sd) throw new Error('Venda não encontrada');
       const { data: itemsData, error: ie } = await supabase
-        .from('sale_items').select('product_id, quantity, unit_price, total_price, products (model, color, category)').eq('sale_id', saleId);
+        .from('sale_items').select('*, products (model, color, category)').eq('sale_id', saleId);
       if (ie) throw new Error(`Erro ao carregar itens: ${ie.message}`);
       const { data: accsData } = await supabase
         .from('sale_accessories').select('accessory_id, quantity, cost, custom_name, accessories (name)').eq('sale_id', saleId);
       setSale(sd);
-      setItems((itemsData || []).map((i: any) => ({ ...i, product: i.products || { model: 'Produto', color: '' } })));
+      setItems(orderSaleItems(itemsData).map((i: any) => ({ ...i, product: i.products || { model: 'Produto', color: '' } })));
       setAccessories((accsData || []).map((a: any) => ({ ...a, accessory: a.accessories })));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao carregar recibo');
@@ -92,12 +93,12 @@ export default function Receipt({ saleId, saleData, onClose, hideDeliveryControl
       setLoading(true);
       setSale(saleData);
       const { data: itemsData, error: ie } = await supabase
-        .from('sale_items').select('product_id, quantity, unit_price, total_price, products (model, color, category)').eq('sale_id', saleData.id);
+        .from('sale_items').select('*, products (model, color, category)').eq('sale_id', saleData.id);
       if (ie) throw new Error(`Erro ao carregar itens: ${ie.message}`);
       const { data: accsData, error: ae } = await supabase
         .from('sale_accessories').select('accessory_id, quantity, cost, custom_name, accessories (name)').eq('sale_id', saleData.id);
       if (ae) throw new Error(`Erro ao carregar acessórios: ${ae.message}`);
-      setItems((itemsData || []).map((i: any) => ({ ...i, product: i.products || { model: 'Produto', color: '' } })));
+      setItems(orderSaleItems(itemsData).map((i: any) => ({ ...i, product: i.products || { model: 'Produto', color: '' } })));
       setAccessories((accsData || []).map((a: any) => ({ ...a, accessory: a.accessories })));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao carregar recibo');

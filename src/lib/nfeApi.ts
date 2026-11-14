@@ -1,6 +1,7 @@
 // 🧾 NF-e própria: chamadas à rota /api/nfe (função da Vercel) com o login do ERP, CEP → código IBGE (ViaCEP)
 // e o rascunho da nota a partir da venda do Histórico (cliente + itens com o NCM do cadastro de Produtos).
 import { supabase } from './supabase';
+import { orderSaleItems } from './saleItemsOrder';
 import { ncmDoBrinde, ncmPeloNome, codigoLegivel, dadosFiscais } from './nfeRegras';
 
 export interface NfeDest {
@@ -68,20 +69,20 @@ type Venda = Record<string, any>;
 // monta o rascunho da nota com o que está na venda (os itens vêm do banco; o NCM do cadastro de Produtos)
 export async function rascunhoDaVenda(venda: Venda): Promise<{ dest: NfeDest; itens: NfeItem[]; desconto: number; frete: number; total: number }> {
   const [itensRes, brindes] = await Promise.all([
-    supabase.from('sale_items').select('product_id, quantity, unit_price, products(id, model, color, sku, ncm, origem, unidade, gtin)').eq('sale_id', venda.id),
+    supabase.from('sale_items').select('*, products(id, model, color, category, sku, ncm, origem, unidade, gtin)').eq('sale_id', venda.id),
     supabase.from('sale_accessories').select('quantity, custom_name, accessories(name, ncm)').eq('sale_id', venda.id),
   ]);
   // antes da migration de produtos (origem, unidade, gtin) as colunas não existem: busca sem elas (0, "Pc", "SEM GTIN")
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let itens: any[] | null = itensRes.data;
-  if (itensRes.error) itens = (await supabase.from('sale_items').select('product_id, quantity, unit_price, products(id, model, color, sku, ncm)').eq('sale_id', venda.id)).data;
+  if (itensRes.error) itens = (await supabase.from('sale_items').select('*, products(id, model, color, category, sku, ncm)').eq('sale_id', venda.id)).data;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let acess: any[] | null = brindes.data;
   // antes da migration accessories.ncm a coluna não existe: busca sem ela (o brinde fica sem NCM e a nota trava)
   if (brindes.error) acess = (await supabase.from('sale_accessories').select('quantity, custom_name, accessories(name)').eq('sale_id', venda.id)).data;
   const linhas: NfeItem[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  for (const it of (itens || []) as any[]) {
+  for (const it of orderSaleItems(itens) as any[]) {
     const p = Array.isArray(it.products) ? it.products[0] : it.products;
     const valor = r2(Number(it.unit_price) || 0);
     const brinde = valor === 0;

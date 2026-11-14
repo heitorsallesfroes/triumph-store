@@ -1515,6 +1515,25 @@
       .vd-fb .vd-fb-t { font-weight: 600; }
       .vd-fb .vd-fb-t.err { color: #e5484d; }
       .vd-fb .ed-add { margin: 0; }
+      .vd-fb.vd-fb-ok { padding: 10px 12px; border-radius: var(--r-md); background: #e8f7ee; color: #116b35; border: 1px solid #9fd9b4; }
+      .vd-fb.vd-fb-ok .vd-fb-t { font-size: 15px; }
+      .vd-fb .vd-fb-d { font-size: var(--fs-1); opacity: .85; }
+      .vd-fb.vd-fb-later, .vd-fb-others { padding: 8px 10px; border-radius: var(--r-md); border: 1px solid #f3b3b5; background: color-mix(in srgb, #e5484d 8%, var(--card)); }
+      .vd-fb-others { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+      .vd-fb-link { align-self: flex-start; padding: 2px 0; border: none; background: none; color: inherit; font-size: var(--fs-1); text-decoration: underline; cursor: pointer; opacity: .9; }
+      .vd-fbc { gap: 10px; margin: 4px 0 12px; padding: 16px; border-radius: 12px; background: #1877f2; color: #fff; box-shadow: 0 6px 18px rgba(24, 119, 242, .35); }
+      .vd-fbc-h { display: flex; align-items: center; gap: 10px; }
+      .vd-fbc-ic { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: #fff; color: #1877f2; font: 800 22px/1 Helvetica, Arial, sans-serif; }
+      .vd-fbc-t { font-size: 16px; font-weight: 700; line-height: 1.25; }
+      .vd-fbc-sub { font-size: var(--fs-1); opacity: .9; }
+      .vd-fbc-v { font-size: 30px; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; }
+      .vd-fbc-warn { padding: 6px 8px; border-radius: 8px; background: rgba(255, 255, 255, .16); font-size: var(--fs-1); }
+      .vd-fbc-go { width: 100%; min-height: 44px; border: none; border-radius: 10px; background: #fff; color: #1877f2; font-size: 16px; font-weight: 800; cursor: pointer; }
+      .vd-fbc-go:hover { background: #eef4ff; }
+      .vd-fbc-go:focus-visible, .vd-fb-link:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+      .vd-fbc-links { display: flex; gap: 14px; flex-wrap: wrap; }
+      .fb-pend { position: absolute; top: 2px; right: 6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: #e5484d; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; box-shadow: 0 0 0 2px var(--bg, #fff); pointer-events: auto; }
+      .pnav > button, .pmore { position: relative; }
       .vfb { width: min(460px, calc(100vw - 32px)); }
       .rdg-cfg { display: flex; flex-direction: column; gap: var(--s-2); }
       .rdg-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
@@ -12693,8 +12712,8 @@
     const sec = el('section', 'crmsec');
     sec.append(el('div', 'wt-head', 'VENDA REGISTRADA'));
     sec.append(el('div', 'fw-test vd-done', `Venda registrada (Em separação). Finalize no ERP. Total ${TS.money(vs.done.total)}.`));
-    const fbBox = saleFbBox(vs.done); // 2.17.2
-    if (fbBox) sec.append(fbBox);
+    const fbBox = saleFbBox(vs.done); // 2.17.2; 2.19.0: card no topo do painel
+    if (fbBox) vtabEl.prepend(fbBox);
     const url = erpLink({ pagina: 'historico', venda: vs.done.id });
     if (url) sec.append(erpAnchor('Abrir esta venda no ERP', url, 'bbtn primary vd-open'));
     else sec.append(el('div', 'crm-intro', 'No ERP: Histórico de Vendas.'));
@@ -12725,7 +12744,103 @@
   const SALE_FB_MODES = [['ask', 'Perguntar (padrão)'], ['auto', 'Enviar sempre automático'], ['off', 'Não perguntar']];
   let saleFbMode = 'ask';
   try { chrome.storage.local.get([SALE_FB_KEY], (r) => { const v = r && r[SALE_FB_KEY]; if (SALE_FB_MODES.some(([k]) => k === v)) saleFbMode = v; }); } catch { /* extensão recarregada */ }
-  const saleFbRender = (done) => { if (vs.done === done && vs.view === 'done') renderVendas(); };
+  // 2.19.0: lembrete da compra não enviada. Venda em "perguntar" (ou que falhou) fica guardada neste computador
+  // (chrome.storage.local, por venda: só id da venda, conversa, valor e nome/telefone para o mesmo envio) até enviar
+  // ou marcar "Não enviar esta venda". Selo vermelho na aba Vendas; abrindo aquela conversa, o card volta.
+  const SALE_FB_PEND_KEY = 'saleFbPending';
+  let saleFbPend = {};
+  const saleFbPendList = () => Object.values(saleFbPend).sort((a, b) => (b.at || 0) - (a.at || 0));
+  function saleFbPendSave() { storageSet({ [SALE_FB_PEND_KEY]: saleFbPend }); saleFbBadge(); }
+  function saleFbPendAdd(done) {
+    const f = done.f || {};
+    if (!done.id || !f.chatId || !done.fb) return;
+    const had = saleFbPend[done.id];
+    saleFbPend[done.id] = {
+      saleId: done.id, chatId: f.chatId, value: done.fb.value, name: f.customer_name || '', phone: f.customer_phone || '',
+      recent: done.fb.recent || null, at: (had && had.at) || Date.now(),
+    };
+    saleFbPendSave();
+  }
+  function saleFbPendDrop(saleId) {
+    if (!saleId || !saleFbPend[saleId]) return;
+    delete saleFbPend[saleId];
+    saleFbPendSave();
+  }
+  // selo na aba Vendas (e no "Mais" quando a aba Vendas está lá dentro)
+  function saleFbBadge() {
+    const n = Object.keys(saleFbPend).length;
+    const txt = `${n} compra${n === 1 ? '' : 's'} não enviada${n === 1 ? '' : 's'}`;
+    const vBtn = shadow.querySelector('.pnav button[data-sec="vendas"]');
+    const mBtn = shadow.querySelector('.pmore');
+    [[vBtn, true], [mBtn, !!(vBtn && pmenuEl.contains(vBtn))]].forEach(([b, on]) => {
+      if (!b) return;
+      let s = b.querySelector(':scope > .fb-pend');
+      if (!n || !on) { if (s) s.remove(); return; }
+      if (!s) { s = el('span', 'fb-pend'); b.append(s); }
+      s.textContent = String(n);
+      s.title = txt;
+      s.setAttribute('aria-label', txt);
+    });
+  }
+  try {
+    chrome.storage.local.get([SALE_FB_PEND_KEY], (r) => {
+      const v = r && r[SALE_FB_PEND_KEY];
+      if (v && typeof v === 'object') saleFbPend = v;
+      saleFbBadge();
+      if (vs.open && vs.view === 'list') renderVendas();
+    });
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area !== 'local' || !ch[SALE_FB_PEND_KEY]) return;
+      saleFbPend = ch[SALE_FB_PEND_KEY].newValue || {};
+      saleFbBadge();
+      if (vs.fbPend && !saleFbPend[vs.fbPend.id] && !['sent', 'dup', 'had', 'sending'].includes(vs.fbPend.fb && vs.fbPend.fb.state)) vs.fbPend = null;
+      if (vs.open && vs.view === 'list') renderVendas();
+    });
+  } catch { /* extensão recarregada */ }
+  // guarda/tira o lembrete conforme o estado: perguntando ou falhou = não enviada; enviada/já tinha = some
+  function saleFbTrack(done) {
+    const st = done && done.fb && done.fb.state;
+    if (st === 'ask' || st === 'error') saleFbPendAdd(done);
+    else if (st === 'sent' || st === 'dup' || st === 'had') saleFbPendDrop(done.id);
+  }
+  const saleFbRender = (done) => {
+    saleFbTrack(done);
+    if ((vs.done === done && vs.view === 'done') || (vs.fbPend === done && vs.view === 'list')) renderVendas();
+  };
+  // "Agora não": o card vira uma linha pequena enquanto esta conversa estiver aberta; abrindo de novo, volta grande
+  const saleFbSnooze = { chatId: null, ids: new Set() };
+  function saleFbLater(done) {
+    const chatId = (done.f && done.f.chatId) || null;
+    if (saleFbSnooze.chatId !== chatId) { saleFbSnooze.chatId = chatId; saleFbSnooze.ids.clear(); }
+    saleFbSnooze.ids.add(done.id);
+    done.fb = { ...done.fb, later: true };
+    saleFbRender(done);
+  }
+  // "Não enviar esta venda": tira o lembrete e o card
+  function saleFbDismiss(done) {
+    saleFbPendDrop(done.id);
+    done.fb = null;
+    if (vs.fbPend === done) vs.fbPend = null;
+    renderVendas();
+  }
+  // Conversa aberta com compra não enviada: o card volta no topo da aba Vendas (confere antes se já foi enviada)
+  async function saleFbPendFor() {
+    let chat = null;
+    try { chat = await waRequest('activeChat', {}, { timeout: 2000 }); } catch { chat = null; }
+    const chatId = chat && chat.kind === 'individual' ? chat.chatId : null;
+    if (saleFbSnooze.chatId !== chatId) { saleFbSnooze.chatId = chatId; saleFbSnooze.ids.clear(); } // trocou de conversa
+    const p = chatId ? saleFbPendList().find((x) => x.chatId === chatId) : null;
+    if (!p) { if (vs.fbPend && !['sent', 'dup'].includes(vs.fbPend.fb && vs.fbPend.fb.state)) { vs.fbPend = null; if (vs.view === 'list') renderVendas(); } return; }
+    if (vs.fbPend && vs.fbPend.id === p.saleId) return;
+    const has = await call('saleConversion', { saleId: p.saleId }).catch(() => null);
+    if (has && has.exists) { saleFbPendDrop(p.saleId); return; }
+    vs.fbPend = {
+      id: p.saleId, restored: true,
+      f: { chatId: p.chatId, customer_name: p.name, customer_phone: p.phone },
+      fb: { state: 'ask', value: p.value, recent: p.recent || null, later: saleFbSnooze.ids.has(p.saleId) },
+    };
+    if (vs.view === 'list') renderVendas();
+  }
   async function saleFbStart(f, done, linkP) {
     const mode = saleFbMode;
     const value = Math.round(Number(done.total) * 100) / 100;
@@ -12772,25 +12887,45 @@
   function saleFbBox(done) {
     const fb = done && done.fb;
     if (!fb) return null;
-    const box = el('div', `fw-test vd-fb st-${fb.state}`);
-    box.setAttribute('role', 'status');
+    // 2.19.0: card grande (azul do Facebook) no topo do painel; "Agora não" vira linha pequena com o lembrete
+    const big = fb.state === 'ask' && !fb.later;
+    const ok = fb.state === 'sent' || fb.state === 'dup' || fb.state === 'had';
+    const box = el('div', `vd-fb st-${fb.state}${big ? ' vd-fbc' : ''}${ok ? ' vd-fb-ok' : ''}${fb.state === 'ask' && fb.later ? ' vd-fb-later' : ''}`);
+    box.setAttribute('role', fb.state === 'error' ? 'alert' : 'status');
     const money = TS.money(fb.value);
+    const noSend = () => fbtn('vd-fb-link vd-fb-skip', 'Não enviar esta venda', () => saleFbDismiss(done));
     if (fb.state === 'checking') box.append(el('div', 'lt-none loading', 'Conferindo a compra para o Facebook…'));
-    else if (fb.state === 'had') box.append(el('div', 'vd-fb-t', `📈 A compra desta venda já foi enviada ao Facebook (${money}).`));
-    else if (fb.state === 'ask') {
-      box.append(el('div', 'vd-fb-t', `📈 Enviar a compra para o Facebook? ${money}`));
-      if (fb.recent) box.append(el('div', 'ed-note', `Atenção: já foi enviada uma compra de ${TS.money(fb.recent.value)} em ${dmHm(fb.recent.at)} nesta conversa. Envie só se for outro pedido.`));
+    else if (fb.state === 'had') box.append(el('div', 'vd-fb-t', `Compra enviada ao Facebook ✓ (${money}, já tinha sido enviada antes)`));
+    else if (big) {
+      const head = el('div', 'vd-fbc-h');
+      const ic = el('span', 'vd-fbc-ic', 'f');
+      ic.setAttribute('aria-hidden', 'true');
+      head.append(ic, el('div', 'vd-fbc-t', 'Enviar esta venda para o Facebook?'));
+      box.append(head);
+      if (done.restored) box.append(el('div', 'vd-fbc-sub', `Compra ainda não enviada${done.f && done.f.customer_name ? ` · ${done.f.customer_name}` : ''}`));
+      box.append(el('div', 'vd-fbc-v', money));
+      if (fb.recent) box.append(el('div', 'vd-fbc-warn', `Atenção: já foi enviada uma compra de ${TS.money(fb.recent.value)} em ${dmHm(fb.recent.at)} nesta conversa. Envie só se for outro pedido.`));
+      box.append(fbtn('vd-fbc-go vd-fb-go', `Enviar agora (${money})`, () => saleFbSend(done.f || {}, done)));
+      const links = el('div', 'vd-fbc-links');
+      links.append(fbtn('vd-fb-link vd-fb-no', 'Agora não', () => saleFbLater(done)));
+      if (done.restored) links.append(noSend());
+      box.append(links);
+    } else if (fb.state === 'ask') {
+      box.append(el('div', 'vd-fb-t', `🔔 Compra de ${money} não enviada ao Facebook`));
       const row = el('div', 'ed-add');
-      row.append(fbtn('bbtn primary vd-fb-go', 'Enviar agora', () => saleFbSend(done.f || {}, done)), fbtn('bbtn vd-fb-no', 'Agora não', () => { done.fb = null; saleFbRender(done); }));
+      row.append(fbtn('bbtn primary vd-fb-go', `Enviar agora (${money})`, () => saleFbSend(done.f || {}, done)), noSend());
       box.append(row);
     } else if (fb.state === 'sending') box.append(el('div', 'lt-none loading', `Enviando a compra (${money}) para o Facebook…`));
     else if (fb.state === 'sent') {
-      box.append(el('div', 'vd-fb-t', `📈 Compra enviada ao Facebook ✓ ${money} (o Facebook recebeu ${fb.n} evento${fb.n === 1 ? '' : 's'})`));
+      box.append(el('div', 'vd-fb-t', 'Compra enviada ao Facebook ✓'));
+      box.append(el('div', 'vd-fb-d', `${money} · o Facebook recebeu ${fb.n} evento${fb.n === 1 ? '' : 's'}`));
       if (fb.linkErr) box.append(el('div', 'ed-note', `Não consegui ligar a compra à venda: ${fb.linkErr}`));
-    } else if (fb.state === 'dup') box.append(el('div', 'vd-fb-t', `📈 Essa compra já tinha sido enviada (não mandei de novo).`));
+    } else if (fb.state === 'dup') box.append(el('div', 'vd-fb-t', 'Compra enviada ao Facebook ✓ (já tinha sido enviada; não mandei de novo)'));
     else if (fb.state === 'error') {
-      box.append(el('div', 'vd-fb-t err', `📈 Não consegui enviar a compra: ${fb.msg}`));
-      box.append(fbtn('bbtn vd-fb-go', 'Tentar de novo', () => saleFbSend(done.f || {}, done)));
+      box.append(el('div', 'vd-fb-t err', `Não consegui enviar a compra: ${fb.msg}`));
+      const row = el('div', 'ed-add');
+      row.append(fbtn('bbtn primary vd-fb-go', 'Tentar de novo', () => saleFbSend(done.f || {}, done)), noSend());
+      box.append(row);
     }
     return box;
   }
@@ -12899,6 +13034,17 @@
     if (vs.view === 'form' && vs.form) { renderSaleForm(); return; }
     if (vs.view === 'done' && vs.done) { renderSaleDone(); return; }
     if (vs.view === 'courier' && vs.courier) { renderCourier(); return; }
+    // 2.19.0: compra não enviada desta conversa (card volta) e das outras (atalho para abrir a conversa)
+    const pendBox = vs.fbPend ? saleFbBox(vs.fbPend) : null;
+    if (pendBox) vtabEl.prepend(pendBox);
+    const others = saleFbPendList().filter((p) => !vs.fbPend || p.saleId !== vs.fbPend.id);
+    if (others.length) {
+      const ob = el('div', 'vd-fb-others');
+      ob.append(el('div', 'vd-fb-t', `🔔 ${others.length} compra${others.length === 1 ? '' : 's'} não enviada${others.length === 1 ? '' : 's'} ao Facebook em outra${others.length === 1 ? '' : 's'} conversa${others.length === 1 ? '' : 's'}`));
+      others.slice(0, 5).forEach((p) => ob.append(fbtn('vd-fb-link vd-fb-open', `${p.name || 'Cliente'} · ${TS.money(p.value)}`, () => openConversation({ chatId: p.chatId, name: p.name }))));
+      vtabEl.append(ob);
+    }
+    saleFbPendFor().catch(() => {});
     const top = el('div', 'ed-add');
     top.append(fbtn('bbtn primary', '💰 Nova venda desta conversa', () => openSaleForm()));
     if (erpLink({})) top.append(fbtn('bbtn', 'Nova venda no ERP', () => openErpNewSale()));

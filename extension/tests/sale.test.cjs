@@ -22,7 +22,7 @@ const P2 = '22222222-2222-4222-8222-222222222222'; // pulseira
 const A1 = '33333333-3333-4333-8333-333333333333';
 const SUP = '44444444-4444-4444-8444-444444444444';
 
-function api({ attribution = true, cepBody = null } = {}) {
+function api({ attribution = true, cepBody = null, noPosition = false } = {}) {
   const db = {
     products: [
       { id: P1, model: 'Smartwatch Ultra', color: 'Preto', category: 'smartwatch', price: 499.9, cost: 210, current_stock: 4, tiny_id: 'T-1' },
@@ -55,6 +55,8 @@ function api({ attribution = true, cepBody = null } = {}) {
     });
     if (method === 'GET') return res(200, rows.filter(match));
     if (method === 'POST') {
+      // 2.19.0: antes da migration sale_items_position a coluna não existe
+      if (noPosition && table === 'sale_items' && (Array.isArray(body) ? body : [body]).some((r) => 'position' in r)) return res(400, { code: 'PGRST204', message: "Could not find the 'position' column of 'sale_items' in the schema cache" });
       const list = (Array.isArray(body) ? body : [body]).map((r) => ({ id: r.id || `${table}-${rows.length + 1}`, ...r }));
       rows.push(...list);
       return res(201, list);
@@ -122,8 +124,8 @@ test('sale_items com o custo editado, sale_accessories com o custo, itens manuai
   await a.createSaleFromChat({ sale: chatSale(TS) });
   const saleId = db.sales[0].id;
   assert.deepStrictEqual(plain(db.sale_items.map(({ id, ...x }) => x)), [
-    { sale_id: saleId, product_id: P1, quantity: 1, unit_price: 489.9, total_price: 489.9, unit_cost: 199.5 },
-    { sale_id: saleId, product_id: P2, quantity: 2, unit_price: 49.9, total_price: 99.8, unit_cost: 12.5 },
+    { sale_id: saleId, product_id: P1, quantity: 1, unit_price: 489.9, total_price: 489.9, unit_cost: 199.5, position: 0 },
+    { sale_id: saleId, product_id: P2, quantity: 2, unit_price: 49.9, total_price: 99.8, unit_cost: 12.5, position: 1 },
   ]);
   assert.deepStrictEqual(plain(db.sale_accessories.map(({ id, ...x }) => x)), [{ sale_id: saleId, accessory_id: A1, custom_name: null, quantity: 1, cost: 3.2 }]);
   assert.deepStrictEqual(plain(db.sales[0].manual_items), [{ name: 'Película extra', price: 20, cost: 4, quantity: 1 }, { name: 'Capa nova', price: 15, cost: 2, quantity: 1 }]);
@@ -197,6 +199,17 @@ test('colar formulário + CEP: preenche como o ERP (o CEP completa rua, UF, cida
   const f = { address_street: '', state: '', city: '', neighborhood: '', ...TS.parseForm('Nome: João\nCEP: 24220-000\nNúmero: 5') };
   const g = plain(TS.applyCep(f, { logradouro: 'Rua Gavião Peixoto', bairro: 'Icaraí', localidade: 'Niterói', uf: 'RJ' }));
   assert.deepStrictEqual([g.customer_name, g.address_number, g.zip_code, g.address_street, g.state, g.city, g.neighborhood], ['João', '5', '24220000', 'Rua Gavião Peixoto', 'RJ', 'Niterói', 'Icaraí']);
+});
+test('2.19.0: sale_items.position = ordem de adição (pulseira antes do relógio fica 0/1); sem a coluna grava sem ela', async () => {
+  const { api: a, TS, db } = api();
+  const s = chatSale(TS);
+  s.items = [...s.items].reverse();
+  await a.createSaleFromChat({ sale: s });
+  assert.deepStrictEqual(db.sale_items.map((i) => [i.product_id, i.position]), [[P2, 0], [P1, 1]]);
+  const b = api({ noPosition: true });
+  await b.api.createSaleFromChat({ sale: chatSale(b.TS) });
+  assert.strictEqual(b.db.sales.length, 1, 'a venda fica gravada');
+  assert.deepStrictEqual(b.db.sale_items.map((i) => [i.product_id, 'position' in i]), [[P1, false], [P2, false]]);
 });
 test('mensagem do entregador: sem a linha de horário', () => {
   const { TS } = api();

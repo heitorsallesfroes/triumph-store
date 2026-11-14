@@ -1218,21 +1218,25 @@ async function main() {
       && row.payment_status === 'a_cobrar' && row.delivery_notes === 'Deixar na portaria' && row.wa_chat_id === CH && row.origin === 'anuncio' && row.ad_title === 'Relógio Promo' && !('wa_warranty_months' in row)
       && JSON.stringify(items) === JSON.stringify([['A', 1, 499.9, 199.5, 499.9], ['B', 2, 59.9, 12.5, 119.8]]) && /pagina=historico/.test(openErp || ''),
       JSON.stringify({ saved, row, items, openErp, msg: await q(`return (sh.querySelector('.vd-msg') || {}).textContent || '';`) }));
-    // 2.17.2: logo depois de "Venda registrada": "Enviar a compra para o Facebook? R$ 619,70" → "Enviar agora" usa o
-    // envio do 📈 (mesmo valor, mesma conversa) e liga a compra à venda recém-criada (sale_id)
+    // 2.17.2: logo depois de "Venda registrada" → "Enviar agora" usa o envio do 📈 (mesmo valor, mesma conversa) e liga a
+    // compra à venda recém-criada (sale_id). 2.19.0: card grande no topo do painel "Enviar esta venda para o Facebook?"
+    // com "Enviar agora (R$ 619,70)" / "Agora não"; enquanto não envia, selo vermelho na aba Vendas (some ao enviar)
     fake.meta = true;
     fake.metaCalls = [];
-    const fbAsk = await waitFor(`const b = sh.querySelector('.vtab .vd-fb.st-ask'); return !!b && /Enviar a compra para o Facebook\\? R\\$\\s619,70/.test(b.textContent);`, 10000);
+    const fbAsk = await waitFor(`const b = sh.querySelector('.vtab .vd-fb.st-ask'); return !!b && b.classList.contains('vd-fbc') && b === sh.querySelector('.vtab').firstElementChild && /Enviar esta venda para o Facebook\\?/.test(b.textContent) && /R\\$\\s619,70/.test((b.querySelector('.vd-fbc-v') || {}).textContent || '');`, 10000);
     const fbAskTxt = await q(`const b = sh.querySelector('.vtab .vd-fb'); return b ? { t: b.textContent, btns: [...b.querySelectorAll('button')].map((x) => x.textContent) } : null;`);
+    const fbBadge = await q(`const s = sh.querySelector('.pnav button[data-sec="vendas"] .fb-pend'); return s ? s.title : null;`);
     await shotQB('venda-facebook-pergunta.png');
-    await q(`[...sh.querySelectorAll('.vtab .vd-fb button')].find((x) => x.textContent === 'Enviar agora').click(); return true;`);
+    await q(`[...sh.querySelectorAll('.vtab .vd-fb button')].find((x) => /^Enviar agora \\(R\\$\\s619,70\\)$/.test(x.textContent)).click(); return true;`);
     const fbSent = await waitFor(`const b = sh.querySelector('.vtab .vd-fb.st-sent'); return !!b && /Compra enviada ao Facebook ✓/.test(b.textContent);`, 15000);
+    const fbBadgeGone = await waitFor(`return !sh.querySelector('.pnav .fb-pend');`, 5000);
     const fbCall = (fake.metaCalls || [])[0] || {};
     const fbEv = fake.events.find((x) => x.event_id === fbCall.event_id) || {};
-    check('2.17.2: depois de "Venda registrada" pergunta "Enviar a compra para o Facebook? R$ 619,70" (Enviar agora / Agora não); "Enviar agora" manda pelo 📈 com o valor da venda, a conversa e o anúncio, e liga a compra à venda (sale_id)',
-      fbAsk && !!fbAskTxt && JSON.stringify(fbAskTxt.btns) === JSON.stringify(['Enviar agora', 'Agora não']) && fbSent && fake.metaCalls.length === 1 && fbCall.value === 619.7 && fbCall.chat_id === CH
+    check('2.19.0: depois de "Venda registrada" card no topo "Enviar esta venda para o Facebook?" (Enviar agora (R$ 619,70) / Agora não) e selo "1 compra não enviada" na aba Vendas, que some ao enviar; "Enviar agora" manda pelo 📈 com o valor da venda, a conversa e o anúncio, e liga a compra à venda (sale_id)',
+      fbAsk && !!fbAskTxt && fbAskTxt.btns.length === 2 && /^Enviar agora \(R\$\s619,70\)$/.test(fbAskTxt.btns[0]) && fbAskTxt.btns[1] === 'Agora não' && fbBadge === '1 compra não enviada' && fbBadgeGone
+      && fbSent && fake.metaCalls.length === 1 && fbCall.value === 619.7 && fbCall.chat_id === CH
       && fbCall.test === false && !!fbCall.ad && fbCall.ad.title === 'Relógio Promo' && fbEv.sale_id === row.id,
-      JSON.stringify({ fbAsk, fbAskTxt, fbSent, fbCall, fbEv: { sale_id: fbEv.sale_id }, saleId: row.id }));
+      JSON.stringify({ fbAsk, fbAskTxt, fbBadge, fbBadgeGone, fbSent, fbCall, fbEv: { sale_id: fbEv.sale_id }, saleId: row.id }));
     await shotQB('venda-facebook-enviado.png');
     fake.meta = false;
     // 2.13.3: o nome da conversa vira o primeiro nome do cliente da venda ("Maria Souza" → "Maria"), origem "da venda"

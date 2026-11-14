@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { orderSaleItems } from '../lib/saleItemsOrder';
 import { fetchAllRows } from '../lib/resumoAnualCalc';
 import { SALE_STATUSES, getStatusConfig, SaleStatus } from '../lib/salesStatus';
 import { ChevronDown, Package, FileText, CreditCard as Edit } from 'lucide-react';
@@ -43,11 +44,11 @@ export default function SalesList() {
 
       const salesWithProducts = await Promise.all(
         (data || []).map(async (sale) => {
-          const { data: items } = await supabase
+          const { data: rawItems } = await supabase
             .from('sale_items')
-            .select('product_id, quantity')
-            .eq('sale_id', sale.id)
-            .order('quantity', { ascending: false });
+            .select('*, products(category)')
+            .eq('sale_id', sale.id);
+          const items = orderSaleItems(rawItems);
 
           let main_product = '';
           let additional_items = 0;
