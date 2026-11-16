@@ -26,8 +26,10 @@ import {
   LogOut,
   RefreshCw,
   FileText,
+  NotebookPen,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { BADGE_EVENT, fetchPendentesHoje } from '../lib/anotacoesDb';
 
 interface LayoutProps {
   children: ReactNode;
@@ -78,7 +80,8 @@ const menuGroups = [
       { id: 'resumo',        label: 'Relatório Mensal', icon: BarChart3  },
       { id: 'resumo-anual',  label: 'Resumo Anual',     icon: Calendar   },
       { id: 'notas-fiscais', label: 'Notas fiscais',    icon: FileText   },
-      { id: 'settings',      label: 'Configurações',    icon: Settings   },
+      { id: 'anotacoes',     label: 'Anotações',        icon: NotebookPen },
+      { id: 'settings',     label: 'Configurações',    icon: Settings   },
     ],
   },
 ];
@@ -119,6 +122,18 @@ export default function Layout({ children, currentPage, onNavigate, onRemount }:
   // ── versão nova publicada (src/lib/erpVersion.ts): a cada 2 min e ao voltar para a aba ──
   const [newVersion, setNewVersion] = useState(false);
   useEffect(() => watchNewVersion(() => setNewVersion(true), { every: Number((globalThis as { __TSP_VERSION_MS?: number }).__TSP_VERSION_MS) || VERSION_CHECK_MS }), []);
+
+  // contador ao lado de "Anotações": tarefas de hoje + atrasadas que faltam (src/lib/anotacoesDb.ts)
+  const [pendentes, setPendentes] = useState<number | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    const buscar = () => { fetchPendentesHoje().then((n) => { if (vivo) setPendentes(n); }).catch(() => {}); };
+    const onEvt = (e: Event) => { const n = (e as CustomEvent<number>).detail; if (typeof n === 'number') setPendentes(n); };
+    buscar();
+    const iv = window.setInterval(buscar, 5 * 60_000);
+    window.addEventListener(BADGE_EVENT, onEvt);
+    return () => { vivo = false; window.clearInterval(iv); window.removeEventListener(BADGE_EVENT, onEvt); };
+  }, []);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('theme') as 'dark' | 'light') || 'dark';
@@ -230,6 +245,11 @@ export default function Layout({ children, currentPage, onNavigate, onRemount }:
                     >
                       <Icon size={16} />
                       <span className="font-medium" style={{ fontSize: '15px' }}>{item.label}</span>
+                      {item.id === 'anotacoes' && !!pendentes && (
+                        <span data-testid="erp-anotacoes-badge" aria-label={`${pendentes} tarefas para hoje`}
+                          className="ml-auto text-xs font-bold px-1.5 rounded-full leading-5 min-w-[20px] text-center"
+                          style={{ background: ORANGE, color: '#fff' }}>{pendentes > 99 ? '99+' : pendentes}</span>
+                      )}
                     </button>
                   );
                 })}

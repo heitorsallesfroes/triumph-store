@@ -19,6 +19,7 @@ import ResumoAnual from './pages/ResumoAnual';
 import SmallSales from './pages/SmallSales';
 import CorreiosTracking from './pages/CorreiosTracking';
 import NotasFiscais from './pages/NotasFiscais';
+import Anotacoes from './pages/Anotacoes';
 import { loadSystemConfig } from './lib/systemConfig';
 import { takeErpLink } from './lib/erpLink';
 import { initialRoute, parseRoute, readStored, writeRoute } from './lib/erpRoute';
@@ -126,6 +127,8 @@ function App() {
         return <ResumoAnual />;
       case 'notas-fiscais':
         return <NotasFiscais />;
+      case 'anotacoes':
+        return <Anotacoes />;
       case 'settings':
         return <Settings />;
       default:
