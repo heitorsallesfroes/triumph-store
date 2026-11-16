@@ -214,7 +214,9 @@ const amostras = () => {
   const umItem = N.preparar(notaBase({ ambiente: 1, itens: [ITENS[0]], desconto: 0 }), EMIT, cert);
   // dados fiscais do cadastro de Produtos: GTIN de verdade, origem 2 e unidade "Un"
   const gtin = N.preparar(notaBase({ ambiente: 1, itens: [{ ...ITENS[0], gtin: '7891000315507', orig: 2, unidade: 'Un' }, ITENS[2]], desconto: 0 }), EMIT, cert);
-  return { prod, homolog, fora, ibs, cnpjDest, umItem, gtin };
+  // venda na loja: presencial (indPres 1, sem indIntermed)
+  const presencial = N.preparar(notaBase({ ambiente: 1, indPres: 1 }), EMIT, cert);
+  return { prod, homolog, fora, ibs, cnpjDest, umItem, gtin, presencial };
 };
 
 await t('schemas oficiais NF-e 4.00 (PL_010 v1.30) + assinatura conferida pelo .NET (SignedXml)', () => {
@@ -658,6 +660,33 @@ await t('fora do RJ: aviso amarelo e o botão só libera com "Conferi"; RJ não 
   assert.equal(R.podeEmitirUf('RJ', false), true);
   assert.equal(R.podeEmitirUf('SP', false), false);
   assert.equal(R.podeEmitirUf('SP', true), true);
+});
+
+await t('presença do comprador: Loja Física = presencial (1), o resto = internet (2)', async () => {
+  assert.equal(R.presencaDaVenda('loja_fisica'), 1);
+  for (const d of ['motoboy', 'correios', '', null, undefined, 'outro']) assert.equal(R.presencaDaVenda(d), 2, String(d));
+  assert.equal(R.TEXTO_PRESENCA[1], 'Venda presencial (loja)');
+  assert.equal(R.TEXTO_PRESENCA[2], 'Venda não presencial (internet)');
+  // XML: presencial sai sem indIntermed; internet continua com indIntermed 0
+  const pres = N.montarXml(notaBase({ indPres: 1 }), EMIT).xml;
+  assert.equal(pega(pres, 'indPres'), '1');
+  assert.ok(!pres.includes('<indIntermed>'));
+  const net = N.montarXml(notaBase(), EMIT).xml;
+  assert.equal(pega(net, 'indPres'), '2');
+  assert.equal(pega(net, 'indIntermed'), '0');
+  // o pedido da tela: só 1 vira presencial; sem campo ou lixo = 2 (como antes)
+  assert.equal(F.limparPedido({ ind_pres: 1 }).indPres, 1);
+  assert.equal(F.limparPedido({ ind_pres: '1' }).indPres, 1);
+  for (const v of [undefined, 2, 3, 9, 'x']) assert.equal(F.limparPedido({ ind_pres: v }).indPres, 2, String(v));
+  // emitir: o XML guardado e enviado sai com a presença escolhida
+  for (const [ind, esperado] of [[1, '1'], [undefined, '2']] as const) {
+    const db = bancoFalso();
+    let enviado = '';
+    const r: any = await F.emitir(contexto(db, async ({ env }) => { enviado = env; return retEnvi(env, '100', 'Autorizado o uso da NF-e'); }), pedido({ ind_pres: ind }));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(pega(enviado, 'indPres'), esperado);
+    assert.equal(db.st.notas[0].dados.indPres, Number(esperado));
+  }
 });
 
 await t('nenhum segredo no repositório: .env.example só com os nomes', () => {

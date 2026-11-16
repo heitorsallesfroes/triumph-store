@@ -21,6 +21,11 @@ export function dadosFiscais(p: { origem?: unknown; unidade?: unknown; gtin?: un
   return { orig: o >= 0 && o <= 8 ? o : 0, unidade: un || 'Pc', gtin: g || 'SEM GTIN' };
 }
 
+// presença do comprador na nota (indPres): venda "Loja Física" = 1 (presencial); Motoboy, Correios e o resto = 2 (internet)
+export type IndPres = 1 | 2;
+export const presencaDaVenda = (deliveryType: unknown): IndPres => (String(deliveryType ?? '').trim() === 'loja_fisica' ? 1 : 2);
+export const TEXTO_PRESENCA: Record<IndPres, string> = { 1: 'Venda presencial (loja)', 2: 'Venda não presencial (internet)' };
+
 // cliente fora do RJ: a nota sai com CFOP 6102 (interestadual) e o botão só libera depois de marcar "Conferi"
 export const AVISO_FORA_RJ = 'Cliente de fora do RJ: a nota sai com CFOP 6102 (operação interestadual). Confira antes de emitir.';
 export const foraDoRj = (uf: unknown) => { const u = String(uf ?? '').trim().toUpperCase(); return u !== '' && u !== 'RJ'; };

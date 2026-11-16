@@ -11,7 +11,8 @@ import {
   NfeDest, NfeItem, NfeNota, NfeCert, HOMOLOG_DEST, HOMOLOG_ITEM, STATUS_NFE,
   nfeGet, nfePost, cepComIbge, rascunhoDaVenda, baixarDanfe, baixarXml, baixarXmlCancelamento, numBR,
 } from '../lib/nfeApi';
-import { AVISO_FORA_RJ, foraDoRj, itensSemNcm, podeEmitirUf, temNotaTiny } from '../lib/nfeRegras';
+import { AVISO_FORA_RJ, TEXTO_PRESENCA, foraDoRj, itensSemNcm, podeEmitirUf, presencaDaVenda, temNotaTiny, type IndPres } from '../lib/nfeRegras';
+import { NFE_CSS } from './nfeCores';
 import { cleanCep, formatCep } from '../lib/cep';
 import NfeCancelar from './NfeCancelar';
 
@@ -53,6 +54,8 @@ export default function NfeModal({ sale, onClose }: Props) {
   const [conferiuUf, setConferiuUf] = useState(false);
   const [conferiuTiny, setConferiuTiny] = useState(false);
   const [confirmarReal, setConfirmarReal] = useState(false);
+  // presença do comprador (indPres): vem do tipo de entrega da venda e pode ser trocada antes de emitir
+  const [presenca, setPresenca] = useState<IndPres>(() => presencaDaVenda(sale.delivery_type));
   const tiny = temNotaTiny(sale);
 
   const carregarNotas = useCallback(async () => {
@@ -118,7 +121,7 @@ export default function NfeModal({ sale, onClose }: Props) {
       const j = await nfePost({
         op: 'emitir', ambiente, venda_id: sale.id, dest,
         itens: itens.map((i) => ({ ...i, qtd: numBR(i.qtd), valor: numBR(i.valor) })),
-        desconto: totais.desc, frete: totais.fr, confirmar_tiny: ambiente === 1 && tiny && conferiuTiny,
+        desconto: totais.desc, frete: totais.fr, ind_pres: presenca, confirmar_tiny: ambiente === 1 && tiny && conferiuTiny,
       });
       if (j.ok) setRes({ tipo: 'autorizada', numero: j.numero, serie: j.serie, chave: j.chave, protocolo: j.protocolo, ambiente });
       else if (j.pendente) setRes({ tipo: 'pendente', id: j.id, msg: j.erro });
@@ -170,28 +173,29 @@ export default function NfeModal({ sale, onClose }: Props) {
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-700" aria-label="Fechar"><X size={20} /></button>
         </div>
 
+        <style>{NFE_CSS}</style>
         <div className="px-6 py-4 space-y-5">
           {producao ? (
-            <div className="rounded-lg border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm text-green-200">
+            <div className="rounded-lg border nfe-ok px-4 py-3 text-sm">
               <ShieldCheck size={15} className="inline -mt-0.5 mr-1" /><b>Notas reais liberadas</b>: "Autorizar na SEFAZ" emite nota <b>com valor fiscal</b>, com o nome real do cliente e dos produtos.
               {cert && (cert.ok
-                ? <span className="block text-xs text-green-100/80 mt-1">Certificado OK até {cert.validade?.split('-').reverse().join('/')} ({cert.dias} dias).</span>
-                : <span className="block text-xs text-red-300 mt-1">⚠️ {cert.erro}</span>)}
+                ? <span className="block text-[13px] nfe-sub mt-1">Certificado OK até {cert.validade?.split('-').reverse().join('/')} ({cert.dias} dias).</span>
+                : <span className="block text-[13px] nfe-erro-t mt-1">⚠️ {cert.erro}</span>)}
             </div>
           ) : (
-            <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-200">
+            <div className="rounded-lg border nfe-aviso px-4 py-3 text-sm">
               🧪 <b>Ambiente de teste (homologação)</b>: a nota vai para a SEFAZ (SVRS) só para teste, <b>sem valor fiscal</b>. Série 2.
               {cert && (cert.ok
-                ? <span className="block text-xs text-yellow-100/80 mt-1">Certificado OK até {cert.validade?.split('-').reverse().join('/')} ({cert.dias} dias).</span>
-                : <span className="block text-xs text-red-300 mt-1">⚠️ {cert.erro}</span>)}
+                ? <span className="block text-[13px] nfe-sub mt-1">Certificado OK até {cert.validade?.split('-').reverse().join('/')} ({cert.dias} dias).</span>
+                : <span className="block text-[13px] nfe-erro-t mt-1">⚠️ {cert.erro}</span>)}
             </div>
           )}
 
           {tiny && (
-            <div className="rounded-lg border border-yellow-500/60 bg-yellow-500/15 px-4 py-3 text-sm text-yellow-200" role="alert">
+            <div className="rounded-lg border nfe-aviso px-4 py-3 text-sm" role="alert">
               <p className="flex items-center gap-2 font-semibold"><AlertTriangle size={15} className="shrink-0" />Esta venda já tem nota emitida pelo Tiny.</p>
               {producao && (
-                <label className="flex items-center gap-2 mt-2 text-yellow-100 cursor-pointer select-none">
+                <label className="flex items-center gap-2 mt-2 nfe-sub cursor-pointer select-none">
                   <input type="checkbox" checked={conferiuTiny} onChange={(e) => setConferiuTiny(e.target.checked)} className="accent-yellow-500 h-4 w-4" />
                   Conferi e quero emitir outra nota real mesmo assim
                 </label>
@@ -200,19 +204,19 @@ export default function NfeModal({ sale, onClose }: Props) {
           )}
 
           {carregando && <div className="flex items-center gap-2 text-gray-400 text-sm"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-orange-500" />Carregando a venda…</div>}
-          {erroCarga && <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">{erroCarga}</div>}
+          {erroCarga && <div className="rounded-lg border nfe-erro px-4 py-3 text-sm">{erroCarga}</div>}
 
           {notas.length > 0 && (
             <section>
               <h3 className="text-sm font-bold text-orange-400 mb-2">Notas desta venda</h3>
               <div className="space-y-2">
                 {notas.map((n) => (
-                  <div key={n.id} className="bg-gray-900/40 rounded-lg p-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+                  <div key={n.id} className="nfe-bloco rounded-lg p-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
                     <span className="font-semibold">Nº {n.numero} / série {n.serie}</span>
-                    {n.ambiente === 2 && <span className="text-[10px] font-bold tracking-wide bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 rounded px-1.5 py-0.5">TESTE</span>}
+                    {n.ambiente === 2 && <span className="text-xs font-bold tracking-wide nfe-selo-aviso border rounded px-1.5 py-0.5">TESTE</span>}
                     <span>{STATUS_NFE[n.status] || n.status}</span>
-                    <span className="text-xs text-gray-400">{dataHora(n.autorizada_em || n.criado_em)}{n.cancelada_em ? ` · cancelada ${dataHora(n.cancelada_em)}` : ''}</span>
-                    {['rejeitada', 'pendente'].includes(n.status) && n.motivo && <span className="text-xs text-gray-400 w-full">{n.cstat ? `${n.cstat}: ` : ''}{n.motivo}</span>}
+                    <span className="text-[13px] text-gray-400">{dataHora(n.autorizada_em || n.criado_em)}{n.cancelada_em ? ` · cancelada ${dataHora(n.cancelada_em)}` : ''}</span>
+                    {['rejeitada', 'pendente'].includes(n.status) && n.motivo && <span className="text-[13px] text-gray-400 w-full">{n.cstat ? `${n.cstat}: ` : ''}{n.motivo}</span>}
                     <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:ml-auto">
                       {['autorizada', 'cancelada'].includes(n.status) && <>
                         {btnBaixar('pdf', n.id, 'Baixar DANFE (PDF)', 'bg-green-700 hover:bg-green-600')}
@@ -229,7 +233,7 @@ export default function NfeModal({ sale, onClose }: Props) {
                   </div>
                 ))}
               </div>
-              {erroBaixar && <p className="text-xs text-red-300 mt-2">{erroBaixar}</p>}
+              {erroBaixar && <p className="text-[13px] nfe-erro-t mt-2">{erroBaixar}</p>}
             </section>
           )}
 
@@ -241,7 +245,7 @@ export default function NfeModal({ sale, onClose }: Props) {
                   <div className="col-span-12 md:col-span-8">
                     <label className={lbl}>Nome</label>
                     <input className={inp} value={dest.nome} onChange={(e) => setD('nome', e.target.value)} />
-                    <p className="text-xs text-gray-500 mt-1">Na nota de teste a SEFAZ exige o texto “{HOMOLOG_DEST}” no lugar do nome (o sistema troca sozinho).</p>
+                    <p className="text-[13px] nfe-aux mt-1">Na nota de teste a SEFAZ exige o texto “{HOMOLOG_DEST}” no lugar do nome (o sistema troca sozinho).</p>
                   </div>
                   <div className="col-span-12 md:col-span-4">
                     <label className={lbl}>CPF / CNPJ</label>
@@ -289,11 +293,11 @@ export default function NfeModal({ sale, onClose }: Props) {
                     <input className={inp} value={dest.email} onChange={(e) => setD('email', e.target.value)} />
                   </div>
                 </div>
-                {!/^\d{7}$/.test(dest.cod_municipio) && <p className="text-xs text-red-400 mt-1">Digite o CEP para achar a cidade e o código IBGE.</p>}
+                {!/^\d{7}$/.test(dest.cod_municipio) && <p className="text-[13px] nfe-erro-t mt-1">Digite o CEP para achar a cidade e o código IBGE.</p>}
                 {foraDoRj(dest.uf) && (
-                  <div className="mt-2 rounded-lg border border-yellow-500/60 bg-yellow-500/15 px-3 py-2 text-sm text-yellow-200" role="alert">
+                  <div className="mt-2 rounded-lg border nfe-aviso px-3 py-2 text-sm" role="alert">
                     <p className="flex items-center gap-2"><AlertTriangle size={15} className="shrink-0" />{AVISO_FORA_RJ}</p>
-                    <label className="flex items-center gap-2 mt-2 text-yellow-100 cursor-pointer select-none">
+                    <label className="flex items-center gap-2 mt-2 nfe-sub cursor-pointer select-none">
                       <input type="checkbox" checked={conferiuUf} onChange={(e) => setConferiuUf(e.target.checked)} className="accent-yellow-500 h-4 w-4" />
                       Conferi
                     </label>
@@ -302,16 +306,16 @@ export default function NfeModal({ sale, onClose }: Props) {
               </section>
 
               <section>
-                <h3 className="text-sm font-bold text-orange-400 mb-2">Itens <span className="text-gray-500 font-normal text-xs">brinde entra com valor 0,00 · o NCM vem do cadastro de Produtos (brinde sem cadastro: pelo nome)</span></h3>
+                <h3 className="text-sm font-bold text-orange-400 mb-2">Itens <span className="nfe-aux font-normal text-[13px]">brinde entra com valor 0,00 · o NCM vem do cadastro de Produtos (brinde sem cadastro: pelo nome)</span></h3>
                 <div className="space-y-2">
                   {itens.map((i, k) => {
                     const ncmOk = /^\d{8}$/.test(dig(i.ncm));
                     return (
-                      <div key={k} className="grid grid-cols-12 gap-2 items-end bg-gray-900/40 rounded-lg p-2">
+                      <div key={k} className="grid grid-cols-12 gap-2 items-end nfe-bloco rounded-lg p-2">
                         <div className="col-span-12 md:col-span-6">
-                          <label className={lbl}>Nome{i.brinde ? ' (brinde)' : ''} <span className="text-gray-500">· código {i.codigo}</span></label>
+                          <label className={lbl}>Nome{i.brinde ? ' (brinde)' : ''} <span className="nfe-aux">· código {i.codigo}</span></label>
                           <input className={inp} value={i.nome} onChange={(e) => setI(k, 'nome', e.target.value)} />
-                          {k === 0 && <p className="text-xs text-gray-500 mt-0.5" title={HOMOLOG_ITEM}>Na nota de teste o 1º item sai com o texto da SEFAZ.</p>}
+                          {k === 0 && <p className="text-[13px] nfe-aux mt-0.5" title={HOMOLOG_ITEM}>Na nota de teste o 1º item sai com o texto da SEFAZ.</p>}
                         </div>
                         <div className="col-span-4 md:col-span-2">
                           <label className={lbl}>NCM</label>
@@ -332,7 +336,7 @@ export default function NfeModal({ sale, onClose }: Props) {
                     );
                   })}
                 </div>
-                {semNcm.length > 0 && <p className="text-xs text-red-400 mt-2">Sem NCM: {semNcm.join(', ')}. A nota não sai enquanto faltar NCM.</p>}
+                {semNcm.length > 0 && <p className="text-[13px] nfe-erro-t mt-2">Sem NCM: {semNcm.join(', ')}. A nota não sai enquanto faltar NCM.</p>}
                 <div className="grid grid-cols-12 gap-3 mt-3">
                   <div className="col-span-6 md:col-span-3">
                     <label className={lbl}>Desconto (R$)</label>
@@ -345,7 +349,13 @@ export default function NfeModal({ sale, onClose }: Props) {
                   <div className="col-span-12 md:col-span-6 flex flex-col items-end justify-end text-sm">
                     <span className="text-gray-400">Produtos {brl(totais.prod)}{totais.desc ? ` − desconto ${brl(totais.desc)}` : ''}{totais.fr ? ` + frete ${brl(totais.fr)}` : ''}</span>
                     <span className="text-lg font-bold">Total da nota: {brl(totais.nota)}</span>
-                    {Math.abs(totais.nota - totalVenda) > 0.009 && <span className="text-xs text-yellow-400">diferente do total da venda ({brl(totalVenda)})</span>}
+                    {Math.abs(totais.nota - totalVenda) > 0.009 && <span className="text-[13px] nfe-aviso-t">diferente do total da venda ({brl(totalVenda)})</span>}
+                    <span className="text-[13px] nfe-aux mt-1" data-testid="nfe-presenca">
+                      {TEXTO_PRESENCA[presenca]} ·{' '}
+                      <button type="button" onClick={() => setPresenca((p) => (p === 1 ? 2 : 1))} className="underline hover:no-underline" style={{ background: 'none', border: 'none', padding: 0, color: 'inherit' }}>
+                        trocar para {presenca === 1 ? 'internet' : 'presencial'}
+                      </button>
+                    </span>
                   </div>
                 </div>
               </section>
@@ -353,13 +363,14 @@ export default function NfeModal({ sale, onClose }: Props) {
           )}
 
           {confirmarReal && dest && (
-            <div className="rounded-lg border border-green-500/60 bg-green-500/10 px-4 py-3 text-sm" role="alertdialog" aria-label="Confirmar nota real">
-              <p className="font-bold text-green-200">Confirmar a nota REAL (com valor fiscal)?</p>
-              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 mt-2 text-green-100">
-                <dt className="text-gray-400">Cliente</dt><dd>{dest.nome || '—'}</dd>
-                <dt className="text-gray-400">CPF/CNPJ</dt><dd>{docFmt(dig(dest.doc))}</dd>
-                <dt className="text-gray-400">Cidade</dt><dd>{dest.municipio}/{dest.uf}</dd>
-                <dt className="text-gray-400">Total</dt><dd className="font-bold">{brl(totais.nota)}</dd>
+            <div className="rounded-lg border nfe-ok px-4 py-3 text-sm" role="alertdialog" aria-label="Confirmar nota real">
+              <p className="font-bold">Confirmar a nota REAL (com valor fiscal)?</p>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 mt-2">
+                <dt className="nfe-sub">Cliente</dt><dd>{dest.nome || '—'}</dd>
+                <dt className="nfe-sub">CPF/CNPJ</dt><dd>{docFmt(dig(dest.doc))}</dd>
+                <dt className="nfe-sub">Cidade</dt><dd>{dest.municipio}/{dest.uf}</dd>
+                <dt className="nfe-sub">Presença</dt><dd>{TEXTO_PRESENCA[presenca]}</dd>
+                <dt className="nfe-sub">Total</dt><dd className="font-bold">{brl(totais.nota)}</dd>
               </dl>
               <div className="flex flex-wrap gap-2 mt-3">
                 <button type="button" disabled={bloqueioComum} onClick={() => emitir(1)} className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 px-4 py-2 rounded-lg font-semibold">Confirmar e autorizar</button>
@@ -369,28 +380,28 @@ export default function NfeModal({ sale, onClose }: Props) {
           )}
 
           {res?.tipo === 'rejeitada' && (
-            <div className="rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm" role="alert">
-              <p className="font-bold text-red-300 flex items-center gap-2"><AlertTriangle size={16} />Rejeitada pela SEFAZ{res.cstat ? ` — código ${res.cstat}` : ''}</p>
-              <p className="text-red-200 mt-1">{res.motivo || res.msg}</p>
-              {res.dica && <p className="text-red-100/80 mt-1 text-xs">O que fazer: {res.dica}</p>}
-              <p className="text-xs text-gray-400 mt-1">O número voltou e pode ser usado de novo. Corrija e emita outra vez.</p>
+            <div className="rounded-lg border nfe-erro px-4 py-3 text-sm" role="alert">
+              <p className="font-bold flex items-center gap-2"><AlertTriangle size={16} />Rejeitada pela SEFAZ{res.cstat ? ` — código ${res.cstat}` : ''}</p>
+              <p className="mt-1">{res.motivo || res.msg}</p>
+              {res.dica && <p className="nfe-sub mt-1 text-[13px]">O que fazer: {res.dica}</p>}
+              <p className="text-[13px] nfe-sub mt-1">O número voltou e pode ser usado de novo. Corrija e emita outra vez.</p>
             </div>
           )}
-          {res?.tipo === 'erro' && <div className="rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-200" role="alert">{res.msg}</div>}
-          {res?.tipo === 'ok' && <div className="rounded-lg border border-green-500/50 bg-green-500/10 px-4 py-3 text-sm text-green-200" role="status">{res.msg}</div>}
+          {res?.tipo === 'erro' && <div className="rounded-lg border nfe-erro px-4 py-3 text-sm" role="alert">{res.msg}</div>}
+          {res?.tipo === 'ok' && <div className="rounded-lg border nfe-ok px-4 py-3 text-sm" role="status">{res.msg}</div>}
           {res?.tipo === 'pendente' && (
-            <div className="rounded-lg border border-yellow-500/50 bg-yellow-500/10 px-4 py-3 text-sm" role="status">
-              <p className="text-yellow-200">{res.msg}</p>
+            <div className="rounded-lg border nfe-aviso px-4 py-3 text-sm" role="status">
+              <p>{res.msg}</p>
               <button type="button" disabled={enviando} onClick={() => consultar(res.id)} className="mt-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 px-4 py-2 rounded-lg font-semibold flex items-center gap-2">
                 <RefreshCw size={15} className={enviando ? 'animate-spin' : ''} />Consultar SEFAZ
               </button>
             </div>
           )}
           {res?.tipo === 'autorizada' && (
-            <div className="rounded-lg border border-green-500/50 bg-green-500/10 px-4 py-3 text-sm" role="status">
-              <p className="font-bold text-green-300 flex items-center gap-2"><CheckCircle2 size={16} />{res.ambiente === 1 ? 'Nota autorizada' : 'Nota de teste autorizada'}{res.numero ? ` — nº ${res.numero}` : ''}{res.serie ? `, série ${res.serie}` : ''}</p>
-              {res.protocolo && <p className="text-xs text-green-100/80 mt-1">Protocolo {res.protocolo}{res.chave ? ` · chave ${res.chave}` : ''}</p>}
-              <p className="text-xs text-green-100/80 mt-1">DANFE e XML em “Notas desta venda”, acima.</p>
+            <div className="rounded-lg border nfe-ok px-4 py-3 text-sm" role="status">
+              <p className="font-bold flex items-center gap-2"><CheckCircle2 size={16} />{res.ambiente === 1 ? 'Nota autorizada' : 'Nota de teste autorizada'}{res.numero ? ` — nº ${res.numero}` : ''}{res.serie ? `, série ${res.serie}` : ''}</p>
+              {res.protocolo && <p className="text-[13px] nfe-sub mt-1">Protocolo {res.protocolo}{res.chave ? ` · chave ${res.chave}` : ''}</p>}
+              <p className="text-[13px] nfe-sub mt-1">DANFE e XML em “Notas desta venda”, acima.</p>
             </div>
           )}
         </div>
@@ -407,7 +418,7 @@ export default function NfeModal({ sale, onClose }: Props) {
                 </button>
               )}
               {podeTeste && (
-                <button type="button" disabled={bloqueioComum} onClick={() => emitir(2)} className="text-xs text-yellow-300 hover:text-yellow-200 underline disabled:text-gray-500 disabled:no-underline">
+                <button type="button" disabled={bloqueioComum} onClick={() => emitir(2)} className="text-xs nfe-aviso-t underline hover:no-underline disabled:text-gray-500 disabled:no-underline">
                   Emitir só um teste (homologação)
                 </button>
               )}

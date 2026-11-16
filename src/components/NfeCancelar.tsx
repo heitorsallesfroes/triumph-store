@@ -23,10 +23,10 @@ export default function NfeCancelar({ nota, onFeito, onFechar, aberto = false }:
   const fechar = () => { setAbrir(false); setConfirmando(false); setErro(''); onFechar?.(); };
 
   if (nota.status !== 'autorizada') return null;
-  if (!pz.pode) return <span className="text-xs text-gray-500" title="A SEFAZ só aceita cancelamento até 24 h depois da autorização">Cancelar: passou do prazo de 24 h</span>;
+  if (!pz.pode) return <span className="text-[13px] nfe-aux" title="A SEFAZ só aceita cancelamento até 24 h depois da autorização">Cancelar: passou do prazo de 24 h</span>;
   if (!abrir) {
     return (
-      <button type="button" onClick={() => setAbrir(true)} className="border border-red-500/60 text-red-300 hover:bg-red-500/10 px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5">
+      <button type="button" onClick={() => setAbrir(true)} className="border border-red-500/60 nfe-erro-t hover:bg-red-500/10 px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5">
         <Ban size={13} />Cancelar nota
       </button>
     );
@@ -41,15 +41,15 @@ export default function NfeCancelar({ nota, onFeito, onFechar, aberto = false }:
     setEnviando(false);
   };
   return (
-    <div className="rounded-lg border border-red-500/50 bg-red-500/10 p-3 text-sm text-left space-y-2 w-full" role="group" aria-label={`Cancelar a nota ${nota.numero}`}>
-      <p className="font-semibold text-red-200">Cancelar a nota nº {nota.numero}{nota.ambiente === 2 ? ' (teste)' : ''}{nota.cliente ? ` de ${nota.cliente}` : ''}</p>
-      <p className="text-xs text-red-100/80">Ainda dá para cancelar por {restanteTexto(pz.restanteMs)} (a SEFAZ aceita até 24 h depois da autorização). O cancelamento não tem volta.</p>
-      <label className="block text-xs text-gray-300">Justificativa (mínimo {JUST_MIN} letras)
+    <div className="rounded-lg border nfe-erro p-3 text-sm text-left space-y-2 w-full" role="group" aria-label={`Cancelar a nota ${nota.numero}`}>
+      <p className="font-semibold">Cancelar a nota nº {nota.numero}{nota.ambiente === 2 ? ' (teste)' : ''}{nota.cliente ? ` de ${nota.cliente}` : ''}</p>
+      <p className="text-[13px] nfe-sub">Ainda dá para cancelar por {restanteTexto(pz.restanteMs)} (a SEFAZ aceita até 24 h depois da autorização). O cancelamento não tem volta.</p>
+      <label className="block text-[13px] nfe-sub">Justificativa (mínimo {JUST_MIN} letras)
         <textarea value={just} onChange={(e) => { setJust(e.target.value.slice(0, JUST_MAX)); setConfirmando(false); }} rows={2} maxLength={JUST_MAX}
           className="mt-1 w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-red-400 focus:outline-none text-sm" placeholder="Ex.: Venda desfeita a pedido do cliente" />
       </label>
-      <p className={`text-xs ${tam < JUST_MIN ? 'text-yellow-300' : 'text-gray-400'}`}>{tam}/{JUST_MAX}{tam < JUST_MIN ? ` · faltam ${JUST_MIN - tam}` : ''}</p>
-      {erro && <p className="text-xs text-red-300 flex items-start gap-1" role="alert"><AlertTriangle size={13} className="mt-0.5 shrink-0" />{erro}</p>}
+      <p className={`text-[13px] ${tam < JUST_MIN ? 'nfe-aviso-t' : 'nfe-sub'}`}>{tam}/{JUST_MAX}{tam < JUST_MIN ? ` · faltam ${JUST_MIN - tam}` : ''}</p>
+      {erro && <p className="text-[13px] nfe-erro-t flex items-start gap-1" role="alert"><AlertTriangle size={13} className="mt-0.5 shrink-0" />{erro}</p>}
       <div className="flex flex-wrap gap-2">
         {!confirmando
           ? <button type="button" disabled={tam < JUST_MIN} onClick={() => setConfirmando(true)} className="bg-red-700 hover:bg-red-600 disabled:bg-gray-600 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg text-xs font-semibold">Cancelar nota</button>

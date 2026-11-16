@@ -168,6 +168,8 @@ export function limparPedido(b) {
     })).filter((i) => i.qtd > 0),
     desconto: Math.max(0, r2(num(b.desconto))),
     frete: Math.max(0, r2(num(b.frete))),
+    // presença do comprador (indPres): 1 = presencial (venda na loja), 2 = internet (padrão, como antes)
+    indPres: Number(b.ind_pres) === 1 ? 1 : 2,
   };
 }
 
@@ -207,7 +209,7 @@ export async function emitir(ctx, b) {
   const data = ctx.agora ? ctx.agora() : new Date();
   const uf = String(emit.uf || 'RJ').toUpperCase();
   const nota = {
-    ambiente, serie: cfg.serie, numero, data, cNF: NFE.novoCNF(numero), natOp: cfg.natop, indPres: 2,
+    ambiente, serie: cfg.serie, numero, data, cNF: NFE.novoCNF(numero), natOp: cfg.natop, indPres: p.indPres,
     dest: p.dest, itens: p.itens, desconto: p.desconto, frete: p.frete,
     pagamento: { tPag: cfg.tpag || '90' }, info: cfg.info, ibpt: { fed: cfg.ibpt_fed, est: cfg.ibpt_est }, ibscbs: false,
   };

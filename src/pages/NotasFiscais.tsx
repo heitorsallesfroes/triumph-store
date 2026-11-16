@@ -23,6 +23,7 @@ import { fetchAllRows } from '../lib/resumoAnualCalc';
 import { useErpRefresh } from '../lib/erpRefresh';
 import { cleanCep, formatCep } from '../lib/cep';
 import NfeCancelar from '../components/NfeCancelar';
+import { NFE_CSS } from '../components/nfeCores';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Config = Record<string, any>;
@@ -41,10 +42,9 @@ const CAMPOS: [string, string, string][] = [
   ['logradouro', 'Rua', 'md:col-span-6'], ['numero', 'Número', 'md:col-span-2'], ['complemento', 'Complemento', 'md:col-span-4'],
   ['bairro', 'Bairro', 'md:col-span-4'], ['municipio', 'Município', 'md:col-span-4'], ['uf', 'UF', 'md:col-span-1'], ['cod_municipio', 'Cód. IBGE do município', 'md:col-span-3'],
 ];
+// cores dos selos nos dois temas (src/components/nfeCores.ts)
 const SELO: Record<string, string> = {
-  autorizada: 'bg-green-500/15 text-green-300 border-green-500/40', pendente: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/40',
-  emitindo: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/40', rejeitada: 'bg-red-500/15 text-red-300 border-red-500/40',
-  cancelada: 'bg-gray-500/20 text-gray-300 border-gray-500/40',
+  autorizada: 'nfe-selo-ok', pendente: 'nfe-selo-aviso', emitindo: 'nfe-selo-aviso', rejeitada: 'nfe-selo-erro', cancelada: 'nfe-selo-neutro',
 };
 const TXT_SELO: Record<string, string> = { autorizada: 'Autorizada', pendente: 'Pendente', emitindo: 'Enviando', rejeitada: 'Rejeitada', cancelada: 'Cancelada' };
 const mesAtual = () => hojeRJ().slice(0, 7);
@@ -225,8 +225,8 @@ export default function NotasFiscais() {
   const linhaStatus = (nome: string, s?: StatusUm) => (
     <div className="flex items-center justify-between text-sm py-1">
       <span className="text-gray-300">{nome}</span>
-      {!s ? <span className="text-gray-500">—</span> : s.erro ? <span className="text-red-400">✖ {s.erro}</span>
-        : <span className={s.cStat === '107' ? 'text-green-400' : 'text-yellow-400'}>{s.cStat === '107' ? '✔' : '⚠'} {s.cStat} — {s.motivo}{s.tMed ? ` (tempo médio ${s.tMed}s)` : ''}</span>}
+      {!s ? <span className="nfe-aux">—</span> : s.erro ? <span className="nfe-erro-t">✖ {s.erro}</span>
+        : <span className={s.cStat === '107' ? 'nfe-ok-t' : 'nfe-aviso-t'}>{s.cStat === '107' ? '✔' : '⚠'} {s.cStat} — {s.motivo}{s.tMed ? ` (tempo médio ${s.tMed}s)` : ''}</span>}
     </div>
   );
   const temChave = !!cfg && 'producao_liberada' in cfg;
@@ -245,6 +245,7 @@ export default function NotasFiscais() {
 
   return (
     <div className="p-4 md:p-8 text-white space-y-5">
+      <style>{NFE_CSS}</style>
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <FileText className="text-yellow-500" size={28} />
@@ -262,52 +263,52 @@ export default function NotasFiscais() {
         </div>
       </div>
 
-      {erro && <div className="rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-200">{erro}</div>}
-      {msg && <div className={`rounded-lg border px-4 py-3 text-sm cursor-pointer ${msg.startsWith('⚠️') ? 'border-red-500/50 bg-red-500/10 text-red-200' : 'border-green-500/50 bg-green-500/10 text-green-200'}`} onClick={() => setMsg('')} role="status">{msg}</div>}
+      {erro && <div className="rounded-lg border nfe-erro px-4 py-3 text-sm">{erro}</div>}
+      {msg && <div className={`rounded-lg border px-4 py-3 text-sm cursor-pointer ${msg.startsWith('⚠️') ? 'nfe-erro' : 'nfe-ok'}`} onClick={() => setMsg('')} role="status">{msg}</div>}
       {lote && <div className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-4 py-2 text-sm text-blue-200 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" />{lote}</div>}
 
       {/* ── Configurações (recolhível) ── */}
       <section className="bg-gray-800 rounded-xl border border-gray-700">
         <button type="button" onClick={() => setConfigAberto((v) => !v)} aria-expanded={configAberto} className="w-full flex items-center justify-between px-5 py-3 text-left">
           <span className="font-bold flex items-center gap-2">{configAberto ? <ChevronDown size={18} /> : <ChevronRight size={18} />}<Settings size={18} className="text-orange-400" />Configurações</span>
-          <span className="text-xs text-gray-400 flex items-center gap-3">
-            <span className={cert?.ok ? 'text-green-400' : 'text-red-400'}>{cert ? (cert.ok ? `certificado até ${cert.validade?.split('-').reverse().join('/')}` : 'certificado com problema') : carregando ? 'carregando…' : 'sem certificado'}</span>
-            <span className={liberada ? 'text-green-400' : 'text-yellow-400'}>{liberada ? 'notas reais liberadas' : 'só teste'}</span>
+          <span className="text-[13px] text-gray-400 flex items-center gap-3">
+            <span className={cert?.ok ? 'nfe-ok-t' : 'nfe-erro-t'}>{cert ? (cert.ok ? `certificado até ${cert.validade?.split('-').reverse().join('/')}` : 'certificado com problema') : carregando ? 'carregando…' : 'sem certificado'}</span>
+            <span className={liberada ? 'nfe-ok-t' : 'nfe-aviso-t'}>{liberada ? 'notas reais liberadas' : 'só teste'}</span>
           </span>
         </button>
         {configAberto && (
           <div className="px-5 pb-5 space-y-4">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <section className="bg-gray-900/40 rounded-xl border border-gray-700 p-5">
+              <section className="nfe-bloco rounded-xl border border-gray-700 p-5">
                 <h2 className="font-bold mb-3 flex items-center gap-2">{cert?.ok ? <ShieldCheck className="text-green-400" size={18} /> : <ShieldAlert className="text-red-400" size={18} />}Certificado digital (A1)</h2>
                 {carregando ? <p className="text-sm text-gray-400">Carregando…</p> : !cert ? <p className="text-sm text-gray-400">—</p> : cert.ok ? (
                   <div className="text-sm space-y-1">
-                    <p className="text-green-300">Válido até <b>{cert.validade?.split('-').reverse().join('/')}</b> ({cert.dias} dias){(cert.dias ?? 99) <= 30 && <span className="text-yellow-400"> — vence logo, renove!</span>}</p>
+                    <p className="nfe-ok-t">Válido até <b>{cert.validade?.split('-').reverse().join('/')}</b> ({cert.dias} dias){(cert.dias ?? 99) <= 30 && <span className="nfe-aviso-t"> — vence logo, renove!</span>}</p>
                     <p className="text-gray-400">{cert.nome}</p>
                     <p className="text-gray-400">CNPJ do certificado: {cert.cnpj || '—'}</p>
                   </div>
-                ) : <p className="text-sm text-red-300">⚠️ {cert.erro}</p>}
-                <p className="text-xs text-gray-500 mt-3">O certificado e a senha ficam só nas variáveis de ambiente da Vercel (NFE_CERT_B64 e NFE_CERT_SENHA). Veja docs/nfe-passo-a-passo.md.</p>
+                ) : <p className="text-sm nfe-erro-t">⚠️ {cert.erro}</p>}
+                <p className="text-[13px] nfe-aux mt-3">O certificado e a senha ficam só nas variáveis de ambiente da Vercel (NFE_CERT_B64 e NFE_CERT_SENHA). Veja docs/nfe-passo-a-passo.md.</p>
               </section>
 
-              <section className="bg-gray-900/40 rounded-xl border border-gray-700 p-5">
+              <section className="nfe-bloco rounded-xl border border-gray-700 p-5">
                 <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                   <h2 className="font-bold flex items-center gap-2"><Wifi size={18} className="text-blue-400" />Conexão com a SEFAZ</h2>
                   <button type="button" disabled={ocupado === 'sefaz'} onClick={testar} className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2">
                     <RefreshCw size={14} className={ocupado === 'sefaz' ? 'animate-spin' : ''} />{ocupado === 'sefaz' ? 'Testando…' : 'Testar conexão com a SEFAZ'}
                   </button>
                 </div>
-                {sefaz?.erro ? <p className="text-sm text-red-300">⚠️ {sefaz.erro}</p> : sefaz ? (
+                {sefaz?.erro ? <p className="text-sm nfe-erro-t">⚠️ {sefaz.erro}</p> : sefaz ? (
                   <div>
                     {linhaStatus('Homologação (teste)', sefaz.homologacao)}
                     {linhaStatus('Produção', sefaz.producao)}
-                    <p className="text-xs text-gray-500 mt-2">Autorizador: {sefaz.autorizador || '—'}. 107 = serviço em operação.</p>
+                    <p className="text-[13px] nfe-aux mt-2">Autorizador: {sefaz.autorizador || '—'}. 107 = serviço em operação.</p>
                   </div>
                 ) : <p className="text-sm text-gray-400">Consulta o status do serviço (NFeStatusServico4) com o certificado. Não emite nada.</p>}
               </section>
             </div>
 
-            <section className="bg-gray-900/40 rounded-xl border border-gray-700 p-5">
+            <section className="nfe-bloco rounded-xl border border-gray-700 p-5">
               <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                 <h2 className="font-bold flex items-center gap-2"><Settings size={18} className="text-orange-400" />Emitente e numeração</h2>
                 {cfg && !editando && <button type="button" onClick={() => setEditando(JSON.parse(JSON.stringify(cfg)))} className="bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded-lg text-sm font-semibold">Editar</button>}
@@ -315,21 +316,21 @@ export default function NotasFiscais() {
               {!cfg ? <p className="text-sm text-gray-400">{carregando ? 'Carregando…' : 'Sem configuração (a migration das notas fiscais foi aplicada?)'}</p> : !editando ? (
                 <>
                   <div className="text-sm text-gray-300 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
-                    <p><span className="text-gray-500">Empresa:</span> {cfg.emitente?.razao} ({cfg.emitente?.fantasia})</p>
-                    <p><span className="text-gray-500">CNPJ / IE:</span> {cfg.emitente?.cnpj} / {cfg.emitente?.ie} · CRT {cfg.emitente?.crt}</p>
-                    <p><span className="text-gray-500">Endereço:</span> {cfg.emitente?.logradouro}, {cfg.emitente?.numero}{cfg.emitente?.complemento ? ` - ${cfg.emitente.complemento}` : ''}, {cfg.emitente?.bairro}</p>
-                    <p><span className="text-gray-500">Cidade:</span> {cfg.emitente?.municipio}/{cfg.emitente?.uf} · CEP {cfg.emitente?.cep} · IBGE {cfg.emitente?.cod_municipio}</p>
-                    <p><span className="text-gray-500">Série:</span> {cfg.serie} · <span className="text-gray-500">próximo nº real:</span> {cfg.proximo_producao} · <span className="text-gray-500">de teste:</span> {cfg.proximo_homolog}</p>
-                    <p><span className="text-gray-500">Natureza:</span> {cfg.natop}</p>
-                    <p><span className="text-gray-500">Tributos aprox. (IBPT):</span> {String(cfg.ibpt_fed).replace('.', ',')}% federal · {String(cfg.ibpt_est).replace('.', ',')}% estadual</p>
-                    <p><span className="text-gray-500">Pagamento na nota:</span> {cfg.tpag} — {tpag[cfg.tpag] || ''}</p>
+                    <p><span className="nfe-aux">Empresa:</span> {cfg.emitente?.razao} ({cfg.emitente?.fantasia})</p>
+                    <p><span className="nfe-aux">CNPJ / IE:</span> {cfg.emitente?.cnpj} / {cfg.emitente?.ie} · CRT {cfg.emitente?.crt}</p>
+                    <p><span className="nfe-aux">Endereço:</span> {cfg.emitente?.logradouro}, {cfg.emitente?.numero}{cfg.emitente?.complemento ? ` - ${cfg.emitente.complemento}` : ''}, {cfg.emitente?.bairro}</p>
+                    <p><span className="nfe-aux">Cidade:</span> {cfg.emitente?.municipio}/{cfg.emitente?.uf} · CEP {cfg.emitente?.cep} · IBGE {cfg.emitente?.cod_municipio}</p>
+                    <p><span className="nfe-aux">Série:</span> {cfg.serie} · <span className="nfe-aux">próximo nº real:</span> {cfg.proximo_producao} · <span className="nfe-aux">de teste:</span> {cfg.proximo_homolog}</p>
+                    <p><span className="nfe-aux">Natureza:</span> {cfg.natop}</p>
+                    <p><span className="nfe-aux">Tributos aprox. (IBPT):</span> {String(cfg.ibpt_fed).replace('.', ',')}% federal · {String(cfg.ibpt_est).replace('.', ',')}% estadual</p>
+                    <p><span className="nfe-aux">Pagamento na nota:</span> {cfg.tpag} — {tpag[cfg.tpag] || ''}</p>
                   </div>
 
                   <div className="mt-4 pt-4 border-t border-gray-700">
                     <div className="flex items-start justify-between gap-4 flex-wrap">
                       <div>
                         <p className="font-semibold">Liberar notas reais (produção)</p>
-                        <p className="text-xs text-gray-400 mt-0.5">
+                        <p className="text-[13px] text-gray-400 mt-0.5">
                           {!temChave ? 'Para usar, aplique no Supabase a migration supabase/migrations/20261122120000_nfe_producao.sql.'
                             : liberada ? `Ligada${cfg.producao_liberada_em ? ` desde ${dataHora(cfg.producao_liberada_em)}` : ''}: o modal da venda tem o botão “Autorizar na SEFAZ” (nota com valor fiscal).`
                               : 'Desligada: só sai nota de teste (homologação).'}
@@ -342,8 +343,8 @@ export default function NotasFiscais() {
                       </button>
                     </div>
                     {liberando !== null && !liberada && (
-                      <div className="mt-3 rounded-lg border border-green-500/50 bg-green-500/10 p-4 text-sm space-y-3" role="alertdialog" aria-label="Confirmar notas reais">
-                        <p className="text-green-200 font-semibold flex items-center gap-2"><AlertTriangle size={15} />Ao ligar, o botão principal do modal passa a emitir nota REAL, com valor fiscal.</p>
+                      <div className="mt-3 rounded-lg border nfe-ok p-4 text-sm space-y-3" role="alertdialog" aria-label="Confirmar notas reais">
+                        <p className="font-semibold flex items-center gap-2"><AlertTriangle size={15} />Ao ligar, o botão principal do modal passa a emitir nota REAL, com valor fiscal.</p>
                         <div className="flex items-end gap-3 flex-wrap">
                           <div>
                             <label className={lbl}>Próximo número de produção (série {cfg.serie})</label>
@@ -386,7 +387,7 @@ export default function NotasFiscais() {
                     <div className="col-span-12"><label className={lbl}>Frase fixa nas informações complementares (vai depois dos tributos aproximados)</label><input className={inp} value={editando.info} onChange={(e) => setEditando({ ...editando, info: e.target.value })} /></div>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-400 mb-2">Responsável técnico (opcional; só vai na nota se nome, e-mail e telefone estiverem preenchidos — preencha se a SEFAZ pedir, rejeição 972)</p>
+                    <p className="text-[13px] text-gray-400 mb-2">Responsável técnico (opcional; só vai na nota se nome, e-mail e telefone estiverem preenchidos — preencha se a SEFAZ pedir, rejeição 972)</p>
                     <div className="grid grid-cols-12 gap-3">
                       {[['cnpj', 'CNPJ (vazio = o da empresa)'], ['contato', 'Nome do contato'], ['email', 'E-mail'], ['fone', 'Telefone']].map(([k, rot]) => (
                         <div key={k} className="col-span-12 md:col-span-3"><label className={lbl}>{rot}</label><input className={inp} value={editando.emitente?.resp?.[k] ?? ''} onChange={(e) => setR(k, e.target.value)} /></div>
@@ -460,7 +461,7 @@ export default function NotasFiscais() {
               <input className={`${inp} pl-9`} value={buscaTxt} onChange={(e) => setBuscaTxt(e.target.value)} placeholder="Cliente, CPF/CNPJ, nº da nota ou chave" aria-label="Buscar notas" />
             </div>
           </div>
-          <p className="text-xs text-gray-500 w-full md:w-auto">{diaBR(iv.dias[0])}{iv.dias[0] !== iv.dias[1] ? ` a ${diaBR(iv.dias[1])}` : ''}</p>
+          <p className="text-[13px] nfe-aux w-full md:w-auto">{diaBR(iv.dias[0])}{iv.dias[0] !== iv.dias[1] ? ` a ${diaBR(iv.dias[1])}` : ''}</p>
         </div>
 
         {sel.size > 0 && (
@@ -472,8 +473,8 @@ export default function NotasFiscais() {
           </div>
         )}
 
-        {erroLista && <div className="mx-4 mb-3 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-200">{erroLista}</div>}
-        {truncado && <p className="mx-4 mb-3 text-xs text-yellow-300">Período com muitas notas: mostrando as 3.000 mais novas. Escolha um período menor.</p>}
+        {erroLista && <div className="mx-4 mb-3 rounded-lg border nfe-erro px-4 py-3 text-sm">{erroLista}</div>}
+        {truncado && <p className="mx-4 mb-3 text-[13px] nfe-aviso-t">Período com muitas notas: mostrando as 3.000 mais novas. Escolha um período menor.</p>}
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -498,10 +499,10 @@ export default function NotasFiscais() {
                 return [
                   <tr key={n.id} className={`border-b border-gray-700/60 align-top ${sel.has(n.id) ? 'bg-orange-500/5' : ''}`}>
                     <td className="py-2 pl-4 pr-2"><input type="checkbox" checked={sel.has(n.id)} onChange={() => marcar(n.id)} aria-label={`Selecionar a nota ${n.numero}`} className="h-4 w-4 accent-orange-500" /></td>
-                    <td className="py-2 pr-3 whitespace-nowrap font-semibold">{n.numero}{n.ambiente === 2 && <span className="ml-1.5 text-[10px] font-bold tracking-wide bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 rounded px-1 py-0.5 align-middle">TESTE</span>}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap font-semibold">{n.numero}{n.ambiente === 2 && <span className="ml-1.5 text-xs font-bold tracking-wide nfe-selo-aviso border rounded px-1 py-0.5 align-middle">TESTE</span>}</td>
                     <td className="py-2 pr-3">{n.serie}</td>
                     <td className="py-2 pr-3 whitespace-nowrap text-gray-300">{dataHora(n.criado_em)}</td>
-                    <td className="py-2 pr-3">{n.cliente || '—'}{n.doc && <span className="block text-xs text-gray-500">{docFmt(n.doc)}</span>}</td>
+                    <td className="py-2 pr-3">{n.cliente || '—'}{n.doc && <span className="block text-[13px] nfe-aux">{docFmt(n.doc)}</span>}</td>
                     <td className="py-2 pr-3">{n.uf || '—'}</td>
                     <td className={`py-2 pr-3 text-right whitespace-nowrap ${['cancelada', 'rejeitada'].includes(n.status) ? 'text-gray-500 line-through' : ''}`}>{brl(n.valor)}</td>
                     <td className="py-2 pr-3"><span className={`inline-block text-xs font-semibold border rounded px-2 py-0.5 ${SELO[n.status] || SELO.cancelada}`}>{TXT_SELO[n.status] || n.status}</span></td>
@@ -514,14 +515,14 @@ export default function NotasFiscais() {
                           {['autorizada', 'cancelada'].includes(n.status) && itemMenu('Baixar DANFE', () => baixar(n, 'pdf'))}
                           {['autorizada', 'cancelada'].includes(n.status) && itemMenu('Baixar XML', () => baixar(n, 'xml'))}
                           {n.status === 'cancelada' && itemMenu('Baixar XML do cancelamento', () => baixar(n, 'canc'))}
-                          {['pendente', 'emitindo'].includes(n.status) && itemMenu('Consultar SEFAZ', () => consultar(n), 'text-yellow-300')}
+                          {['pendente', 'emitindo'].includes(n.status) && itemMenu('Consultar SEFAZ', () => consultar(n), 'nfe-aviso-t')}
                           {n.status === 'autorizada' && (pz.pode
-                            ? itemMenu('Cancelar', () => setAberta({ id: n.id, tipo: 'cancelar' }), 'text-red-300')
-                            : <span className="block px-3 py-1.5 text-xs text-gray-500">Cancelar: passou do prazo de 24 h</span>)}
+                            ? itemMenu('Cancelar', () => setAberta({ id: n.id, tipo: 'cancelar' }), 'nfe-erro-t')
+                            : <span className="block px-3 py-1.5 text-[13px] nfe-aux">Cancelar: passou do prazo de 24 h</span>)}
                           {n.status === 'rejeitada' && itemMenu('Ver motivo', () => setAberta({ id: n.id, tipo: 'motivo' }))}
                           {n.venda_id
                             ? <a role="menuitem" href={`?pagina=historico&venda=${n.venda_id}`} className="block px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700">Abrir venda</a>
-                            : <span className="block px-3 py-1.5 text-xs text-gray-500">Sem venda ligada</span>}
+                            : <span className="block px-3 py-1.5 text-[13px] nfe-aux">Sem venda ligada</span>}
                         </MenuFlutuante>
                       )}
                     </td>
@@ -530,9 +531,9 @@ export default function NotasFiscais() {
                     <tr key={`${n.id}-aberta`} className="border-b border-gray-700/60">
                       <td colSpan={9} className="px-4 py-3">
                         {aberta.tipo === 'motivo'
-                          ? <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-start justify-between gap-3">
+                          ? <div className="rounded-lg border nfe-erro px-4 py-3 text-sm flex items-start justify-between gap-3">
                               <span><b>Rejeitada{n.cstat ? ` (${n.cstat})` : ''}:</b> {n.motivo || 'a SEFAZ não mandou o motivo'}</span>
-                              <button type="button" onClick={() => setAberta(null)} className="text-xs underline text-gray-300">fechar</button>
+                              <button type="button" onClick={() => setAberta(null)} className="text-[13px] underline nfe-sub">fechar</button>
                             </div>
                           : <NfeCancelar nota={n} aberto onFechar={() => setAberta(null)} onFeito={(m) => { setMsg(m); setAberta(null); carregarLista(); }} />}
                       </td>
@@ -545,7 +546,7 @@ export default function NotasFiscais() {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-700 text-sm">
-          <span className="text-gray-300"><b>{r.quantidade}</b> nota{r.quantidade === 1 ? '' : 's'} · valor <b>{brl(r.valor)}</b> <span className="text-xs text-gray-500">(sem canceladas nem rejeitadas)</span></span>
+          <span className="text-gray-300"><b>{r.quantidade}</b> nota{r.quantidade === 1 ? '' : 's'} · valor <b>{brl(r.valor)}</b> <span className="text-[13px] nfe-aux">(sem canceladas nem rejeitadas)</span></span>
           {r.paginas > 1 && (
             <div className="flex items-center gap-2">
               <button type="button" disabled={r.pagina <= 1} onClick={() => setFiltros((f) => ({ ...f, pagina: r.pagina - 1 }))} className="px-3 py-1 rounded border border-gray-600 disabled:opacity-40 hover:bg-gray-700">‹ Anterior</button>
@@ -555,7 +556,7 @@ export default function NotasFiscais() {
           )}
         </div>
       </section>
-      <p className="text-xs text-gray-500">Cancelamento: até 24 h depois da autorização. Guarde os XMLs: a lei pede 5 anos (ficam guardados aqui também).</p>
+      <p className="text-[13px] nfe-aux">Cancelamento: até 24 h depois da autorização. Guarde os XMLs: a lei pede 5 anos (ficam guardados aqui também).</p>
     </div>
   );
 }
