@@ -1,16 +1,17 @@
-// 📓 Gestão › Anotações: TAREFAS (checklist por dia, com prioridade, repetição e arrastar) e NOTAS (cartões tipo
+// 📓 Gestão › Anotações: TAREFAS (checklist por dia, com prioridade, repetição e arrastar), NOTAS (cartões tipo
 // post-it, salvos sozinhos enquanto digita). Regras puras em src/lib/anotacoes.ts (testadas em
 // scripts/tests/anotacoes.test.ts). Tabelas erp_tarefas / erp_notas: supabase/migrations/20261127120000_erp_anotacoes.sql
-// — sem ela a página mostra o aviso e não grava nada.
+// — sem ela a página mostra o aviso e não grava nada. PENSAMENTOS (mapas mentais): src/pages/AnotacoesPensamentos.tsx.
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type HTMLAttributes, type PointerEvent as RPointerEvent, type ReactNode } from 'react';
 import {
   NotebookPen, ListChecks, StickyNote, Plus, Star, Trash2, GripVertical, Repeat, Check, ChevronDown, ChevronRight,
-  Search, Pin, PinOff, X, AlertTriangle, CalendarDays, Loader2,
+  Search, Pin, PinOff, X, AlertTriangle, CalendarDays, Loader2, Brain,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useErpDirty, useErpRefresh } from '../lib/erpRefresh';
 import { initialTab, writeTab } from '../lib/erpRoute';
 import { announcePendentes } from '../lib/anotacoesDb';
+import Pensamentos from './AnotacoesPensamentos';
 import {
   CORES, RAPIDAS, REPETICOES, agrupar, blocosDoTexto, corValida, dateKey, dueLabel, filtrarNotas, isDateKey, isOverdue,
   moveInList, nextDue, nextPosition, notaVazia, pendentesHoje, quickDate, reorderUpdates, tabelaFaltando,
@@ -19,7 +20,7 @@ import {
 
 const ORANGE = '#f97316';
 const MIGRATION = 'supabase/migrations/20261127120000_erp_anotacoes.sql';
-const TABS = ['tarefas', 'notas'] as const;
+const TABS = ['tarefas', 'notas', 'pensamentos'] as const;
 type Tab = (typeof TABS)[number];
 const UNDO_MS = 5000;
 
@@ -106,7 +107,7 @@ export default function Anotacoes() {
         </div>
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Anotações</h1>
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Suas tarefas do dia e um bloco de notas.</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Suas tarefas do dia, um bloco de notas e mapas mentais.</p>
         </div>
       </div>
 
@@ -125,9 +126,9 @@ export default function Anotacoes() {
       )}
 
       <div role="tablist" className="inline-flex p-1 rounded-xl mb-5" style={{ background: 'var(--bg-inner)', border: '1px solid var(--border-main)' }}>
-        {([['tarefas', 'Tarefas', ListChecks], ['notas', 'Notas', StickyNote]] as const).map(([id, label, Icon]) => (
+        {([['tarefas', 'Tarefas', ListChecks], ['notas', 'Notas', StickyNote], ['pensamentos', 'Pensamentos', Brain]] as const).map(([id, label, Icon]) => (
           <button key={id} role="tab" aria-selected={tab === id} type="button" onClick={() => choose(id)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+            className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold transition-all"
             style={{ background: tab === id ? 'var(--bg-card)' : 'transparent', color: tab === id ? ORANGE : 'var(--text-muted)',
               boxShadow: tab === id ? '0 1px 3px rgba(0,0,0,.15)' : 'none', border: 'none' }}>
             <Icon size={16} /> {label}
@@ -135,7 +136,9 @@ export default function Anotacoes() {
         ))}
       </div>
 
-      {tab === 'tarefas' ? <Tarefas bloqueado={faltaMigration} onMissing={onMissing} /> : <Notas bloqueado={faltaMigration} onMissing={onMissing} />}
+      {tab === 'tarefas' ? <Tarefas bloqueado={faltaMigration} onMissing={onMissing} />
+        : tab === 'notas' ? <Notas bloqueado={faltaMigration} onMissing={onMissing} />
+        : <Pensamentos />}
     </div>
   );
 }
