@@ -13,6 +13,7 @@ import { generateShippingLabel } from '../lib/superfrete';
 import { calculateCardFee } from '../lib/cardFees';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 import { useErpRefresh } from '../lib/erpRefresh';
+import { lerParam, marcarParam } from '../lib/chunkReload';
 
 type Period = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'max' | 'custom';
 
@@ -164,6 +165,16 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
   useEffect(() => { loadSelosNfe(); }, [loadSelosNfe]);
 
   useEffect(() => { loadSales(); }, []);
+  // modal da nota no endereço (?nfe=<venda>): depois de recarregar (versão nova do ERP) ele volta aberto
+  const nfeDaUrl = useRef(lerParam('nfe'));
+  useEffect(() => {
+    if (loading || !nfeDaUrl.current) return;
+    const s = sales.find((x) => x.id === nfeDaUrl.current);
+    nfeDaUrl.current = null;
+    if (s) setNfeSale(s); else marcarParam('nfe', null);
+  }, [loading, sales]);
+  useEffect(() => { if (!nfeDaUrl.current) marcarParam('nfe', nfeSale ? nfeSale.id : null); }, [nfeSale]);
+  useEffect(() => () => marcarParam('nfe', null), []);
   useErpRefresh(() => { loadSales(); loadSelosNfe(); }); // "Atualizar" do topo (os filtros continuam)
   useEffect(() => { setVisibleCount(PAGE_SIZE); setSelectedIds(new Set()); }, [filteredSales]);
 

@@ -3,6 +3,7 @@
 import { supabase } from './supabase';
 import { orderSaleItems } from './saleItemsOrder';
 import { ncmDoBrinde, ncmPeloNome, codigoLegivel, dadosFiscais } from './nfeRegras';
+import { importar } from './chunkReload';
 
 export interface NfeDest {
   doc: string; nome: string; email: string; fone: string; cep: string; endereco: string; numero: string;
@@ -139,8 +140,9 @@ export async function baixarDanfe(notaId: string) {
   const j = await nfeGet({ op: 'xml', id: notaId });
   if (j.erro || !j.xml) throw new Error(j.erro || 'XML não encontrado');
   if (j.status !== 'autorizada' && j.status !== 'cancelada') throw new Error('o DANFE só sai de nota autorizada');
-  const { gerarDanfe } = await import('./danfe');
-  const pdf = await gerarDanfe(j.xml, { cancelada: j.status === 'cancelada' });
+  const { gerarDanfe } = await importar(() => import('./danfe'));
+  // o jspdf também é carregado sob demanda (dentro do gerarDanfe): passa pelo mesmo tratamento
+  const pdf = await importar(() => gerarDanfe(j.xml, { cancelada: j.status === 'cancelada' }));
   pdf.save(`DANFE-${String(j.numero).padStart(9, '0')}-serie${j.serie}${j.ambiente === 2 ? '-HOMOLOGACAO' : ''}.pdf`);
 }
 // XML do cancelamento (procEventoNFe)
@@ -157,7 +159,7 @@ export async function cancelarNota(notaId: string, justificativa: string) {
 // ── vários arquivos de uma vez ──
 type Arquivo = { nome: string; texto: string };
 async function baixarZip(arquivos: Arquivo[], nome: string) {
-  const { default: JSZip } = await import('jszip');
+  const { default: JSZip } = await importar(() => import('jszip'));
   const zip = new JSZip();
   for (const a of arquivos) zip.file(a.nome, a.texto);
   baixarArquivo(nome, await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }));
@@ -203,14 +205,14 @@ export async function baixarXmlsZip(ids: string[], nome: string, progresso?: (n:
 }
 // um PDF só com os DANFEs das notas escolhidas (só autorizadas e canceladas têm DANFE)
 export async function imprimirDanfes(ids: string[], progresso?: (n: number) => void): Promise<{ feitas: number; puladas: number }> {
-  const { gerarDanfe } = await import('./danfe');
+  const { gerarDanfe } = await importar(() => import('./danfe'));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let pdf: any = null;
   let feitas = 0, puladas = 0, k = 0;
   for (const id of ids) {
     const j = await nfeGet({ op: 'xml', id });
     if (j.xml && (j.status === 'autorizada' || j.status === 'cancelada')) {
-      pdf = await gerarDanfe(j.xml, { cancelada: j.status === 'cancelada', juntarEm: pdf || undefined });
+      pdf = await importar(() => gerarDanfe(j.xml, { cancelada: j.status === 'cancelada', juntarEm: pdf || undefined }));
       feitas++;
     } else puladas++;
     progresso?.(++k);
