@@ -2,7 +2,7 @@
 // e o rascunho da nota a partir da venda do Histórico (cliente + itens com o NCM do cadastro de Produtos).
 import { supabase } from './supabase';
 import { orderSaleItems } from './saleItemsOrder';
-import { ncmDoBrinde, ncmPeloNome, codigoLegivel, dadosFiscais } from './nfeRegras';
+import { ncmDoBrinde, ncmPeloNome, codigoLegivel, dadosFiscais, nomeArquivoNota, nomeLoteDanfes } from './nfeRegras';
 import { importar } from './chunkReload';
 
 export interface NfeDest {
@@ -134,7 +134,7 @@ function baixarArquivo(nome: string, conteudo: Blob) {
 export async function baixarXml(notaId: string) {
   const j = await nfeGet({ op: 'xml', id: notaId });
   if (j.erro || !j.xml) throw new Error(j.erro || 'XML não encontrado');
-  baixarArquivo(`${j.chave || `nfe-${j.numero}`}${j.status === 'autorizada' ? '-procNFe' : '-assinado'}.xml`, new Blob([j.xml], { type: 'application/xml' }));
+  baixarArquivo(nomeArquivoNota(j, 'xml'), new Blob([j.xml], { type: 'application/xml' }));
 }
 export async function baixarDanfe(notaId: string) {
   const j = await nfeGet({ op: 'xml', id: notaId });
@@ -143,7 +143,7 @@ export async function baixarDanfe(notaId: string) {
   const { gerarDanfe } = await importar(() => import('./danfe'));
   // o jspdf também é carregado sob demanda (dentro do gerarDanfe): passa pelo mesmo tratamento
   const pdf = await importar(() => gerarDanfe(j.xml, { cancelada: j.status === 'cancelada' }));
-  pdf.save(`DANFE-${String(j.numero).padStart(9, '0')}-serie${j.serie}${j.ambiente === 2 ? '-HOMOLOGACAO' : ''}.pdf`);
+  pdf.save(nomeArquivoNota(j, 'pdf'));
 }
 // XML do cancelamento (procEventoNFe)
 export async function baixarXmlCancelamento(notaId: string) {
@@ -209,15 +209,17 @@ export async function imprimirDanfes(ids: string[], progresso?: (n: number) => v
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let pdf: any = null;
   let feitas = 0, puladas = 0, k = 0;
+  let nomeUma = '';
   for (const id of ids) {
     const j = await nfeGet({ op: 'xml', id });
     if (j.xml && (j.status === 'autorizada' || j.status === 'cancelada')) {
+      nomeUma = nomeArquivoNota(j, 'pdf');
       pdf = await importar(() => gerarDanfe(j.xml, { cancelada: j.status === 'cancelada', juntarEm: pdf || undefined }));
       feitas++;
     } else puladas++;
     progresso?.(++k);
   }
   if (!pdf) throw new Error('nenhuma das notas escolhidas tem DANFE (só autorizadas e canceladas)');
-  pdf.save(`DANFEs-${feitas}-notas.pdf`);
+  pdf.save(feitas === 1 ? nomeUma : nomeLoteDanfes());
   return { feitas, puladas };
 }

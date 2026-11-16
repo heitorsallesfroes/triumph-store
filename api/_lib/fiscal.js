@@ -297,7 +297,8 @@ export async function xml(ctx, id, tipo) {
     if (!canc?.xml) return { erro: 'essa nota não tem XML de cancelamento' };
     return { numero: n.numero, serie: n.serie, chave: n.chave, ambiente: n.ambiente, status: n.status, protocolo: canc.protocolo, xml: canc.xml, tipo };
   }
-  return { numero: n.numero, serie: n.serie, chave: n.chave, ambiente: n.ambiente, status: n.status, protocolo: n.protocolo, xml: n.xml, tem_cancelamento: !!canc?.xml };
+  // cliente: nome real (na nota de teste o XML tem o texto da SEFAZ no lugar) — usado no nome do arquivo baixado
+  return { numero: n.numero, serie: n.serie, chave: n.chave, ambiente: n.ambiente, status: n.status, protocolo: n.protocolo, xml: n.xml, tem_cancelamento: !!canc?.xml, cliente: n.cliente || null };
 }
 
 // cancela na SEFAZ (evento 110111) no ambiente da própria nota

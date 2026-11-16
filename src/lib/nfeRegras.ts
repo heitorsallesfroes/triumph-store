@@ -26,6 +26,36 @@ export type IndPres = 1 | 2;
 export const presencaDaVenda = (deliveryType: unknown): IndPres => (String(deliveryType ?? '').trim() === 'loja_fisica' ? 1 : 2);
 export const TEXTO_PRESENCA: Record<IndPres, string> = { 1: 'Venda presencial (loja)', 2: 'Venda não presencial (internet)' };
 
+// ── nome do arquivo baixado (DANFE e XML) ──
+// "Nota Fiscal - Amanda Rangel de Freitas.pdf"; teste: "Nota Fiscal - TESTE - …"; cancelada: "Nota Fiscal - CANCELADA - …".
+// Sem os caracteres que o Windows não aceita (\ / : * ? " < > |) nem espaços duplos.
+export const limparNomeArquivo = (s: unknown): string => String(s ?? '')
+  .replace(/[\\/:*?"<>|]/g, ' ')
+  .replace(/[^ -~\u00a0-\uffff]/g, ' ')   // caracteres de controle
+  .replace(/\s+/g, ' ')
+  .trim()
+  .replace(/[. ]+$/, '')    // Windows não aceita nome terminando em ponto ou espaço
+  .slice(0, 150)
+  .trim();
+const HOMOLOG_RE = /AMBIENTE DE HOMOLOGACAO/i;
+const entidades: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+// nome do cliente no XML (<dest><xNome>), menos o texto da SEFAZ das notas de teste
+export function clienteDoXml(xml: unknown): string {
+  const dest = String(xml ?? '').match(/<dest>([\s\S]*?)<\/dest>/);
+  const nome = (dest?.[1].match(/<xNome>([\s\S]*?)<\/xNome>/)?.[1] || '')
+    .replace(/&(amp|lt|gt|quot|apos);/g, (_, e: string) => entidades[e]).replace(/&#(\d+);/g, (_, d: string) => String.fromCharCode(Number(d)));
+  return HOMOLOG_RE.test(nome) ? '' : nome;
+}
+export function nomeArquivoNota(n: { cliente?: string | null; xml?: string | null; ambiente?: number; status?: string }, ext: 'pdf' | 'xml'): string {
+  const nome = limparNomeArquivo(n.cliente && !HOMOLOG_RE.test(n.cliente) ? n.cliente : clienteDoXml(n.xml)) || 'Sem nome';
+  return `${['Nota Fiscal', n.ambiente === 2 ? 'TESTE' : '', n.status === 'cancelada' ? 'CANCELADA' : '', nome].filter(Boolean).join(' - ')}.${ext}`;
+}
+// lote de DANFEs: várias notas = "Notas Fiscais - DD-MM-AAAA.pdf" (dia no horário de Brasília); uma só = nome da nota
+export function nomeLoteDanfes(agora: Date = new Date()): string {
+  const [a, m, d] = new Date(agora.getTime() - 3 * 3600e3).toISOString().slice(0, 10).split('-');
+  return `Notas Fiscais - ${d}-${m}-${a}.pdf`;
+}
+
 // cliente fora do RJ: a nota sai com CFOP 6102 (interestadual) e o botão só libera depois de marcar "Conferi"
 export const AVISO_FORA_RJ = 'Cliente de fora do RJ: a nota sai com CFOP 6102 (operação interestadual). Confira antes de emitir.';
 export const foraDoRj = (uf: unknown) => { const u = String(uf ?? '').trim().toUpperCase(); return u !== '' && u !== 'RJ'; };

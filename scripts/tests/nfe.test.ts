@@ -689,6 +689,33 @@ await t('presença do comprador: Loja Física = presencial (1), o resto = intern
   }
 });
 
+await t('nome do arquivo: "Nota Fiscal - CLIENTE", TESTE/CANCELADA, sem caracteres proibidos; lote com a data', async () => {
+  assert.equal(R.nomeArquivoNota({ cliente: 'Amanda Rangel de Freitas', ambiente: 1, status: 'autorizada' }, 'pdf'), 'Nota Fiscal - Amanda Rangel de Freitas.pdf');
+  assert.equal(R.nomeArquivoNota({ cliente: 'Amanda Rangel de Freitas', ambiente: 1, status: 'autorizada' }, 'xml'), 'Nota Fiscal - Amanda Rangel de Freitas.xml');
+  assert.equal(R.nomeArquivoNota({ cliente: 'Amanda Rangel', ambiente: 2, status: 'autorizada' }, 'pdf'), 'Nota Fiscal - TESTE - Amanda Rangel.pdf');
+  assert.equal(R.nomeArquivoNota({ cliente: 'Amanda Rangel', ambiente: 1, status: 'cancelada' }, 'pdf'), 'Nota Fiscal - CANCELADA - Amanda Rangel.pdf');
+  assert.equal(R.nomeArquivoNota({ cliente: 'Amanda Rangel', ambiente: 2, status: 'cancelada' }, 'xml'), 'Nota Fiscal - TESTE - CANCELADA - Amanda Rangel.xml');
+  assert.equal(R.nomeArquivoNota({ cliente: ' Ana  "Bia"  \\ Silva / Souza: *?<>|  ', ambiente: 1, status: 'autorizada' }, 'pdf'), 'Nota Fiscal - Ana Bia Silva Souza.pdf');
+  assert.equal(R.nomeArquivoNota({ cliente: 'João da Silva...', ambiente: 1 }, 'pdf'), 'Nota Fiscal - João da Silva.pdf');
+  // sem o nome na linha da nota: o do XML (<dest><xNome>), nunca o texto da SEFAZ da nota de teste
+  const xmlReal = N.montarXml(notaBase({ ambiente: 1, dest: { ...DEST_RJ, nome: 'Maria & Filhos' } }), EMIT).xml;
+  assert.equal(R.clienteDoXml(xmlReal), 'Maria & Filhos');
+  assert.equal(R.nomeArquivoNota({ cliente: null, xml: xmlReal, ambiente: 1, status: 'autorizada' }, 'pdf'), 'Nota Fiscal - Maria & Filhos.pdf');
+  const xmlTeste = N.montarXml(notaBase(), EMIT).xml;
+  assert.equal(R.clienteDoXml(xmlTeste), '');
+  assert.equal(R.nomeArquivoNota({ cliente: null, xml: xmlTeste, ambiente: 2 }, 'pdf'), 'Nota Fiscal - TESTE - Sem nome.pdf');
+  assert.equal(R.nomeArquivoNota({ cliente: R.limparNomeArquivo('') || null, ambiente: 1 }, 'pdf'), 'Nota Fiscal - Sem nome.pdf');
+  // lote: dia no horário de Brasília (23h30 do dia 16 em Brasília = 02h30 UTC do dia 17)
+  assert.equal(R.nomeLoteDanfes(new Date('2026-11-17T02:30:00Z')), 'Notas Fiscais - 16-11-2026.pdf');
+  assert.equal(R.nomeLoteDanfes(new Date('2026-01-05T12:00:00Z')), 'Notas Fiscais - 05-01-2026.pdf');
+  // a rota do XML devolve o nome real do cliente (guardado na nota), também na de teste
+  const db = bancoFalso();
+  const r: any = await F.emitir(contexto(db, async ({ env }) => retEnvi(env, '100', 'Autorizado o uso da NF-e')), pedido());
+  const x: any = await F.xml({ db, cert: () => cert }, r.id);
+  assert.equal(x.cliente, DEST_RJ.nome);
+  assert.equal(R.nomeArquivoNota(x, 'pdf'), `Nota Fiscal - TESTE - ${DEST_RJ.nome}.pdf`);
+});
+
 await t('nenhum segredo no repositório: .env.example só com os nomes', () => {
   const ex = readFileSync(path.join(AQUI, '..', '..', '.env.example'), 'utf8');
   for (const k of ['NFE_CERT_B64', 'NFE_CERT_SENHA', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) assert.match(ex, new RegExp(`^${k}=\\s*$`, 'm'));
