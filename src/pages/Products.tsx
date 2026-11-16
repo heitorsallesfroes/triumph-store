@@ -1,4 +1,4 @@
-// 📦 Cadastros › Produtos — cadastro principal dos produtos do ERP (o Tiny fica só como integração temporária).
+// 📦 Cadastros › Produtos — cadastro principal dos produtos do ERP.
 // Lista com busca (modelo, cor, SKU, NCM), filtros de categoria e situação, ordem por coluna e filtros no endereço
 // (?pr_…, o F5 não perde); cards do topo; painel lateral de cadastro em seções (identificação, fiscal da NF-e
 // própria, preços com margem na hora, estoque só leitura); Duplicar (outra cor rápido) e Desativar (some da Nova
@@ -6,7 +6,7 @@
 // Antes da migration 20261123120000_produtos_cadastro.sql: tudo conta como ativo e os dados fiscais não são gravados.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Package, Plus, Search, X, RefreshCw, Watch, ShoppingBag, ChevronDown, ChevronRight, ArrowUp, ArrowDown, Copy, Power,
+  Package, Plus, Search, X, RefreshCw, ArrowUp, ArrowDown, Copy, Power,
   Pencil, AlertTriangle, Boxes, Wallet, Tag, FileWarning, Save,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -18,9 +18,6 @@ import {
   hrefSemFiltros, lerFiltros, loteValido, margem, ncmOk, numBR, paraBanco, resumo, rotuloCategoria, seloEstoque, textoLote,
   trocarOrdem, validar,
 } from '../lib/produtos';
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 const brl = (v: unknown) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const inp = 'w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 focus:border-orange-500 focus:outline-none text-sm';
@@ -53,10 +50,6 @@ export default function Products() {
   const [lotePreco, setLotePreco] = useState('');
   const [loteAtivo, setLoteAtivo] = useState(false);
   const [confirmar, setConfirmar] = useState<{ lote: Lote; mudancas: { id: string; dados: Record<string, unknown> }[] } | null>(null);
-  // Tiny (temporário)
-  const [tinyAberto, setTinyAberto] = useState(false);
-  const [importando, setImportando] = useState(false);
-  const [importResult, setImportResult] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
     setErro('');
@@ -181,18 +174,6 @@ export default function Products() {
     setMsg(falhou ? `⚠️ ${ok} alterado(s); parou: ${falhou}` : `✅ ${ok} produto(s) alterado(s).`);
     if (!falhou) { setSel(new Set()); setLoteTipo(''); }
     carregar();
-  };
-
-  // ── Tiny (temporário) ──
-  const importarTiny = async (categoria: 'smartwatch' | 'acessorio') => {
-    setImportando(true); setImportResult(null);
-    try {
-      const resp = await fetch(`${SUPABASE_URL}/functions/v1/import-tiny-products`, {
-        method: 'POST', headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ categoria }),
-      });
-      const data = await resp.json();
-      if (data.success) { setImportResult(`✅ ${data.imported} produtos importados com sucesso!`); carregar(); } else setImportResult(`❌ Erro: ${data.error}`);
-    } catch { setImportResult('❌ Erro ao importar produtos'); } finally { setImportando(false); }
   };
 
   const cab = (rot: string, o: Ordem | null, cls = '') => (
@@ -370,24 +351,6 @@ export default function Products() {
             })}
           </tbody>
         </table>
-      </section>
-
-      {/* ── Integração Tiny (temporária, recolhida) ── */}
-      <section className="bg-gray-800 rounded-xl border border-gray-700">
-        <button type="button" onClick={() => setTinyAberto((v) => !v)} aria-expanded={tinyAberto} className="w-full flex items-center justify-between px-5 py-3 text-left">
-          <span className="font-medium flex items-center gap-2 text-gray-300">{tinyAberto ? <ChevronDown size={18} /> : <ChevronRight size={18} />}<RefreshCw size={16} className="text-gray-400" />Integração Tiny (temporária)</span>
-          <span className="text-xs text-gray-500">importar produtos do Tiny ERP</span>
-        </button>
-        {tinyAberto && (
-          <div className="px-5 pb-5">
-            <p className="text-xs text-gray-400 mb-3">O cadastro principal agora é aqui no ERP. A importação fica só enquanto a migração do Tiny não termina; o envio de estoque para o Tiny nas vendas e no Controle de Estoque continua igual.</p>
-            <div className="flex gap-3 flex-wrap">
-              <button type="button" onClick={() => importarTiny('smartwatch')} disabled={importando} className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm disabled:opacity-50"><Watch size={15} />{importando ? 'Importando…' : 'Importar Smartwatches'}</button>
-              <button type="button" onClick={() => importarTiny('acessorio')} disabled={importando} className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm disabled:opacity-50"><ShoppingBag size={15} />{importando ? 'Importando…' : 'Importar Acessórios'}</button>
-            </div>
-            {importResult && <p className="mt-3 text-sm text-gray-300">{importResult}</p>}
-          </div>
-        )}
       </section>
 
       {/* ── painel lateral de cadastro ── */}

@@ -643,6 +643,14 @@ await t('tela e servidor concordam: prazo de 24 h e nota do Tiny', () => {
   for (const v of [{ nfe_status: 'emitida' }, { nfe_chave: '1' }, { nfe_url: 'x' }, { nfe_id: 5 }, {}, null]) assert.equal(R.temNotaTiny(v), F.temNotaTiny(v));
   assert.equal(R.restanteTexto(5 * 3600e3 + 7 * 60e3), '5 h 7 min');
 });
+await t('selo da nota antiga do Tiny no Histórico: número pela chave e link', () => {
+  const chave = '33261149923481000104550010000001231000001234';
+  assert.deepEqual(R.notaTiny({ nfe_status: 'emitida', nfe_chave: chave, nfe_url: 'https://tiny/danfe' }), { numero: '123', url: 'https://tiny/danfe' });
+  assert.deepEqual(R.notaTiny({ nfe_chave: chave }), { numero: '123', url: `https://erp.olist.com/notas_fiscais#edit/${chave}` });
+  assert.deepEqual(R.notaTiny({ nfe_status: 'emitida' }), { numero: null, url: null });
+  assert.equal(R.notaTiny({ nfe_status: null, nfe_chave: '', nfe_url: null }), null);
+  assert.equal(R.notaTiny(null), null);
+});
 await t('migration accessories.ncm: coluna nova e preenchimento só de pulseira e fone', () => {
   const sql = readFileSync(path.join(RAIZ, 'supabase', 'migrations', '20261121120000_acessorios_ncm.sql'), 'utf8');
   assert.match(sql, /alter table accessories add column if not exists ncm text;/);

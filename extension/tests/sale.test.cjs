@@ -1,7 +1,7 @@
 // Testes da 2.12.3 (venda pelo WhatsApp 💰 igual à "Nova Venda" do ERP). node extension/tests/sale.test.cjs
 // - supabase-api.js com um banco falso em memória: createSaleFromChat grava sales / sale_items / sale_accessories
 //   exatamente como o buildSale (que o scripts/tests/saleParity.test.ts compara com o código do Sales.tsx), com o
-//   custo editado, 2 formas de pagamento, Correios, CPF, itens manuais, fornecedor, estoque, Tiny e origem automática
+//   custo editado, 2 formas de pagamento, Correios, CPF, itens manuais, fornecedor, estoque (sem Tiny, 2.20.1) e origem automática
 // - recusa o que o ERP recusa (sem item, CPF inválido, total alocado diferente, motoboy sem bairro/cidade)
 // - lookupCep (ViaCEP, como o ERP): só o CEP sai
 'use strict';
@@ -17,7 +17,7 @@ const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
 const CHAT = '5521987654321@c.us';
-const P1 = '11111111-1111-4111-8111-111111111111'; // smartwatch, com Tiny
+const P1 = '11111111-1111-4111-8111-111111111111'; // smartwatch (tiny_id antigo no banco: ignorado desde a 2.20.1)
 const P2 = '22222222-2222-4222-8222-222222222222'; // pulseira
 const A1 = '33333333-3333-4333-8333-333333333333';
 const SUP = '44444444-4444-4444-8444-444444444444';
@@ -43,7 +43,6 @@ function api({ attribution = true, cepBody = null, noPosition = false } = {}) {
     const body = init.body ? JSON.parse(init.body) : undefined;
     calls.push({ method, url, body });
     if (url.startsWith('https://viacep.com.br/')) return res(200, cepBody || { cep: '24220-000', logradouro: 'Rua Gavião Peixoto', bairro: 'Icaraí', localidade: 'Niterói', uf: 'RJ' });
-    if (url.includes('/functions/v1/update-tiny-stock')) return res(200, { success: true });
     const u = new URL(url);
     const table = u.pathname.replace('/rest/v1/', '');
     const rows = db[table] || (db[table] = []);
@@ -133,15 +132,14 @@ test('sale_items com o custo editado, sale_accessories com o custo, itens manuai
   const novos = db.products.filter((p) => p.category === 'acessorio');
   assert.deepStrictEqual(novos.map((p) => [p.model, p.cost, p.price, p.current_stock]), [['Película extra', 4, 20, 0], ['Capa nova', 2, 15, 0]]);
 });
-test('estoque baixado, Tiny avisado, e o custo editado grava no produto (saveProductCost do ERP)', async () => {
+test('estoque baixado, Tiny NÃO é avisado (2.20.1), e o custo editado grava no produto (saveProductCost do ERP)', async () => {
   const { api: a, TS, db, calls } = api();
   const r = await a.createSaleFromChat({ sale: chatSale(TS) });
   const p1 = db.products.find((p) => p.id === P1);
   const p2 = db.products.find((p) => p.id === P2);
   assert.deepStrictEqual([p1.current_stock, p2.current_stock, p1.cost, p2.cost], [3, 7, 199.5, 12.5]);
-  const tiny = calls.filter((c) => c.url.includes('update-tiny-stock'));
-  assert.deepStrictEqual(tiny.map((c) => c.body), [{ tiny_id: 'T-1', quantidade: 3 }]);
-  assert.strictEqual(r.tinyFailed, 0);
+  assert.ok(!calls.some((c) => /tiny/i.test(c.url)), 'nenhuma chamada ao Tiny (nem tiny_id no select)');
+  assert.ok(!('tinyFailed' in r));
   assert.ok(!calls.some((c) => c.method === 'PATCH' && c.url.includes(`products?id=eq.${P2}`) && c.body && 'cost' in c.body), 'custo sem mudança não é gravado');
 });
 test('sem anúncio registrado nem visto: orgânico; anúncio visto nas mensagens: anúncio', async () => {

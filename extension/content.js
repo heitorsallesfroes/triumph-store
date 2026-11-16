@@ -12845,7 +12845,7 @@
       }
       chatNameFromSaleResult(f.chatId, res && res.chatName); // 2.13.3
       const linkP = f.linkEventId ? call('linkSaleToPurchase', { eventId: f.linkEventId, saleId: res.id, fillPhone: false }).then(() => cv.links.delete(f.linkEventId)).catch(() => {}) : Promise.resolve(); // 2.10.5
-      vs.done = { id: res.id, total: res.total, tinyFailed: res.tinyFailed, after: null, fb: null };
+      vs.done = { id: res.id, total: res.total, after: null, fb: null };
       vs.view = 'done';
       vs.busy = false;
       renderVendas();
@@ -12967,7 +12967,6 @@
     const url = erpLink({ pagina: 'historico', venda: vs.done.id });
     if (url) sec.append(erpAnchor('Abrir esta venda no ERP', url, 'bbtn primary vd-open'));
     else sec.append(el('div', 'crm-intro', 'No ERP: Histórico de Vendas.'));
-    if (vs.done.tinyFailed) sec.append(el('div', 'ed-note', 'O estoque do Tiny não confirmou a atualização: confira no ERP.'));
     // 2.12.4: o que foi feito depois da venda, parte por parte
     const box = el('div', 'vd-after');
     if (!vs.done.after) box.append(el('div', 'lt-none loading', 'Aplicando as etiquetas e as automações…'));

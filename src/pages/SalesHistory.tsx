@@ -7,7 +7,7 @@ import { ChevronDown, Package, FileText, CreditCard as Edit, Search, Calendar, T
 import Receipt from '../components/Receipt';
 import NfeModal from '../components/NfeModal';
 import { nfeGet } from '../lib/nfeApi';
-import { selosPorVenda, Selo } from '../lib/nfeRegras';
+import { selosPorVenda, Selo, notaTiny } from '../lib/nfeRegras';
 import Sales from './Sales';
 import { generateShippingLabel } from '../lib/superfrete';
 import { calculateCardFee } from '../lib/cardFees';
@@ -68,9 +68,6 @@ const EMPTY_PERIOD_LABELS: Record<Period, string> = {
 };
 
 const PAGE_SIZE = 20;
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 interface Sale {
   id: string;
@@ -134,7 +131,6 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
   const [productFilter, setProductFilter] = useState('');
   const [debouncedProductFilter, setDebouncedProductFilter] = useState('');
   const [generatingLabel, setGeneratingLabel] = useState<string | null>(null);
-  const [generatingNFe, setGeneratingNFe] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [whatsappSale, setWhatsappSale] = useState<Sale | null>(null);
   const [receiptChoiceSale, setReceiptChoiceSale] = useState<Sale | null>(null);
@@ -462,74 +458,6 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
     } finally {
       setFilterLoading(false);
       setFilterRun((n) => n + 1);
-    }
-  };
-
-  const updateNFeInState = (saleId: string, nfe_url: string, nfe_status: string, nfe_chave?: string) => {
-    const patch = (s: Sale) => s.id === saleId ? { ...s, nfe_url, nfe_status, ...(nfe_chave ? { nfe_chave } : {}) } : s;
-    setFilteredSales(prev => prev.map(patch));
-    setSales(prev => prev.map(patch));
-  };
-
-  const handleGenerateNFe = async (sale: Sale) => {
-    if (!sale.customer_cpf) {
-      alert('CPF/CNPJ do cliente é obrigatório para gerar nota fiscal');
-      return;
-    }
-
-    setGeneratingNFe(sale.id);
-    try {
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/gerar-nfe`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ sale_id: sale.id }),
-      });
-
-      const data = await response.json();
-
-      if (!data.success) {
-        alert(`Erro ao gerar nota fiscal: ${data.error}`);
-        return;
-      }
-
-      const nfeUrl = data.nfe_url || '';
-
-      if (data.nfe_chave) {
-        await supabase.from('sales').update({ nfe_chave: data.nfe_chave }).eq('id', sale.id);
-      }
-
-      updateNFeInState(sale.id, nfeUrl, 'emitida', data.nfe_chave || undefined);
-
-      // Abre antes do alert para não ser bloqueado como popup
-      if (nfeUrl) window.open(nfeUrl, '_blank');
-      alert('Nota fiscal gerada com sucesso!');
-    } catch (error) {
-      alert('Erro ao gerar nota fiscal');
-    } finally {
-      setGeneratingNFe(null);
-    }
-  };
-
-  const handleViewNFe = async (sale: Sale) => {
-    // Sempre busca do Supabase em tempo real para garantir dados frescos
-    const { data } = await supabase
-      .from('sales')
-      .select('nfe_url, nfe_chave')
-      .eq('id', sale.id)
-      .single();
-
-    const resolvedUrl =
-      data?.nfe_url ||
-      (data?.nfe_chave ? `https://erp.olist.com/notas_fiscais#edit/${data.nfe_chave}` : null);
-
-    if (resolvedUrl) {
-      window.open(resolvedUrl, '_blank');
-      updateNFeInState(sale.id, resolvedUrl, 'emitida');
-    } else {
-      alert('URL da nota não disponível. Acesse diretamente no Tiny ERP.');
     }
   };
 
@@ -1380,9 +1308,15 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
                       <FileText size={20} className="text-yellow-500" />
                       <div>
                         <p className="text-sm font-semibold">Nota Fiscal</p>
-                        {sale.nfe_status === 'emitida' && (
-                          <p className="text-xs text-green-500">✅ NF-e emitida</p>
-                        )}
+                        {(() => {
+                          const t = notaTiny(sale);
+                          if (!t) return null;
+                          const rot = `NF-e Tiny${t.numero ? ` nº ${t.numero}` : ''}`;
+                          const cls = 'inline-block mt-0.5 mr-1 text-[11px] rounded px-1.5 py-0.5 border bg-gray-500/15 text-gray-400 border-gray-500/40';
+                          return t.url
+                            ? <a href={t.url} target="_blank" rel="noopener noreferrer" title="Nota antiga emitida pelo Tiny (abrir)" className={`${cls} hover:text-gray-200 hover:border-gray-400`}>{rot} ↗</a>
+                            : <span title="Nota antiga emitida pelo Tiny" className={cls}>{rot}</span>;
+                        })()}
                         {selosNfe[sale.id] && (
                           <span title="NF-e própria (direto na SEFAZ)" className={`inline-block mt-0.5 text-[11px] font-semibold rounded px-1.5 py-0.5 border ${{
                             verde: 'bg-green-500/15 text-green-300 border-green-500/40',
@@ -1401,27 +1335,6 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
                       >
                         <FileText size={16} />Nota fiscal
                       </button>
-                      {!sale.nfe_status ? (
-                        <button
-                          onClick={() => handleGenerateNFe(sale)}
-                          disabled={generatingNFe === sale.id}
-                          className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
-                        >
-                          {generatingNFe === sale.id ? (
-                            <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>Gerando...</>
-                          ) : (
-                            <><FileText size={16} />Gerar NF-e</>
-                          )}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleViewNFe(sale)}
-                          className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-semibold"
-                        >
-                          <FileText size={16} />
-                          Ver NF-e
-                        </button>
-                      )}
                     </div>
                   </div>
                 </div>

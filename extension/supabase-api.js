@@ -3736,8 +3736,8 @@
 
   // ── Venda pela conversa (2.3.0) ──
   // Grava nas tabelas do ERP EXATAMENTE como a tela "Nova Venda" (src/pages/Sales.tsx): sales,
-  // sale_items, sale_accessories, status 'em_separacao', estoque baixado na criação (como o ERP) e o
-  // Tiny avisado pela mesma Edge Function. Nunca grava finalized_at (o trigger do banco faz isso ao
+  // sale_items, sale_accessories, status 'em_separacao', estoque baixado na criação (como o ERP; 2.20.1: sem
+  // Tiny). Nunca grava finalized_at (o trigger do banco faz isso ao
   // finalizar no ERP). Os cálculos ficam em sale-calc.js (cópia dos do ERP). Só a pedido do clique.
 
   const SALE = () => root.TspSale;
@@ -3906,8 +3906,8 @@
   async function createSaleFromChat({ sale }) {
     const S = SALE();
     const { form, items, accessories, manualItems, payments, suppliers, extra } = checkSaleInput(sale || {});
-    // Dados frescos do banco: categoria (volumes/fornecedor), custo padrão, estoque e Tiny do produto; custo do acessório
-    const products = items.length ? await rest(`products?select=id,model,color,category,price,cost,current_stock,tiny_id&id=in.${inList(items.map((i) => i.product_id))}`) : [];
+    // Dados frescos do banco: categoria (volumes/fornecedor), custo padrão e estoque do produto; custo do acessório
+    const products = items.length ? await rest(`products?select=id,model,color,category,price,cost,current_stock&id=in.${inList(items.map((i) => i.product_id))}`) : [];
     const byId = new Map(products.map((p) => [p.id, p]));
     items.forEach((it) => { if (!byId.has(it.product_id)) throw new Error('Produto não encontrado'); });
     const accRows = accessories.length ? await rest(`accessories?select=id,name,cost&id=in.${inList(accessories.map((a) => a.accessory_id))}`) : [];
@@ -3961,24 +3961,15 @@
         await rest(`products?id=eq.${it.product_id}`, json('PATCH', 'return=minimal', { cost: it.unit_cost })).catch(() => {});
       }
     }
-    // Estoque: o ERP baixa na criação da venda (products.current_stock) e avisa o Tiny
-    let tinyFailed = 0;
+    // Estoque: o ERP baixa na criação da venda (products.current_stock). 2.20.1: o Tiny não é mais avisado
     for (const it of items) {
-      const fresh = await rest(`products?select=current_stock,tiny_id&id=eq.${it.product_id}`);
+      const fresh = await rest(`products?select=current_stock&id=eq.${it.product_id}`);
       if (!fresh.length) continue;
       const novo = (Number(fresh[0].current_stock) || 0) - it.quantity;
       await rest(`products?id=eq.${it.product_id}`, json('PATCH', 'return=minimal', { current_stock: novo }));
-      if (fresh[0].tiny_id) {
-        try {
-          const { SUPABASE_URL } = root.WA_CONFIG;
-          const res = await supaFetch(`${SUPABASE_URL}/functions/v1/update-tiny-stock`, json('POST', 'return=minimal', { tiny_id: fresh[0].tiny_id, quantidade: novo }));
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok || !body.success) tinyFailed++;
-        } catch { tinyFailed++; }
-      }
     }
     const chatName = extra.wa_chat_id ? await chatNameFromSale(extra.wa_chat_id, row.customer_name) : null; // 2.13.3
-    return { id: saleId, total: row.total_sale_price, status: row.status, tinyFailed, origin: row.origin || null, chatName };
+    return { id: saleId, total: row.total_sale_price, status: row.status, origin: row.origin || null, chatName };
   }
 
   // 2.12.3: fetchAddressByCep do ERP (src/lib/viaCep.ts): só o CEP (8 dígitos) sai; volta rua, bairro, cidade e UF

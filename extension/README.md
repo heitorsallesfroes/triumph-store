@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.20.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.20.1** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -175,7 +175,7 @@ Registra a venda da conversa aberta **direto no ERP**, do mesmo jeito que a tela
 "Nova Venda" do ERP: mesmas tabelas (`sales`, `sale_items`,
 `sale_accessories`), mesmos cálculos (taxas de cartão da configuração, custos,
 lucro, volumes), status **Em separação** e **estoque baixado na hora**, como o
-ERP faz (o Tiny também é avisado). Finalize a venda no ERP, como sempre.
+ERP faz. Finalize a venda no ERP, como sempre.
 
 - Abra pelo botão **💰 Venda** na linha da conversa ou pela seção **Vendas**.
 - Cliente (nome e telefone da conversa, editáveis), produtos do ERP (com cor,
@@ -802,6 +802,10 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.20.1 — Sem Tiny
+- A venda pela conversa não avisa mais o estoque do Tiny (o ERP saiu do Tiny de vez); o estoque do ERP continua
+  baixando na hora, igual.
 
 ### 2.20.0 — Automações confiáveis: a etiqueta vai para quem recebeu, o motor confere o chat no WhatsApp
 - **Causa raiz (16/11)**: a etiqueta "Ao enviar, colocar na etiqueta CRM" da mensagem rápida usava a identificação da

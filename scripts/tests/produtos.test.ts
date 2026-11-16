@@ -161,16 +161,28 @@ t('filtros no endereço: só o diferente do padrão (pr_…); inválidos voltam 
   assert.equal(P.hrefSemFiltros(`https://erp.exemplo${h}`), '/?pagina=produtos#x');
 });
 
-t('Nova Venda esconde inativos na busca; a tela não apaga produto (desativa) e o Tiny fica recolhido no fim', () => {
+t('Nova Venda esconde inativos na busca; a tela não apaga produto (desativa) e não tem mais Tiny', () => {
   const sales = readFileSync(new URL('../../src/pages/Sales.tsx', import.meta.url), 'utf8');
   assert.match(sales, /const productsAtivos = products\.filter\(\(p\) => p\.ativo !== false\)/);
   assert.equal((sales.match(/products=\{productsAtivos\}/g) || []).length, 2, 'QuickAdd e UnifiedSearch');
   const tela = readFileSync(new URL('../../src/pages/Products.tsx', import.meta.url), 'utf8');
   assert.ok(!/\.delete\(\)/.test(tela), 'sem excluir produto nem itens de venda');
-  assert.ok(tela.includes('Integração Tiny (temporária)'));
-  assert.ok(tela.indexOf('Integração Tiny (temporária)') > tela.indexOf('<table'), 'bloco do Tiny depois da tabela');
+  assert.ok(!/tiny/i.test(tela), 'sem bloco nem importação do Tiny (nem tiny_id na tela)');
   const mig = readFileSync(new URL('../../supabase/migrations/20261123120000_produtos_cadastro.sql', import.meta.url), 'utf8');
   for (const c of ['ativo boolean NOT NULL DEFAULT true', "unidade text NOT NULL DEFAULT 'Pc'", "gtin text NOT NULL DEFAULT 'SEM GTIN'", 'origem smallint NOT NULL DEFAULT 0']) assert.ok(mig.includes(c), c);
+});
+
+t('ERP desligado do Tiny: Nova Venda, Histórico e Controle de Estoque não chamam mais as funções do Tiny', () => {
+  const src = (f: string) => readFileSync(new URL(`../../src/${f}`, import.meta.url), 'utf8');
+  for (const f of ['pages/Sales.tsx', 'pages/SalesHistory.tsx', 'pages/StockControl.tsx', 'pages/Products.tsx']) {
+    const s = src(f);
+    for (const fn of ['update-tiny-stock', 'sync-tiny-stock', 'import-tiny-products', 'gerar-nfe', 'tiny-diagnostics']) assert.ok(!s.includes(fn), `${f}: ${fn}`);
+    assert.ok(!/tiny_id/.test(s), `${f}: tiny_id`);
+  }
+  assert.throws(() => src('lib/tiny.ts'), 'src/lib/tiny.ts removido');
+  const h = src('pages/SalesHistory.tsx');
+  assert.ok(!h.includes('Gerar NF-e') && !h.includes('handleGenerateNFe'), 'sem o botão antigo do Tiny');
+  assert.ok(h.includes('setNfeSale(sale)') && h.includes('notaTiny(sale)'), 'botão "Nota fiscal" + selo da nota antiga do Tiny');
 });
 
 console.log(`\n${passou} testes de Produtos passaram`);

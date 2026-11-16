@@ -831,27 +831,6 @@ export default function Sales({ triggerFastSale, onNavigate, editSaleId, onEditD
             .eq('id', sp.product_id);
 
           if (stockError) throw stockError;
-
-          // Atualizar estoque no Tiny
-          if ((product as any).tiny_id) {
-            const novoEstoque = product.current_stock - sp.quantity;
-            try {
-              const tinyRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-tiny-stock`, {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ tiny_id: (product as any).tiny_id, quantidade: novoEstoque }),
-              });
-              const tinyData = await tinyRes.json();
-              if (!tinyData.success) {
-                console.error(`Tiny stock update failed for ${(product as any).tiny_id}:`, tinyData.error);
-              }
-            } catch (tinyErr) {
-              console.error('Erro ao atualizar estoque no Tiny:', tinyErr);
-            }
-          }
         }
       }
       alert('Venda registrada com sucesso!');

@@ -93,6 +93,16 @@ export const restanteTexto = (ms: number) => { const h = Math.floor(ms / 3600e3)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const temNotaTiny = (v: any) => !!(v && (v.nfe_id || v.nfe_status || v.nfe_chave || v.nfe_url));
 
+// selo da nota antiga do Tiny: número (tirado da chave de 44 dígitos, posições 26–34) e link para abrir, se houver
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function notaTiny(v: any): { numero: string | null; url: string | null } | null {
+  if (!temNotaTiny(v)) return null;
+  const chave = String(v.nfe_chave || '').replace(/D/g, '');
+  const numero = chave.length === 44 ? String(Number(chave.slice(25, 34))) : null;
+  const url = v.nfe_url || (chave ? `https://erp.olist.com/notas_fiscais#edit/${chave}` : null);
+  return { numero, url };
+}
+
 // ── selo da nota própria no Histórico de Vendas ──
 export interface NotaSelo { venda_id?: string | null; ambiente: number; numero: number; status: string; criado_em?: string }
 export interface Selo { texto: string; cor: 'verde' | 'amarelo' | 'vermelho' | 'cinza'; teste: boolean }

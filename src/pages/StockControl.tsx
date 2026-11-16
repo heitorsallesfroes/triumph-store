@@ -369,18 +369,6 @@ const [showStockSummary, setShowStockSummary] = useState(false);
           // Recebimento parcial — reduz a quantidade pendente, mantém como pendente
           await supabase.from('stock_orders').update({ quantity: order.quantity - received }).eq('id', order.id);
         }
-
-        const product = products.find((p: any) => p.id === order.product_id);
-        if (product?.tiny_id) {
-          await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-tiny-stock`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ tiny_id: product.tiny_id, quantidade: newStock }),
-          });
-        }
       }
 
       setConfirmReceiveGroup(null);
@@ -489,17 +477,6 @@ const [showStockSummary, setShowStockSummary] = useState(false);
         quantity: qty,
         notes: movementReason.trim() || null,
       }]);
-
-      if (selectedProduct.tiny_id) {
-        await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-tiny-stock`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ tiny_id: selectedProduct.tiny_id, quantidade: novoEstoque }),
-        });
-      }
 
       setShowMovementForm(false);
       setMovementQty('');
