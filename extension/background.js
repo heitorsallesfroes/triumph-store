@@ -120,8 +120,12 @@ const HANDLERS = {
   automationSentToday: (m) => WaApi.automationSentToday({ automationId: m.automationId, since: m.since }), // 2.13.2
   automationReserve:    (m) => WaApi.automationReserve({ automationId: m.automationId, contactId: m.contactId, runKey: m.runKey }),
   automationUnreserve:  (m) => WaApi.automationUnreserve({ id: m.id }),
-  applySendLabels:      (m) => WaApi.applySendLabels({ addLabelId: m.addLabelId, removeLabelId: m.removeLabelId, removeAll: m.removeAll === true, contactId: m.contactId, identity: m.identity, chatId: m.chatId, name: m.name }),
-  getContactName:       (m) => WaApi.getContactName(m.identity),
+  applySendLabels:      (m) => WaApi.applySendLabels({ addLabelId: m.addLabelId, removeLabelId: m.removeLabelId, removeAll: m.removeAll === true, contactId: m.contactId, identity: m.identity, chatId: m.chatId, name: m.name, phone: m.phone }), // 2.20.0: + phone (do WhatsApp para o chat que recebeu)
+  logLabelFailure:      (m) => WaApi.logLabelFailure({ chat_id: m.chat_id, item_id: m.item_id, reason: m.reason }), // 2.20.0
+  serverNow:            ()  => WaApi.serverNow(), // 2.20.0: relógio do computador × servidor
+  automationHealth:     (m) => WaApi.automationHealth({ since: m.since }), // 2.20.0: Saúde das automações
+  contactsForPhones:    (m) => WaApi.contactsForPhones({ phones: m.phones }), // 2.20.0
+  getContactName:      (m) => WaApi.getContactName(m.identity),
   // Venda pela conversa (2.3.0): só createSaleFromChat grava nas tabelas do ERP, e só pelo botão "Registrar venda"
   erpCatalog:            ()  => WaApi.erpCatalog(),
   createSaleFromChat:    (m) => WaApi.createSaleFromChat({ sale: m.sale }),

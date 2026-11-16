@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.19.2** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.20.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,40 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.20.0 — Automações confiáveis: a etiqueta vai para quem recebeu, o motor confere o chat no WhatsApp
+- **Causa raiz (16/11)**: a etiqueta "Ao enviar, colocar na etiqueta CRM" da mensagem rápida usava a identificação da
+  conversa que estava **aberta quando o envio terminava**. O envio leva segundos (às vezes mais de 1 min esperando a
+  confirmação); quem já tinha aberto a próxima conversa fazia a etiqueta ir para o telefone **dessa** pessoa, ligado ao
+  chat que recebeu a mensagem. Resultado: contato com o telefone de um e o chat de outro, percurso da Régua no chat
+  errado, painel com dois blocos e a pessoa que recebeu sem etiqueta. Agora o chat que recebe é guardado **antes** do
+  envio e o telefone vem do **WhatsApp para esse chat**; a tela só vale se era desse mesmo chat.
+- **Etiqueta "Ao enviar"**: 3 tentativas (na hora, 3 s, 10 s). Não deu → aviso, registro no **Diagnóstico**
+  ("Registro das automações") e no log (`wa_send_log`, "pulado", motivo "etiqueta não aplicada: …").
+- **Motor**: antes de qualquer envio (Régua e automações) pergunta ao WhatsApp o telefone do chat. Não é o do contato
+  (ou não dá para confirmar) → **não envia**, o percurso fica **pausado** (`outcome = 'pausado_chat'`), registra no
+  log e no Diagnóstico. A ponte não respondeu → só espera o próximo ciclo.
+- **Resposta pela pessoa**: o motor procura a resposta nos ids do telefone que o WhatsApp dá para o chat e no chat do
+  contato, **só se o WhatsApp confirmar que esse chat é do mesmo telefone** (a resposta de outra pessoa nunca conta).
+- **Painel da conversa**: um bloco por percurso (`run.id`) e só os percursos da pessoa da conversa.
+- **Mais › Manutenção › Saúde das automações**: a lista de hoje (mensagem rápida com etiqueta → etiqueta aplicada? →
+  entrou na régua? → chat confere?) e todos os percursos ativos conferidos com o WhatsApp. Problemas em vermelho, com
+  o botão de cada conserto: **Aplicar etiqueta**, **Juntar** (percursos da mesma pessoa; fica o mais antigo),
+  **Pausar**, **Passar para o contato certo** (o chat é de outro contato que já existe), **Retomar** e **Mandar para
+  "Se responder"** (o cliente já respondeu depois do começo da espera). **Reparar tudo** faz os consertos em ordem.
+  Nada é enviado daqui.
+- **Horas no futuro**: os 3 primeiros envios da Régua de 16/11 (09:27 no servidor) vieram do WhatsApp com a hora
+  17/11 01:16 (15h49 à frente) — no celular pareciam "de madrugada" e viraram "envio manual" de 17/11,
+  `last_message_at` de amanhã e "mensagem sua depois" no motor. Hora de mensagem mais de 2 min no futuro agora vale
+  a hora em que a extensão viu (log, leads, atividade, motor).
+- **Relógio**: o motor não envia com o relógio do computador mais de 5 min diferente do servidor ou com o fuso
+  diferente do de Brasília (o horário de envio é calculado pelo relógio do computador). Aparece no estado do motor e no
+  Diagnóstico.
+- **Migration** `20261126120000_wa_runs_chat_fix.sql` (aplicar à mão): percursos ativos cujo chat (telefone do
+  WhatsApp em `wa_contact_names`/`wa_chat_activity`) é de outro telefone passam para o contato certo quando ele é
+  único, ou ficam pausados; tudo guardado em `wa_runs_chat_fix_20261126` (com o comando para desfazer).
+- Testes: `tests/health.test.cjs` (casos reais de 16/11: painel duplicado, Fernanda, Patrick/Tania, Di/Maitê,
+  gabriel/Charlie, envio "de madrugada", +1 dia, relógio).
 
 ### 2.19.2 — CEP aceita colar com ponto, traço ou espaços
 - **CEP da aba Vendas**: colar "24.030-330", "24030-330", "24030330" ou com espaços funciona (antes o limite de 9

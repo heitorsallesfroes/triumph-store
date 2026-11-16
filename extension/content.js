@@ -1993,7 +1993,7 @@
               <button type="button" data-sec="agendados" title="Agendados" aria-pressed="false">${svg('clock')}<span>Agendados</span></button>
               <button type="button" data-sec="disparos" title="Disparos (envio para uma etiqueta CRM)" aria-pressed="false">${svg('megaphone')}<span>Disparos</span></button>
               <button type="button" data-sec="follows" title="Automações (Quando → Se → Então)" aria-pressed="false">${svg('repeat')}<span>Automações</span></button>
-              <div class="pmaint"><div class="pmaint-h">Manutenção</div><button type="button" class="pmerge" title="Junta no mais antigo os contatos com a mesma conversa ou o mesmo telefone">${svg('repeat')}<span>Juntar contatos duplicados</span></button><button type="button" class="ppdiag" title="Lê um produto do catálogo e testa o envio do Produto (só em Meu Numero Pessoal)">${svg('activity')}<span>Diagnóstico do Produto</span></button></div>
+              <div class="pmaint"><div class="pmaint-h">Manutenção</div><button type="button" class="pmerge" title="Junta no mais antigo os contatos com a mesma conversa ou o mesmo telefone">${svg('repeat')}<span>Juntar contatos duplicados</span></button><button type="button" class="ppdiag" title="Lê um produto do catálogo e testa o envio do Produto (só em Meu Numero Pessoal)">${svg('activity')}<span>Diagnóstico do Produto</span></button><button type="button" class="phealth" title="Confere com o WhatsApp as etiquetas das mensagens rápidas de hoje e o chat de cada percurso das réguas">${svg('check')}<span>Saúde das automações</span></button></div>
             </div>
           </div>
         </nav>
@@ -2592,6 +2592,198 @@
     testBtn.disabled = !list.length;
   }
   shadow.querySelector('.ppdiag').addEventListener('click', () => { openProductDiag(); });
+
+  // ── 2.20.0: Saúde das automações (Mais › Manutenção) ──
+  // Lista de hoje: mensagens rápidas com "Ao enviar, colocar na etiqueta CRM" → etiqueta aplicada? → entrou na régua
+  // dessa etiqueta? → o chat do percurso é do telefone do contato? E TODOS os percursos ativos das réguas conferidos com
+  // o telefone que o WhatsApp dá para o chat AGORA (a fonte da verdade). Problemas em vermelho, cada um com o botão do
+  // conserto; "Reparar tudo" faz os consertos seguros em ordem. Nada é enviado daqui: só etiqueta e percurso.
+  const HL_RED = 'color:#d93025;font-weight:600';
+  const HL_OK = 'color:#188038';
+  async function openHealth() {
+    setMoreOpen(false);
+    shadow.querySelectorAll('.pdg-bg').forEach((n) => n.remove());
+    const bg = el('div', 'pdg-bg');
+    const box = el('div', 'pdg');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Saúde das automações');
+    box.style.maxHeight = '85vh';
+    box.style.overflow = 'auto';
+    const head = el('div', 'pdg-h', 'Saúde das automações');
+    const msg = el('div', 'pdg-msg', 'Conferindo com o WhatsApp…');
+    const body = el('div', 'hl-body');
+    const btns = el('div', 'pdg-b');
+    const mk = (t, cls = 'btn') => { const b = el('button', cls, t); b.type = 'button'; return b; };
+    const fixAllBtn = mk('Reparar tudo', 'btn primary');
+    const againBtn = mk('Conferir de novo');
+    const copyBtn = mk('Copiar');
+    const closeBtn = mk('Fechar');
+    btns.append(fixAllBtn, againBtn, copyBtn, closeBtn);
+    box.append(head, btns, msg, body);
+    bg.append(box);
+    root.append(bg);
+    const close = () => bg.remove();
+    closeBtn.addEventListener('click', close);
+    bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+    let model = null;
+    const render = () => {
+      body.textContent = '';
+      if (!model) return;
+      const sec = (t) => body.append(el('div', 'pmaint-h', t));
+      const line = (ok, text, fix) => {
+        const row = el('div', 'hl-row');
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(127,127,127,.2)';
+        const t = el('div', '', text);
+        t.style.cssText = ok ? HL_OK : HL_RED;
+        row.append(t);
+        if (fix) { const b = mk(fix.label, 'btn'); b.addEventListener('click', async () => { b.disabled = true; await runFix(fix); b.disabled = false; }); row.append(b); }
+        body.append(row);
+      };
+      sec(`Mensagens rápidas de hoje com etiqueta (${model.sends.length})`);
+      if (!model.sends.length) body.append(el('div', '', 'Nenhuma hoje.'));
+      model.sends.forEach((s) => line(s.ok, `${s.when} · ${s.title} · ${s.who} — ${s.steps.map((x) => `${x.ok ? '✓' : '✗'} ${x.text}`).join(' → ')}`, s.fix));
+      model.failures.forEach((f) => line(false, `${f.when} · ${f.reason}`, null));
+      sec(`Percursos ativos das réguas (${model.runs.length}; com problema: ${model.runs.filter((r) => !r.ok).length})`);
+      model.runs.filter((r) => !r.ok).forEach((r) => line(false, `${r.auto} · ${r.who} — ${r.text}`, r.fix));
+      model.dups.forEach((d) => line(false, `${d.auto} · ${d.who} — ${d.n + 1} percursos ativos da mesma pessoa`, d.fix));
+      model.replied.forEach((r) => line(false, `${r.auto} · ${r.who} — respondeu às ${r.at} e o percurso ainda espera`, r.fix));
+      const okRuns = model.runs.filter((r) => r.ok).length;
+      if (okRuns) line(true, `${okRuns} percurso${okRuns === 1 ? '' : 's'} com o chat conferido pelo WhatsApp`, null);
+    };
+    const text = () => (model ? [
+      `Saúde das automações - ${new Date().toLocaleString('pt-BR')}`,
+      ...model.sends.map((s) => `[${s.ok ? 'OK' : 'PROBLEMA'}] rápida ${s.when} ${s.title}: ${s.steps.map((x) => x.text).join(' → ')}`),
+      ...model.failures.map((f) => `[PROBLEMA] ${f.when} ${f.reason}`),
+      ...model.runs.filter((r) => !r.ok).map((r) => `[PROBLEMA] percurso ${r.id.slice(0, 8)} ${r.auto}: ${r.text}`),
+      ...model.dups.map((d) => `[PROBLEMA] ${d.auto}: ${d.n + 1} percursos ativos da mesma pessoa`),
+      ...model.replied.map((r) => `[PROBLEMA] percurso ${r.id.slice(0, 8)}: respondeu às ${r.at} e ainda espera`),
+    ].join('\n') : '');
+    copyBtn.addEventListener('click', async () => { const ok = await copyToClipboard(text()); msg.textContent = ok ? 'Copiado.' : 'Não foi possível copiar.'; });
+    const patchRun = async (run, patch) => {
+      const r = await call('seqUpdateRun', { id: run.id, version: run.version, patch });
+      if (r && r.ok && r.run) { run.version = r.run.version; Object.assign(run, r.run); return true; }
+      return false;
+    };
+    async function runFix(fix, quiet = false) {
+      let ok = false;
+      try {
+        if (fix.kind === 'label') {
+          const r = await call('applySendLabels', { addLabelId: fix.labelId, chatId: fix.chatId, phone: fix.phone || undefined });
+          ok = !!(r && r.applied);
+          if (ok) afterLabelChange();
+        } else if (fix.kind === 'pause') ok = await patchRun(fix.run, { outcome: E.SEQ_PAUSED });
+        else if (fix.kind === 'resume') ok = await patchRun(fix.run, { outcome: null });
+        else if (fix.kind === 'relink') ok = await patchRun(fix.run, { contact_id: fix.contactId, outcome: null });
+        else if (fix.kind === 'merge') { ok = true; for (const d of fix.dups) ok = (await patchRun(d, { status: 'saiu', outcome: 'id_duplicado' })) && ok; }
+        else if (fix.kind === 'replied') ok = await patchRun(fix.run, fix.patch);
+      } catch (e) { ok = false; msg.textContent = `Não deu: ${String((e && e.message) || e)}`; }
+      if (!quiet) { msg.textContent = ok ? 'Feito. Conferindo de novo…' : 'Não deu (alguém mexeu antes ou o banco recusou). Conferindo de novo…'; await check(); }
+      return ok;
+    }
+    fixAllBtn.addEventListener('click', async () => {
+      if (!model) return;
+      fixAllBtn.disabled = true;
+      // ordem: o percurso passa para o dono certo do chat → pausa o que não dá para confirmar → junta duplicados →
+      // "Se responder" de quem já respondeu → etiqueta que faltou nas mensagens rápidas
+      const fixes = [...model.runs.filter((r) => r.fix && r.fix.kind === 'relink'), ...model.runs.filter((r) => r.fix && r.fix.kind !== 'relink'), ...model.dups, ...model.replied, ...model.sends.filter((s) => s.fix)].map((x) => x.fix);
+      let n = 0;
+      for (const f of fixes) { msg.textContent = `Reparando ${n + 1} de ${fixes.length}…`; if (await runFix(f, true)) n++; }
+      msg.textContent = `${n} de ${fixes.length} consertos feitos. Conferindo de novo…`;
+      await check();
+      fixAllBtn.disabled = false;
+    });
+    againBtn.addEventListener('click', () => check());
+    async function check() {
+      againBtn.disabled = true;
+      try { model = await healthModel((t) => { msg.textContent = t; }); msg.textContent = `Conferido às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.`; } catch (e) { msg.textContent = `Não consegui conferir: ${String((e && e.message) || e)}`; }
+      againBtn.disabled = false;
+      render();
+    }
+    await check();
+  }
+  shadow.querySelector('.phealth').addEventListener('click', () => { openHealth(); });
+
+  // telefone que o WhatsApp dá para o chat agora: { phone, answered } (respostas iguais no mesmo minuto vêm da memória)
+  const hlPhones = new Map();
+  async function hlWaInfo(chatId) {
+    const m = /^(\d{8,15})@c\.us$/.exec(chatId || '');
+    if (m) return { phone: m[1], answered: true };
+    const hit = hlPhones.get(chatId);
+    if (hit && Date.now() - hit.at < 60000) return hit.v;
+    let v;
+    try { const r = await waRequest('chatPhone', { chatId }, { timeout: 4000 }); const d = String((r && r.phone) || '').replace(/\D/g, ''); v = { phone: /^\d{8,15}$/.test(d) ? d : null, answered: true }; } catch { v = { phone: null, answered: false }; }
+    hlPhones.set(chatId, { at: Date.now(), v });
+    return v;
+  }
+  async function healthModel(progress) {
+    const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+    const d = await call('automationHealth', { since: midnight.toISOString() });
+    const hm = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const contacts = new Map((d.contacts || []).map((c) => [c.id, c]));
+    const autos = new Map((d.automations || []).map((a) => [a.id, a]));
+    const chats = [...new Set([...(d.sends || []).map((s) => s.chat_id), ...(d.runs || []).map((r) => r.chat_id)])];
+    const wa = new Map();
+    for (let i = 0; i < chats.length; i++) { if (i % 10 === 0) progress(`Perguntando ao WhatsApp o telefone de cada conversa (${i + 1} de ${chats.length})…`); wa.set(chats[i], await hlWaInfo(chats[i])); }
+    const phones = [...new Set([...wa.values()].map((v) => v.phone).filter(Boolean))];
+    const owners = phones.length ? (await call('contactsForPhones', { phones })) || [] : [];
+    const byPhone = {};
+    owners.forEach((c) => { (byPhone[c.phone] = byPhone[c.phone] || []).push(c); });
+    const who = (chatId) => { const v = wa.get(chatId); return v && v.phone ? v.phone : `conversa …${String(chatId).slice(-9)}`; };
+    // percursos
+    const runs = (d.runs || []).map((r) => {
+      const a = autos.get(r.automation_id);
+      const run = { ...r, contact: r.contact_id ? contacts.get(r.contact_id) || null : null };
+      const v = E.healthOfRun({ run, wa: wa.get(r.chat_id), contactsByPhone: byPhone });
+      const fixLabel = { relink: 'Passar para o contato certo', pause: 'Pausar', resume: 'Retomar' };
+      const fix = v.fix ? { ...v.fix, run, label: fixLabel[v.fix.kind] } : null;
+      return { id: r.id, run, auto: a ? a.name : 'Régua', who: who(r.chat_id), ok: v.status === 'ok', status: v.status, text: v.text, fix };
+    });
+    const live = runs.filter((x) => x.status === 'ok').map((x) => x.run);
+    const dups = E.healthDuplicates(live, (r) => (wa.get(r.chat_id) || {}).phone).map((g) => ({ auto: (autos.get(g.keep.automation_id) || {}).name || 'Régua', who: who(g.keep.chat_id), n: g.dups.length, fix: { kind: 'merge', dups: g.dups, label: 'Juntar (fica o mais antigo)' } }));
+    // quem já respondeu depois do começo da espera (pela PESSOA: os ids do telefone do WhatsApp e o chat do contato)
+    const replied = [];
+    const waiting = live.filter((r) => r.wait_started_at && autos.get(r.automation_id));
+    if (waiting.length) {
+      progress('Procurando respostas dos clientes…');
+      const ids = (r) => { const ph = (wa.get(r.chat_id) || {}).phone; return [...new Set([r.chat_id, ph ? `${ph}@c.us` : null, r.contact && r.contact.chat_id && E.samePerson(r.contact.phone, ph) ? r.contact.chat_id : null].filter(Boolean))]; };
+      const all = [...new Set(waiting.flatMap(ids))];
+      const since = new Date(Math.min(...waiting.map((r) => Date.parse(r.wait_started_at))) - 60000).toISOString();
+      let rep = {}; let cust = { chats: {}, phones: {} };
+      try { rep = (await call('seqReplies', { chatIds: all, since })) || {}; } catch { rep = {}; }
+      try { cust = (await call('seqCustomerAt', { chatIds: all, phones: phones, since })) || cust; } catch { /* sem a tabela */ }
+      const defs = new Map();
+      for (const r of waiting) {
+        const a = autos.get(r.automation_id);
+        let def = defs.get(a.id);
+        if (!def) { const full = (motor.state.automations || []).find((x) => x.id === a.id); def = full && full.sequence ? E.seqNormalize(full.sequence) : null; defs.set(a.id, def); }
+        if (!def) continue;
+        const ph = (wa.get(r.chat_id) || {}).phone;
+        const ev = [...ids(r).flatMap((c) => [...(rep[c] || []), ...((cust.chats || {})[c] || [])]), ...(ph ? (cust.phones || {})[ph] || [] : [])].map(Number).filter(Number.isFinite);
+        const ms = (x) => (x ? Date.parse(x) : null);
+        const patch = E.seqRepliedPatch({ def, run: { node: r.node, wait_started_at: ms(r.wait_started_at), last_sent_at: ms(r.last_sent_at), skip_wait: !!r.skip_wait, branches: r.branches || [], entered_at: ms(r.created_at) }, replies: ev, now: Date.now() });
+        if (patch) replied.push({ id: r.id, auto: a.name, who: who(r.chat_id), at: hm(new Date(Math.max(...ev)).toISOString()), fix: { kind: 'replied', run: r, patch, label: 'Mandar para "Se responder"' } });
+      }
+    }
+    // mensagens rápidas de hoje com etiqueta
+    const links = new Map();
+    (d.links || []).forEach((l) => links.set(`${l.contact_id}|${l.label_id}`, Date.parse(l.created_at || '')));
+    const sends = (d.sends || []).map((s) => {
+      const v = wa.get(s.chat_id) || { phone: null, answered: false };
+      const contact = [...contacts.values()].find((c) => c.chat_id === s.chat_id && (!v.phone || !c.phone || E.samePerson(c.phone, v.phone)))
+        || (v.phone ? (byPhone[v.phone] || [])[0] || null : null);
+      const labelAt = contact ? links.get(`${contact.id}|${s.item.label_id}`) : NaN;
+      const starts = [...autos.values()].some((a) => a.active && a.start && a.start.type === 'etiqueta' && a.start.source !== 'whatsapp' && a.start.label_id === s.item.label_id);
+      const run = contact ? runs.find((x) => (x.run.contact_id === contact.id || x.run.chat_id === s.chat_id) && (autos.get(x.run.automation_id) || {}).start && autos.get(x.run.automation_id).start.label_id === s.item.label_id) : null;
+      const h = E.healthOfQuickSend({ contact, labelAt: Number.isFinite(labelAt) ? labelAt : NaN, run: run ? run.run : null, runCheck: run ? (run.status === 'ok' ? 'ok' : run.status) : null, startsRegua: starts });
+      let fix = null;
+      if (h.fix && h.fix.kind === 'label') fix = v.phone || /@c\.us$/.test(s.chat_id) ? { kind: 'label', labelId: s.item.label_id, chatId: s.chat_id, phone: v.phone, label: 'Aplicar etiqueta' } : null;
+      else if (h.fix && h.fix.kind === 'pause' && run && run.fix) fix = run.fix;
+      return { when: hm(s.created_at), title: s.item.title, who: who(s.chat_id), ok: h.ok, steps: h.steps, fix };
+    });
+    const failures = (d.failures || []).map((f) => ({ when: hm(f.created_at), reason: f.reason }));
+    return { sends, failures, runs, dups, replied };
+  }
 
   // ── 2.17.0: Radar — conversas sem etiqueta CRM e sem automação há mais de N horas ──
   // A cada 5 min (só no horário geral de envio): lê as conversas da memória do WhatsApp Web (radarChats), as etiquetas
@@ -3236,11 +3428,18 @@
         const chat = await waRequest('activeChat', {}, { timeout: 1000 });
         if (chat && chat.kind === 'individual' && typeof chat.chatId === 'string') chatId = chat.chatId;
       } catch { chatId = null; }
-      if (chatId && /@lid$/.test(chatId) && !identity.phone) {
+      // 2.20.0: sempre pergunta ao WhatsApp o telefone do @lid (também quando a tela já mostra um telefone)
+      if (chatId && /@lid$/.test(chatId)) {
         try { const wa = await waRequest('chatPhone', { chatId }, { timeout: 2500 }); const d = String((wa && wa.phone) || '').replace(/\D/g, ''); if (/^\d{8,15}$/.test(d)) phone = d; } catch { phone = null; }
       }
+      const m = chatId ? /^(\d{8,15})@c\.us$/.exec(chatId) : null;
+      if (m) phone = m[1];
     }
     if (state.convKey !== identity.key) return; // trocou de conversa no meio
+    // 2.20.0: a tela (cabeçalho) e o WhatsApp discordam do telefone (a conversa trocou no meio): não liga o chat a
+    // este contato — vale o telefone que o WhatsApp dá para o chat
+    if (chatId && phone && identity.phone && !globalThis.TspEngine.samePerson(phone, identity.phone)) { chatId = null; phone = null; }
+    if (phone && identity.phone) phone = null; // o telefone da tela já vale (e confere)
     convIdLink.key = identity.key; convIdLink.chatId = chatId; convIdLink.phone = phone;
   }
 
@@ -4828,10 +5027,11 @@
     setSendButtonsDisabled(true);
     try {
       const noLearn = !name && globalThis.TspEngine.previewSendPlan(partsOf(item), pst.skip, pst.skipFiles).parts.some((p) => globalThis.TspEngine.hasNameVar(p.body)); // 2.9.1
+      const snap = sendSnap(); // 2.20.0: quem está na tela AGORA (antes do envio), para comparar com o chat que recebe
       const res = await runSequence({ parts, chatId, firstName: name, noLearn });
       sequenceToast(res, parts.length);
       // etiquetas "Ao enviar" continuam valendo com partes tiradas (as escolhidas saíram e pelo menos uma foi enviada)
-      if (globalThis.TspEngine.sendLabelsApply(res)) { registerUse(item); applyItemLabels(item, targetForOpenChat(chatId)); logQuickSend(chatId, item.id); }
+      if (globalThis.TspEngine.sendLabelsApply(res)) { registerUse(item); logQuickSend(chatId, item.id); applyItemLabels(item, await sendTargetFor(chatId, snap)); }
     } finally {
       state.busyId = null;
       setSendButtonsDisabled(false);
@@ -4861,20 +5061,45 @@
   }
 
   // ── Mensagem rápida que etiqueta (2.1.0): só depois que a mensagem INTEIRA saiu ──
-  function targetForOpenChat(chatId) {
+  // 2.20.0 (causa raiz de 16/11): antes a etiqueta ia para a identificação da conversa ABERTA quando o envio TERMINAVA
+  // (targetForOpenChat). O envio leva segundos (às vezes mais de 1 min esperando a confirmação); quem já tinha aberto a
+  // próxima conversa via a etiqueta ir para o telefone DELA, ligado ao chat que recebeu a mensagem: contato com telefone
+  // de um e chat de outro, percurso no chat errado, e a pessoa que recebeu ficava sem etiqueta.
+  // Agora: o chat que recebe é guardado no começo do envio; o telefone vem do WhatsApp PARA ESSE CHAT; a identificação
+  // da tela (sendSnap, tirada antes do envio) só vale se era desse mesmo chat.
+  function sendSnap() {
     const id = state.ctx && state.ctx.identity;
-    if (canLabel(id)) return { identity: { ...identityPayload(id), chatId: chatId || undefined } };
-    return chatId ? { chatId } : null;
+    if (!canLabel(id)) return { identity: null, chatId: null };
+    return { identity: identityPayload(id), chatId: convIdLink.key === id.key ? convIdLink.chatId : null };
   }
+  async function sendTargetFor(chatId, snap) {
+    if (!chatId) return null;
+    let wa = null;
+    try { wa = await waRequest('chatPhone', { chatId }, { timeout: 4000 }); } catch { wa = null; }
+    return globalThis.TspEngine.sendTargetOf({ chatId, wa: wa ? { phone: wa.phone || null, name: wa.name || null } : null, snap });
+  }
+  const LABEL_RETRY_MS = [0, 3000, 10000]; // 2.20.0: 3 tentativas
 
   async function applyItemLabels(item, target) {
     if (!item || !target) return;
     if (item.on_send_add_label_id || item.on_send_remove_label_id || item.on_send_remove_all_crm) {
-      try {
-        const r = await call('applySendLabels', { addLabelId: item.on_send_add_label_id || null, removeLabelId: item.on_send_remove_all_crm ? null : item.on_send_remove_label_id || null, removeAll: !!item.on_send_remove_all_crm, ...target });
-        if (r && r.applied) afterLabelChange();
-      } catch {
-        toast('Enviado, mas não consegui trocar a etiqueta CRM.', 'warn', 5000);
+      const chatId = target.chatId || (target.identity && target.identity.chatId) || null;
+      let why = null;
+      for (let i = 0; i < LABEL_RETRY_MS.length; i++) {
+        if (LABEL_RETRY_MS[i]) await sleep(LABEL_RETRY_MS[i]);
+        try {
+          const r = await call('applySendLabels', { addLabelId: item.on_send_add_label_id || null, removeLabelId: item.on_send_remove_all_crm ? null : item.on_send_remove_label_id || null, removeAll: !!item.on_send_remove_all_crm, ...target });
+          if (r && r.applied) { afterLabelChange(); why = null; break; }
+          why = (r && r.reason) || 'não aplicada';
+          if (r && r.reason === 'conversa sem telefone e sem contato no CRM') break; // tentar de novo não muda nada
+        } catch (e) {
+          why = String((e && e.message) || e || 'erro').slice(0, 120);
+        }
+      }
+      if (why) {
+        toast(`Enviado, mas a etiqueta CRM não foi aplicada (${why}). Veja em Mais › Saúde das automações.`, 'warn', 9000);
+        diagLog({ kind: 'etiqueta', reason: `etiqueta não aplicada: ${why}`, chatId, itemTitle: item.title });
+        if (chatId) call('logLabelFailure', { chat_id: chatId, item_id: item.id, reason: why }).catch(() => {});
       }
     }
     await applyItemWaLabels(item, target);
@@ -4959,8 +5184,17 @@
       let fallbackNote = null;
       if (asVoice) {
         // 1) Rápido: WA-JS envia como mensagem de voz (só arquivos Ogg/Opus)
+        // 2.20.0: o chat que vai receber é guardado ANTES do envio (a etiqueta vai para ele, não para a conversa aberta no fim)
+        let voiceChat = null;
+        try { const c = await waRequest('activeChat', {}, { timeout: 2000 }); if (c && c.kind === 'individual') voiceChat = c.chatId; } catch { voiceChat = null; }
+        const voiceSnap = sendSnap();
         const fast = await sendVoiceFast(item);
-        if (fast.status === 'ok') { registerUse(item); applyItemLabels(item, targetForOpenChat(null)); return; }
+        if (fast.status === 'ok') {
+          registerUse(item);
+          if (voiceChat) applyItemLabels(item, await sendTargetFor(voiceChat, voiceSnap));
+          else if (item.on_send_add_label_id) diagLog({ kind: 'etiqueta', reason: 'etiqueta não aplicada: não deu para saber a conversa do áudio', itemTitle: item.title });
+          return;
+        }
         if (fast.status === 'stop') return;
         // 2) Plano B: gravação simulada pela ponte do microfone (o WhatsApp codifica o áudio)
         const planB = getContext();
@@ -5704,9 +5938,10 @@
     if (card && send) setBusy(card, send, true);
     else setSendButtonsDisabled(true);
     try {
+      const snap = sendSnap(); // 2.20.0
       const res = await runSequence({ parts, chatId, firstName: ctx.firstName });
       sequenceToast(res, parts.length);
-      if (res.status === 'ok') { registerUse(item); applyItemLabels(item, targetForOpenChat(chatId)); logQuickSend(chatId, item.id); }
+      if (res.status === 'ok') { registerUse(item); logQuickSend(chatId, item.id); applyItemLabels(item, await sendTargetFor(chatId, snap)); }
     } finally {
       state.busyId = null;
       if (card && send && card.isConnected) setBusy(card, send, false);
@@ -7412,6 +7647,8 @@
     onChange: () => renderEngineUi(),
     onItemUsed: (item) => registerUse(item),
     onItemSent: (item, target) => applyItemLabels(item, target),
+    onDiag: (ev) => diagLog(ev), // 2.20.0: percurso pausado (chat de outra pessoa), automação bloqueada, relógio errado
+    serverNow: () => call('serverNow'), // 2.20.0: relógio do computador × servidor
     nameFor: (chatId, fallback) => nameForChat(chatId, fallback),
     onLabelsChanged: () => { syncLabels().catch(() => {}); },
     stopRunning: () => { if (seq && AUTO_LABELS.includes(seq.label)) stopSequence(); },
@@ -9548,6 +9785,11 @@
       if (r.skip_wait !== true) continue;
       try { r.skipInfo = await call('seqSkipInfo', { runId: r.id, automationId: r.automation_id, hourSince: new Date(t0 - 3600 * 1000).toISOString(), daySince: midnight.toISOString() }); } catch { r.skipInfo = null; }
     }
+    // 2.20.0 (defeito 1 de 16/11): um bloco por percurso (run.id), e só os percursos DESTA pessoa: o que está em outro
+    // chat e o WhatsApp diz que esse chat é de outro telefone não aparece aqui (vinha pelo contato do CRM com o telefone
+    // desta conversa e o chat de outra pessoa — o mesmo percurso aparecia em duas conversas)
+    ov.runs = await cseqOwnRuns(globalThis.TspEngine.uniqueRuns(ov.runs || []), chatId, phone);
+    ov.ended = globalThis.TspEngine.uniqueRuns(ov.ended || []);
     if (cseq.chatId !== chatId) return;
     Object.assign(cseq, { runs: ov.runs || [], ended: ov.ended || [], sends: ov.sends || [], warns: Array.isArray(warns) ? warns : [], loaded: true, at: Date.now() });
     renderChatSequence();
@@ -9555,7 +9797,13 @@
   const cseqDef = (r) => { try { return E.seqNormalize((r.automation && r.automation.sequence) || {}); } catch { return (r.automation && r.automation.sequence) || {}; } };
   const cseqRun = (r) => ({ ...r, due_at: Date.parse(r.due_at || '') || null });
   // parado de propósito: a automação desligada ou os envios automáticos pausados
-  const cseqHold = (r) => (r.automation && r.automation.active === false ? 'parado: a automação está desligada'
+  async function cseqOwnRuns(runs, chatId, phone) {
+    const phones = {};
+    if (phone) for (const r of runs) if (r.chat_id !== chatId && !(r.chat_id in phones)) phones[r.chat_id] = await chatPhoneOf(r.chat_id);
+    return globalThis.TspEngine.ownRuns({ runs, chatId, phone, phones });
+  }
+  const cseqHold = (r) => (E.seqIsPaused(r) ? 'pausado: a conversa do percurso não é do telefone do contato (Mais › Saúde das automações)'
+    : r.automation && r.automation.active === false ? 'parado: a automação está desligada'
     : motor.state.settings && motor.state.settings.paused_all ? 'parado: os envios automáticos estão pausados' : null);
   const cseqCard = (r) => E.seqChatCard(cseqDef(r), cseqRun(r), cseq.sends.filter((s) => s.source_id === r.automation_id), Date.now(), { itemTitle, settings: motor.state.settings, hold: cseqHold(r) });
   const cseqDm = (ms) => { const d = new Date(ms); return Number.isFinite(ms) ? `${two(d.getDate())}/${two(d.getMonth() + 1)} ${two(d.getHours())}:${two(d.getMinutes())}` : ''; };
@@ -9575,7 +9823,7 @@
         const def = cseqDef(r);
         const line = el('div', 'cseq-line');
         // 2.18.5: a etapa real em português simples (não "passo: vai mexer nas etiquetas")
-        line.append(el('span', 'cseq-t', `🔁 Na automação ${r.automation.name} · ${E.seqStepText(def, cseqRun(r), Date.now(), { itemTitle })}`));
+        line.append(el('span', 'cseq-t', `🔁 Na automação ${r.automation.name} · ${E.seqIsPaused(r) ? '⏸ pausado: a conversa não confere com o contato' : E.seqStepText(def, cseqRun(r), Date.now(), { itemTitle })}`));
         const e = E.seqIndex(def).get(r.node);
         const btns = el('span', 'cseq-btns');
         btns.append(fbtn('ed-mini cseq-out', 'Tirar da automação', () => chatSeqAction(r, 'sair')));
@@ -14420,14 +14668,17 @@
       pnl.scanning = waRequest('activityScan', {}, { timeout: 150000 }).then((scan) => {
         if (!scan || !scan.scanned) return;
         pnl.scanned = true;
-        (Array.isArray(scan.leads) ? scan.leads : []).forEach((e) => pnl.pending.push({ ...e, at: 0 }));
-        pnl.act.add(Array.isArray(scan.items) ? scan.items : []);
+        // 2.20.0: hora no futuro (relógio do WhatsApp errado) vira a de agora: nada de "17/11" gravado em 16/11
+        const tNow = Date.now();
+        (Array.isArray(scan.leads) ? scan.leads : []).forEach((e) => pnl.pending.push({ ...e, t: globalThis.TspEngine.clampSec(e.t, tNow), at: 0 }));
+        pnl.act.add((Array.isArray(scan.items) ? scan.items : []).map((a) => globalThis.TspEngine.clampActivity(a, tNow)));
       }).catch(() => {}).finally(() => { pnl.scanning = null; });
     }
     let got = null;
     try { got = await waRequest('convEvents', {}, { timeout: 20000 }); } catch { got = null; }
     const now = Date.now();
-    (got && Array.isArray(got.events) ? got.events : []).forEach((e) => pnl.pending.push({ ...e, at: e.scan ? 0 : now }));
+    // 2.20.0: hora no futuro → a hora em que a extensão viu (assim o envio da extensão também é reconhecido como dela)
+    (got && Array.isArray(got.events) ? got.events : []).forEach((e) => pnl.pending.push({ ...e, t: globalThis.TspEngine.clampSec(e.t, now), at: e.scan ? 0 : now }));
     if (pnl.pending.length > 5000) pnl.pending.splice(0, pnl.pending.length - 5000);
     const ready = pnl.pending.filter((e) => now - e.at >= PANEL_DELAY_MS);
     pnl.pending = pnl.pending.filter((e) => now - e.at < PANEL_DELAY_MS);
@@ -14699,6 +14950,39 @@
     return [motorRow, flowsRow, autoRow, saleRow, conversionDiagRow()];
   }
 
+  // ── 2.20.0: registro das automações no Diagnóstico ──
+  // Etiqueta "Ao enviar" que não foi aplicada (depois das tentativas), percurso pausado porque o chat não é do telefone do
+  // contato, automação bloqueada pelo mesmo motivo e relógio/fuso do computador errado. Guarda os 50 últimos neste
+  // computador (chrome.storage.local). Na tela: o motivo e o fim do id da conversa; no texto copiado, só o motivo.
+  const AUTO_DIAG_KEY = 'autoDiagLog';
+  function autoDiagList() {
+    if (!Array.isArray(state.autoDiag)) {
+      state.autoDiag = [];
+      try { chrome.storage.local.get(AUTO_DIAG_KEY, (r) => { if (r && Array.isArray(r[AUTO_DIAG_KEY])) state.autoDiag = [...state.autoDiag, ...r[AUTO_DIAG_KEY]].slice(0, 50); }); } catch { /* sem storage */ }
+    }
+    return state.autoDiag;
+  }
+  function diagLog(ev) {
+    const e = ev || {};
+    const row = { at: Date.now(), kind: String(e.kind || 'aviso').slice(0, 30), reason: String(e.reason || '').slice(0, 160), chat: e.chatId ? String(e.chatId).replace(/^(\d+)(@.*)$/, (m, d, s) => `…${d.slice(-4)}${s}`) : null, automation: e.automation ? String(e.automation).slice(0, 60) : null, item: e.itemTitle ? String(e.itemTitle).slice(0, 60) : null };
+    state.autoDiag = [row, ...autoDiagList()].slice(0, 50);
+    try { chrome.storage.local.set({ [AUTO_DIAG_KEY]: state.autoDiag }); } catch { /* sem storage */ }
+    if (state.view === 'diag') renderDiag();
+  }
+  function autoDiagRows() {
+    const list = autoDiagList();
+    const day = Date.now() - 24 * 3600 * 1000;
+    const recent = list.filter((r) => r.at >= day);
+    const head = { label: 'Registro das automações (24 h)', status: recent.length ? 'warn' : 'ok', screen: recent.length ? `${recent.length} aviso${recent.length === 1 ? '' : 's'} (abaixo; detalhes em Mais › Saúde das automações)` : 'nenhum problema registrado' };
+    const when = (ms) => new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+    return [head, ...recent.slice(0, 10).map((r) => ({
+      label: `  ${when(r.at)} · ${r.kind === 'etiqueta' ? 'Etiqueta' : r.kind === 'relogio' ? 'Relógio' : r.automation || 'Automação'}`,
+      status: 'fail',
+      screen: [r.reason, r.item ? `(${r.item})` : null, r.chat ? `conversa ${r.chat}` : null].filter(Boolean).join(' '),
+      copy: r.reason,
+    }))];
+  }
+
   // ── Diagnóstico (nunca inclui conteúdo de conversa) ────────────────────────
 
   function diagnostics() {
@@ -14740,6 +15024,7 @@
       partsDiagRow(),
       schedDiagRow(),
       ...engineDiagRows(),
+      ...autoDiagRows(), // 2.20.0
       ...waDiagRows(),
       {
         label: 'Ponte do microfone carregada',

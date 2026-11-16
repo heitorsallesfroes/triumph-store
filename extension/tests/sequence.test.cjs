@@ -193,7 +193,7 @@ function motorWith({ runs, leads = [], noSend = false, testChat = null }) {
     if (type === 'engineActivity') return { automations: [seq], enrollments: [], schedules: false, campaigns: false };
     if (type === 'seqLeads') return leads;
     if (type === 'seqCreateRuns') { p.items.forEach((it) => { if (!db.runs.some((r) => r.chat_id === it.chat_id)) db.runs.push({ id: `r${db.runs.length + 1}`, version: 0, status: 'ativo', branches: [], ...it }); }); db.created.push(...p.items); return { created: p.items.length }; }
-    if (type === 'seqRuns') return db.runs.filter((r) => r.status === 'ativo').map((r) => ({ ...r, contact: { id: 'k', name: 'Ana', labelIds: noSend ? ['NS'] : [] } }));
+    if (type === 'seqRuns') return db.runs.filter((r) => r.status === 'ativo').map((r) => ({ ...r, contact: { id: 'k', phone: (/^(\d+)@c\.us$/.exec(r.chat_id) || [])[1] || null, name: 'Ana', labelIds: noSend ? ['NS'] : [] } }));
     if (type === 'seqReplies') return {};
     if (type === 'seqUpdateRun') {
       const r = db.runs.find((x) => x.id === p.id);

@@ -80,7 +80,10 @@ test('gatilho "O cliente respondeu": resposta depois de entrar na etiqueta, segu
 });
 
 // ── motor de verdade com API e WhatsApp falsos ──
-function motorWith({ run, chats, waPhones = {}, custAt = { chats: {}, phones: {} }, replies = {}, contactPhone = null }) {
+// 2.20.0: o motor só mexe no percurso quando o WhatsApp confirma que o chat é do telefone do contato: por padrão os dois
+// @lid dos casos são do 5521996790042 (o telefone do contato)
+const SAME = { '24236685025474@lid': '5521996790042', '135386043003035@lid': '5521996790042' };
+function motorWith({ run, chats, waPhones = SAME, custAt = { chats: {}, phones: {} }, replies = {}, contactPhone = '5521996790042' }) {
   const now = { t: at('12:16:00') };
   const seq = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Régua de follow-up', active: true, kind: 'sequencia', sequence: DEF, activated_at: new Date(at('08:00')).toISOString() };
   const db = { runs: [{ version: 0, status: 'ativo', branches: [], node: 'w', automation_id: seq.id, ...run }], asked: [], sent: [] };
@@ -143,9 +146,9 @@ test('motor: a resposta caiu no @c.us da mesma pessoa (telefone dado pelo WhatsA
   assert.deepStrictEqual([r.status, r.outcome], ['fim', 'respondeu']);
   assert.ok(m.db.asked.includes('5521996790042@c.us'));
 });
-test('motor: contato do CRM com telefone de OUTRA pessoa → a resposta dela não conta (alias só pelo WhatsApp)', async () => {
+test('motor: contato do CRM com telefone de OUTRA pessoa → a resposta dela não conta e o percurso PAUSA (2.20.0)', async () => {
   const m = motorWith({
-    run: RUN1,
+    run: { ...RUN1, contact_id: 'k' }, // o percurso é do contato 'k'
     contactPhone: '5521979767588', // telefone de 208344820273225@lid, outra conversa
     waPhones: { '24236685025474@lid': '5521996790042' },
     chats: {
@@ -155,7 +158,7 @@ test('motor: contato do CRM com telefone de OUTRA pessoa → a resposta dela nã
     custAt: { chats: {}, phones: { 5521979767588: [at('12:13:23')] } },
   });
   const r = await cycle(m);
-  assert.deepStrictEqual([r.status, r.outcome || null], ['ativo', null]);
+  assert.deepStrictEqual([r.status, r.outcome || null, m.db.sent.length], ['ativo', 'pausado_chat', 0]);
   assert.ok(!m.db.asked.includes('5521979767588@c.us'));
 });
 test('motor: extensão fechada às 12:10, reabre às 12:16 (conversa ainda não carregada) → wa_chat_activity conta', async () => {

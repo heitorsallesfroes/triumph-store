@@ -211,7 +211,7 @@ test('motor: "lead novo" entra com a hora da 1ª mensagem (⏳ 2 h desde a entra
     if (type === 'seqLeads') return [{ chat_id: '5511900000001@c.us', phone: null, first_message_at: new Date(T0).toISOString(), origin: 'organico' }];
     // como o servidor: entered_at vira created_at
     if (type === 'seqCreateRuns') { p.items.forEach((it) => { db.created.push(it); if (!db.runs.length) db.runs.push({ id: 'r1', version: 0, status: 'ativo', branches: [], automation_id: it.automation_id, chat_id: it.chat_id, node: it.node, created_at: new Date(it.entered_at || now.t).toISOString() }); }); return { created: p.items.length }; }
-    if (type === 'seqRuns') return db.runs.filter((r) => r.status === 'ativo').map((r) => ({ ...r, contact: { id: 'k', name: 'Ana', labelIds: [] } }));
+    if (type === 'seqRuns') return db.runs.filter((r) => r.status === 'ativo').map((r) => ({ ...r, contact: { id: 'k', phone: (/^(\d+)@c\.us$/.exec(r.chat_id) || [])[1] || null, name: 'Ana', labelIds: [] } }));
     if (type === 'seqReplies') return {};
     if (type === 'seqUpdateRun') {
       const r = db.runs.find((x) => x.id === p.id);

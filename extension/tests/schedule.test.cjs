@@ -153,7 +153,7 @@ function motorWith({ schedule = null, counts = { hour: 0, day: 0 }, sentToday = 
     if (type === 'sendCounts') return counts;
     if (type === 'automationSentToday') return { count: sentToday };
     if (type === 'activeEnrollments') return [];
-    if (type === 'seqRuns') return db.runs.filter((r) => r.status === 'ativo').map((r) => ({ ...r, contact: { id: 'k', name: 'Ana', labelIds: [] } }));
+    if (type === 'seqRuns') return db.runs.filter((r) => r.status === 'ativo').map((r) => ({ ...r, contact: { id: 'k', phone: (/^(\d+)@c\.us$/.exec(r.chat_id) || [])[1] || null, name: 'Ana', labelIds: [] } }));
     if (type === 'seqReplies') return {};
     if (type === 'seqUpdateRun') {
       const r = db.runs.find((x) => x.id === p.id);

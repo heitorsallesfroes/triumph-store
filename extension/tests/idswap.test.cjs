@@ -350,7 +350,8 @@ const labelsOf = (fake, id) => fake.db.wa_contact_labels.filter((l) => l.contact
 test('2.16.7 caixa ETIQUETA: percurso na conversa 196980…@lid com o contact_id do contato (chat_id 80685…@lid) → Follow Up 2 entra e Follow Up 1 sai', async () => {
   const fake = fakeDb(twoLids({ wa_sequence_runs: [runAt(LID_B, C)] }));
   const A = apiOn(fake);
-  const { motor, logs } = motorOn(A, { wa: waLoaded(), def: labelDef() });
+  // 2.20.0: o WhatsApp confirma que 196980…@lid é do telefone do contato (senão o percurso pausa)
+  const { motor, logs } = motorOn(A, { wa: waLoaded({ chatPhone: async ({ chatId }) => (chatId === LID_B ? { phone: PH } : null) }), def: labelDef() });
   await motor.loadSettings();
   await motor.refreshActivity();
   await motor._sequencesOnce();

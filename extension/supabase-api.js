@@ -1514,7 +1514,9 @@
     return followSteps.map.get(itemId) ?? null;
   }
   const PANEL_CHAT_RE = /^[0-9]+@(c\.us|lid)$/;
-  const isoOfSec = (t) => { const n = Number(t); if (!Number.isFinite(n) || n <= 0) throw new Error('Data inválida'); return new Date(Math.round(n * 1000)).toISOString(); };
+  // 2.20.0: hora de mensagem no futuro (mais de 2 min à frente; relógio do WhatsApp errado — 16/11: t de 17/11 01:16 para
+  // envios de 16/11 09:27) é gravada com a hora de agora, nunca "amanhã"
+  const isoOfSec = (t) => { const n = Number(t); if (!Number.isFinite(n) || n <= 0) throw new Error('Data inválida'); const ms = Math.round(n * 1000); return new Date(ms > Date.now() + 2 * 60 * 1000 ? Date.now() : ms).toISOString(); };
   const panelPhone = (v) => (typeof v === 'string' && /^\d{8,15}$/.test(v) ? v : null);
   const short = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().replace(/\s+/g, ' ').slice(0, max) : null);
   const eqIso = (ms) => encodeURIComponent(new Date(ms).toISOString());
@@ -2944,7 +2946,8 @@
     if (p.status !== undefined) { if (!['ativo', 'fim', 'saiu'].includes(p.status)) throw new Error('Status inválido'); out.status = p.status; if (p.status !== 'ativo') out.ended_at = new Date().toISOString(); }
     if (p.outcome !== undefined) out.outcome = p.outcome == null ? null : String(p.outcome).slice(0, 30);
     ['wait_started_at', 'due_at', 'last_sent_at'].forEach((k) => { if (p[k] !== undefined) out[k] = p[k] == null ? null : new Date(Number(p[k])).toISOString(); });
-    if (p.skip_wait !== undefined) out.skip_wait = p.skip_wait === true;
+    if (p.skip_wait !== undefined) out.skip_wait = p.skip_wait === true; // 2.20.0: + contact_id (reparo da Saúde das automações: o percurso passa para o contato certo do chat)
+    if (p.contact_id !== undefined) out.contact_id = p.contact_id == null ? null : checkUuid(p.contact_id, 'Contato inválido');
     if (p.branches !== undefined) { if (!Array.isArray(p.branches) || p.branches.length > 50) throw new Error('Caminhos inválidos'); out.branches = p.branches.map((b) => ({ node: String(b.node).slice(0, 40), result: b.result === 'sim' ? 'sim' : 'nao', at: Number(b.at) || null })); }
     const rows = await seqRest(`wa_sequence_runs?id=eq.${id}&version=eq.${version}`, json('PATCH', 'return=representation', out));
     return { ok: rows.length === 1, run: rows[0] || null };
@@ -3618,14 +3621,23 @@
   // ── Mensagem rápida que etiqueta (2.1.0) ──
   // Depois que a mensagem INTEIRA saiu: põe/tira o contato das etiquetas CRM do item.
   // Acha o contato pelo id, pela conversa aberta (identity) ou pelo id da conversa; cria se preciso.
-  async function applySendLabels({ addLabelId, removeLabelId, removeAll = false, contactId, identity, chatId, name }) {
+  // 2.20.0: phone = o telefone que o WhatsApp deu para chatId (o chat que RECEBEU a mensagem). Com ele, o contato é
+  // achado/criado por esse chat + telefone (nunca pela conversa aberta na tela). Não aplicou → reason.
+  async function applySendLabels({ addLabelId, removeLabelId, removeAll = false, contactId, identity, chatId, name, phone }) {
     const add = addLabelId == null || addLabelId === '' ? null : checkUuid(addLabelId, 'Etiqueta inválida');
     const remove = removeLabelId == null || removeLabelId === '' ? null : checkUuid(removeLabelId, 'Etiqueta inválida');
     const all = removeAll === true;
-    if (!add && !remove && !all) return { applied: false };
+    if (!add && !remove && !all) return { applied: false, reason: 'nada para trocar' };
     let contact = null;
+    const chatOk = typeof chatId === 'string' && SCHED_CHAT_RE.test(chatId);
+    const waPhone = typeof phone === 'string' && /^\d{8,15}$/.test(phone.replace(/\D/g, '')) ? phone.replace(/\D/g, '') : (chatOk ? phoneOfChat(chatId) : null);
     if (contactId) {
       contact = { id: checkUuid(contactId, 'Contato inválido') };
+    } else if (chatOk && waPhone) {
+      const nm = typeof name === 'string' && name.trim() && !/^[+\d\s().-]+$/.test(name) ? name.trim().replace(/\s+/g, ' ').slice(0, 100) : null;
+      const id = { key: `tel:${waPhone}`, phone: waPhone, name: nm, chatId };
+      contact = await ensureContact(id);
+      if (contact) await rememberChatId(contact, chatId);
     } else if (identity) {
       const id = checkIdentity(identity);
       contact = await ensureContact(id);
@@ -3641,7 +3653,7 @@
         if (contact) await rememberChatId(contact, chatId).catch(() => {});
       }
     }
-    if (!contact) return { applied: false };
+    if (!contact) return { applied: false, reason: chatOk ? 'conversa sem telefone e sem contato no CRM' : 'sem conversa' };
     if (all) {
       // 2.8.6: tira de todas as etiquetas CRM, menos a que vai colocar e a "Não enviar" (bloqueio do motor)
       const now = await labelIdsOf(contact.id);
@@ -3654,7 +3666,61 @@
       if (out.length) await rest(`wa_contact_labels?contact_id=eq.${contact.id}&label_id=in.(${out.join(',')})`, { method: 'DELETE' });
     } else if (remove) await rest(`wa_contact_labels?contact_id=eq.${contact.id}&label_id=eq.${remove}`, { method: 'DELETE' });
     if (add) await followAdd({ contactId: contact.id, labelId: add });
-    return { applied: true, contactId: contact.id, labelIds: await labelIdsOf(contact.id) };
+    const labelIds = await labelIdsOf(contact.id);
+    if (add && !labelIds.includes(add)) return { applied: false, contactId: contact.id, labelIds, reason: 'a etiqueta não ficou gravada' };
+    return { applied: true, contactId: contact.id, labelIds };
+  }
+  // 2.20.0: etiqueta "Ao enviar" que não foi aplicada (depois das novas tentativas): fica no log (wa_send_log, 'pulado'
+  // com o motivo) para o Diagnóstico e a Saúde das automações. Não conta nos limites (origem 'rapida').
+  const LABEL_FAIL_PREFIX = 'etiqueta não aplicada: ';
+  async function logLabelFailure({ chat_id, item_id, reason }) {
+    if (!SCHED_CHAT_RE.test(chat_id || '')) throw new Error('Conversa inválida');
+    const item = optUuid(item_id, 'Mensagem inválida');
+    const why = `${LABEL_FAIL_PREFIX}${String(reason || 'erro').replace(/\s+/g, ' ').slice(0, 120)}`;
+    await engineRest('wa_send_log', json('POST', 'return=minimal', { source: 'rapida', origin: 'rapida', chat_id, item_id: item, status: 'pulado', reason: why }));
+    return { ok: true };
+  }
+  // 2.20.0: hora do servidor (cabeçalho Date do Supabase) para conferir o relógio do computador
+  async function serverNow() {
+    const { SUPABASE_URL } = cfg();
+    const res = await supaFetch(`${SUPABASE_URL}/rest/v1/wa_settings?select=id&limit=1`, { method: 'HEAD' });
+    const t = Date.parse(res.headers.get('date') || '');
+    return Number.isFinite(t) ? t : null;
+  }
+  // 2.20.0: Saúde das automações — os dados do banco (o telefone real de cada chat vem do WhatsApp, na extensão):
+  // as mensagens rápidas de hoje com "Ao enviar, colocar na etiqueta CRM", os contatos, as etiquetas e os percursos
+  // ativos das réguas (com o contato do percurso). Nada é gravado aqui.
+  async function automationHealth({ since }) {
+    const t = Date.parse(since || '');
+    if (!Number.isFinite(t)) throw new Error('Data inválida');
+    const sinceIso = encodeURIComponent(new Date(t).toISOString());
+    const sends = await engineRest(`wa_send_log?select=id,chat_id,item_id,status,reason,created_at&source=eq.rapida&created_at=gte.${sinceIso}&order=created_at.asc&limit=2000`);
+    const itemIds = [...new Set(sends.map((s) => s.item_id).filter(Boolean))];
+    const items = itemIds.length ? await rest(`wa_items?select=id,title,on_send_add_label_id&id=in.${inList(itemIds)}`) : [];
+    const labelOf = new Map(items.filter((i) => i.on_send_add_label_id).map((i) => [i.id, i]));
+    const labeled = sends.filter((s) => s.status === 'enviado' && labelOf.has(s.item_id));
+    const failures = sends.filter((s) => s.status === 'pulado' && String(s.reason || '').startsWith(LABEL_FAIL_PREFIX));
+    let runs = [];
+    try { runs = await restAll(`wa_sequence_runs?select=${SEQ_RUN_COLS}&status=eq.ativo&order=id.asc`); } catch (err) { if (!tableMissing(err, ['wa_sequence_runs'])) throw err; }
+    const chats = [...new Set([...labeled.map((s) => s.chat_id), ...runs.map((r) => r.chat_id)])];
+    const byChat = await contactRowsByChats(chats);
+    const ids = [...new Set([...runs.map((r) => r.contact_id), ...Object.values(byChat).map((c) => c.id)].filter(Boolean))];
+    const contacts = [];
+    for (let i = 0; i < ids.length; i += 100) contacts.push(...await contactsById(ids.slice(i, i + 100)));
+    const links = [];
+    for (let i = 0; i < ids.length; i += 100) links.push(...await restAll(`wa_contact_labels?select=contact_id,label_id,created_at&contact_id=in.${inList(ids.slice(i, i + 100))}&order=contact_id.asc,label_id.asc`));
+    let autos = [];
+    try { autos = await autoRest('wa_automations?select=id,name,kind,active,sequence&kind=eq.sequencia'); } catch { autos = []; }
+    return {
+      sends: labeled.map((s) => ({ ...s, item: { id: s.item_id, title: labelOf.get(s.item_id).title, label_id: labelOf.get(s.item_id).on_send_add_label_id } })),
+      failures, runs, contacts, links, automations: autos.map((a) => ({ id: a.id, name: a.name, active: a.active, start: a.sequence && a.sequence.start ? a.sequence.start : null })),
+    };
+  }
+  // 2.20.0: contatos com estes telefones (para achar o dono certo do chat de um percurso)
+  async function contactsForPhones({ phones }) {
+    const list = (Array.isArray(phones) ? phones : []).map((p) => String(p || '').replace(/\D/g, '')).filter((p) => /^\d{8,15}$/.test(p)).slice(0, 500);
+    if (!list.length) return [];
+    return contactsByPhones(list);
   }
 
   // 2.8.6: "Não enviar" (com ou sem acento/maiúsculas) nunca sai pelo "tirar de todas"
@@ -4729,7 +4795,8 @@
     saleFirstName, erpCatalog, createSaleFromChat, lookupCep, recentChatSale, fetchChatSales, saleContactLabels, saleTriggerCandidates,
     fetchAutomations, saveAutomation, setAutomationActive, deleteAutomation, automationRuns, automationReserve, automationSentCounts,
     seqRuns, seqCreateRuns, seqManualEnter, seqUpdateRun, seqReplies, seqCustomerAt, seqLeads, seqChatRuns, seqLabelWarnings, adoptChatId, seqSkipInfo, seqRunAction, seqStats, automationSentToday,
-    automationUnreserve, applySendLabels, getContactName,
+    automationUnreserve, applySendLabels, getContactName, logLabelFailure, serverNow, automationHealth, contactsForPhones, // 2.20.0
+   
     campaignVariantStats, fetchCampaigns, saveCampaign, deleteCampaign, previewCampaign, startCampaign, campaignAction, nextCampaignTarget,
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,

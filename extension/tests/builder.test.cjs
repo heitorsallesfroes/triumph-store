@@ -152,7 +152,7 @@ function motorWith({ includeExisting = false, contacts = [], waLabels = [], chat
     if (type === 'engineActivity') return { automations: [seq], enrollments: [], schedules: false, campaigns: false };
     if (type === 'flowCandidates') return contacts;
     if (type === 'seqCreateRuns') { p.items.forEach((it) => { if (!db.runs.some((r) => r.chat_id === it.chat_id)) db.runs.push({ id: `r${db.runs.length + 1}`, version: 0, status: 'ativo', branches: [], ...it }); }); db.created.push(...p.items); return { created: p.items.length }; }
-    if (type === 'seqRuns') return db.runs.filter((r) => r.status === 'ativo').map((r) => { const c = contacts.find((x) => x.chat_id === r.chat_id) || {}; return { ...r, contact: { id: c.id || 'k', name: c.name || 'Ana', labelIds: c.labelIds || [] } }; });
+    if (type === 'seqRuns') return db.runs.filter((r) => r.status === 'ativo').map((r) => { const c = contacts.find((x) => x.chat_id === r.chat_id) || {}; return { ...r, contact: { id: c.id || 'k', phone: c.phone || ((/^(\d+)@c\.us$/.exec(r.chat_id) || [])[1] || null), name: c.name || 'Ana', labelIds: c.labelIds || [] } }; });
     if (type === 'seqReplies') return {};
     if (type === 'seqUpdateRun') {
       const r = db.runs.find((x) => x.id === p.id);

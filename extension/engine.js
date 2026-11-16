@@ -2251,8 +2251,209 @@
     download: 'arquivo não baixou', no_whatsapp: 'número sem WhatsApp', item_not_found: 'mensagem salva não existe mais',
   };
 
+  // ── 2.20.0: o chat do percurso é da MESMA pessoa do contato? (a fonte da verdade é o telefone que o WhatsApp dá
+  // para aquele chat AGORA). Causa raiz dos defeitos de 16/11: a etiqueta "Ao enviar" da mensagem rápida usava o
+  // telefone da conversa que estava ABERTA quando o envio terminou (o usuário já tinha ido para a próxima), e o
+  // contato desse outro telefone era ligado ao chat que recebeu a mensagem.
+  const SEQ_PAUSED = 'pausado_chat';
+  const CHAT_MISMATCH_REASON = 'pausado: a conversa não é do telefone do contato';
+  const CHAT_UNCONFIRMED_REASON = 'pausado: não deu para confirmar o telefone da conversa';
+  // mesmo telefone brasileiro com ou sem o 9 (55 + DDD + 8 ou 9 dígitos); fora do Brasil: dígitos iguais
+  function samePerson(a, b) {
+    const x = digitsOf(a);
+    const y = digitsOf(b);
+    if (!/^\d{8,15}$/.test(x) || !/^\d{8,15}$/.test(y)) return false;
+    if (x === y) return true;
+    const br = (d) => (/^55\d{10,11}$/.test(d) ? `${d.slice(2, 4)}${d.slice(-8)}` : null);
+    return !!br(x) && br(x) === br(y);
+  }
+  // waPhone: telefone que o WhatsApp deu para o chat (@c.us: o próprio número); answered: o WhatsApp respondeu
+  // → 'ok' | 'mismatch' (outra pessoa) | 'unconfirmed' (sem telefone de um dos lados) | 'unknown' (ponte não respondeu)
+  // bound = o percurso/automação é de um contato (contact_id). Sem contato (ex.: lead novo ainda sem CRM) não há com
+  // quem comparar: o destino é o próprio chat (basta o WhatsApp responder)
+  function seqChatCheck({ chatId, waPhone, answered, contactPhone, bound = true }) {
+    const m = /^(\d{8,15})@c\.us$/.exec(chatId || '');
+    const wa = m ? m[1] : digitsOf(waPhone);
+    if (!m && !answered) return 'unknown';
+    if (!bound) return 'ok';
+    if (!/^\d{8,15}$/.test(wa) || !/^\d{8,15}$/.test(digitsOf(contactPhone))) return 'unconfirmed';
+    return samePerson(wa, contactPhone) ? 'ok' : 'mismatch';
+  }
+  const seqIsPaused = (r) => !!r && r.status === 'ativo' && r.outcome === SEQ_PAUSED;
+  // painel da conversa (chatId, telefone dado pelo WhatsApp = phone): só os percursos DESTA pessoa. phones: chat → telefone
+  // do WhatsApp para os chats dos percursos. Percurso noutro chat que é de outro telefone não aparece (16/11: o contato
+  // do CRM tinha o telefone desta conversa e o chat de outra; o mesmo bloco aparecia duas vezes)
+  function ownRuns({ runs, chatId, phone, phones = {} }) {
+    return uniqueRuns(runs).filter((r) => {
+      if (r.chat_id === chatId || !phone) return true;
+      const other = /^(\d{8,15})@c\.us$/.exec(r.chat_id || '') ? r.chat_id.split('@')[0] : phones[r.chat_id];
+      return !other || samePerson(other, phone);
+    });
+  }
+  // painel da conversa: um bloco por percurso (run.id), sem repetir
+  function uniqueRuns(runs) {
+    const seen = new Set();
+    return (runs || []).filter((r) => r && r.id && !seen.has(r.id) && (seen.add(r.id), true));
+  }
+  // percurso em "Esperar resposta" cujo cliente já respondeu depois do começo da espera → o que gravar para ir a
+  // "Se responder" SEM enviar nada agora (se o caminho começa por um envio, fica parado nele: o motor manda no ciclo
+  // dele, com limites e horário). null = não respondeu / não está esperando resposta.
+  function seqRepliedPatch({ def, run, replies, now }) {
+    const e = seqIndex(def).get(run && run.node);
+    if (!e || e.node.type !== 'esperar' || !Number(run.wait_started_at)) return null;
+    const ref = seqReplyRef(run.wait_started_at, run.last_sent_at);
+    if (!(replies || []).some((t) => Number(t) > ref)) return null;
+    const res = seqStep({ def, run: { ...run, skip_wait: false }, chat: null, replies, now, settings: null });
+    const branches = [...(run.branches || []), ...(res.branches || [])];
+    if (!(res.branches || []).some((b) => b.result === 'sim')) return null;
+    if (res.status === 'run') return { node: res.sendNode, branches, wait_started_at: null, due_at: null, skip_wait: false };
+    if (res.status === 'progress' || res.status === 'wait') return { node: res.node, branches, wait_started_at: res.waitStart || now, due_at: null, skip_wait: false };
+    return { status: 'fim', outcome: res.outcome || 'respondeu', node: null, branches, due_at: null };
+  }
+  // Saúde das automações: um percurso ativo conferido com o WhatsApp.
+  // run: { id, automation_id, chat_id, contact_id, contact: { id, phone } }; wa: { phone, answered };
+  // contactsByPhone: telefone → [contatos] (para achar o dono certo do chat) → { status, text, fix }
+  //   fix: { kind: 'relink', contactId } (o chat é de outro contato que já existe: o percurso passa para ele)
+  //      | { kind: 'pause' } | { kind: 'resume' } | null
+  function healthOfRun({ run, wa, contactsByPhone = {} }) {
+    const chk = seqChatCheck({ chatId: run.chat_id, waPhone: wa && wa.phone, answered: !!(wa && wa.answered), contactPhone: run.contact && run.contact.phone, bound: !!run.contact_id });
+    const paused = seqIsPaused(run);
+    if (chk === 'unknown') return { status: 'unknown', text: 'o WhatsApp não respondeu (tente de novo)', fix: null };
+    const m = /^(\d{8,15})@c\.us$/.exec(run.chat_id || '');
+    const waPh = m ? m[1] : digitsOf(wa && wa.phone);
+    if (chk === 'ok') return paused ? { status: 'paused', text: 'pausado, mas o chat confere com o contato', fix: { kind: 'resume' } } : { status: 'ok', text: 'chat confere', fix: null };
+    const owners = Object.entries(contactsByPhone).filter(([ph]) => samePerson(ph, waPh)).flatMap(([, l]) => l || []);
+    const uniq = [...new Map(owners.map((c) => [c.id, c])).values()];
+    if (/^\d{8,15}$/.test(waPh) && uniq.length === 1 && uniq[0].id !== run.contact_id) {
+      return { status: 'mismatch', text: `o chat é de ${waPh}, não de ${(run.contact && run.contact.phone) || 'contato sem telefone'}`, fix: { kind: 'relink', contactId: uniq[0].id, phone: waPh } };
+    }
+    const text = chk === 'mismatch' ? `o chat é de ${waPh}, não de ${run.contact.phone}` : 'sem telefone para conferir';
+    return { status: chk, text, fix: paused ? null : { kind: 'pause' } };
+  }
+  // mais de um percurso ativo da mesma régua para a mesma pessoa (telefone dado pelo WhatsApp): o mais antigo fica
+  function healthDuplicates(runs, phoneOfRun) {
+    const groups = new Map();
+    (runs || []).forEach((r) => {
+      const ph = digitsOf(phoneOfRun(r));
+      const k = /^55\d{10,11}$/.test(ph) ? `${r.automation_id}|${ph.slice(2, 4)}${ph.slice(-8)}` : /^\d{8,15}$/.test(ph) ? `${r.automation_id}|${ph}` : null;
+      if (!k) return;
+      groups.set(k, [...(groups.get(k) || []), r]);
+    });
+    return [...groups.values()].filter((l) => l.length > 1).map((l) => {
+      const s = [...l].sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || String(a.id).localeCompare(String(b.id)));
+      return { keep: s[0], dups: s.slice(1) };
+    });
+  }
+  // mensagem rápida com "Ao enviar, colocar na etiqueta" → etiqueta aplicada? → entrou na automação? → chat confere?
+  // send: { chat_id, created_at }; contact: o contato do chat (pelo telefone do WhatsApp) ou null; labelAt: quando
+  // entrou na etiqueta (ms) ou null; run: o percurso da régua dessa etiqueta para essa pessoa ou null
+  function healthOfQuickSend({ contact, labelAt, run, runCheck, startsRegua }) {
+    const steps = [];
+    if (!contact || !Number.isFinite(labelAt)) return { ok: false, steps: [{ ok: false, text: contact ? 'etiqueta não aplicada' : 'etiqueta não aplicada (sem contato no CRM)' }], fix: { kind: 'label' } };
+    steps.push({ ok: true, text: 'etiqueta aplicada' });
+    if (!startsRegua) return { ok: true, steps, fix: null };
+    if (!run) { steps.push({ ok: false, text: 'não entrou na automação' }); return { ok: false, steps, fix: null }; }
+    steps.push({ ok: true, text: 'entrou na automação' });
+    if (runCheck === 'ok') { steps.push({ ok: true, text: 'chat do percurso confere' }); return { ok: true, steps, fix: null }; }
+    steps.push({ ok: false, text: runCheck === 'unknown' ? 'chat do percurso: o WhatsApp não respondeu' : 'chat do percurso é de outra pessoa' });
+    return { ok: false, steps, fix: runCheck === 'unknown' ? null : { kind: 'pause' } };
+  }
+
+  // ── 2.20.0: datas e relógio ──
+  // Hora (s) de uma mensagem vinda do WhatsApp no FUTURO (mais de 2 min à frente de agora) vira a hora em que a
+  // extensão viu o evento. 16/11: os 3 primeiros envios da régua (09:27 no servidor) vieram com t = 17/11 01:16
+  // (15h49 à frente): viraram "envio manual" de 17/11, last_message_at de amanhã e "mensagem sua depois" no motor.
+  const FUTURE_SLACK_MS = 2 * 60 * 1000;
+  function clampSec(t, nowMs) {
+    const n = Number(t);
+    if (!Number.isFinite(n) || n <= 0) return n;
+    return n * 1000 > nowMs + FUTURE_SLACK_MS ? Math.floor(nowMs / 1000) : n;
+  }
+  // atividade da varredura da abertura (activityScan) com as horas no futuro corrigidas (e o "dia" junto)
+  function clampActivity(a, nowMs) {
+    if (!a || typeof a !== 'object') return a;
+    const out = { ...a };
+    ['lastAt', 'lastCustomerAt', 'firstMessageAt'].forEach((k) => { if (Number(out[k])) out[k] = clampSec(out[k], nowMs); });
+    const today = spDayOfSec(Math.floor(nowMs / 1000));
+    if (Array.isArray(out.days)) out.days = out.days.map((d) => (d && d.day > today ? { ...d, day: today } : d));
+    return out;
+  }
+  // conversas da ponte (chatsInfo) com as horas no futuro corrigidas
+  function clampChat(chat, nowMs) {
+    if (!chat || typeof chat !== 'object') return chat;
+    const out = { ...chat };
+    if (out.last && Number(out.last.t)) out.last = { ...out.last, t: clampSec(out.last.t, nowMs) };
+    if (Number(out.lastIn)) out.lastIn = clampSec(out.lastIn, nowMs);
+    return out;
+  }
+  // minutos entre o fuso do computador e o de São Paulo (horários de envio são de Brasília)
+  function spOffsetMin(ms) {
+    const d = new Date(ms);
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(d);
+      const g = (t) => Number((parts.find((p) => p.type === t) || {}).value);
+      const sp = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour') % 24, g('minute'));
+      const loc = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes());
+      return Math.round((loc - sp) / 60000);
+    } catch { return 0; }
+  }
+  // o motor não envia com o relógio errado: diferença do servidor > 5 min ou fuso diferente do de Brasília
+  const CLOCK_MAX_SKEW_MS = 5 * 60 * 1000;
+  function clockProblem({ now, serverNow, tzDiffMin }) {
+    if (Number.isFinite(serverNow) && Math.abs(now - serverNow) > CLOCK_MAX_SKEW_MS) {
+      const min = Math.round((now - serverNow) / 60000);
+      return `relógio do computador ${min > 0 ? 'adiantado' : 'atrasado'} ${formatLeft(Math.abs(min) * 60000)} (acerte a hora do Windows)`;
+    }
+    if (Number.isFinite(tzDiffMin) && Math.abs(tzDiffMin) >= 30) return 'fuso do computador diferente do de Brasília (acerte o fuso do Windows)';
+    return null;
+  }
+
+  // 2.20.0: para quem vai a etiqueta "Ao enviar" da mensagem rápida. Tudo é decidido pelo chat que RECEBEU a
+  // mensagem (chatId, guardado no começo do envio), nunca pela conversa aberta no fim: o telefone vem do WhatsApp
+  // para esse chat; a identificação da tela (snapshot do começo) só vale se era desse mesmo chat.
+  // wa: { phone, name } do WhatsApp para chatId; snap: { identity, chatId } da tela no começo do envio
+  function sendTargetOf({ chatId, wa, snap }) {
+    if (!chatId) return null;
+    const m = /^(\d{8,15})@c\.us$/.exec(chatId);
+    const phone = m ? m[1] : /^\d{8,15}$/.test(digitsOf(wa && wa.phone)) ? digitsOf(wa.phone) : null;
+    const same = !!(snap && snap.identity && snap.chatId === chatId);
+    const idPhone = same ? digitsOf(snap.identity.phone) : '';
+    const name = (same && snap.identity.name) || (wa && wa.name) || null;
+    if (phone) {
+      // a tela dizia outro telefone para este chat: vale o do WhatsApp
+      return { chatId, phone, name: idPhone && !samePerson(idPhone, phone) ? (wa && wa.name) || null : name };
+    }
+    if (same) return { identity: { ...snap.identity, chatId } };
+    return { chatId, name: (wa && wa.name) || null };
+  }
+
   function createMotor(deps) {
     const now = () => (deps.now ? deps.now() : Date.now());
+    // 2.20.0: hora de mensagem no futuro (relógio do WhatsApp errado) não vale nas decisões do motor
+    if (deps.wa && typeof deps.wa.chatsInfo === 'function') {
+      const rawInfo = deps.wa.chatsInfo;
+      deps.wa = { ...deps.wa, chatsInfo: async (p) => {
+        const r = await rawInfo(p);
+        if (r && r.chats && typeof r.chats === 'object') { const t = now(); r.chats = Object.fromEntries(Object.entries(r.chats).map(([k, v]) => [k, clampChat(v, t)])); }
+        return r;
+      } };
+    }
+    let clockAt = 0;
+    let clockMsg = null;
+    // relógio do computador × servidor e fuso (a cada 5 min); sem como saber: não bloqueia
+    async function clockCheck() {
+      if (now() - clockAt < 5 * 60 * 1000) return clockMsg;
+      clockAt = now();
+      let serverNow = NaN;
+      if (deps.serverNow) {
+        try { serverNow = Number(await Promise.race([deps.serverNow(), new Promise((r) => setTimeout(() => r(NaN), 5000))])); } catch { serverNow = NaN; }
+        if (!(serverNow > 0)) serverNow = NaN; // sem resposta / sem o cabeçalho Date: não bloqueia
+      }
+      const prev = clockMsg;
+      clockMsg = clockProblem({ now: now(), serverNow, tzDiffMin: deps.now ? 0 : spOffsetMin(now()) });
+      if (clockMsg && clockMsg !== prev && deps.onDiag) { try { deps.onDiag({ kind: 'relogio', reason: clockMsg }); } catch { /* registro */ } }
+      return clockMsg;
+    }
     const rnd = () => (deps.random ? deps.random() : Math.random());
     const runnerId = deps.runnerId || `r${Math.floor(rnd() * 1e9).toString(36)}${now().toString(36)}`;
     const st = {
@@ -2855,6 +3056,31 @@
       if (got && run.chat_id) { if (waPhoneCache.size > 5000) waPhoneCache.clear(); waPhoneCache.set(run.chat_id, got); }
       return got;
     }
+    // 2.20.0: { phone, answered } — answered = o WhatsApp respondeu (com ou sem telefone); fresh: sem o cache
+    async function seqWaInfo(run, fresh = false) {
+      const m = /^(\d{8,15})@c\.us$/.exec(run.chat_id || '');
+      if (m) return { phone: m[1], answered: true };
+      if (!/@lid$/.test(run.chat_id || '') || !deps.wa || typeof deps.wa.chatPhone !== 'function') return { phone: null, answered: false };
+      if (!fresh && waPhoneCache.has(run.chat_id)) return { phone: waPhoneCache.get(run.chat_id), answered: true };
+      try {
+        const r = await deps.wa.chatPhone({ chatId: run.chat_id });
+        const ph = digitsOf(r && r.phone);
+        if (/^\d{8,15}$/.test(ph)) { if (waPhoneCache.size > 5000) waPhoneCache.clear(); waPhoneCache.set(run.chat_id, ph); return { phone: ph, answered: true }; }
+        return { phone: null, answered: true };
+      } catch { return { phone: null, answered: false }; }
+    }
+    // 2.20.0: o chat do percurso não é (ou não dá para confirmar que é) do telefone do contato → pausa, registra no
+    // log da automação (wa_send_log 'pulado' com o motivo) e no Diagnóstico. Nada é enviado.
+    async function seqPauseRun(run, automation, chk, waPhone) {
+      const saved = await seqPatch(run, { outcome: SEQ_PAUSED });
+      if (!saved) return false;
+      run.outcome = SEQ_PAUSED;
+      run.version = saved.version;
+      const reason = chk === 'mismatch' ? CHAT_MISMATCH_REASON : CHAT_UNCONFIRMED_REASON;
+      await logSkip({ source: 'follow', source_id: automation ? automation.id : run.automation_id || null, contact_id: run.contact ? run.contact.id : run.contact_id || null, chat_id: run.chat_id, item_id: null }, reason);
+      if (deps.onDiag) { try { deps.onDiag({ kind: 'run_pausado', automation: automation ? automation.name : null, runId: run.id, chatId: run.chat_id, reason, waPhone: waPhone || null, contactPhone: (run.contact && run.contact.phone) || null }); } catch { /* registro */ } }
+      return true;
+    }
     async function seqWaPhoneRaw(run) {
       const m = /^(\d{8,15})@c\.us$/.exec(run.chat_id || '');
       if (m) return m[1];
@@ -2925,10 +3151,19 @@
       // 2.19.1: a mesma pessoa com dois ids (@lid e @c.us do telefone): a resposta em qualquer um conta. O telefone é
       // o do WhatsApp para a conversa do percurso (o do contato do CRM pode ser de outra pessoa: contaria a resposta dela)
       const aliasOf = new Map();
+      const waInfo = new Map(); // 2.20.0: o que o WhatsApp disse do chat de cada percurso (para a conferência)
       for (const r of runs) {
-        const ph = digitsOf(await seqWaPhone(r));
+        if (seqIsPaused(r)) continue; // 2.20.0: pausado (chat de outra pessoa): nem olha
+        const info = await seqWaInfo(r);
+        waInfo.set(r.id, info);
+        const ph = digitsOf(info.phone);
         const okPh = /^\d{8,15}$/.test(ph) ? ph : null;
-        aliasOf.set(r.id, { phone: okPh, ids: [...new Set([r.chat_id, okPh ? `${okPh}@c.us` : null].filter(Boolean))] });
+        // 2.20.0: a resposta é procurada pela PESSOA: os ids do telefone do WhatsApp e o chat do contato (só quando o
+        // contato é desse mesmo telefone — o do CRM pode ser de outra pessoa)
+        let cChat = r.contact && okPh && samePerson(r.contact.phone, okPh) && typeof r.contact.chat_id === 'string' && r.contact.chat_id !== r.chat_id ? r.contact.chat_id : null;
+        // o chat do contato também tem que ser desse telefone pelo WhatsApp (o chat_id do CRM pode ser de outra pessoa)
+        if (cChat) { const ci = await seqWaInfo({ chat_id: cChat }); if (!ci.phone || !samePerson(ci.phone, okPh)) cChat = null; }
+        aliasOf.set(r.id, { phone: okPh, ids: [...new Set([r.chat_id, okPh ? `${okPh}@c.us` : null, cChat].filter(Boolean))] });
       }
       const chatIds = [...new Set(runs.map((r) => r.chat_id))];
       const askIds = [...new Set([...aliasOf.values()].flatMap((x) => x.ids))];
@@ -2974,6 +3209,13 @@
         const a = byId.get(r.automation_id);
         if (!a) continue;
         if (a.test_chat_id && r.chat_id !== a.test_chat_id) continue; // modo teste: só a conversa escolhida
+        // 2.20.0: o chat do percurso tem que ser do telefone do contato (pelo WhatsApp, agora). Não confere → pausa.
+        // O WhatsApp não respondeu → não mexe neste ciclo (nem envia).
+        if (seqIsPaused(r)) continue;
+        const info = waInfo.get(r.id) || { phone: null, answered: false };
+        const chk = seqChatCheck({ chatId: r.chat_id, waPhone: info.phone, answered: info.answered, contactPhone: r.contact && r.contact.phone, bound: !!r.contact_id });
+        if (chk === 'unknown') continue;
+        if (chk !== 'ok') { await seqPauseRun(r, a, chk, info.phone); continue; }
         // nunca para quem tem "Não enviar": sai da sequência
         if (st.noSendLabelId && r.contact && (r.contact.labelIds || []).includes(st.noSendLabelId)) { await seqPatch(r, { status: 'saiu', outcome: 'nao_enviar' }); continue; }
         // 2.13.0: "Não enviar" do WhatsApp e as etiquetas de "Nunca para quem tem" (CRM ou WhatsApp)
@@ -3032,6 +3274,10 @@
     }
     async function runSequenceJob({ automation, run, res }) {
       const def = automation.sequence;
+      // 2.20.0: confere de novo, sem cache, logo antes de mandar
+      const info = await seqWaInfo(run, true);
+      const chk = seqChatCheck({ chatId: run.chat_id, waPhone: info.phone, answered: info.answered, contactPhone: run.contact && run.contact.phone, bound: !!run.contact_id });
+      if (chk !== 'ok') { if (chk !== 'unknown') await seqPauseRun(run, automation, chk, info.phone); return; }
       const t = now();
       const nextIsWait = res.node && (seqIndex(def).get(res.node) || {}).node && ['esperar', 'pausa'].includes(seqIndex(def).get(res.node).node.type); // 2.13.0: ⏳ também
       const branches = [...(run.branches || []), ...res.branches];
@@ -3089,6 +3335,19 @@
       for (const step of ev.plan) {
         if (step.type === 'enviar') {
           const entry = { source: 'follow', source_id: automation.id, contact_id: contact.id, chat_id: ev.chatId, item_id: step.itemId };
+          // 2.20.0: o chat tem que ser do telefone do contato (pelo WhatsApp, agora); senão não envia e registra
+          const info = await seqWaInfo({ chat_id: ev.chatId }, true);
+          const chk = seqChatCheck({ chatId: ev.chatId, waPhone: info.phone, answered: info.answered, contactPhone: contact.phone });
+          if (chk !== 'ok') {
+            if (chk !== 'unknown') {
+              const reason = chk === 'mismatch' ? CHAT_MISMATCH_REASON : CHAT_UNCONFIRMED_REASON;
+              await logSkip(entry, reason);
+              if (deps.onDiag) { try { deps.onDiag({ kind: 'automacao_bloqueada', automation: automation.name, chatId: ev.chatId, reason, waPhone: info.phone || null, contactPhone: contact.phone || null }); } catch { /* registro */ } }
+            }
+            if (!sent) { try { await api('automationUnreserve', { id: runId }); } catch { /* ok */ } }
+            failedRecently.set(`${automation.id}:${contact.id}`, now() + RETRY_AFTER_FAIL_MS);
+            break;
+          }
           const item = await deps.itemById(step.itemId);
           if (!item) {
             await logSkip(entry, 'sem mensagem');
@@ -3185,6 +3444,9 @@
       // Com algo ativo: no máximo uma busca de trabalho a cada 60 s (depois de um envio, segue direto)
       if (now() < st.workAt) return;
       if (!(await waReady())) { st.waiting = 'WhatsApp não pronto'; return; }
+      // 2.20.0: relógio/fuso errado = horário de envio errado: não procura trabalho
+      const clk = await clockCheck();
+      if (clk) { st.waiting = clk; return; }
       if (!st.countsAt || now() - st.countsAt >= COUNTS_MS) await refreshCounts();
       const lim = limitCheck(st.counts, st.settings);
       if (!lim.ok) { st.waiting = lim.reason; return; }
@@ -3395,6 +3657,7 @@
     CAMP_HARD, CAMP_PRESETS, CAMP_PRESET_LABEL, campaignSpeed, campaignSpeedRisk, campaignSpeedClamped, campaignSpeedText, campaignGapMs, campaignGate, campaignForecast, forecastText,
     spinText, hasSpin, VARIANT_MODES, variantCount, pickVariant, variantParts, spinParts, removeAllExcept, // 2.14.0
     limitCheck, randomGapMs, estimateDuration, estimateText,
+    SEQ_PAUSED, CHAT_MISMATCH_REASON, CHAT_UNCONFIRMED_REASON, samePerson, seqChatCheck, seqIsPaused, uniqueRuns, ownRuns, seqRepliedPatch, healthOfRun, healthDuplicates, healthOfQuickSend, sendTargetOf, clampSec, clampChat, clampActivity, spOffsetMin, clockProblem, // 2.20.0
     createMotor,
   };
 })(globalThis);
