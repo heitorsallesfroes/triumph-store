@@ -5892,6 +5892,7 @@
   }
 
   function sequenceToast(res, total) {
+    try { motor.noteSend(res); } catch { /* 2.20.2: o envio do painel também libera/bloqueia o motor */ }
     if (res.status === 'ok' && res.failedFiles && res.failedFiles.length) { toast(`Enviado, mas não consegui enviar: ${res.failedFiles.join(', ')}.`, 'warn', 10000); return; }
     const via = lastProductVia ? ` ${PRODUCT_VIA[lastProductVia]}` : '';
     lastProductVia = null;
@@ -7626,6 +7627,7 @@
     wa: {
       ready: async () => { const st = await refreshWaStatus(); return !!(st && st.ready); },
       // 2.20.2: WA-JS pronto mas o WhatsApp ainda sincronizando (status lido logo antes, em ready)
+      sendable: () => !(state.waStatus && state.waStatus.sendProbe === false), // 2.20.2 (status lido em ready)
       loading: () => !!(state.waStatus && (state.waStatus.loaded && !state.waStatus.ready || state.waStatus.ready && state.waStatus.synced === false)),
       chatsInfo: (p) => waRequest('chatsInfo', p, { timeout: 8000 }),
       // 2.5.0: etiquetas nativas (fila de trocas e conversas da etiqueta: só memória do WhatsApp Web)

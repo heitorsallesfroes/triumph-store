@@ -287,7 +287,8 @@ function bridge({ msgs = {}, noEarlier = {}, older = {}, chatT = {}, extraChats 
   });
   return { emit: (m) => onMsg(m), request, loads };
 }
-const msg = (chat, id, fromMe, t, extra = {}) => ({ id: { remote: { _serialized: chat }, fromMe, id }, t, type: 'chat', ...extra });
+// 2.20.2: as suas já aceitas pelo WhatsApp (ack 1); sem ack não saem da ponte
+const msg = (chat, id, fromMe, t, extra = {}) => ({ id: { remote: { _serialized: chat }, fromMe, id }, t, type: 'chat', ...(fromMe ? { ack: 1 } : {}), ...extra });
 test('ponte: 1ª mensagem do cliente numa conversa sem nada antes = lead (com anúncio); conversa antiga não', async () => {
   const now = Math.floor(Date.now() / 1000);
   const first = msg(A, 'm1', false, now, { ctwaContext: { sourceId: 'AD9', title: 'Óculos' } });

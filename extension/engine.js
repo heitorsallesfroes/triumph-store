@@ -2285,6 +2285,10 @@
   // (1, 2, 4, 8, 16 min… até 30 min). Bug da 2.20.0 em 18/11 08:52: 79 runs pausados logo depois de ler o QR code.
   const seqShouldPause = (chk) => chk === 'mismatch';
   const WA_LOADING_TEXT = 'Aguardando o WhatsApp terminar de carregar';
+  // 2.20.2: o WhatsApp recusou envios seguidos (18/11: WhatsApp Web 2.3000.1055167106 + WA-JS 4.7.2 = "getMeLidUserOrThrow
+  // is not a function" em todo envio): o motor para de tentar até um envio sair de verdade (ex.: mensagem rápida) ou recarregar
+  const SEND_BLOCKED_TEXT = 'Envios desativados: o WhatsApp não aceitou o envio';
+  const SEND_FAILS_TO_BLOCK = 2;
   function unconfirmedDelayMs(n) {
     const k = Math.max(1, Math.floor(Number(n) || 1));
     return Math.min(60 * 1000 * 2 ** Math.min(k - 1, 10), 30 * 60 * 1000);
@@ -2543,6 +2547,24 @@
       if (deps.wa && typeof deps.wa.loading === 'function') { try { loading = !!(await deps.wa.loading()); } catch { loading = false; } }
       st.waLoading = loading;
       return ok && !loading;
+    }
+    // 2.20.2: resultado de todo envio (motor e painel): falhas seguidas no envio → bloqueia; um envio que saiu → libera
+    function noteSend(res) {
+      if (!res) return;
+      if (res.status === 'ok' || (res.sent || 0) > 0) { st.sendFails = 0; st.sendBlocked = false; return; }
+      if (res.status === 'failed' && res.stage === 'sending' && !['pix_failed', 'rich_failed'].includes(res.code)) {
+        st.sendFails = (st.sendFails || 0) + 1;
+        if (st.sendFails >= SEND_FAILS_TO_BLOCK) st.sendBlocked = true;
+      }
+    }
+    const rawSendParts = deps.sendParts;
+    if (typeof rawSendParts === 'function') {
+      deps.sendParts = async (a) => {
+        if (st.sendBlocked || st.sendProbeFail) return { status: 'failed', stage: 'before-send', sent: 0, code: 'send_blocked', message: SEND_BLOCKED_TEXT };
+        const r = await rawSendParts(a);
+        noteSend(r);
+        return r;
+      };
     }
     // 2.20.2: chat sem confirmação → espera crescente por chave (run ou automação:contato); confirmou → zera
     const unconfirmedTries = new Map(); // chave → { n, until }
@@ -3459,6 +3481,9 @@
         st.waiting = st.waLoading ? WA_LOADING_TEXT : 'WhatsApp não pronto';
         return;
       }
+      // 2.20.2: a WA-JS quebra antes de enviar (teste sem envio) ou o WhatsApp recusou envios seguidos: não tenta enviar
+      if (deps.wa && typeof deps.wa.sendable === 'function') { let ok = true; try { ok = (await deps.wa.sendable()) !== false; } catch { ok = true; } st.sendProbeFail = !ok; }
+      if (st.sendBlocked || st.sendProbeFail) { st.waiting = SEND_BLOCKED_TEXT; return; }
       await ensureNoSendLabel();
       if (st.settings.paused_all) { st.role = 'pausado'; st.waiting = 'pausado'; return; }
       st.role = 'este';
@@ -3612,7 +3637,7 @@
     }
 
     return {
-      state: st, runnerId, start, stop, tick, leaseTick, poke, refreshActivity, setPaused, saveSettings, simulate, queueCounts, loadSettings, loadFlows,
+      state: st, runnerId, start, stop, tick, leaseTick, poke, noteSend, refreshActivity, setPaused, saveSettings, simulate, queueCounts, loadSettings, loadFlows,
       // 2.12.0 (só testes): um ciclo das sequências (entrada, decisão, gravação e os envios da fila), sem o laço do motor
       _sequencesOnce: async () => { await refreshSequences(); const done = []; while ((st.seqQueue || []).length) { const j = st.seqQueue.shift(); await runSequenceJob(j); done.push(j); } return done; },
       _trackNativeLabelsOnce: () => trackNativeLabels(), // 2.16.5 (só testes): uma leitura das etiquetas nativas
@@ -3694,7 +3719,7 @@
     spinText, hasSpin, VARIANT_MODES, variantCount, pickVariant, variantParts, spinParts, removeAllExcept, // 2.14.0
     limitCheck, randomGapMs, estimateDuration, estimateText,
     SEQ_PAUSED, CHAT_MISMATCH_REASON, CHAT_UNCONFIRMED_REASON, samePerson, seqChatCheck, seqIsPaused, uniqueRuns, ownRuns, seqRepliedPatch, healthOfRun, healthDuplicates, healthOfQuickSend, sendTargetOf, clampSec, clampChat, clampActivity, spOffsetMin, clockProblem, // 2.20.0
-    seqShouldPause, unconfirmedDelayMs, WA_LOADING_TEXT, // 2.20.2
+    seqShouldPause, unconfirmedDelayMs, WA_LOADING_TEXT, SEND_BLOCKED_TEXT, SEND_FAILS_TO_BLOCK, // 2.20.2
     createMotor,
   };
 })(globalThis);

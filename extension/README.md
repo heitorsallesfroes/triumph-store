@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.20.2** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.20.3** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,19 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.20.3 — Nada sai: o motor para e nada vira "enviado" sem ter saído
+- **18/11, depois do QR code**: o WhatsApp Web atualizou para a **2.3000.1055167106** e a WA-JS **4.7.2** quebra em todo
+  envio (`n.UserPrefs.getMeLidUserOrThrow is not a function`, em `WPP.conn.getMyUserLid`): mensagem rápida e automações
+  falhavam com "envio não confirmado". Quem resolve é a WA-JS **4.8.2** (18/11, "fall back to nullable account LID
+  getter"); o vendor **não** foi trocado aqui.
+- O motor confere esse passo sem enviar nada; quebrado, ou o WhatsApp recusou 2 envios seguidos: **não tenta enviar** e o
+  painel mostra "Envios desativados: o WhatsApp não aceitou o envio". Volta sozinho quando um envio sai de verdade
+  (ex.: mensagem rápida) ou ao recarregar com a WA-JS que funciona.
+- "Você digitou" (wa_send_log manual, enviado) só é gravado depois que o WhatsApp **aceita** a mensagem (ack ≥ 1); no
+  relógio espera, com erro nunca.
+- A espera "Aguardando o WhatsApp terminar de carregar" (2.20.2) não trava mais nesta versão do WhatsApp Web
+  (`isMainLoaded()` devolve `undefined`).
 
 ### 2.20.2 — WhatsApp carregando não pausa automação
 - **Bug da 2.20.0 (18/11 08:52)**: logo depois de reconectar o WhatsApp Web (QR code), o motor pausou 79 percursos com

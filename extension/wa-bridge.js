@@ -42,12 +42,19 @@
   }
 
   const isReady = () => !!(wpp && wpp.isReady);
+  // 2.20.2: o passo da WA-JS que quebrou todo envio em 18/11 (WhatsApp Web 2.3000.1055167106 + WA-JS 4.7.2:
+  // "UserPrefs.getMeLidUserOrThrow is not a function"), chamado sozinho: só lê, não envia. TypeError = incompatível
+  function sendProbe() {
+    if (!isReady() || !wpp.conn || typeof wpp.conn.getMyUserLid !== 'function') return null;
+    try { wpp.conn.getMyUserLid(); return true; } catch (e) { return e instanceof TypeError ? false : null; }
+  }
   // 2.20.2: WhatsApp Web terminou de carregar (tela principal pronta e carregada). Sem as funções: não bloqueia
   const isSynced = () => {
     if (!isReady()) return false;
     const conn = wpp.conn;
     if (!conn) return true;
-    const flag = (name) => { try { return typeof conn[name] === 'function' ? !!conn[name]() : true; } catch { return true; } };
+    // só false bloqueia: na versão 2.3000.1055167106 do WhatsApp Web isMainLoaded() devolve undefined (18/11)
+    const flag = (name) => { try { return typeof conn[name] === 'function' ? conn[name]() !== false : true; } catch { return true; } };
     return flag('isMainReady') && flag('isMainLoaded');
   };
   // 2.9.2: tipos novos de parte (rich-parts.js roda logo antes desta ponte, no mesmo mundo)
@@ -135,6 +142,7 @@
       loaded: !!wpp,
       ready: isReady(),
       synced: isSynced(), // 2.20.2: terminou a sincronização inicial (depois do QR code)
+      sendProbe: sendProbe(), // 2.20.2: false = a WA-JS quebra antes de enviar (nada é enviado no teste)
       telemetryOff: config.disableGoogleAnalytics === true,
       linkServersOff: Array.isArray(servers) && servers.length === 0,
       chat: activeChat().kind,
@@ -655,6 +663,8 @@
       } catch {
         throw onFail ? onFail() : new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
       }
+      // 2.20.2: o WhatsApp marcou erro no envio (ack -1): não saiu
+      if (r && Number.isFinite(Number(r.ack)) && Number(r.ack) < 0) throw new BridgeError('send_failed', 'O WhatsApp não aceitou o envio', 'sending');
       // 2.16.13: por qual caminho o produto saiu (nativo / link-grande / link)
       // 2.16.14: + o registro do envio do produto (trace) para o log da extensão
       // 2.18.9: + o id da parte especial enviada (o painel acompanha os tracinhos por 2 minutos)
@@ -1668,8 +1678,26 @@
       const earlier = msgs.some((x) => x !== m && realMsg(x) && msgT(x) <= t && safe(() => x.id.id, 1) !== safe(() => m.id.id, 2));
       if (!earlier && noEarlierOf(chat) !== false) { ev.first = true; ev.ad = leadAd(m); ev.ig = igCodeOf(m); if (!ev.ig) ev.igh = igPhraseOf(m); }
     }
+    // 2.20.2: mensagem sua só vai para o painel (e para wa_send_log como "você digitou") depois que o WhatsApp a
+    // aceitou (ack >= 1). No relógio: espera; erro (ack -1) ou 10 min sem sair: nunca vira "enviado"
+    if (fromMe && !mineAccepted(m)) {
+      mineAckWait.push({ ev, m, at: Date.now() });
+      if (mineAckWait.length > CONV_MAX) mineAckWait.splice(0, mineAckWait.length - CONV_MAX);
+      return;
+    }
     convQueue.push(ev);
     if (convQueue.length > CONV_MAX) convQueue.splice(0, convQueue.length - CONV_MAX);
+  }
+  const MINE_ACK_WAIT_MS = 10 * 60 * 1000;
+  const mineAckWait = []; // { ev, m, at }
+  const mineAccepted = (m) => { const a = Number(safe(() => m.ack, NaN)); return Number.isFinite(a) && a >= 1; };
+  function mineAckFlush() {
+    const now = Date.now();
+    for (let i = mineAckWait.length - 1; i >= 0; i--) {
+      const w = mineAckWait[i];
+      const a = Number(safe(() => w.m.ack, NaN));
+      if (Number.isFinite(a) && a >= 1) { convQueue.push(w.ev); mineAckWait.splice(i, 1); } else if (a < 0 || now - w.at > MINE_ACK_WAIT_MS) mineAckWait.splice(i, 1);
+    }
   }
   const pnCache = new Map();
   async function cachedPn(chatId) {
@@ -1681,6 +1709,7 @@
   }
   // Mensagens novas desde a última vez (a varredura da abertura agora é a activityScan, 2.12.8)
   async function convEvents() {
+    mineAckFlush(); // 2.20.2
     const events = convQueue.splice(0, convQueue.length);
     if (isReady()) for (const e of events) if (!e.fromMe) e.phone = await cachedPn(e.chatId);
     return { events, scanned: false };
@@ -2008,6 +2037,8 @@
       } catch {
         throw onFail ? onFail() : new BridgeError('send_failed', 'O WhatsApp não confirmou o envio', 'sending');
       }
+      // 2.20.2: o WhatsApp marcou erro no envio (ack -1): não saiu
+      if (r && Number.isFinite(Number(r.ack)) && Number(r.ack) < 0) throw new BridgeError('send_failed', 'O WhatsApp não aceitou o envio', 'sending');
       // 2.16.13: por qual caminho o produto saiu (nativo / link-grande / link)
       // 2.16.14: + o registro do envio do produto (trace) para o log da extensão
       // 2.18.9: + o id da parte especial enviada (o painel acompanha os tracinhos por 2 minutos)
