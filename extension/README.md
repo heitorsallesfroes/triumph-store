@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.20.4** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.21.0** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,25 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.21.0 — Etiquetar em massa (Mais › Manutenção)
+- Coloca a etiqueta do WhatsApp **"Enviar Black Friday"** em quem chamou desde **18/07/2026** e nunca mais respondeu
+  depois da sua resposta. Nenhuma mensagem é enviada; o motor de envio não muda.
+- **Quem entra** (lendo as conversas pela WA-JS, não só o banco): conversa individual (sem grupos, status, a sua própria
+  conversa e "Meu Numero Pessoal"); a 1ª mensagem foi do **cliente**, desde 18/07; você respondeu pelo menos uma vez e,
+  depois da sua 1ª resposta, o cliente não mandou mais nada (reação não conta). A **saudação automática** do WhatsApp
+  Business não conta como sua resposta nem como começo da conversa (ela chega no mesmo segundo da 1ª mensagem).
+- **Fora**: etiqueta "Cliente" do WhatsApp, venda no ERP (`sales.customer_phone`, DDD + 8 últimos dígitos) e quem já
+  tem "Enviar Black Friday". O nome da etiqueta é comparado sem acento, emoji e maiúsculas ("Cliente ⌚️" = "Cliente";
+  "Cliente Antigo" não).
+- **Não deu para confirmar** (fica de fora e aparece no relatório): o histórico não carregou até o começo; parte do
+  histórico ficou **só no celular** (`endOfHistoryTransferType` 0/2 — em 18/11 eram 56 de 486 conversas); ou a
+  conversa não tem telefone para conferir a venda.
+- **Simular**: percorre as conversas devagar (carrega as mensagens antigas de uma conversa por vez, com pausa) e mostra a
+  lista (nome/telefone, 1º contato, sua última mensagem), o total por mês e o motivo de quem ficou de fora. Nada muda.
+- **Aplicar etiqueta**: só depois de simular, com confirmação mostrando o total. 20 por minuto, barra de progresso,
+  **Parar** e relatório (aplicadas, puladas e motivo). Antes de cada uma confere de novo (o cliente pode ter respondido
+  ou ganhado "Cliente" depois da simulação). Se a etiqueta não existir, é criada ao aplicar.
 
 ### 2.20.4 — WA-JS 4.8.2: os envios voltam
 - A biblioteca WA-JS (`vendor/wppconnect-wa.js`) passou da 4.7.2 para a **4.8.2** oficial (npm `@wppconnect/wa-js@4.8.2`,

@@ -2440,6 +2440,87 @@
     return { chatId, name: (wa && wa.name) || null };
   }
 
+  // ── 2.21.0: Etiquetar em massa (Mais › Manutenção) ──
+  // Quem entra: conversa individual (não a sua nem "Meu Numero Pessoal") cuja 1ª mensagem foi do CLIENTE desde `since`;
+  // você respondeu pelo menos uma vez e, depois da sua 1ª resposta, o cliente não mandou mais nada (reação não conta:
+  // a ponte nem manda). Fora: etiqueta "Cliente" do WhatsApp, a etiqueta de destino, venda no ERP (DDD + 8 últimos).
+  // Sem histórico até o começo (ou até antes de `since`) ou sem telefone para conferir a venda: fica de fora como
+  // "não deu para confirmar". msgs: [{ fromMe, t }] (t em segundos) na ordem do WhatsApp.
+  const BULK_REASON = {
+    nao_individual: 'não é conversa individual',
+    minha_conversa: 'é a sua própria conversa',
+    antes: 'primeiro contato antes do início do período',
+    sem_historico: 'não deu para confirmar: histórico não carregou até o começo',
+    historico_no_celular: 'não deu para confirmar: parte do histórico ficou só no celular',
+    sem_mensagens: 'sem mensagens',
+    comecou_por_mim: 'a conversa começou por você',
+    nao_respondi: 'você não respondeu',
+    respondeu_depois: 'o cliente respondeu depois da sua resposta',
+    ja_tem: 'já tem a etiqueta',
+    cliente: 'tem a etiqueta Cliente',
+    venda: 'tem venda no ERP',
+    sem_telefone: 'não deu para confirmar: sem telefone para conferir a venda',
+  };
+  const BULK_UNCONFIRMED = ['sem_historico', 'historico_no_celular', 'sem_telefone'];
+  // DDD + 8 últimos dígitos (com ou sem 55, com ou sem o 9)
+  function bulkPhoneKey(raw) {
+    let d = String(raw == null ? '' : raw).replace(/\D/g, '');
+    if ((d.length === 12 || d.length === 13) && d.startsWith('55')) d = d.slice(2);
+    if (d.length !== 10 && d.length !== 11) return null;
+    return `${d.slice(0, 2)}${d.slice(-8)}`;
+  }
+  // nome de etiqueta sem acento, emoji e maiúsculas ("Cliente ⌚️" → "cliente")
+  const bulkLabelNorm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const bulkLabelIds = (labels, name) => (labels || []).filter((l) => l && bulkLabelNorm(l.name) === bulkLabelNorm(name)).map((l) => String(l.id));
+  function bulkOrdered(msgs) {
+    // mensagem automática (saudação/ausência do WhatsApp Business) não é sua resposta nem o começo da conversa
+    return (msgs || []).filter((m) => m && !m.auto).map((m, i) => ({ fromMe: !!m.fromMe, t: Number(m.t) || 0, i })).filter((m) => m.t > 0).sort((a, b) => a.t - b.t || a.i - b.i);
+  }
+  function bulkDecision({ chatId, name = '', isMe = false, msgs, complete, moreOnPhone = false, since, labelIds = [], clienteIds = [], targetIds = [], phone = null, salePhones = null }) {
+    const out = (reason, extra = {}) => ({ ok: !reason, reason: reason || null, ...extra });
+    if (!/^\d+@(c\.us|lid)$/.test(chatId || '')) return out('nao_individual');
+    if (isMe || radarNorm(name) === 'meu numero pessoal') return out('minha_conversa');
+    const list = bulkOrdered(msgs);
+    if (list.some((m) => m.t < since)) return out('antes');
+    if (moreOnPhone) return out('historico_no_celular');
+    if (!complete) return out('sem_historico');
+    if (!list.length) return out('sem_mensagens');
+    const first = list[0];
+    if (first.fromMe) return out('comecou_por_mim', { firstAt: first.t });
+    const replyIdx = list.findIndex((m) => m.fromMe);
+    if (replyIdx < 0) return out('nao_respondi', { firstAt: first.t });
+    const firstReplyAt = list[replyIdx].t;
+    const lastMineAt = list.filter((m) => m.fromMe).pop().t;
+    const info = { firstAt: first.t, firstReplyAt, lastMineAt };
+    if (list.slice(replyIdx + 1).some((m) => !m.fromMe)) return out('respondeu_depois', info);
+    const ids = (labelIds || []).map(String);
+    if (ids.some((id) => (targetIds || []).includes(id))) return out('ja_tem', info);
+    if (ids.some((id) => (clienteIds || []).includes(id))) return out('cliente', info);
+    const key = bulkPhoneKey(phone);
+    if (!key) return out('sem_telefone', info);
+    if (salePhones && salePhones.has(key)) return out('venda', info);
+    return out(null, { ...info, phoneKey: key });
+  }
+  // logo antes de aplicar: com as mensagens da memória agora, ainda vale? (o cliente pode ter respondido depois da simulação)
+  function bulkRecheck({ msgs, firstReplyAt, labelIds = [], clienteIds = [], targetIds = [] }) {
+    const ids = (labelIds || []).map(String);
+    if (ids.some((id) => (targetIds || []).includes(id))) return 'ja_tem';
+    if (ids.some((id) => (clienteIds || []).includes(id))) return 'cliente';
+    if (bulkOrdered(msgs).some((m) => !m.fromMe && m.t > firstReplyAt)) return 'respondeu_depois';
+    return null;
+  }
+  // total por mês do 1º contato (horário de São Paulo), em ordem
+  function bulkByMonth(rows) {
+    const map = new Map();
+    for (const r of rows || []) { const k = new Date(r.firstAt * 1000 - 3 * 3600000).toISOString().slice(0, 7); map.set(k, (map.get(k) || 0) + 1); }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, n]) => ({ month, n }));
+  }
+  function bulkSkipSummary(rows) {
+    const map = new Map();
+    for (const r of rows || []) if (r.reason) map.set(r.reason, (map.get(r.reason) || 0) + 1);
+    return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([reason, n]) => ({ reason, n, text: BULK_REASON[reason] || reason, unconfirmed: BULK_UNCONFIRMED.includes(reason) }));
+  }
+
   function createMotor(deps) {
     const now = () => (deps.now ? deps.now() : Date.now());
     // 2.20.0: hora de mensagem no futuro (relógio do WhatsApp errado) não vale nas decisões do motor
@@ -3720,6 +3801,7 @@
     limitCheck, randomGapMs, estimateDuration, estimateText,
     SEQ_PAUSED, CHAT_MISMATCH_REASON, CHAT_UNCONFIRMED_REASON, samePerson, seqChatCheck, seqIsPaused, uniqueRuns, ownRuns, seqRepliedPatch, healthOfRun, healthDuplicates, healthOfQuickSend, sendTargetOf, clampSec, clampChat, clampActivity, spOffsetMin, clockProblem, // 2.20.0
     seqShouldPause, unconfirmedDelayMs, WA_LOADING_TEXT, SEND_BLOCKED_TEXT, SEND_FAILS_TO_BLOCK, // 2.20.2
+    BULK_REASON, BULK_UNCONFIRMED, bulkPhoneKey, bulkLabelNorm, bulkLabelIds, bulkDecision, bulkRecheck, bulkByMonth, bulkSkipSummary, // 2.21.0
     createMotor,
   };
 })(globalThis);

@@ -2057,7 +2057,98 @@
     return { cancelled: true };
   }
 
+  // ── 2.21.0: Etiquetar em massa (só leitura aqui; a etiqueta vai por setChatLabels, uma conversa por vez) ──
+  // bulkChats: conversas individuais com atividade desde `since` (a 1ª mensagem desde `since` exige isso).
+  // bulkChat: de uma conversa, só QUEM mandou e QUANDO (nunca o texto). Sem mensagem antes de `since` na memória e sem
+  // chegar ao começo: carrega as antigas devagar (páginas de BULK_PAGE, pausa entre elas, no máx. maxPages).
+  // Começo = uma carga não traz nada novo (o tamanho da página não serve: o WhatsApp devolve 53, 56… para 50). E o
+  // WhatsApp precisa ter trazido do celular o histórico inteiro: chat.endOfHistoryTransferType 0 ou 2 = ainda há
+  // mensagens só no celular (18/11: 56 de 486 conversas) → moreOnPhone, "não deu para confirmar".
+  // auto: mensagem automática do WhatsApp Business (saudação/ausência): a regra não conta como sua resposta.
+  const BULK_PAGE = 50;
+  const BULK_MAX_PAGES = 40;
+  const BULK_PAUSE_MS = 400;
+  function myIds() {
+    const ids = new Set();
+    const me = safe(() => wpp.conn.getMyUserId(), null);
+    const s = String(safe(() => me._serialized, '') || '');
+    if (s) ids.add(s);
+    const user = String(safe(() => me.user, '') || '');
+    if (user) ids.add(`${user}@c.us`);
+    const lid = safe(() => wpp.conn.getMyUserLid(), null);
+    const l = String(safe(() => lid._serialized || lid.toString(), '') || '');
+    if (/@lid$/.test(l)) ids.add(l.replace(/:\d+@/, '@'));
+    return ids;
+  }
+  async function bulkChats(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const since = Number(payload && payload.since) || 0;
+    let loaded = null;
+    try { loaded = await withTimeout(wpp.chat.list({ ignoreGroupMetadata: true }), LIST_TIMEOUT_MS * 2); } catch { loaded = null; }
+    if (!Array.isArray(loaded)) throw new BridgeError('list_failed', 'Não consegui ler a lista de conversas', 'before-send');
+    const mine = myIds();
+    const out = [];
+    for (const chat of loaded) {
+      const id = chatIdOf(chat);
+      if (!/^[0-9]+@(c\.us|lid)$/.test(id) || safe(() => chat.isGroup, false)) continue;
+      const t = Number(safe(() => chat.t, 0)) || 0;
+      if (t && t < since) continue;
+      out.push({ chatId: id, name: realName(chatCard(chat, false).name) || '', t, isMe: mine.has(id) });
+    }
+    return { chats: out.sort((a, b) => b.t - a.t), total: loaded.length };
+  }
+  async function bulkChat(payload) {
+    if (!isReady()) throw new BridgeError('not_ready', 'A biblioteca ainda não está pronta', 'before-send');
+    const p = payload || {};
+    const chatId = p.chatId;
+    if (typeof chatId !== 'string' || !/^[0-9]+@(c\.us|lid)$/.test(chatId)) throw new BridgeError('invalid_chat', 'Conversa inválida', 'before-send');
+    const since = Number(p.since) || 0;
+    const maxPages = Number.isInteger(p.maxPages) ? Math.max(0, Math.min(p.maxPages, BULK_MAX_PAGES)) : BULK_MAX_PAGES;
+    const pauseMs = Number.isInteger(p.pauseMs) ? Math.max(0, Math.min(p.pauseMs, 5000)) : BULK_PAUSE_MS;
+    const chat = safe(() => wpp.chat.get(chatId), null);
+    if (!chat) throw new BridgeError('invalid_chat', 'Conversa não encontrada', 'before-send');
+    const all = [];
+    const seen = new Set();
+    const addMsgs = (list) => (list || []).forEach((m) => {
+      if (!realMsg(m)) return;
+      const k = safe(() => m.id._serialized, '');
+      if (k && seen.has(k)) return;
+      if (k) seen.add(k);
+      all.push(m);
+    });
+    addMsgs(safe(() => chat.msgs.getModelsArray(), null));
+    let complete = noEarlierOf(chat) === true;
+    const before = () => all.some((m) => msgT(m) && msgT(m) < since);
+    let pages = 0;
+    const canLoad = !!(wpp.chat && typeof wpp.chat.getMessages === 'function');
+    while (!complete && !before() && canLoad && pages < maxPages) {
+      pages++;
+      const oldest = all.filter((m) => msgT(m)).sort((a, b) => msgT(a) - msgT(b))[0];
+      const anchor = oldest ? safe(() => oldest.id._serialized, '') : '';
+      let got = null;
+      try { got = await withTimeout(wpp.chat.getMessages(chatId, anchor ? { count: BULK_PAGE, direction: 'before', id: anchor } : { count: BULK_PAGE }), ACT_LOAD_TIMEOUT_MS); } catch { got = null; }
+      if (!Array.isArray(got)) break; // não entregou: fica sem saber
+      const n = all.length;
+      addMsgs(got);
+      if (all.length === n || noEarlierOf(chat) === true) complete = true; // nada novo: chegou ao começo
+      else if (pauseMs) await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    }
+    const eoh = safe(() => chat.endOfHistoryTransferType, undefined);
+    const moreOnPhone = eoh === 0 || eoh === 2;
+    const msgs = all.map((m) => {
+      const x = { fromMe: safe(() => m.id.fromMe, null), t: msgT(m) };
+      if (/automated/i.test(String(safe(() => m.type, '') || ''))) x.auto = true;
+      return x;
+    }).filter((m) => typeof m.fromMe === 'boolean' && m.t > 0);
+    return {
+      chatId, complete: complete && !moreOnPhone, moreOnPhone, pages, msgs, labelIds: labelIdsOf(chat), name: realName(chatCard(chat, false).name) || '',
+      isMe: myIds().has(chatId), phone: await cachedPn(chatId),
+    };
+  }
+
   const HANDLERS = {
+    bulkChats: (payload) => bulkChats(payload), // 2.21.0
+    bulkChat: (payload) => bulkChat(payload), // 2.21.0
     status: () => status(),
     activeChat: () => activeChat(),
     sendVoice: (payload, requestId) => sendVoice(requestId, payload),

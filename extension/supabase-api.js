@@ -1661,6 +1661,12 @@
     return rows.length;
   }
 
+  // 2.21.0: Etiquetar em massa — os telefones de todas as vendas do ERP (só leitura; o painel compara DDD + 8 últimos)
+  async function salePhones() {
+    const rows = await restAll('sales?select=customer_phone&customer_phone=not.is.null&order=id.asc');
+    return { phones: [...new Set(rows.map((r) => String(r.customer_phone || '').replace(/\D/g, '')).filter((d) => d.length >= 10))] };
+  }
+
   // Envio de mensagem rápida pelo painel (seta / prévia), já enviado. Sem a migration: não registra (como antes).
   async function logQuickSend({ chat_id, item_id }) {
     if (!(await panelCols())) return { id: null };
@@ -4792,7 +4798,7 @@
     claimTarget, finishTarget, campaignTargets, simulateCampaign, duplicateCampaign,
     getEngineSettings, updateEngineSettings, claimLease, sendCounts, lastSendAt, logSend, finishSendLog, fetchSendLog,
     seqChatOverview, // 2.18.5
-    saveLeads, igPhraseList, logQuickSend, logManualSends, recordReplies, touchLeads, saveChatActivity,
+    saveLeads, igPhraseList, salePhones, logQuickSend, logManualSends, recordReplies, touchLeads, saveChatActivity,
     chatContact, ensureNoSendLabel, fetchFlows, saveFlow, setFlowActive, deleteFlow, flowCandidates, contactLabelIds,
     followReserve, followAdd, followMove, ENGINE_MISSING,
     fetchSchedules, createSchedule, cancelSchedule, dueSchedules, claimSchedule, finishSchedule,
