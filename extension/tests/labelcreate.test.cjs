@@ -41,7 +41,7 @@ test('ponte: cria só com labels.addNewLabel, só no WhatsApp Business, e diz po
   assert.match(b, /labelCreate: \(payload\) => labelCreate\(payload\)/);
   assert.match(b, /labelColors: \(\) => labelColors\(\)/);
   assert.match(c, /'só no WhatsApp Business'/);
-  // a WA-JS empacotada (4.7.2) tem a função
+  // a WA-JS empacotada (4.8.2) tem a função
   const v = src('vendor/wppconnect-wa.js');
   assert.ok(v.includes('t.addNewLabel=async function'));
 });

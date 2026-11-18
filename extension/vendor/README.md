@@ -22,9 +22,9 @@ Quem fala com a biblioteca é o `wa-bridge.js` (código nosso).
 | | |
 |---|---|
 | Pacote | `@wppconnect/wa-js` (npm) |
-| Versão | **4.7.2** |
+| Versão | **4.8.2** (até a extensão 2.20.3: 4.7.2) |
 | Arquivo | `dist/wppconnect-wa.js` do pacote, **sem nenhuma alteração** |
-| SHA-256 | `97aca719c9ef8e618e7941425920451139def9bd70f5d8449c24864f406dfc85` |
+| SHA-256 | `b1a9c3c42357ad2a9fb7504f460c909dcf0e2b1ad8129abdb485f151164a4b10` (595652 bytes; pacote npm sha512-3xMNZt/rCrJKZBmfD428LsaGakYGvq4vNmH+AzKM2uf7x3/XL4tpyqKO/MtB7NFQmh8UlL957tGOu3i5iMOQqw==) |
 | Licença | Apache-2.0 (`LICENSE-wa-js.txt`); licenças dos componentes em `wppconnect-wa.js.LICENSE.txt` |
 | Código-fonte | https://github.com/wppconnect-team/wa-js |
 

@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.20.3** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.20.4** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,13 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.20.4 — WA-JS 4.8.2: os envios voltam
+- A biblioteca WA-JS (`vendor/wppconnect-wa.js`) passou da 4.7.2 para a **4.8.2** oficial (npm `@wppconnect/wa-js@4.8.2`,
+  integridade conferida com o registro; arquivo sem nenhuma alteração; SHA-256 em `vendor/README.md`). Ela corrige o
+  envio no WhatsApp Web 2.3000.1055167106 (`getMeLidUserOrThrow is not a function` → usa `getMaybeMeLidUser`).
+- Nada mudou no que a extensão usa da biblioteca (a única mudança incompatível da 4.8.0 é `WPP.conn.getMigrationState`,
+  que a extensão não usa).
 
 ### 2.20.3 — Nada sai: o motor para e nada vira "enviado" sem ter saído
 - **18/11, depois do QR code**: o WhatsApp Web atualizou para a **2.3000.1055167106** e a WA-JS **4.7.2** quebra em todo
@@ -2667,7 +2674,7 @@ claro/escuro, com esqueleto ao carregar.
 ### 1.5.0
 - Áudios em Ogg/Opus vão pelo **caminho rápido**: o cliente vê "gravando
   áudio…" por alguns segundos e o áudio é enviado na hora como mensagem de
-  voz, usando a biblioteca aberta WA-JS (embutida em `vendor/`, versão 4.7.2).
+  voz, usando a biblioteca aberta WA-JS (embutida em `vendor/`; versão atual em `vendor/README.md`).
 - A gravação simulada da 1.4.0 virou o **plano B** e o anexo como arquivo, o
   **plano C**. O aviso diz qual caminho foi usado.
 - Telemetria e servidores de terceiros da biblioteca **desligados**.

@@ -132,7 +132,7 @@ test('painel: nome/número clicável (mão + "Abrir conversa") no Quadro, Agenda
   assert.match(api, /wa_campaign_targets\?select=id,chat_id,name,status,reason,sent_at/);
   assert.match(body(api, '  async function fetchSendLog('), /chat_id: r\.chat_id \|\| null, phone:/);
 });
-test('a WA-JS empacotada (4.7.2) tem as funções usadas (sem mexer no arquivo)', () => {
+test('a WA-JS empacotada (4.8.2) tem as funções usadas (sem mexer no arquivo)', () => {
   const v = src('vendor/wppconnect-wa.js');
   assert.ok(v.includes('t.openChatBottom=async function'));
   assert.ok(v.includes('findOrCreateLatestChat'));
