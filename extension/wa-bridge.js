@@ -42,6 +42,14 @@
   }
 
   const isReady = () => !!(wpp && wpp.isReady);
+  // 2.20.2: WhatsApp Web terminou de carregar (tela principal pronta e carregada). Sem as funções: não bloqueia
+  const isSynced = () => {
+    if (!isReady()) return false;
+    const conn = wpp.conn;
+    if (!conn) return true;
+    const flag = (name) => { try { return typeof conn[name] === 'function' ? !!conn[name]() : true; } catch { return true; } };
+    return flag('isMainReady') && flag('isMainLoaded');
+  };
   // 2.9.2: tipos novos de parte (rich-parts.js roda logo antes desta ponte, no mesmo mundo)
   const Rich = window.TspRich || null;
 
@@ -126,6 +134,7 @@
     return {
       loaded: !!wpp,
       ready: isReady(),
+      synced: isSynced(), // 2.20.2: terminou a sincronização inicial (depois do QR code)
       telemetryOff: config.disableGoogleAnalytics === true,
       linkServersOff: Array.isArray(servers) && servers.length === 0,
       chat: activeChat().kind,

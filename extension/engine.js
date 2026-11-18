@@ -2280,6 +2280,15 @@
     return samePerson(wa, contactPhone) ? 'ok' : 'mismatch';
   }
   const seqIsPaused = (r) => !!r && r.status === 'ativo' && r.outcome === SEQ_PAUSED;
+  // 2.20.2: só 'mismatch' (o WhatsApp CONFIRMOU que o chat é de outra pessoa) pausa. 'unconfirmed'/'unknown' (WhatsApp
+  // sincronizando, chat não carregado, WA-JS não pronto) só pulam o ciclo e tentam de novo com espera crescente
+  // (1, 2, 4, 8, 16 min… até 30 min). Bug da 2.20.0 em 18/11 08:52: 79 runs pausados logo depois de ler o QR code.
+  const seqShouldPause = (chk) => chk === 'mismatch';
+  const WA_LOADING_TEXT = 'Aguardando o WhatsApp terminar de carregar';
+  function unconfirmedDelayMs(n) {
+    const k = Math.max(1, Math.floor(Number(n) || 1));
+    return Math.min(60 * 1000 * 2 ** Math.min(k - 1, 10), 30 * 60 * 1000);
+  }
   // painel da conversa (chatId, telefone dado pelo WhatsApp = phone): só os percursos DESTA pessoa. phones: chat → telefone
   // do WhatsApp para os chats dos percursos. Percurso noutro chat que é de outro telefone não aparece (16/11: o contato
   // do CRM tinha o telefone desta conversa e o chat de outra; o mesmo bloco aparecia duas vezes)
@@ -2328,7 +2337,7 @@
       return { status: 'mismatch', text: `o chat é de ${waPh}, não de ${(run.contact && run.contact.phone) || 'contato sem telefone'}`, fix: { kind: 'relink', contactId: uniq[0].id, phone: waPh } };
     }
     const text = chk === 'mismatch' ? `o chat é de ${waPh}, não de ${run.contact.phone}` : 'sem telefone para conferir';
-    return { status: chk, text, fix: paused ? null : { kind: 'pause' } };
+    return { status: chk, text, fix: paused || !seqShouldPause(chk) ? null : { kind: 'pause' } }; // 2.20.2: sem confirmação não pausa
   }
   // mais de um percurso ativo da mesma régua para a mesma pessoa (telefone dado pelo WhatsApp): o mais antigo fica
   function healthDuplicates(runs, phoneOfRun) {
@@ -2526,8 +2535,23 @@
       return st.noSendLabelId;
     }
 
+    // 2.20.2: pronto = WA-JS pronto E o WhatsApp terminou a sincronização inicial (deps.wa.loading). Carregando: st.waLoading
     async function waReady() {
-      try { return !!(await deps.wa.ready()); } catch { return false; }
+      let ok = false;
+      try { ok = !!(await deps.wa.ready()); } catch { ok = false; }
+      let loading = false;
+      if (deps.wa && typeof deps.wa.loading === 'function') { try { loading = !!(await deps.wa.loading()); } catch { loading = false; } }
+      st.waLoading = loading;
+      return ok && !loading;
+    }
+    // 2.20.2: chat sem confirmação → espera crescente por chave (run ou automação:contato); confirmou → zera
+    const unconfirmedTries = new Map(); // chave → { n, until }
+    const unconfirmedWaiting = (key) => { const u = unconfirmedTries.get(key); return !!u && u.until > now(); };
+    function unconfirmedLater(key) {
+      const n = ((unconfirmedTries.get(key) || {}).n || 0) + 1;
+      if (unconfirmedTries.size > 5000) unconfirmedTries.clear();
+      unconfirmedTries.set(key, { n, until: now() + unconfirmedDelayMs(n) });
+      return unconfirmedTries.get(key).until;
     }
 
     // Pega ou renova a trava. Só tenta com o WhatsApp pronto nesta aba.
@@ -3212,10 +3236,12 @@
         // 2.20.0: o chat do percurso tem que ser do telefone do contato (pelo WhatsApp, agora). Não confere → pausa.
         // O WhatsApp não respondeu → não mexe neste ciclo (nem envia).
         if (seqIsPaused(r)) continue;
+        if (unconfirmedWaiting(`seq:${r.id}`)) continue; // 2.20.2: ainda na espera crescente
         const info = waInfo.get(r.id) || { phone: null, answered: false };
         const chk = seqChatCheck({ chatId: r.chat_id, waPhone: info.phone, answered: info.answered, contactPhone: r.contact && r.contact.phone, bound: !!r.contact_id });
-        if (chk === 'unknown') continue;
-        if (chk !== 'ok') { await seqPauseRun(r, a, chk, info.phone); continue; }
+        if (seqShouldPause(chk)) { await seqPauseRun(r, a, chk, info.phone); continue; }
+        if (chk !== 'ok') { unconfirmedLater(`seq:${r.id}`); continue; } // 2.20.2: não pausa; tenta depois
+        unconfirmedTries.delete(`seq:${r.id}`);
         // nunca para quem tem "Não enviar": sai da sequência
         if (st.noSendLabelId && r.contact && (r.contact.labelIds || []).includes(st.noSendLabelId)) { await seqPatch(r, { status: 'saiu', outcome: 'nao_enviar' }); continue; }
         // 2.13.0: "Não enviar" do WhatsApp e as etiquetas de "Nunca para quem tem" (CRM ou WhatsApp)
@@ -3277,7 +3303,8 @@
       // 2.20.0: confere de novo, sem cache, logo antes de mandar
       const info = await seqWaInfo(run, true);
       const chk = seqChatCheck({ chatId: run.chat_id, waPhone: info.phone, answered: info.answered, contactPhone: run.contact && run.contact.phone, bound: !!run.contact_id });
-      if (chk !== 'ok') { if (chk !== 'unknown') await seqPauseRun(run, automation, chk, info.phone); return; }
+      if (seqShouldPause(chk)) { await seqPauseRun(run, automation, chk, info.phone); return; }
+      if (chk !== 'ok') { unconfirmedLater(`seq:${run.id}`); return; } // 2.20.2: não pausa; tenta depois
       const t = now();
       const nextIsWait = res.node && (seqIndex(def).get(res.node) || {}).node && ['esperar', 'pausa'].includes(seqIndex(def).get(res.node).node.type); // 2.13.0: ⏳ também
       const branches = [...(run.branches || []), ...res.branches];
@@ -3339,15 +3366,18 @@
           const info = await seqWaInfo({ chat_id: ev.chatId }, true);
           const chk = seqChatCheck({ chatId: ev.chatId, waPhone: info.phone, answered: info.answered, contactPhone: contact.phone });
           if (chk !== 'ok') {
-            if (chk !== 'unknown') {
-              const reason = chk === 'mismatch' ? CHAT_MISMATCH_REASON : CHAT_UNCONFIRMED_REASON;
-              await logSkip(entry, reason);
-              if (deps.onDiag) { try { deps.onDiag({ kind: 'automacao_bloqueada', automation: automation.name, chatId: ev.chatId, reason, waPhone: info.phone || null, contactPhone: contact.phone || null }); } catch { /* registro */ } }
+            const key = `${automation.id}:${contact.id}`;
+            if (seqShouldPause(chk)) {
+              await logSkip(entry, CHAT_MISMATCH_REASON);
+              if (deps.onDiag) { try { deps.onDiag({ kind: 'automacao_bloqueada', automation: automation.name, chatId: ev.chatId, reason: CHAT_MISMATCH_REASON, waPhone: info.phone || null, contactPhone: contact.phone || null }); } catch { /* registro */ } }
+              failedRecently.set(key, now() + RETRY_AFTER_FAIL_MS);
+            } else {
+              failedRecently.set(key, unconfirmedLater(key)); // 2.20.2: sem confirmação: nada no log, tenta depois (espera crescente)
             }
             if (!sent) { try { await api('automationUnreserve', { id: runId }); } catch { /* ok */ } }
-            failedRecently.set(`${automation.id}:${contact.id}`, now() + RETRY_AFTER_FAIL_MS);
             break;
           }
+          unconfirmedTries.delete(`${automation.id}:${contact.id}`);
           const item = await deps.itemById(step.itemId);
           if (!item) {
             await logSkip(entry, 'sem mensagem');
@@ -3420,7 +3450,13 @@
       const holding = await ensureLease();
       if (!holding) {
         if (st.settings.paused_all) { st.role = 'pausado'; st.waiting = 'pausado'; return; }
-        st.waiting = st.role === 'outro' ? 'outro computador executa' : 'WhatsApp não pronto';
+        st.waiting = st.role === 'outro' ? 'outro computador executa' : st.waLoading ? WA_LOADING_TEXT : 'WhatsApp não pronto';
+        return;
+      }
+      // 2.20.2: com a trava, mas o WhatsApp ainda sincronizando (logo depois do QR code): não roda nada
+      if (!(await waReady())) {
+        if (st.settings.paused_all) { st.role = 'pausado'; st.waiting = 'pausado'; return; }
+        st.waiting = st.waLoading ? WA_LOADING_TEXT : 'WhatsApp não pronto';
         return;
       }
       await ensureNoSendLabel();
@@ -3443,7 +3479,7 @@
       if (now() < st.nextAllowedAt) { st.waiting = 'intervalo entre contatos'; return; }
       // Com algo ativo: no máximo uma busca de trabalho a cada 60 s (depois de um envio, segue direto)
       if (now() < st.workAt) return;
-      if (!(await waReady())) { st.waiting = 'WhatsApp não pronto'; return; }
+      if (!(await waReady())) { st.waiting = st.waLoading ? WA_LOADING_TEXT : 'WhatsApp não pronto'; return; }
       // 2.20.0: relógio/fuso errado = horário de envio errado: não procura trabalho
       const clk = await clockCheck();
       if (clk) { st.waiting = clk; return; }
@@ -3658,6 +3694,7 @@
     spinText, hasSpin, VARIANT_MODES, variantCount, pickVariant, variantParts, spinParts, removeAllExcept, // 2.14.0
     limitCheck, randomGapMs, estimateDuration, estimateText,
     SEQ_PAUSED, CHAT_MISMATCH_REASON, CHAT_UNCONFIRMED_REASON, samePerson, seqChatCheck, seqIsPaused, uniqueRuns, ownRuns, seqRepliedPatch, healthOfRun, healthDuplicates, healthOfQuickSend, sendTargetOf, clampSec, clampChat, clampActivity, spOffsetMin, clockProblem, // 2.20.0
+    seqShouldPause, unconfirmedDelayMs, WA_LOADING_TEXT, // 2.20.2
     createMotor,
   };
 })(globalThis);

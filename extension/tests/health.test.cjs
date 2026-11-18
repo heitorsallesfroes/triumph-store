@@ -243,11 +243,11 @@ test('3) motor: prazo vencido do run 0b1f9a87 (chat do Patrick, contato da Tania
   await cycle(m);
   assert.deepStrictEqual([m.db.sent.length, m.db.logs.length, m.db.runs[0].version], [0, 1, 1]);
 });
-test('3) motor: o WhatsApp não sabe o telefone do @lid → não envia e pausa ("não deu para confirmar"); a ponte não respondeu → só espera o próximo ciclo', async () => {
+test('3) motor: o WhatsApp não sabe o telefone do @lid → não envia e NÃO pausa (2.20.2: tenta depois); a ponte não respondeu → só espera o próximo ciclo', async () => {
   const run = { ...RUN_PATRICK, chat_id: '259657197166684@lid' };
   const m = motorWith({ runs: [run], contacts: C_TANIA, now: at('13:00:00') });
   await cycle(m);
-  assert.deepStrictEqual([m.db.runs[0].outcome, m.db.sent.length, m.db.logs[0].reason], ['pausado_chat', 0, 'pausado: não deu para confirmar o telefone da conversa']);
+  assert.deepStrictEqual([m.db.runs[0].outcome, m.db.sent.length, m.db.logs.length], [null, 0, 0]);
   const broken = motorWith({ runs: [RUN_PATRICK], contacts: C_TANIA, now: at('13:00:00'), waBroken: true }); // ponte não respondeu
   await cycle(broken);
   assert.deepStrictEqual([broken.db.runs[0].outcome, broken.db.sent.length], [null, 0]);

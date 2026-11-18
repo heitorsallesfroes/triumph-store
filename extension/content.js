@@ -7625,6 +7625,8 @@
     api: (type, payload) => call(type, payload),
     wa: {
       ready: async () => { const st = await refreshWaStatus(); return !!(st && st.ready); },
+      // 2.20.2: WA-JS pronto mas o WhatsApp ainda sincronizando (status lido logo antes, em ready)
+      loading: () => !!(state.waStatus && (state.waStatus.loaded && !state.waStatus.ready || state.waStatus.ready && state.waStatus.synced === false)),
       chatsInfo: (p) => waRequest('chatsInfo', p, { timeout: 8000 }),
       // 2.5.0: etiquetas nativas (fila de trocas e conversas da etiqueta: só memória do WhatsApp Web)
       labelEvents: () => waRequest('labelEvents', {}, { timeout: 2000 }),
@@ -8797,6 +8799,7 @@
     if (m.settings && m.settings.paused_all) return 'pausado';
     if (m.role === 'este') return 'este computador executa';
     if (m.role === 'outro') return 'outro computador executa';
+    if (m.waLoading) return E.WA_LOADING_TEXT; // 2.20.2
     return 'aguardando o WhatsApp ficar pronto';
   }
 

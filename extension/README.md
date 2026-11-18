@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.20.1** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.20.2** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,17 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.20.2 — WhatsApp carregando não pausa automação
+- **Bug da 2.20.0 (18/11 08:52)**: logo depois de reconectar o WhatsApp Web (QR code), o motor pausou 79 percursos com
+  "pausado: não deu para confirmar o telefone da conversa", porque o WhatsApp ainda estava sincronizando.
+- Agora só pausa quando o WhatsApp **confirma** que o chat é de outra pessoa. Sem confirmação (WhatsApp sincronizando,
+  chat não carregado, WA-JS não pronto) o motor só pula aquele ciclo e tenta de novo depois, com espera crescente
+  (1, 2, 4, 8, 16 e no máximo 30 min). Nada vai para o log como "pausado".
+- Enquanto o WhatsApp não termina a sincronização inicial, o motor não roda nada e o painel mostra
+  "Aguardando o WhatsApp terminar de carregar".
+- Os percursos que a 2.20.0 pausou por engano continuam pausados: em **Saúde das automações** aparecem como
+  "pausado, mas o chat confere com o contato", com o botão para retomar.
 
 ### 2.20.1 — Sem Tiny
 - A venda pela conversa não avisa mais o estoque do Tiny (o ERP saiu do Tiny de vez); o estoque do ERP continua
