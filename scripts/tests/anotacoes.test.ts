@@ -3,10 +3,10 @@
 // - agrupamento por data (Atrasadas, Hoje, Amanhã, Esta semana, Mais pra frente, Algum dia) e Feitas
 // - atrasadas e contador do menu (hoje + atrasadas que faltam)
 // - repetição: todo dia, dias úteis, toda semana (feita no dia, atrasada ou adiantada)
-// - escolha rápida do dia, arrastar (posições), notas (busca, ordem, listas com "- ")
+// - escolha rápida do dia, arrastar (posições), notas (busca, ordem, listas com "- ", capa do cartão, data da edição)
 import assert from 'node:assert/strict';
 import {
-  addDays, agrupar, blocosDoTexto, corValida, dueLabel, endOfWeek, filtrarNotas, groupOf, isDateKey, isOverdue, moveInList,
+  addDays, agrupar, blocosDoTexto, capaDaNota, corValida, dueLabel, editadaLabel, endOfWeek, filtrarNotas, groupOf, isDateKey, isOverdue, moveInList,
   nextDue, nextPosition, pendentesHoje, quickDate, reorderUpdates, tabelaFaltando,
   type Nota, type Tarefa,
 } from '../../src/lib/anotacoes.ts';
@@ -166,6 +166,25 @@ test('notas: linhas com "- " viram lista, o resto parágrafo', () => {
   ]);
   assert.deepEqual(blocosDoTexto('a\r\n\r\nb'), [{ tipo: 'texto', linhas: ['a', '', 'b'] }]);
   assert.deepEqual(blocosDoTexto('-sem espaço'), [{ tipo: 'texto', linhas: ['-sem espaço'] }]);
+});
+
+test('notas: capa mostra só o título; sem título, a 1ª linha do texto cortada com "…"', () => {
+  assert.deepEqual(capaDaNota({ titulo: '  Fornecedores ', texto: 'Ligar para o João' }), { titulo: 'Fornecedores', semTitulo: false, temTexto: true });
+  assert.deepEqual(capaDaNota({ titulo: 'Só título', texto: '  ' }), { titulo: 'Só título', semTitulo: false, temTexto: false });
+  assert.deepEqual(capaDaNota({ titulo: '', texto: '\n\n- senha do wi-fi\noutra linha' }), { titulo: 'senha do wi-fi', semTitulo: true, temTexto: true });
+  assert.deepEqual(capaDaNota({ titulo: ' ', texto: '' }), { titulo: 'Nota vazia', semTitulo: true, temTexto: false });
+  const longa = capaDaNota({ titulo: '', texto: 'a'.repeat(100) }, 60);
+  assert.equal(longa.titulo, `${'a'.repeat(60)}…`);
+  assert.ok(longa.semTitulo);
+});
+
+test('notas: data da última edição curta', () => {
+  const agora = new Date(2026, 10, 18, 15, 0);
+  assert.equal(editadaLabel(new Date(2026, 10, 18, 9, 5).toISOString(), agora), 'hoje, 09:05');
+  assert.equal(editadaLabel(new Date(2026, 10, 17, 23, 0).toISOString(), agora), 'ontem');
+  assert.equal(editadaLabel(new Date(2026, 2, 3, 12, 0).toISOString(), agora), '3 mar');
+  assert.equal(editadaLabel(new Date(2025, 10, 12, 12, 0).toISOString(), agora), '12/11/2025');
+  assert.equal(editadaLabel('lixo', agora), '');
 });
 
 test('migration não aplicada é reconhecida', () => {

@@ -13,7 +13,7 @@ import { initialTab, writeTab } from '../lib/erpRoute';
 import { announcePendentes } from '../lib/anotacoesDb';
 import Pensamentos from './AnotacoesPensamentos';
 import {
-  CORES, RAPIDAS, REPETICOES, agrupar, blocosDoTexto, corValida, dateKey, dueLabel, filtrarNotas, isDateKey, isOverdue,
+  CORES, RAPIDAS, REPETICOES, agrupar, capaDaNota, corValida, dateKey, dueLabel, editadaLabel, filtrarNotas, isDateKey, isOverdue,
   moveInList, nextDue, nextPosition, notaVazia, pendentesHoje, quickDate, reorderUpdates, tabelaFaltando,
   type Cor, type GrupoId, type Nota, type Rapida, type Repeticao, type Tarefa,
 } from '../lib/anotacoes';
@@ -542,28 +542,33 @@ function Notas({ bloqueado, onMissing }: { bloqueado: boolean; onMissing: () => 
           {busca ? 'Nenhuma nota encontrada.' : 'Nenhuma nota ainda. Clique em "Nova nota" para começar.'}
         </div>
       ) : (
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 220px), 1fr))' }}>
-          {lista.map((n) => (
-            <article key={n.id} className="anot-card anot-row relative rounded-2xl p-4 cursor-pointer flex flex-col" data-testid="anot-nota"
-              style={{ background: corVar(n.cor), border: `1px solid ${corBorda(n.cor)}`, minHeight: 120, maxHeight: 320, overflow: 'hidden' }}
-              onClick={() => setAberta({ id: n.id, titulo: n.titulo, texto: n.texto, cor: n.cor, fixada: n.fixada })}>
-              <div className="flex items-start gap-2 mb-1">
-                <h3 className="flex-1 min-w-0 font-semibold text-[15px] break-words" style={{ color: 'var(--text-primary)' }}>
-                  {n.titulo || <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{n.texto ? '' : 'Nota vazia'}</span>}
-                </h3>
-                <button type="button" onClick={(e) => { e.stopPropagation(); fixar(n); }} aria-label={n.fixada ? 'Desafixar' : 'Fixar no topo'}
-                  title={n.fixada ? 'Desafixar' : 'Fixar no topo'} className={`p-1 -m-1 rounded ${n.fixada ? '' : 'anot-hover'}`}
-                  style={{ background: 'none', border: 'none', color: n.fixada ? ORANGE : 'var(--text-muted)' }}>
-                  <Pin size={15} fill={n.fixada ? ORANGE : 'none'} />
-                </button>
-              </div>
-              <div className="flex-1 text-sm overflow-hidden" style={{ color: 'var(--text-secondary)' }}><TextoNota texto={n.texto} /></div>
-              <div className="flex justify-end mt-2">
-                <button type="button" onClick={(e) => { e.stopPropagation(); setConfirmar(n); }} aria-label="Excluir nota" title="Excluir"
-                  className="anot-hover p-1 -m-1 rounded" style={{ background: 'none', border: 'none', color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
-              </div>
-            </article>
-          ))}
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {lista.map((n) => {
+            const capa = capaDaNota(n);
+            const abrir = () => setAberta({ id: n.id, titulo: n.titulo, texto: n.texto, cor: n.cor, fixada: n.fixada });
+            return (
+              <article key={n.id} className="anot-card anot-row relative rounded-2xl p-4 cursor-pointer flex flex-col h-32 sm:h-36" data-testid="anot-nota"
+                role="button" tabIndex={0} aria-label={`Abrir nota: ${capa.titulo}`}
+                style={{ background: corVar(n.cor), border: `1px solid ${corBorda(n.cor)}`, overflow: 'hidden' }}
+                onClick={abrir} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); abrir(); } }}>
+                <div className="flex items-start gap-2 flex-1 min-h-0">
+                  <h3 className={`flex-1 min-w-0 break-words line-clamp-3 ${capa.semTitulo ? 'italic font-medium text-base' : 'font-bold text-lg leading-snug'}`}
+                    data-testid="anot-nota-titulo" style={{ color: capa.semTitulo ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
+                    {capa.titulo}
+                  </h3>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); fixar(n); }} aria-label={n.fixada ? 'Desafixar' : 'Fixar no topo'}
+                    title={n.fixada ? 'Desafixar' : 'Fixar no topo'} className={`p-1 -m-1 rounded flex-shrink-0 ${n.fixada ? '' : 'anot-hover'}`}
+                    style={{ background: 'none', border: 'none', color: n.fixada ? ORANGE : 'var(--text-muted)' }}>
+                    <Pin size={15} fill={n.fixada ? ORANGE : 'none'} />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between gap-2 mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <span className="truncate">{editadaLabel(n.updated_at)}</span>
+                  {capa.temTexto && <span aria-label="Tem texto" title="Tem texto" className="opacity-70">📝</span>}
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
 
@@ -589,19 +594,7 @@ function Notas({ bloqueado, onMissing }: { bloqueado: boolean; onMissing: () => 
   );
 }
 
-function TextoNota({ texto }: { texto: string }) {
-  return (
-    <>
-      {blocosDoTexto(texto).map((b, i) => (b.tipo === 'lista' ? (
-        <ul key={i} className="list-disc pl-5 my-1 space-y-0.5">{b.itens.map((it, j) => <li key={j} className="break-words">{it}</li>)}</ul>
-      ) : (
-        <p key={i} className="whitespace-pre-wrap break-words">{b.linhas.join('\n')}</p>
-      )))}
-    </>
-  );
-}
-
-function Modal({ children, onClose, label, small, style }: { children: ReactNode; onClose: () => void; label: string; small?: boolean; style?: CSSProperties }) {
+function Modal({ children, onClose, label, small, large, style }: { children: ReactNode; onClose: () => void; label: string; small?: boolean; large?: boolean; style?: CSSProperties }) {
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', esc);
@@ -610,7 +603,7 @@ function Modal({ children, onClose, label, small, style }: { children: ReactNode
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,.5)' }} onPointerDown={onClose}>
       <div role="dialog" aria-modal="true" aria-label={label} onPointerDown={(e) => e.stopPropagation()}
-        className={`w-full ${small ? 'sm:max-w-sm' : 'sm:max-w-xl'} rounded-t-2xl sm:rounded-2xl p-5 max-h-[92vh] flex flex-col`}
+        className={`w-full ${small ? 'sm:max-w-sm' : large ? 'sm:max-w-3xl' : 'sm:max-w-xl'} rounded-t-2xl sm:rounded-2xl p-5 max-h-[92vh] flex flex-col`}
         style={{ ...card, boxShadow: '0 20px 50px rgba(0,0,0,.35)', ...style }}>
         {children}
       </div>
@@ -672,10 +665,10 @@ function NotaEditor({ inicial, onSaved, onClose, onDelete, onMissing }: {
   const label = { idle: '', pendente: 'Digitando…', salvando: 'Salvando…', salvo: 'Salvo', erro: 'Erro ao salvar — tente de novo' }[status];
 
   return (
-    <Modal onClose={fechar} label="Nota" style={{ background: corVar(d.cor), borderColor: corBorda(d.cor) }}>
+    <Modal onClose={fechar} label="Nota" large style={{ background: corVar(d.cor), borderColor: corBorda(d.cor) }}>
       <div className="flex items-center gap-2 mb-3">
         <input value={d.titulo} onChange={(e) => change({ titulo: e.target.value })} placeholder="Título" aria-label="Título da nota" maxLength={200}
-          className="anot-plain flex-1 min-w-0 text-lg font-semibold" autoFocus={!inicial.id} />
+          className="anot-plain flex-1 min-w-0 text-xl sm:text-2xl font-bold" data-testid="anot-nota-titulo-input" autoFocus={!inicial.id} />
         <button type="button" onClick={() => change({ fixada: !d.fixada })} aria-label={d.fixada ? 'Desafixar' : 'Fixar no topo'} title={d.fixada ? 'Desafixar' : 'Fixar no topo'}
           className="p-1.5 rounded-lg" style={{ background: 'none', border: 'none', color: d.fixada ? ORANGE : 'var(--text-muted)' }}>
           {d.fixada ? <Pin size={18} fill={ORANGE} /> : <PinOff size={18} />}
@@ -684,7 +677,7 @@ function NotaEditor({ inicial, onSaved, onClose, onDelete, onMissing }: {
       </div>
       <textarea value={d.texto} onChange={(e) => change({ texto: e.target.value })} aria-label="Texto da nota" data-testid="anot-nota-texto"
         placeholder={'Escreva aqui…\n- use "- " para fazer uma lista'} autoFocus={!!inicial.id}
-        className="anot-plain w-full flex-1 text-[15px] leading-relaxed resize-none" style={{ minHeight: 220 }} />
+        className="anot-plain w-full flex-1 text-[15px] leading-relaxed resize-none" style={{ minHeight: '55vh' }} />
       <div className="flex items-center gap-2 mt-3 pt-3 flex-wrap" style={{ borderTop: `1px solid ${corBorda(d.cor)}` }}>
         <div className="flex gap-1.5" role="radiogroup" aria-label="Cor da nota">
           {CORES.map((c) => (

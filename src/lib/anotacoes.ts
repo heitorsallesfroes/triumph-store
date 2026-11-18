@@ -185,6 +185,28 @@ export function filtrarNotas(notas: Nota[], busca: string): Nota[] {
 }
 export const notaVazia = (n: Pick<Nota, 'titulo' | 'texto'>) => !n.titulo.trim() && !n.texto.trim();
 
+// capa do cartão: só o título; sem título, a primeira linha do texto (cortada com "…") para saber o que é
+export interface Capa { titulo: string; semTitulo: boolean; temTexto: boolean }
+export function capaDaNota(n: Pick<Nota, 'titulo' | 'texto'>, max = 60): Capa {
+  const temTexto = !!n.texto.trim();
+  const titulo = n.titulo.trim();
+  if (titulo) return { titulo, semTitulo: false, temTexto };
+  const linha = (n.texto.replace(/\r\n?/g, '\n').split('\n').find((l) => l.trim()) || '').trim().replace(/^[-*•]\s+/, '');
+  if (!linha) return { titulo: 'Nota vazia', semTitulo: true, temTexto: false };
+  return { titulo: linha.length > max ? `${linha.slice(0, max).trimEnd()}…` : linha, semTitulo: true, temTexto };
+}
+
+// data da última edição, curta: "hoje, 14:05", "ontem", "12 nov" (mesmo ano) ou "12/11/2025"
+export function editadaLabel(iso: string, agora: Date = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const k = dateKey(d), hoje = dateKey(agora);
+  if (k === hoje) return `hoje, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (k === addDays(hoje, -1)) return 'ontem';
+  if (d.getFullYear() === agora.getFullYear()) return `${d.getDate()} ${MESES[d.getMonth()]}`;
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
 // texto da nota em blocos para mostrar: linhas com "- " (ou "* ") viram itens de lista; o resto, parágrafos
 export type Bloco = { tipo: 'lista'; itens: string[] } | { tipo: 'texto'; linhas: string[] };
 export function blocosDoTexto(texto: string): Bloco[] {
