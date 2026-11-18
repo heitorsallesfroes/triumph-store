@@ -2458,6 +2458,9 @@
     respondeu_depois: 'o cliente respondeu depois da sua resposta',
     ja_tem: 'já tem a etiqueta',
     cliente: 'tem a etiqueta Cliente',
+    cliente_antigo: 'tem a etiqueta Cliente Antigo',
+    pago: 'tem a etiqueta Pago',
+    comprou_acessorios: 'tem a etiqueta Comprou acessórios',
     venda: 'tem venda no ERP',
     sem_telefone: 'não deu para confirmar: sem telefone para conferir a venda',
   };
@@ -2472,11 +2475,27 @@
   // nome de etiqueta sem acento, emoji e maiúsculas ("Cliente ⌚️" → "cliente")
   const bulkLabelNorm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   const bulkLabelIds = (labels, name) => (labels || []).filter((l) => l && bulkLabelNorm(l.name) === bulkLabelNorm(name)).map((l) => String(l.id));
+  // 2.21.1: etiquetas do WhatsApp que tiram a conversa da lista (pelo nome, como "Cliente"), na ordem do motivo
+  const BULK_EXCLUDE_LABELS = [
+    { reason: 'cliente', name: 'Cliente' },
+    { reason: 'cliente_antigo', name: 'Cliente Antigo' },
+    { reason: 'pago', name: 'Pago' },
+    { reason: 'comprou_acessorios', name: 'Comprou acessórios' },
+  ];
+  const bulkExcludeIds = (labels) => Object.fromEntries(BULK_EXCLUDE_LABELS.map((x) => [x.reason, bulkLabelIds(labels, x.name)]));
+  // clienteIds: o parâmetro da 2.21.0 (só "Cliente"), somado a excludeIds.cliente
+  function bulkExcludedBy(labelIds, excludeIds, clienteIds) {
+    const ids = (labelIds || []).map(String);
+    const ex = { ...(excludeIds || {}) };
+    ex.cliente = [...(ex.cliente || []), ...(clienteIds || [])].map(String);
+    const hit = BULK_EXCLUDE_LABELS.find((x) => (ex[x.reason] || []).map(String).some((id) => ids.includes(id)));
+    return hit ? hit.reason : null;
+  }
   function bulkOrdered(msgs) {
     // mensagem automática (saudação/ausência do WhatsApp Business) não é sua resposta nem o começo da conversa
     return (msgs || []).filter((m) => m && !m.auto).map((m, i) => ({ fromMe: !!m.fromMe, t: Number(m.t) || 0, i })).filter((m) => m.t > 0).sort((a, b) => a.t - b.t || a.i - b.i);
   }
-  function bulkDecision({ chatId, name = '', isMe = false, msgs, complete, moreOnPhone = false, since, labelIds = [], clienteIds = [], targetIds = [], phone = null, salePhones = null }) {
+  function bulkDecision({ chatId, name = '', isMe = false, msgs, complete, moreOnPhone = false, since, labelIds = [], clienteIds = [], excludeIds = {}, targetIds = [], phone = null, salePhones = null }) {
     const out = (reason, extra = {}) => ({ ok: !reason, reason: reason || null, ...extra });
     if (!/^\d+@(c\.us|lid)$/.test(chatId || '')) return out('nao_individual');
     if (isMe || radarNorm(name) === 'meu numero pessoal') return out('minha_conversa');
@@ -2495,17 +2514,19 @@
     if (list.slice(replyIdx + 1).some((m) => !m.fromMe)) return out('respondeu_depois', info);
     const ids = (labelIds || []).map(String);
     if (ids.some((id) => (targetIds || []).includes(id))) return out('ja_tem', info);
-    if (ids.some((id) => (clienteIds || []).includes(id))) return out('cliente', info);
+    const ex = bulkExcludedBy(ids, excludeIds, clienteIds);
+    if (ex) return out(ex, info);
     const key = bulkPhoneKey(phone);
     if (!key) return out('sem_telefone', info);
     if (salePhones && salePhones.has(key)) return out('venda', info);
     return out(null, { ...info, phoneKey: key });
   }
   // logo antes de aplicar: com as mensagens da memória agora, ainda vale? (o cliente pode ter respondido depois da simulação)
-  function bulkRecheck({ msgs, firstReplyAt, labelIds = [], clienteIds = [], targetIds = [] }) {
+  function bulkRecheck({ msgs, firstReplyAt, labelIds = [], clienteIds = [], excludeIds = {}, targetIds = [] }) {
     const ids = (labelIds || []).map(String);
     if (ids.some((id) => (targetIds || []).includes(id))) return 'ja_tem';
-    if (ids.some((id) => (clienteIds || []).includes(id))) return 'cliente';
+    const ex = bulkExcludedBy(ids, excludeIds, clienteIds);
+    if (ex) return ex;
     if (bulkOrdered(msgs).some((m) => !m.fromMe && m.t > firstReplyAt)) return 'respondeu_depois';
     return null;
   }
@@ -3802,6 +3823,7 @@
     SEQ_PAUSED, CHAT_MISMATCH_REASON, CHAT_UNCONFIRMED_REASON, samePerson, seqChatCheck, seqIsPaused, uniqueRuns, ownRuns, seqRepliedPatch, healthOfRun, healthDuplicates, healthOfQuickSend, sendTargetOf, clampSec, clampChat, clampActivity, spOffsetMin, clockProblem, // 2.20.0
     seqShouldPause, unconfirmedDelayMs, WA_LOADING_TEXT, SEND_BLOCKED_TEXT, SEND_FAILS_TO_BLOCK, // 2.20.2
     BULK_REASON, BULK_UNCONFIRMED, bulkPhoneKey, bulkLabelNorm, bulkLabelIds, bulkDecision, bulkRecheck, bulkByMonth, bulkSkipSummary, // 2.21.0
+    BULK_EXCLUDE_LABELS, bulkExcludeIds, // 2.21.1
     createMotor,
   };
 })(globalThis);

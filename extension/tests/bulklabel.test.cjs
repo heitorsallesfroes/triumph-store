@@ -91,6 +91,33 @@ test('etiqueta "Cliente", já tem "Enviar Black Friday", venda no ERP → fora',
   assert.strictEqual(why({ phone: '552188776655' }), 'venda', 'sem o 9 também');
 });
 
+// 2.21.1: as etiquetas do WhatsApp de 18/11 (nomes reais, com emoji)
+const WA_LABELS = [{ id: '1', name: 'Cliente ⌚️' }, { id: '22', name: 'Cliente Antigo 👨‍🦳' }, { id: '14', name: 'Pago 💰' }, { id: '19', name: 'Comprou acessórios 🧣' }, { id: '24', name: 'Enviar Black Friday 💛' }, { id: '12', name: 'Lead Quente 🔥' }];
+
+test('2.21.1: etiquetas "Cliente Antigo", "Pago" e "Comprou acessórios" também tiram da lista, cada uma com o seu motivo', () => {
+  const excludeIds = plain(E.bulkExcludeIds(WA_LABELS));
+  assert.deepStrictEqual(excludeIds, { cliente: ['1'], cliente_antigo: ['22'], pago: ['14'], comprou_acessorios: ['19'] });
+  const r = (labelIds) => E.bulkDecision(base({ labelIds, clienteIds: [], excludeIds, targetIds: ['24'] })).reason;
+  assert.deepStrictEqual([r(['1']), r(['22']), r(['14']), r(['19']), r(['12']), r([])], ['cliente', 'cliente_antigo', 'pago', 'comprou_acessorios', null, null]);
+  assert.strictEqual(r(['24', '14']), 'ja_tem', 'já tem a etiqueta vem antes');
+  assert.deepStrictEqual(['cliente_antigo', 'pago', 'comprou_acessorios'].map((k) => E.BULK_REASON[k]), ['tem a etiqueta Cliente Antigo', 'tem a etiqueta Pago', 'tem a etiqueta Comprou acessórios']);
+  // relatório: o motivo de cada uma aparece, e não conta como "não deu para confirmar"
+  const sum = plain(E.bulkSkipSummary([{ reason: 'pago' }, { reason: 'comprou_acessorios' }, { reason: 'pago' }, { reason: 'cliente_antigo' }]));
+  assert.deepStrictEqual(sum.map((x) => [x.text, x.n, x.unconfirmed]), [['tem a etiqueta Pago', 2, false], ['tem a etiqueta Comprou acessórios', 1, false], ['tem a etiqueta Cliente Antigo', 1, false]]);
+});
+
+test('2.21.1: nome sem acento, emoji e maiúsculas; "Cliente Antigo" não vira "Cliente" (cada uma com o seu motivo); nome parecido não entra', () => {
+  const ex = plain(E.bulkExcludeIds([{ id: 'a', name: 'COMPROU ACESSORIOS' }, { id: 'b', name: 'pago' }, { id: 'c', name: 'Pagou parcial' }, { id: 'd', name: 'cliente antigo' }]));
+  assert.deepStrictEqual(ex, { cliente: [], cliente_antigo: ['d'], pago: ['b'], comprou_acessorios: ['a'] });
+});
+
+test('2.21.1: logo antes de aplicar, ganhou "Pago" depois da simulação → pula com o motivo', () => {
+  const excludeIds = E.bulkExcludeIds(WA_LABELS);
+  const firstReplyAt = S('2026-08-03T10:05:00');
+  assert.strictEqual(E.bulkRecheck({ msgs: [{ fromMe: true, t: firstReplyAt }], firstReplyAt, labelIds: ['14'], excludeIds, targetIds: ['24'] }), 'pago');
+  assert.strictEqual(E.bulkRecheck({ msgs: [{ fromMe: true, t: firstReplyAt }], firstReplyAt, labelIds: ['12'], excludeIds, targetIds: ['24'] }), null);
+});
+
 test('sem telefone para conferir a venda → fora e "não deu para confirmar"', () => {
   assert.strictEqual(why({ phone: null }), 'sem_telefone');
   assert.ok(E.BULK_UNCONFIRMED.includes('sem_telefone'));

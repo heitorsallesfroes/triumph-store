@@ -2722,7 +2722,7 @@
     box.style.maxHeight = '85vh';
     box.style.overflow = 'auto';
     const head = el('div', 'pdg-h', 'Etiquetar em massa');
-    const intro = el('div', 'pdg-msg', `Etiqueta do WhatsApp "${BULK_TARGET}" em quem chamou desde ${dayTxt(since)} (a 1ª mensagem foi do cliente), recebeu resposta sua e não mandou mais nada depois da sua 1ª resposta. Fora: etiqueta "Cliente", venda no ERP e quem já tem a etiqueta. Nenhuma mensagem é enviada.`);
+    const intro = el('div', 'pdg-msg', `Etiqueta do WhatsApp "${BULK_TARGET}" em quem chamou desde ${dayTxt(since)} (a 1ª mensagem foi do cliente), recebeu resposta sua e não mandou mais nada depois da sua 1ª resposta. Fora: etiquetas ${E2.BULK_EXCLUDE_LABELS.map((x) => `"${x.name}"`).join(', ')}, venda no ERP e quem já tem a etiqueta. Nenhuma mensagem é enviada.`);
     const btns = el('div', 'pdg-b');
     const mk = (t, cls = 'btn') => { const b = el('button', cls, t); b.type = 'button'; return b; };
     const simBtn = mk('Simular', 'btn primary');
@@ -2747,7 +2747,7 @@
     let running = false;
     let stop = false;
     let armed = false;
-    let sim = null; // { rows, candidates, clienteIds, targetIds, hasCliente, at, stopped }
+    let sim = null; // { rows, candidates, excludeIds, targetIds, missing, at, stopped }
     let report = null; // { applied, skipped: [{ row, reason }], left }
     const close = () => { stop = true; bg.remove(); };
     closeBtn.addEventListener('click', close);
@@ -2771,7 +2771,7 @@
       }
       if (!sim) return;
       sec(`Simulação (${new Date(sim.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}): ${sim.candidates.length} conversa${sim.candidates.length === 1 ? '' : 's'} para etiquetar de ${sim.rows.length} lidas${sim.stopped ? ' (parada antes do fim)' : ''}`);
-      if (!sim.hasCliente) line('Aviso: não achei a etiqueta "Cliente" no WhatsApp.');
+      if (sim.missing.length) line(`Aviso: não achei no WhatsApp a etiqueta ${sim.missing.map((n) => `"${n}"`).join(', ')} (ninguém sai da lista por ela).`);
       if (!sim.targetIds.length) line(`A etiqueta "${BULK_TARGET}" ainda não existe: ela é criada ao aplicar.`);
       sec('Por mês do primeiro contato');
       E2.bulkByMonth(sim.candidates).forEach((m) => line(`${m.month.slice(5)}/${m.month.slice(0, 4)}: ${m.n}`));
@@ -2801,7 +2801,7 @@
     copyBtn.addEventListener('click', async () => { const ok = await copyToClipboard(text()); msg.textContent = ok ? 'Copiado.' : 'Não foi possível copiar.'; });
     async function readLabels() {
       const labels = await waRequest('labels', {}, { timeout: 8000 });
-      return { clienteIds: E2.bulkLabelIds(labels, 'Cliente'), targetIds: E2.bulkLabelIds(labels, BULK_TARGET) };
+      return { excludeIds: E2.bulkExcludeIds(labels), targetIds: E2.bulkLabelIds(labels, BULK_TARGET) };
     }
     simBtn.addEventListener('click', async () => {
       stop = false;
@@ -2833,7 +2833,7 @@
           await sleep(r && r.pages ? 300 : 60); // devagar: o WhatsApp continua usável
         }
         progress(1, 1);
-        sim = { rows, candidates: rows.filter((r) => r.ok), ...lab, hasCliente: lab.clienteIds.length > 0, at: Date.now(), stopped: stop };
+        sim = { rows, candidates: rows.filter((r) => r.ok), ...lab, missing: E2.BULK_EXCLUDE_LABELS.filter((x) => !(lab.excludeIds[x.reason] || []).length).map((x) => x.name), at: Date.now(), stopped: stop };
         msg.textContent = `${stop ? 'Simulação parada' : 'Simulação pronta'}: ${sim.candidates.length} para etiquetar. Nada foi alterado.`;
       } catch (e) {
         msg.textContent = `Não consegui simular: ${String((e && e.message) || e)}`;
@@ -2873,9 +2873,9 @@
           msg.textContent = `Etiquetando ${i + 1} de ${list.length}… (aplicadas: ${report.applied})`;
           let reason = null;
           try {
-            // confere de novo agora (o cliente pode ter respondido ou alguém pode ter posto "Cliente" depois da simulação)
+            // confere de novo agora (o cliente pode ter respondido ou ganhado uma etiqueta que tira da lista depois da simulação)
             const now = await waRequest('bulkChat', { chatId: row.chatId, since, maxPages: 0, pauseMs: 0 }, { timeout: 15000 });
-            reason = E2.bulkRecheck({ msgs: now.msgs, firstReplyAt: row.firstReplyAt, labelIds: now.labelIds, clienteIds: lab.clienteIds, targetIds: [targetId] });
+            reason = E2.bulkRecheck({ msgs: now.msgs, firstReplyAt: row.firstReplyAt, labelIds: now.labelIds, excludeIds: lab.excludeIds, targetIds: [targetId] });
             if (!reason) {
               const r = await waRequest('setChatLabels', { chatId: row.chatId, add: [targetId] }, { timeout: 15000 });
               if (r && r.confirmed) report.applied++; else reason = 'o WhatsApp não confirmou a etiqueta';

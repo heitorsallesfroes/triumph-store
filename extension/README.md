@@ -20,7 +20,7 @@ de etiqueta, sempre com o nome junto:
   `wa_labels`, `wa_contacts` e `wa_contact_labels`). Ficam só no nosso
   sistema e são a base dos follows e dos disparos.
 
-Versão atual: **2.21.0** (precisa do **Google Chrome 111 ou mais novo**)
+Versão atual: **2.21.1** (precisa do **Google Chrome 111 ou mais novo**)
 
 ---
 
@@ -802,6 +802,12 @@ guardada.
 ---
 
 ## O que mudou
+
+### 2.21.1 — Etiquetar em massa: mais etiquetas que tiram da lista
+- Além de "Cliente", ficam de fora quem tem as etiquetas do WhatsApp **"Cliente Antigo"**, **"Pago"** e **"Comprou
+  acessórios"** (pelo nome, sem acento, emoji e maiúsculas). Cada uma aparece no relatório com o seu motivo ("tem a
+  etiqueta Pago" etc.), na simulação e na conferência logo antes de aplicar. Etiqueta que não existe no WhatsApp aparece
+  num aviso.
 
 ### 2.21.0 — Etiquetar em massa (Mais › Manutenção)
 - Coloca a etiqueta do WhatsApp **"Enviar Black Friday"** em quem chamou desde **18/07/2026** e nunca mais respondeu
