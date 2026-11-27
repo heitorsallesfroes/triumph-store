@@ -173,6 +173,8 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
   useEffect(() => () => marcarParam('nfe', null), []);
   useErpRefresh(() => { loadSales(); loadSelosNfe(); }); // "Atualizar" do topo (os filtros continuam)
   useEffect(() => { setVisibleCount(PAGE_SIZE); setSelectedIds(new Set()); }, [filteredSales]);
+  // "Hoje": mostra todas as vendas do dia de uma vez (sem "Carregar mais"); outros períodos paginam na tela
+  const shownCount = period === 'today' ? filteredSales.length : visibleCount;
 
   // Venda do link: na lista filtrada → mostra, rola e realça. Fora (filtro de data, paginação) → busca pelo id e
   // abre o dia dela com os filtros limpos. Não existe → aviso "Venda não encontrada".
@@ -559,7 +561,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
   };
 
   const toggleSelectAll = () => {
-    const visible = filteredSales.slice(0, visibleCount).map(s => s.id);
+    const visible = filteredSales.slice(0, shownCount).map(s => s.id);
     const allSelected = visible.every(id => selectedIds.has(id));
     if (allSelected) {
       setSelectedIds(prev => { const next = new Set(prev); visible.forEach(id => next.delete(id)); return next; });
@@ -600,7 +602,8 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
     }
   };
 
-  const handleUpdateInstallments = async (sale: Sale, newInstallments: number) => {
+  // Definição rápida de parcelas/bandeira (mesma regra de taxa da tela completa: calculateCardFee)
+  const handleUpdateInstallments = async (sale: Sale, newInstallments: number, newBrand?: string) => {
     setUpdatingInstallmentsId(sale.id);
     try {
       const { data: freshSale, error: fetchError } = await supabase
@@ -610,7 +613,9 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
         .single();
       if (fetchError) throw fetchError;
 
-      if (newInstallments === freshSale.installments) { setEditingInstallmentsId(null); return; }
+      const brandChanged = newBrand !== undefined && newBrand !== (freshSale.card_brand || 'visa_mastercard');
+      if (newInstallments === freshSale.installments && !brandChanged) { if (newBrand === undefined) setEditingInstallmentsId(null); return; }
+      const brand = newBrand ?? freshSale.card_brand;
 
       let updatedPaymentMethods = freshSale.payment_methods;
       let cardFee: number;
@@ -626,14 +631,14 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
       const hasCreditCardItem = freshSale.payment_methods?.some((pm: { method: string }) => pm.method === 'credit_card') ?? false;
       if (hasCreditCardItem) {
         updatedPaymentMethods = freshSale.payment_methods!.map((pm: { method: string; card_brand: string; installments: number; amount: number }) =>
-          pm.method === 'credit_card' ? { ...pm, installments: newInstallments } : pm
+          pm.method === 'credit_card' ? { ...pm, installments: newInstallments, ...(newBrand !== undefined ? { card_brand: newBrand } : {}) } : pm
         );
         cardFee = updatedPaymentMethods.reduce((sum: number, pm: { method: string; card_brand: string; installments: number; amount: number }) => {
           const amount = pm.amount > 0 ? pm.amount : freshSale.total_sale_price;
           return sum + calculateCardFee(amount, pm.method, pm.card_brand || '', pm.installments || 0, saleFeeDate);
         }, 0);
       } else {
-        cardFee = calculateCardFee(freshSale.total_sale_price, 'credit_card', freshSale.card_brand || '', newInstallments, saleFeeDate);
+        cardFee = calculateCardFee(freshSale.total_sale_price, 'credit_card', brand || '', newInstallments, saleFeeDate);
       }
       const netReceived = freshSale.total_sale_price - cardFee;
       const profit = netReceived - (freshSale.total_cost || 0);
@@ -646,6 +651,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
 
       const { error } = await supabase.from('sales').update({
         installments: newInstallments,
+        ...(newBrand !== undefined ? { card_brand: newBrand } : {}),
         card_fee: cardFee,
         net_received: netReceived,
         profit,
@@ -656,7 +662,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
       const patch = (s: Sale) => {
         if (s.id !== sale.id) return s;
         console.log('[handleUpdateInstallments] profit antes:', s.profit, '-> depois:', profit);
-        return { ...s, installments: newInstallments, card_fee: cardFee, net_received: netReceived, profit, payment_methods: updatedPaymentMethods };
+        return { ...s, installments: newInstallments, ...(newBrand !== undefined ? { card_brand: newBrand } : {}), card_fee: cardFee, net_received: netReceived, profit, payment_methods: updatedPaymentMethods };
       };
       setFilteredSales(prev => prev.map(patch));
       setSales(prev => prev.map(patch));
@@ -664,7 +670,7 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
       alert('Erro ao atualizar parcelas');
     } finally {
       setUpdatingInstallmentsId(null);
-      setEditingInstallmentsId(null);
+      if (newBrand === undefined) setEditingInstallmentsId(null); // trocar bandeira mantém o painel aberto p/ escolher as parcelas
     }
   };
 
@@ -1050,16 +1056,16 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
               <input
                 type="checkbox"
                 id="select-all"
-                checked={filteredSales.slice(0, visibleCount).every(s => selectedIds.has(s.id))}
+                checked={filteredSales.slice(0, shownCount).every(s => selectedIds.has(s.id))}
                 onChange={toggleSelectAll}
                 className="w-4 h-4 accent-orange-500 cursor-pointer"
               />
               <label htmlFor="select-all" className="text-xs text-gray-400 cursor-pointer select-none">
-                Selecionar todos visíveis ({Math.min(visibleCount, filteredSales.length)})
+                Selecionar todos visíveis ({Math.min(shownCount, filteredSales.length)})
               </label>
             </div>
 
-          {filteredSales.slice(0, visibleCount).map((sale) => {
+          {filteredSales.slice(0, shownCount).map((sale) => {
             const statusConfig = getStatusConfig(sale.status);
             const isSelected = selectedIds.has(sale.id);
             return (
@@ -1127,8 +1133,18 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
                                 {canEditInstallments && editingInstallmentsId === sale.id && (
                                   <div
                                     onClick={(e) => e.stopPropagation()}
-                                    className="absolute top-full left-0 mt-1 z-30 bg-gray-700 border border-gray-600 rounded-lg shadow-lg p-1.5 grid grid-cols-3 gap-1 w-32"
+                                    className="absolute top-full left-0 mt-1 z-30 bg-gray-700 border border-gray-600 rounded-lg shadow-lg p-1.5 grid grid-cols-3 gap-1 w-40"
                                   >
+                                    {([['visa_mastercard', 'Visa/Master'], ['elo_amex', 'Elo/Amex']] as const).map(([b, label]) => (
+                                      <button
+                                        key={b}
+                                        onClick={() => handleUpdateInstallments(sale, sale.installments || 1, b)}
+                                        disabled={updatingInstallmentsId === sale.id}
+                                        className={`col-span-3 ${b === 'elo_amex' ? 'mb-1' : ''} px-1.5 py-1 rounded text-xs font-medium transition-colors disabled:opacity-50 ${(sale.card_brand || 'visa_mastercard') === b ? 'bg-orange-500 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-600'}`}
+                                      >
+                                        {label}
+                                      </button>
+                                    ))}
                                     {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
                                       <button
                                         key={n}
@@ -1424,15 +1440,15 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
         )}
       </div>
 
-      {!filterLoading && visibleCount < filteredSales.length && (
+      {!filterLoading && shownCount < filteredSales.length && (
         <div className="flex flex-col items-center gap-1 pt-2">
           <button
             onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
             className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-orange-500 text-gray-300 rounded-lg text-sm font-medium transition-all"
           >
-            Carregar mais ({filteredSales.length - visibleCount} restantes)
+            Carregar mais ({filteredSales.length - shownCount} restantes)
           </button>
-          <p className="text-xs text-gray-500">Exibindo {Math.min(visibleCount, filteredSales.length)} de {filteredSales.length} vendas</p>
+          <p className="text-xs text-gray-500">Exibindo {Math.min(shownCount, filteredSales.length)} de {filteredSales.length} vendas</p>
         </div>
       )}
 
