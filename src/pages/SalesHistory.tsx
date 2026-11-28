@@ -10,7 +10,7 @@ import { nfeGet } from '../lib/nfeApi';
 import { selosPorVenda, Selo, notaTiny } from '../lib/nfeRegras';
 import Sales from './Sales';
 import { generateShippingLabel } from '../lib/superfrete';
-import { calculateCardFee } from '../lib/cardFees';
+import { calculateCardFee, isLinkPix } from '../lib/cardFees';
 import { getTodayInBrazil, getYesterdayInBrazil, getLastMonthRangeInBrazil, getWeekRangeInBrazil } from '../lib/dateUtils';
 import { useErpRefresh } from '../lib/erpRefresh';
 import { lerParam, marcarParam } from '../lib/chunkReload';
@@ -1113,7 +1113,8 @@ export default function SalesHistory({ focusSaleId = null }: { focusSaleId?: str
                             const Icon = cfg.icon;
                             const showInstallments = (sale.installments ?? 0) > 1
                               && (sale.payment_method === 'credit_card' || sale.payment_method === 'payment_link');
-                            const badgeLabel = showInstallments ? `${cfg.label} ${sale.installments}x` : cfg.label;
+                            const badgeLabel = paymentKey === 'payment_link' && isLinkPix(sale.payment_method, sale.card_brand) ? `${cfg.label} PIX`
+                              : showInstallments ? `${cfg.label} ${sale.installments}x` : cfg.label;
                             const canEditInstallments = paymentKey === 'credit_card';
                             return (
                               <span className="relative inline-flex items-center gap-1">

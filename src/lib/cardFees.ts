@@ -25,12 +25,30 @@ function resolveBrand(cardBrand: string | null): CardBrand {
   return cardBrand === 'elo_amex' ? 'elo_amex' : 'visa_mastercard';
 }
 
+// "Link de pagamento - PIX": guardado como card_brand = 'pix' (installments = 1) → taxa 0%
+export const LINK_PIX = 'pix';
+export const isLinkPix = (paymentMethod: string, cardBrand: string | null | undefined): boolean =>
+  paymentMethod === 'payment_link' && cardBrand === LINK_PIX;
+
+// Ajusta uma forma de pagamento depois de mudar `field` (tela de venda/edição): escolher "PIX" nas parcelas do
+// link marca card_brand 'pix'; escolher parcela ou sair do link tira o 'pix' (volta ao Visa/Master padrão)
+export function applyLinkPixChoice<T extends { method: string; card_brand: string; installments: number }>(
+  pm: T, field: string, value: string | number,
+): T {
+  if (field === 'installments' && value === LINK_PIX) return { ...pm, card_brand: LINK_PIX, installments: 1 };
+  if (pm.card_brand === LINK_PIX && (field === 'installments' || (field === 'method' && value !== 'payment_link'))) {
+    return { ...pm, card_brand: ['credit_card', 'debit_card', 'payment_link'].includes(pm.method) ? 'visa_mastercard' : '' };
+  }
+  return pm;
+}
+
 export function getCardFeeRate(
   paymentMethod: string,
   cardBrand: string | null,
   installments: number,
   saleDate?: FeeDate
 ): number {
+  if (isLinkPix(paymentMethod, cardBrand)) return 0;
   const prefix = BRAND_PREFIX[resolveBrand(cardBrand)];
 
   if (paymentMethod === 'debit_card') {
@@ -72,6 +90,7 @@ export function calculateCardFee(
 export function getCardBrandLabel(cardBrand: string | null): string {
   if (cardBrand === 'visa_mastercard') return 'Visa / Mastercard';
   if (cardBrand === 'elo_amex') return 'Elo / Amex';
+  if (cardBrand === LINK_PIX) return 'PIX';
   return '';
 }
 

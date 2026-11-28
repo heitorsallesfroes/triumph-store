@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase, Supplier, Motoboy } from '../lib/supabase';
 import { byAddedOrder, insertSaleItems } from '../lib/saleItemsOrder';
 import { X, Save, Trash2, Plus, Package } from 'lucide-react';
-import { calculateCardFee, getFeePercentageLabel } from '../lib/cardFees';
+import { calculateCardFee, getFeePercentageLabel, LINK_PIX, isLinkPix, applyLinkPixChoice } from '../lib/cardFees';
 import { cleanCep, formatCep } from '../lib/cep';
 
 interface EditSaleProps {
@@ -238,6 +238,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
     if (field === 'method' && value !== 'credit_card' && value !== 'payment_link') {
       updated[index].installments = 0;
     }
+    updated[index] = applyLinkPixChoice(updated[index], field, value);
     setPaymentMethods(updated);
   };
 
@@ -637,6 +638,7 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
 
                   {(pm.method === 'credit_card' || pm.method === 'debit_card' || pm.method === 'payment_link') && (
                     <div className="flex gap-3">
+                      {!isLinkPix(pm.method, pm.card_brand) && (
                       <select
                         value={pm.card_brand}
                         onChange={e => updatePaymentMethod(index, 'card_brand', e.target.value)}
@@ -646,17 +648,19 @@ export default function EditSale({ saleId, onClose, onSaved }: EditSaleProps) {
                         <option value="visa_mastercard">Visa / Mastercard</option>
                         <option value="elo_amex">Elo / Amex</option>
                       </select>
+                      )}
 
                       {(pm.method === 'credit_card' || pm.method === 'payment_link') && (
                         <select
-                          value={pm.installments}
-                          onChange={e => updatePaymentMethod(index, 'installments', parseInt(e.target.value))}
+                          value={isLinkPix(pm.method, pm.card_brand) ? LINK_PIX : pm.installments}
+                          onChange={e => updatePaymentMethod(index, 'installments', e.target.value === LINK_PIX ? LINK_PIX : parseInt(e.target.value))}
                           className="flex-1 bg-gray-600 text-white rounded-lg px-3 py-2 border border-gray-500 focus:border-orange-500 focus:outline-none text-sm"
                         >
                           <option value="0">Parcelas (definir depois)</option>
+                          {pm.method === 'payment_link' && <option value={LINK_PIX}>PIX (0%)</option>}
                           {pm.card_brand && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => (
                             <option key={n} value={n}>
-                              {n}x ({getFeePercentageLabel(pm.method, pm.card_brand, n, saleFeeDate)})
+                              {n}x ({getFeePercentageLabel(pm.method, isLinkPix(pm.method, pm.card_brand) ? 'visa_mastercard' : pm.card_brand, n, saleFeeDate)})
                             </option>
                           ))}
                         </select>
